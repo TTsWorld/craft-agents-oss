@@ -1,956 +1,242 @@
-# Sources / Credentials / Skills 系统
+# 核心机制：Sources / Credentials / Skills
 
-> Craft Agents OSS v0.10.4 — 基于代码的子系统研究
->
-> 本文档研究三大子系统的设计契约、生命周期、安全边界与不变量。所有结论均基于具体源码行号引用。
+## 这是什么机制
 
-## 0. 总览
+**它是什么**：Craft Agents 用三套相互独立但同构的子系统，把「外部数据连接（Sources）」「机密凭证（Credentials）」「可复用指令（Skills）」统一管起来。Sources 负责连什么、Credentials 负责怎么连、Skills 负责连上后怎么用，三者共享同一套 workspace 磁盘布局（`~/.craft-agent/workspaces/{id}/`）与同一套 `@mention` 注入语义。
 
-Craft Agents 把三类「外部能力」抽象到统一的 `LoadedSource` / `LoadedSkill` 模型上，并使用 AES-256-GCM 加密文件落地所有凭据。三者关系如下：
+**为什么需要它**：
+- 没有 Sources 的统一契约，每接一个 MCP/API/本地源都得写一套独立的连接、鉴权、prompt 注入逻辑——膨胀且易错。
+- 没有加密凭证存储，OAuth token / API key 只能明文落盘或频繁弹系统钥匙串，跨机器迁移和 refresh 都无法实现。
+- 没有 Skills 的分级存储，团队/项目级复用指令无法与个人指令区分，Claude Code 生态的 `.agents/skills` 习惯也接不进来。
+
+**设计核心**：
+1. **三类 Source 同契约**：`mcp`/`api`/`local` 共用 `FolderSourceConfig`，靠 `type` 字段选择 `mcp?`/`api?`/`local?` 三个互斥子块，凭证类型由 `SourceCredentialManager.getCredentialId()` 按规则映射到统一的 `source_oauth/source_bearer/source_apikey/source_basic` 四个槽。
+2. **AES-256-GCM + 双 key fallback**：`credentials.enc` 用机器硬件 UUID 派生密钥加密；v1（hostname）与 v2（硬件 UUID）双 key 顺序尝试，老机器加密的凭证能透明迁移、自动重加密。
+3. **Skills 三级覆盖 + plugin 名同构**：global（`~/.agents/skills`）< workspace（`{ws}/skills`）< project（`{project}/.agents/skills`），三者 basename 都是 `.agents`，对 Claude SDK 而言都解析成 `.agents:{slug}`。
+
+---
+
+## 一、三类 Source 的统一契约
+
+### What / Why
+
+`SourceType = 'mcp' | 'api' | 'local'`（`packages/shared/src/sources/types.ts:16`）是固定枚举（`packages/shared/CLAUDE.md` 也把这条列为 hard rule）。三类源的差异仅在「如何连接」，连接产出的「工具」形态对上层一致：MCP 源暴露 stdio/http MCP 工具，API 源被 `api-tools.ts` 包装成 in-process SDK MCP server（`createSdkMcpServer`），local 源提供文件路径上下文。因此 `SourceServerBuilder.buildAll()` 能把三类源统一收敛成 `{ mcpServers, apiServers, errors }`（`server-builder.ts:52-59`）。
+
+### 三类 Source 契约图
 
 ```mermaid
 flowchart LR
-  User[用户输入<br/>@skill / chat 消息] --> BaseAgent[BaseAgent.chat]
-  BaseAgent -->|Mentions 解析| Skills[Skills 子系统]
-  BaseAgent -->|加载 enabled sources| Sources[Sources 子系统]
-  Sources -->|读取/写入 token| Creds[Credentials 子系统<br/>AES-256-GCM]
-  Skills -->|requiredSources 元数据| Sources
-  Sources -->|mcpServers + apiServers| Agent[Agent 后端<br/>Claude SDK / Pi]
-  Creds -->|process.env 注入| Agent
+    subgraph Config["FolderSourceConfig (config.json)"]
+        TYPE["type: 'mcp' | 'api' | 'local'"]
+    end
+
+    subgraph MCP["mcp?: McpSourceConfig"]
+        M1["transport: http | sse | stdio"]
+        M2["authType: oauth | bearer | none"]
+        M3["url / command+args+env / headerNames"]
+    end
+    subgraph API["api?: ApiSourceConfig"]
+        A1["authType: bearer|header|query|basic|oauth|none"]
+        A2["baseUrl + renewEndpoint + oauth?"]
+    end
+    subgraph LOCAL["local?: LocalSourceConfig"]
+        L1["path + format"]
+    end
+
+    Config --> MCP
+    Config --> API
+    Config --> LOCAL
+
+    MCP --> SB["SourceServerBuilder.buildMcpServer"]
+    API --> SBA["SourceServerBuilder.buildApiServer"]
+    LOCAL --> CTX["加载为上下文/路径"]
+
+    SB --> OUT["BuiltServers.mcpServers"]
+    SBA --> OUT2["BuiltServers.apiServers"]
+
+    SB -.凭证.-> CRED["SourceCredentialManager"]
+    SBA -.凭证.-> CRED
 ```
 
-三大子系统各自的「What / Why」如下：
+### How：注册、激活、@mention 注入
 
-| 子系统 | What（是什么） | Why（存在的理由） |
-|---|---|---|
-| **Sources** | 工作区目录下三种类型（mcp/api/local）的外部连接，统一抽象为 `LoadedSource` | 让 Agent 以一致的方式调用 MCP server、REST API、本地文件系统，而无需为每种类型写特殊代码 |
-| **Credentials** | 单一加密文件 `~/.craft-agent/credentials.enc`（AES-256-GCM + PBKDF2），按 `{type}::{scope}` 键值寻址 | 跨平台稳定、无 OS keychain 弹窗；同时保证「机器迁移即失效」的安全性 |
-| **Skills** | 三级目录（global/workspace/project）下的 `SKILL.md`，通过 `[skill:slug]` @mention 触发 | 让用户用 Markdown 文件扩展 Agent 的指令集，而不必修改 Agent 源码 |
+**注册（磁盘即真相）**：每个 source 是一个文件夹 `~/.craft-agent/workspaces/{ws}/sources/{slug}/`，内含 `config.json` 与可选 `guide.md`（`types.ts:7-11`）。`createSource()`（`storage.ts:501`）调用 `generateSourceSlug()` 把名字 slug 化（`storage.ts:461`），建目录、写 config。`loadSource()`（`storage.ts:339`）把 config + guide + iconPath + 路径组装成 `LoadedSource`。
+
+**激活判定**：`isSourceUsable()`（`storage.ts:400`）是统一闸门——`enabled` 为真且（`authType` 为 `none`/`undefined` 或 `isAuthenticated===true`）。`sourceNeedsAuthentication()`（`credential-manager.ts:1329`）是其反函数，用于提示重连。注意 stdio 传输的 MCP 源**永远不需要鉴权**（本地子进程），故返回 `false`（`credential-manager.ts:1335`）。
+
+**@mention 注入 prompt**：用户消息里写 `[source:linear]` / `[skill:commit]` 等括号 mention。`parseMentions()`（`packages/shared/src/mentions/index.ts:62`）用正则提取并校验 slug 是否存在。注入分两条路径：
+
+- **Source 状态**：`SourceManager.formatSourceState()`（`agent/core/source-manager.ts:159`）每轮生成 `<sources>` XML 块，列出 active/inactive 源、首次出现的 tagline、需要重连的 `<source_issue>`；对有 guide 的源强制要求「先 Read guide.md 才能调工具」。
+- **Skill 解析**：`BaseAgent.extractSkillPaths()`（`base-agent.ts:930`）调用 `loadAllSkills()` 拿到全部 slug，匹配 mention 后解析出每个 skill 的 `SKILL.md` 绝对路径，并通过 `resolveSkillMentions()` 把 mention 替换成 `[Mentioned skill: Name (slug: ...)]` 保留语义。
 
 ---
 
-## 1. Source 三类型：mcp / api / local
+## 二、AES-256-GCM 凭证存储
 
-### 1.1 What
+### What / Why
 
-Source 是工作区范围内的「外部连接」。每个 source 是一个目录：
+凭证存在 `~/.craft-agent/credentials.enc`（`backends/secure-storage.ts:44-45`）。为什么不直接用 OS keychain？因为跨平台（macOS/Win/Linux）一致、无钥匙串弹窗、且能在子进程（session-mcp-server）通过主进程写入的缓存文件读到（见下文）。代价是必须自己保证机密性+完整性——选 AES-256-GCM（带认证标签，防篡改）。
 
-```
-~/.craft-agent/workspaces/{workspaceId}/sources/{sourceSlug}/
-  ├── config.json   # FolderSourceConfig
-  └── guide.md      # 使用指南，YAML frontmatter + Markdown 正文
-```
-
-引用：`packages/shared/src/sources/types.ts:6-11`。
-
-三类型定义在 `packages/shared/src/sources/types.ts:16`：
-
-```ts
-export type SourceType = 'mcp' | 'api' | 'local';
-```
-
-CLAUDE.md 第 27 行明确写：「Source types are fixed: `mcp`, `api`, `local`」——这是项目级的不变量。
-
-### 1.2 Why
-
-把三类外部资源统一抽象，是为了：
-
-1. **Agent 调用接口统一**：每个 source 都能产出 `mcpServers[slug]` 或 `apiServers[slug]`，丢给 Agent backend（`server-builder.ts:78-152`）。
-2. **UI 列表统一**：所有 source 都有 `name/slug/icon/tagline/connectionStatus`，UI 不必为类型分支。
-3. **凭据存储统一**：所有 source 凭据都走 `source_oauth/source_bearer/source_apikey/source_basic` 四种 CredentialType（`credentials/types.ts:135-140`）。
-
-### 1.3 三类型对比表
-
-| 维度 | **mcp** | **api** | **local** |
-|---|---|---|---|
-| **传输方式** | stdio 子进程 / HTTP / SSE（`types.ts:244`） | 进程内 fetch + 动态 MCP tool（`api-tools.ts`） | 文件系统读取 |
-| **生命周期** | stdio：Agent backend 拉起子进程；http/sse：长连接 | 每次工具调用独立 fetch，工具本身在 Agent 进程内（`createSdkMcpServer`） | 不持有连接，按需读文件 |
-| **认证类型** | `oauth / bearer / none`（`types.ts:22`） | `bearer / header / query / basic / oauth / none`（`types.ts:27`） | 无（不需要认证） |
-| **能力边界** | 提供任意 MCP tool | 提供 1 个 `api_{slug}` 动态 tool，参数 `{path, method, params}` | 不直接注册 tool，但可被 Agent 通过 Read/Bash 访问 |
-| **隔离级别** | stdio：独立子进程，env 净化（见 §7）；http/sse：网络边界 | 进程内，无沙箱；凭据在内存中 | 完全可信（无隔离） |
-| **凭据槽位** | `source_oauth` / `source_bearer` | `source_oauth` / `source_bearer` / `source_basic` / `source_apikey` | 无 |
-| **可自动刷新** | 仅 oauth 类型（`isOAuthSource`，types.ts:191-205） | oauth + renewEndpoint（`hasRenewEndpoint`，types.ts:223-225） | 否 |
-| **关键文件** | `types.ts:250-303`（McpSourceConfig） | `types.ts:370-399`（ApiSourceConfig） | `types.ts:404-407`（LocalSourceConfig） |
-
-### 1.4 三类型统一抽象的类图
-
-```mermaid
-classDiagram
-  class FolderSourceConfig {
-    +string id
-    +string name
-    +string slug
-    +boolean enabled
-    +string provider
-    +SourceType type
-    +boolean isAuthenticated
-    +SourceConnectionStatus connectionStatus
-    +string connectionError
-    +number lastTestedAt
-  }
-  class McpSourceConfig {
-    +McpTransport transport
-    +string url
-    +SourceMcpAuthType authType
-    +string clientId
-    +string command
-    +string[] args
-    +Record env
-    +Record headers
-    +string[] headerNames
-  }
-  class ApiSourceConfig {
-    +string baseUrl
-    +ApiAuthType authType
-    +string headerName
-    +string[] headerNames
-    +string queryParam
-    +string authScheme
-    +Record defaultHeaders
-    +ApiTestEndpoint testEndpoint
-    +ApiRenewEndpoint renewEndpoint
-    +ApiOAuthConfig oauth
-  }
-  class LocalSourceConfig {
-    +string path
-    +string format
-  }
-  class LoadedSource {
-    +FolderSourceConfig config
-    +SourceGuide guide
-    +string folderPath
-    +string workspaceRootPath
-    +string workspaceId
-    +boolean isBuiltin
-    +string iconPath
-  }
-
-  FolderSourceConfig *-- McpSourceConfig : mcp?
-  FolderSourceConfig *-- ApiSourceConfig : api?
-  FolderSourceConfig *-- LocalSourceConfig : local?
-  LoadedSource *-- FolderSourceConfig : config
-  LoadedSource *-- SourceGuide : guide?
-
-  note for LoadedSource "「folder-based」抽象：<br/>三种 type 共享同一个外层壳<br/>（types.ts:441-528）"
-```
-
-### 1.5 关键不变量
-
-1. **`type` 互斥**：`mcp / api / local` 三选一（CLAUDE.md hard rule）。
-2. **slug 即凭据 key 的一部分**：`source_oauth::{workspaceId}::{sourceSlug}`（`credentials/types.ts:191-194`），因此 slug 改名会导致凭据丢失。
-3. **`isSourceUsable()` 是唯一过滤入口**（`storage.ts:400-411`）：`enabled && (authType ∈ {none, undefined} || isAuthenticated === true)`。
-4. **stdio MCP source 不需要凭据**（`credential-manager.ts:153`：`source.config.mcp?.transport !== 'stdio' && ... authType !== 'none'` 才尝试读凭据）。
-
----
-
-## 2. Credentials：AES-256-GCM 加密子系统
-
-### 2.1 What
-
-整个项目所有敏感凭据（API key / OAuth token / IAM / Service Account / source token）都存在单一文件：
-
-```
-~/.craft-agent/credentials.enc
-```
-
-文件格式（`packages/shared/src/credentials/backends/secure-storage.ts:14-25` 注释，行 305-316 实现）：
-
-```
-[Header - 64 bytes]
-├── Magic:   "CRAFT01\0"  (8 bytes)
-├── Flags:   uint32 LE    (4 bytes, 保留)
-├── Salt:    32 bytes     (PBKDF2 salt)
-└── Reserved: 20 bytes
-[Encrypted Payload]
-├── IV:        12 bytes   (每次写入重新生成)
-├── Auth Tag:  16 bytes   (GCM 完整性标签)
-└── Ciphertext: 变长      (JSON.stringify(CredentialStore))
-```
-
-文件权限：`0o600`（`secure-storage.ts:315`），目录权限：`0o700`（行 284）。
-
-### 2.2 Why
-
-为什么不使用 OS keychain？源码注释给出明确答案（`credentials/manager.ts:1-6`）：
-
-> Main interface for credential storage. Uses encrypted file storage for cross-platform compatibility without OS keychain prompts.
-
-设计目标：
-
-1. **跨平台一致**：macOS Keychain / Windows DPAPI / Linux libsecret 三套实现复杂；单文件方案所有平台行为一致。
-2. **无 UI 弹窗**：Keychain 会触发系统弹窗，对 headless server 部署不友好（README §Remote Server 即用此方案）。
-3. **机器绑定**：密钥派生自硬件 UUID，机器迁移即失效（见 §2.4）。
-4. **统一 schema**：所有凭据类型（LLM、source、workspace、messaging）共用同一文件，便于备份/导出。
-
-### 2.3 CredentialStore 落盘 JSON 结构
-
-落盘 JSON 是 `CredentialStore` 接口（`secure-storage.ts:101-109`）：
-
-```ts
-interface CredentialStore {
-  version: 1;                          // 永远是 1（目前）
-  credentials: Record<string, StoredCredential>;
-  metadata: {
-    createdAt: number;                 // Unix ms
-    updatedAt: number;                 // Unix ms
-  };
-}
-```
-
-key 格式（`credentials/types.ts:130-207`）：
-
-| 类型 | key 格式 | 示例 |
-|---|---|---|
-| LLM API key | `llm_api_key::{connectionSlug}` | `llm_api_key::anthropic-default` |
-| LLM OAuth | `llm_oauth::{connectionSlug}` | `llm_oauth::openai-codex` |
-| LLM IAM | `llm_iam::{connectionSlug}` | — |
-| LLM Service Account | `llm_service_account::{connectionSlug}` | — |
-| Workspace OAuth | `workspace_oauth::{workspaceId}` | — |
-| **Source OAuth** | `source_oauth::{workspaceId}::{sourceSlug}` | `source_oauth::ws-abc::linear` |
-| **Source Bearer** | `source_bearer::{workspaceId}::{sourceSlug}` | — |
-| **Source API Key** | `source_apikey::{workspaceId}::{sourceSlug}` | — |
-| **Source Basic** | `source_basic::{workspaceId}::{sourceSlug}` | — |
-| Messaging | `messaging_bearer::{workspaceId}::{platform}` | — |
-| Global | `{type}::global` | `anthropic_api_key::global` |
-
-**分隔符 `::`** 的选择是有意为之（`types.ts:14-15, 130-132`）：不能用 `/`，因为 server name / URL 可能含 `/`。
-
-`StoredCredential` 字段（`types.ts:86-128`）：
-
-| 字段 | 用途 |
-|---|---|
-| `value` | 主秘密（API key / access token / AWS secret key / Service Account JSON） |
-| `refreshToken` | OAuth refresh token |
-| `expiresAt` | Unix ms 时间戳 |
-| `clientId` / `clientSecret` | OAuth client（refresh 必需，Google 同时需要 secret） |
-| `tokenType` | 例如 `"Bearer"` |
-| `source` | `'native' \| 'cli'`：标识 token 来源 |
-| `idToken` | OIDC id_token（OpenAI/Codex 用，与 `value` 中的 access_token 并存） |
-| `awsAccessKeyId` / `awsRegion` / `awsSessionToken` | AWS IAM 字段 |
-| `gcpProjectId` / `gcpRegion` / `serviceAccountEmail` | GCP 字段 |
-
-### 2.4 加解密流程图
+### 加解密流程图
 
 ```mermaid
 flowchart TD
-  subgraph Derive["密钥派生（启动一次）"]
-    M1[getStableMachineId<br/>macOS: IOPlatformUUID<br/>Win: MachineGuid<br/>Linux: /etc/machine-id<br/>fallback: username:homedir]
-    M1 --> H[SHA256<br/>update machineId<br/>update 'craft-agent-v2']
-    H --> SALT[Salt 来自文件头<br/>或新生成 32B]
-    SALT --> P[PBKDF2-SHA256<br/>100000 iters<br/>32B key]
-    P --> KEY[AES-256 key]
-  end
+    A["getStableMachineId()"] -->|"mac: IOPlatformUUID<br/>win: MachineGuid<br/>linux: /etc/machine-id"| B["sha256(machineId + 'craft-agent-v2')"]
+    SALT["文件头 32B salt"] --> B
+    B --> PBK["pbkdf2Sync(key, salt, 100000, 32B, sha256)"]
+    PBK --> KEY["32B AES key (v2)"]
 
-  subgraph Write["写入路径 saveStoreSync"]
-    W1[JSON.stringify CredentialStore] --> W2[随机 IV 12B]
-    KEY --> W3[AES-256-GCM encrypt]
-    W2 --> W3
-    W3 --> W4[AuthTag 16B]
-    W1 --> W3
-    W3 --> W5[组装 Header64 + IV + Tag + Cipher]
-    W5 --> W6[writeFileSync<br/>mode 0o600]
-  end
+    READ["读 credentials.enc"] --> HDR["校验 magic 'CRAFT01\\0' + 解析 header(64B)"]
+    HDR --> ENC["IV(12B) + AuthTag(16B) + Ciphertext"]
+    KEY --> TRY1["createDecipheriv aes-256-gcm + setAuthTag"]
+    TRY1 -->|成功| OK["JSON.parse → CredentialStore"]
+    TRY1 -->|失败 GCM| LEG["v1 legacy key: sha256(hostname+username+homedir+'craft-agent-v1')"]
+    LEG --> TRY2["同流程解密"]
+    TRY2 -->|成功| MIG["透明重加密：saveStoreSync 用 v2 key 落盘"]
+    TRY2 -->|失败| DEL["handleCorruptedFile 删除文件"]
 
-  subgraph Read["读取路径 loadStoreSync"]
-    R1[readFileSync] --> R2{Magic == CRAFT01?}
-    R2 -- 否 --> RC[handleCorruptedFile<br/>删除文件]
-    R2 -- 是 --> R3[提取 salt + IV + Tag + Cipher]
-    R3 --> RD1[尝试 v2 key 解密]
-    RD1 -- 成功 --> RCACHE[缓存 store 返回]
-    RD1 -- 失败 --> RD2[尝试 v1 legacy key<br/>hostname-based 迁移]
-    RD2 -- 成功 --> RMIG[重新加密写盘]
-    RD2 -- 失败 --> RC
-    RMIG --> RCACHE
-  end
+    WRITE["saveStoreSync"] --> IV2["randomBytes 12B IV（每次写都换）"]
+    KEY --> CIPH["createCipheriv aes-256-gcm"]
+    CIPH --> OUT["header(64B)+IV+AuthTag+Ciphertext, mode 0600"]
 ```
 
-关键实现要点（`secure-storage.ts`）：
+### How：关键实现
 
-- **`getStableMachineId()`（行 65-99）**：优先使用硬件 UUID，因为 hostname 会随网络/DHCP 漂移。
-- **`PBKDF2_ITERATIONS = 100000`（行 58）**：在安全与启动延迟之间的折中。
-- **每次写入都生成新 IV（行 298）**：GCM 安全要求；同一明文加密两次密文不同。
-- **双重 key 尝试（行 232-251）**：v1 key 含 hostname，v2 key 用硬件 UUID。v1 能解开时立即重新加密为 v2，完成无缝迁移。
-- **损坏即删除（行 350-362）**：解不开就清空，让用户重新登录——避免反复失败的死循环。
-- **`cachedStore` 单例缓存（行 115）**：避免每次 get/set 都解密。
+**密钥派生**（`backends/secure-storage.ts:65-99, 319-348`）：v2 用硬件 UUID（macOS 的 `IOPlatformUUID` 绑主板、Win 的 `MachineGuid`、Linux 的 machine-id），比 v1 的 hostname 稳定得多（hostname 会随 DHCP/网络变化）。派生链是 `sha256(machineId + 'craft-agent-v2')` → `PBKDF2(100000 轮, sha256, 32B)`。`PBKDF2_ITERATIONS = 100000`（`:58`）。
 
-### 2.5 CredentialManager 与 Backends
+**双 key fallback**（`loadStoreSync` `:198-256`）：先 v2 key 解，失败再用 `getLegacyEncryptionKey()`（v1，含 hostname）解；一旦 v1 解成功，立即用 v2 key 重写文件（`:248-250`），实现无感迁移。两把 key 都失败才视为损坏删文件（`handleCorruptedFile`）。
 
-`CredentialManager`（`manager.ts`）是门面（Facade）。后端列表：
+**写安全**：每次 `saveStoreSync` 都生成新 IV（`:298`，GCM 安全必需），文件权限 `0o600`（`:315`）。文件格式：64B header（magic `CRAFT01\0` + 4B flags + 32B salt + 20B reserved）+ 12B IV + 16B AuthTag + 密文（`:16-24` 注释）。
 
-| Backend | priority | isAvailable | 用途 |
-|---|---|---|---|
-| `SecureStorageBackend` | 100 | 永远 true | 唯一活动后端，文件加密 |
-| `EnvironmentBackend` | 110 | **永远 false**（`env.ts:17`）| 故意禁用，强制手动输入 API key |
+**凭证寻址**（`credentials/types.ts:170-207`）：`credentialIdToAccount()` 把 `CredentialId` 拼成 `{type}::{scope...}` 字符串做 key，用 `::` 而非 `/` 是因为 source 名可能含 `/`（如 URL）。四类 source 凭证槽：`source_oauth` / `source_bearer` / `source_apikey` / `source_basic`，scope 形如 `source_oauth::{workspaceId}::{sourceSlug}`。
 
-后端选择策略（`manager.ts:86-91`）：按 priority 降序，第一个 available 的 backend 负责写；读时遍历所有 backend。
+**`CredentialManager` 抽象**（`credentials/manager.ts`）：单例，封装多 backend（目前仅 `SecureStorageBackend`，priority 100）。`isExpired()`（`:596`）用 5 分钟提前量；OAuth token 无 `expiresAt` 时视为已过期（强制 refresh），API key 无 `expiresAt` 视为永不过期。
 
-`get/set/delete/list` 都通过 `ensureInitialized()`（行 33-48）惰性初始化。`deleteSync` 路径（行 166-187）是为了让 `saveSourceConfig` 这类同步调用立即看到凭据被清理（行 50-65）。
+### v1/v2 双 key 的设计理由
 
-### 2.6 健康检查与机器迁移
-
-`checkHealth()`（`manager.ts:629-699`）在启动时验证：
-
-1. 文件能解密（触发 `list({})`）
-2. 默认 LLM 连接有凭据
-
-若解密失败，按错误关键字分类（行 644-663）：
-
-- `'decrypt' / 'cipher' / 'authentication tag'` → `decryption_failed`（通常是机器迁移）
-- `'json' / 'parse'` → `file_corrupted`
-
-UI 可据此提示「请重新登录」。
+不是「为了兼容而兼容」，而是**机器迁移的真实场景**：用户把 `~/.craft-agent` 整个拷到新机器，新机器 hardware UUID 不同 → v2 key 解密失败；但 v1 用 hostname+username+homedir，如果这些碰巧相同（同账号同名机器）还能解出来。即便 hostname 不同，至少保证老版本（仅 v1）升级到新版本（仅 v2）的存量用户不会一夜之间丢全部凭证。重加密保证存量凭证只经历一次 fallback。
 
 ---
 
-## 3. SourceCredentialManager 与 Token Refresh
+## 三、Source 凭证 + OAuth + 自动 Refresh
 
-### 3.1 What
+### What / Why
 
-`SourceCredentialManager`（`sources/credential-manager.ts:123-1263`）是 Source 子系统的凭据门面，封装：
+`SourceCredentialManager`（`sources/credential-manager.ts`）是 source 凭证的统一入口，把 OAuth prepare/exchange/refresh、bearer/apikey/basic 读写、过期检查、provider 路由全部收敛。`TokenRefreshManager`（`token-refresh-manager.ts`）负责「token 快过期自动换」并做限流，避免每次会话启动都对同一失效源狂刷。
 
-1. CRUD：`save / load / delete / getToken / getApiCredential`
-2. CredentialType 解析：`getCredentialId(source)` 根据 source 配置决定走哪个槽位（行 304-336）
-3. OAuth 流程：`prepareOAuth` / `exchangeAndStore` / `authenticate`
-4. Token 刷新：`refresh` + 各 provider 子方法（Google/Slack/Microsoft/Generic/MCP/Renew）
-
-### 3.2 Why
-
-注释（行 7-13）明确说，这个类是为了取代散落在 `SourceService` / `session-scoped-tools` / IPC handler 里的凭据逻辑——单一职责。
-
-### 3.3 getCredentialId 决策树（`credential-manager.ts:304-336`）
+### How：连接新 Source → 存凭证 → refresh → 注入 prompt 调用链
 
 ```
-mcp source:
-  authType === 'bearer'      → source_bearer
-  否则                       → source_oauth   (oauth 或 'none' 都落到此)
-
-api source:
-  provider ∈ {google, slack, microsoft}    → source_oauth
-  api.authType === 'oauth'                  → source_oauth
-  api.authType === 'bearer'                 → source_bearer
-  api.authType === 'basic'                  → source_basic
-  其它 (header / query / none)              → source_apikey
+用户连新 Source（UI / source_oauth_trigger 工具）
+  → SourceCredentialManager.prepareOAuth() [credential-manager.ts:414]
+    → detectProvider() 路由 google/slack/microsoft/generic/mcp [:394]
+    → PKCE + state + authUrl 生成（WebUI 走 oauth-relay 包一层 state 信封）
+  → 浏览器授权 → 回调带回 code
+  → exchangeAndStore() [:541]
+    → 按 provider 调 exchangeXxxOAuth()
+    → save() 写入 credentials.enc（type=source_oauth, scope={ws}::{slug}）
+    → markSourceAuthenticated() 改 config.json [storage.ts:93]
+  → 会话启动 / 工具调用
+    → TokenRefreshManager.ensureFreshToken() [token-refresh-manager.ts:115]
+      → needsRefresh()？过期前 5 分钟或无 expiresAt → credManager.refresh()
+        → doRefresh() 路由 [credential-manager.ts:925]
+          → refreshGoogle/Slack/Microsoft/Generic/Mcp 或 refreshApiRenew
+        → 成功 save() 回写新 token；失败 markSourceNeedsReauth() + 5min cooldown
+    → SourceServerBuilder.buildMcpServer/buildApiServer 注入 token/credential
+    → SourceManager.formatSourceState() 把源状态注入 prompt
 ```
 
-注意：`'none'` 也会落到 `source_apikey`，所以 `saveSourceConfig` 在切换到 `none` 时主动清理该槽位（`storage.ts:144-152`，注释说明这是为了防止「孤立的凭据」复活）。
+**Provider 路由**（`doRefresh` `:925-982`）：先判 `hasRenewEndpoint`（自定义续期，不需 refreshToken，用当前 token 调 `api.renewEndpoint`），否则必须有 `refreshToken`；再按 `provider`（google/slack/microsoft）或 `authType==='oauth'`（generic，static config 走 `refreshGenericOAuthToken`，自动发现走 MCP refresh）分支。Microsoft 特殊：refresh 会轮换 refreshToken，所以 `refreshMicrosoft` 用 `result.refreshToken || cred.refreshToken` 兜底（`:1142`）。
 
-### 3.4 MCP source 的 OAuth/bearer 回退（行 180-203）
+**并发去重**（`refresh` `:903-920`）：`pendingRefreshes` Map 按 slug 存 in-flight promise，防多请求并发刷同一源——对 Microsoft 尤其关键（并发刷会让旧 refreshToken 失效）。
 
-```
-读：先试 source_oauth → 再试 source_bearer → 都没有则 null
-```
+**限流**（`TokenRefreshManager` `:57-89`）：失败的源进 5 分钟 cooldown（`DEFAULT_COOLDOWN_MS`），`isInCooldown()` 跳过，避免狂刷被 provider 封。
 
-这是因为历史上 MCP source 可能从 oauth 改成 bearer 或反过来，老凭据留在另一槽位不会自动清理。读取双槽位是为了向后兼容。
+**Renew endpoint**（`refreshApiRenew` `:988-1067`）：非 OAuth 的自定义 bearer API 续期。当前 token 通过 `Authorization` 头或 `{{token}}` 占位符（body/header 递归替换）发给 `renewEndpoint.path`，从响应 `tokenField`（默认 `access_token`）取新 token。
 
-### 3.5 Token Refresh 全流程
+**WebUI OAuth relay**（`auth/oauth-relay.ts`）：稳定回调 URI `https://agents.craft.do/auth/callback`，把真正的服务端回调目标编码进外层 `state` 信封（`ca1.{base64url({v,r,s})}`），由 router worker 解包。这样 Google 等只需注册一个回调地址。
 
-Token refresh 涉及三层：
-
-1. **`TokenRefreshManager`**（`token-refresh-manager.ts:39-247`）：实例级，负责限流 + 编排
-2. **`SourceCredentialManager.refresh()`**（`credential-manager.ts:903-982`）：实际调用 provider
-3. **各 provider 的 `refresh*Token()`**：底层 HTTP 调用
-
-```mermaid
-sequenceDiagram
-  participant SM as SessionManager
-  participant TRM as TokenRefreshManager
-  participant SCM as SourceCredentialManager
-  participant BE as Provider Backend<br/>(google/microsoft/slack/mcp)
-  participant Vault as SecureStorage
-
-  SM->>TRM: getSourcesNeedingRefresh(sources)
-  TRM->>TRM: 过滤 isRefreshableSource<br/>+ 检查 cooldown
-  TRM->>SCM: needsRefresh(source) per source
-  SCM->>Vault: load(source)
-  Vault-->>SCM: StoredCredential
-  SCM-->>TRM: needsRefresh=true/false
-  TRM-->>SM: [sources needing refresh]
-
-  SM->>TRM: refreshSources(needRefresh)
-  loop 每个 source
-    TRM->>TRM: ensureFreshToken(source)
-    TRM->>SCM: refresh(source)
-    SCM->>SCM: pendingRefreshes 去重<br/>(防 Microsoft 并发 rotation)
-    SCM->>BE: POST /token refresh_token=...
-    BE-->>SCM: {access_token, expires_in, refresh_token?}
-    SCM->>Vault: save(source, new cred)
-    SCM-->>TRM: new token
-    TRM->>Vault: markSourceAuthenticated()<br/>(config.json isAuthenticated=true)
-  end
-  TRM-->>SM: {refreshed, failed}
-```
-
-### 3.6 Refresh 路由决策（`credential-manager.ts:925-982`）
-
-```
-1. hasRenewEndpoint(source)  → refreshApiRenew  (非 OAuth 自定义端点)
-2. provider === 'google'      → refreshGoogle
-3. provider === 'slack'       → refreshSlack
-4. provider === 'microsoft'   → refreshMicrosoft
-5. api.authType === 'oauth':
-   - 有 oauth.tokenUrl        → refreshGeneric
-   - 否则 baseUrl+clientId    → refreshMcp（自动发现端点）
-6. mcp + mcp.url              → refreshMcp
-```
-
-### 3.7 Renew Endpoint（`credential-manager.ts:988-1067`）
-
-非 OAuth API 也能自动刷新：在 `api.renewEndpoint` 中配置自定义端点。流程：
-
-1. URL 解析（相对路径基于 baseUrl）
-2. Header 合并顺序：`Content-Type → defaultHeaders → renewEndpoint.headers(含{{token}}) → Authorization`
-3. Body 用 `{{token}}` 占位符递归替换（`substituteTokenInBody`，行 1273-1290）
-4. 提取新 token：`tokenField ?? 'access_token'`
-5. 提取过期：`expiresInField ?? 'expires_in'`，失败时用 `fallbackTtlSecs`
-
-此类 source **不需要 refreshToken**（`token-refresh-manager.ts:100, 133`）。
-
-### 3.8 防并发刷新：`pendingRefreshes`（行 124, 906-920）
-
-同一 source 的多次 refresh 请求共享同一个 Promise。注释（行 899-902）说明：Microsoft 会轮换 refresh token，并发刷新会导致其中一个失效。
-
-### 3.9 限流：cooldown 5 分钟（`token-refresh-manager.ts:19, 57-61`）
-
-失败的 source 进入 cooldown（`recordFailure`，行 66-68），5 分钟内不再尝试（`isInCooldown`，行 57-61）。成功后清空（`clearFailure`，行 73-75）。这防止了已失效 source 拖累 session 启动。
-
-### 3.10 过期判定逻辑
-
-| 函数 | 文件 | 行为 |
-|---|---|---|
-| `CredentialManager.isExpired` | `manager.ts:596-612` | 5 分钟提前过期；OAuth 无 `expiresAt` 视为已过期（强制刷新）；API key 无 `expiresAt` 视为永不过期 |
-| `SourceCredentialManager.isExpired` | `credential-manager.ts:345-348` | 严格按 `expiresAt`，无 5 分钟提前量 |
-| `SourceCredentialManager.needsRefresh` | `credential-manager.ts:353-357` | 5 分钟提前量 |
-
-注意：`CredentialManager.isExpired` 处理「OAuth 无 expiresAt」的特殊情况，是因为历史遗留凭据可能没有 `expiresAt` 字段，强制刷新一次后字段就补全了（注释 `manager.ts:602-607`）。
+**子进程读凭证**（`session-mcp-server/src/index.ts:95-145`）：MCP 子进程无 keychain 访问权，主进程把解密后的 token 写到 `{ws}/sources/{slug}/.credential-cache.json`，子进程的 `createCredentialManager()` 只读这个缓存文件；refresh 在子进程里返回 `null`（`:140` 注释「需要主进程」），由主进程侧统一刷新。
 
 ---
 
-## 4. Skills 子系统
+## 四、Skills 三级存储
 
-### 4.1 What
+### What / Why
 
-Skill 是 Markdown 文件（`SKILL.md`），YAML frontmatter 描述元数据，正文是指令。三级目录（`skills/storage.ts:216-247`）：
+Skills 是带 `SKILL.md`（YAML frontmatter + 正文）的可复用指令包，对应 Claude Code 的 `.agents/skills` 生态。三级（global/workspace/project）让用户级、团队级、项目级指令能分层覆盖，同名 skill 高优先级覆盖低优先级。
 
-| 级别 | 路径 | 优先级 |
-|---|---|---|
-| **global** | `~/.agents/skills/{slug}/SKILL.md` | 最低 |
-| **workspace** | `~/.craft-agent/workspaces/{ws}/skills/{slug}/SKILL.md` | 中 |
-| **project** | `{projectRoot}/.agents/skills/{slug}/SKILL.md` | 最高 |
-
-同名 slug，高优先级覆盖低优先级（`storage.ts:224-244`，用 Map 覆盖实现）。
-
-### 4.2 Why
-
-Skill 让用户**不改代码**就能扩展 Agent 行为。例如用户可以写一个 `datadog-api` skill，描述如何调用 Datadog API + 列出工具，然后 `@datadog-api` 触发。
-
-Skill 与 Source 的关系：Skill 元数据 `requiredSources`（`skills/types.ts:28`）声明依赖的 source slug，理论上能在触发时自动启用——但代码中 `requiredSources` 字段只在 `parseSkillFile` 中解析（`storage.ts:88`），目前未在 `extractSkillPaths` 中使用，是预留字段。
-
-### 4.3 SKILL.md frontmatter Schema（`skills/types.ts:11-29`）
-
-```yaml
----
-name: Git Commit                    # 必填
-description: Brief description      # 必填
-globs: ["*.ts"]                     # 可选：文件 glob 模式（预留，未使用）
-alwaysAllow: ["Bash", "Read"]       # 可选：always allow 的工具
-icon: 🔧                            # 可选：emoji 或 URL（不支持 SVG/相对路径）
-requiredSources: [linear, github]   # 可选：依赖的 source slug（预留）
----
-正文：Markdown 指令
-```
-
-### 4.4 @mention 触发机制
-
-@mention 是用户在 chat 中写 `[skill:slug]` 或 `[skill:workspaceId:slug]` 来调用 skill。
-
-**解析正则**（`mentions/index.ts:88`）：
-
-```js
-new RegExp(`\\[skill:(?:${WS_ID_CHARS}+:)?([\\w-]+)\\]`, 'g')
-```
-
-其中 `WS_ID_CHARS = '[\\w .-]'`（行 27）——显式用字面空格而非 `\s`，避免匹配换行（注释 行 26）。
-
-#### 4.4.1 完整触发时序图
-
-```mermaid
-sequenceDiagram
-  participant U as 用户
-  participant BA as BaseAgent.chat
-  participant MM as mentions/index
-  participant SS as skills/storage
-  participant PM as PrerequisiteManager
-  participant Agent as chatImpl (Claude/Pi)
-
-  U->>BA: "@[skill:commit] 写一个提交"
-  BA->>BA: extractSkillPaths(message)
-  BA->>SS: loadAllSkills(workspaceRoot, projectRoot)
-  SS-->>BA: [LoadedSkill[]] 含 commit
-  BA->>MM: parseMentions(msg, skillSlugs, [])
-  MM-->>BA: {skills:["commit"], invalidSkills:[]}
-  BA->>BA: skillPaths.set("commit", ".../SKILL.md")
-  BA->>MM: resolveSkillMentions(msg, nameMap)
-  MM-->>BA: "[Mentioned skill: Git Commit (slug: commit)] 写一个提交"
-  BA->>BA: 若消息只剩 mention<br/>→ cleanMessage = 默认指令
-  BA->>PM: registerSkillPrerequisites([...skillPaths.values()])
-  PM->>PM: pendingSkillPaths.add(expandedPath)
-  BA->>BA: directive = formatSkillDirective(skillPaths)
-  BA->>Agent: chatImpl(directive + cleanMessage)
-
-  Note over Agent: Agent 看到「你必须先读 SKILL.md」
-
-  Agent->>Agent: 调 Read 工具读 SKILL.md
-  Agent->>PM: [PreToolUse hook] checkPrerequisites("Read")
-  PM-->>Agent: allowed (Read 总是放行)
-  PM->>PM: trackReadTool({file_path})<br/>pendingSkillPaths.delete(path)
-
-  Agent->>Agent: 调下一个工具（如 Bash）
-  Agent->>PM: checkPrerequisites("Bash")
-  alt pendingSkillPaths 为空
-    PM-->>Agent: allowed
-  else 仍有未读 skill
-    PM-->>Agent: blocked<br/>"You must read ..."
-    Note over PM: MAX_REJECTIONS=1 后<br/>放行（防死锁）
-  end
-```
-
-### 4.5 PrerequisiteManager 的「先读后用」强制
-
-`PrerequisiteManager`（`agent/core/prerequisite-manager.ts:118-274`）有两个独立的 prerequisite 系统：
-
-1. **静态规则**（行 64-112）：
-   - `mcp__{slug}__*` → 必须先读 `sources/{slug}/guide.md`（除非 slug 在 `EXEMPT_SLUGS` = `{session, craft-agents-docs}`）
-   - `api_{slug}` → 同上
-   - `browser_tool` → 必须先读 `~/.craft-agent/docs/browser-tools.md`（strict 模式）
-
-2. **动态 skill prerequisite**（行 138-143, 186-210）：
-   - 由 `registerSkillPrerequisites` 注册
-   - 阻塞**所有**工具，除了 `Read` 与命中 pending path 的 Bash 命令
-   - `MAX_REJECTIONS = 1`（行 120）：阻塞一次后强制放行，防止模型陷入死循环
-
-`trackReadTool`（行 217-231）会在 Read 工具完成后清除对应的 pending path；`trackBashSkillRead`（行 238-252）处理通过 `cat SKILL.md` 这种 Bash 读取的情况——这是必要的，因为 Bash 不走 Read 工具链。
-
-`resetReadState`（行 259-266）在 context compaction 时调用：因为 LLM 上下文被压缩后会丢失已读内容，必须重置 prerequisite 状态让其重读。
-
-### 4.6 Skills 缓存（行 197-203）
-
-`loadAllSkills` 结果按 `(workspaceRoot, projectRoot)` 缓存，TTL 5 分钟。原因（行 192-195 注释）：每次调用要读 3 个目录，约 100ms，而 skill 列表在 session 内极少变化。
-
-`invalidateSkillsCache()`（行 201-203）在工作目录变更或 skill 文件事件时调用。
-
-### 4.7 Skill 与 Claude Agent SDK 的关系
-
-CLAUDE.md 注释（`claude-agent.ts:1355`）：
-
-> // No plugins — skills are handled by BaseAgent.chat() via read-before-execute
-
-也就是说：**Skills 不走 Claude SDK 的 plugin 机制**。Craft Agents 选择自己实现 `[skill:slug]` 解析 + PrerequisiteManager 强制读 SKILL.md，而不是把 SKILL.md 注册成 SDK plugin。这给了项目跨 backend（Claude / Pi）的一致行为。
-
-但 `LoadedSkill.AGENTS_PLUGIN_NAME = '.agents'`（`skills/types.ts:41`）仍保留——SDK 内部 plugin 命名约定基于 `path.basename()`，所以 `{project}/.agents/` 与 `~/.agents/` 都解析为 `.agents:skillSlug`。这是为兼容 SDK 行为留的常量，实际未启用 SDK plugin 注册。
-
----
-
-## 5. Token Refresh 完整集成
-
-### 5.1 SessionManager 启动时的批量刷新
-
-`packages/server-core/src/sessions/SessionManager.ts:490-511` 的 `refreshExpiredCredentials` 函数：
-
-```ts
-async function refreshExpiredCredentials(
-  sources: LoadedSource[],
-  tokenRefreshManager: TokenRefreshManager
-): Promise<RefreshExpiredCredentialsResult> {
-  const needRefresh = await tokenRefreshManager.getSourcesNeedingRefresh(sources)
-  if (needRefresh.length === 0) return { refreshedCount: 0, failedSources: [] }
-  const { refreshed, failed } = await tokenRefreshManager.refreshSources(needRefresh)
-  ...
-}
-```
-
-注释（行 477-489）解释了一个微妙的顺序问题：**必须先刷新再 build servers**——否则一次 build 看到的是旧凭据 + 旧 usable 集合（Issue #710）。
-
-### 5.2 Source 自动激活的 auto-retry（行 7352-7402）
-
-当 source 在 turn 中途被激活（用户在 chat 中切换了 source 启用开关），SessionManager 会：
-
-1. 发送 `source_activated` 事件给 UI
-2. 设置 100ms 自动重试定时器，重发原始消息 + `[<slug> activated]` 后缀
-3. 若用户在 100ms 内发了新消息，自动重试被取消（行 7394-7397）
-
-这是为了在 headless 部署（WebUI / docker）中模拟桌面客户端的 source 激活链。
-
----
-
-## 6. 凭据文件落盘格式详解
-
-### 6.1 文件布局
-
-```
-偏移   长度   字段                说明
-─────────────────────────────────────────────────────────────
-0      8      Magic              b"CRAFT01\0"
-8      4      Flags (uint32 LE)  保留，目前为 0
-12     32     Salt               PBKDF2 salt（首次写入时随机生成）
-44     20     Reserved           填充至 64 字节
-─────────────────────────────────────────────────────────────
-64     12     IV                 每次写入重新随机
-76     16     AuthTag            GCM 完整性标签
-92     *      Ciphertext         AES-256-GCM(JSON.stringify(store))
-```
-
-常量在 `secure-storage.ts:48-58`：
-
-```ts
-const MAGIC_BYTES = Buffer.from('CRAFT01\0');
-const HEADER_SIZE = 64;
-const MAGIC_SIZE = 8;
-const FLAGS_SIZE = 4;
-const SALT_SIZE = 32;
-const IV_SIZE = 12;
-const AUTH_TAG_SIZE = 16;
-const KEY_SIZE = 32;
-const PBKDF2_ITERATIONS = 100000;
-```
-
-### 6.2 版本号
-
-- **`CredentialStore.version`**（JSON 内）：固定为 `1`（`secure-storage.ts:103, 138`）。schema 演进靠新增字段（`StoredCredential` 全是 optional 字段）。
-- **Magic `CRAFT01`**（文件头）：文件格式版本，未来可以 `CRAFT02` 引入不兼容变更。
-- **Key derivation 版本**：`'craft-agent-v2'`（行 327）与 `'craft-agent-v1'`（行 344）——用于密钥派生算法升级时的迁移。
-
-### 6.3 为什么 `StoredCredential` 几乎全是 optional
-
-因为同一个 `StoredCredential` 类型覆盖：纯 API key（只要 `value`）、OAuth（要 `value + refreshToken + expiresAt + clientId`）、AWS IAM（`value=secretKey + awsAccessKeyId + awsRegion`）、Service Account（`value=JSON + gcpProjectId + ...`）。字段全部 optional 是为了用单一 schema 兼容所有凭据类型（注释 `types.ts:78-85`）。
-
-### 6.4 多 Header 凭据的 JSON 存储
-
-某些 API（如 Datadog）需要多个 header（`DD-API-KEY` + `DD-APPLICATION-KEY`）。这类凭据以 JSON 字符串存到 `value` 字段（`credential-manager.ts:259-276`）：
-
-```json
-{ "DD-API-KEY": "xxx", "DD-APPLICATION-KEY": "yyy" }
-```
-
-读取时按 `api.headerNames` 校验所有 header 都存在（行 264-271）。
-
----
-
-## 7. 本地 MCP 子进程的隔离与 env 净化
-
-### 7.1 What
-
-`mcp` 类型 source 的 `transport: 'stdio'` 会拉起一个本地子进程。源码位于：
-
-- `packages/shared/src/mcp/client.ts:72-108`（`CraftMcpClient`）
-- `packages/shared/src/mcp/validation.ts:304-495`（连接验证）
-
-### 7.2 Why
-
-stdio MCP server 通常是用户安装的第三方 npm 包或脚本。如果它继承了 Agent 主进程的全部 env，就可能在日志里泄漏：
-
-- `ANTHROPIC_API_KEY`（用户 Claude 凭据）
-- `AWS_ACCESS_KEY_ID`（云账号）
-- `GITHUB_TOKEN`、`STRIPE_SECRET_KEY` 等
-
-README 第 629-637 行明确说明这是安全设计：
-
-> ### Local MCP Server Isolation
->
-> When spawning local MCP servers (stdio transport), sensitive environment variables are filtered out to prevent credential leakage to subprocesses.
-
-### 7.3 净化策略
-
-**黑名单方式**（`mcp/client.ts:43-60`）：
-
-```ts
-const BLOCKED_ENV_VARS = [
-  // Craft Agent auth
-  'ANTHROPIC_API_KEY',
-  'CLAUDE_CODE_OAUTH_TOKEN',
-  // AWS
-  'AWS_ACCESS_KEY_ID',
-  'AWS_SECRET_ACCESS_KEY',
-  'AWS_SESSION_TOKEN',
-  // Common tokens
-  'GITHUB_TOKEN', 'GH_TOKEN', 'OPENAI_API_KEY',
-  'GOOGLE_API_KEY', 'STRIPE_SECRET_KEY', 'NPM_TOKEN',
-];
-```
-
-构建子进程 env 的逻辑（`client.ts:84-97`）：
-
-```ts
-if (config.transport === 'stdio') {
-  const processEnv: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !BLOCKED_ENV_VARS.includes(key)) {
-      processEnv[key] = value;
-    }
-  }
-  this.transport = new StdioClientTransport({
-    command: config.command,
-    args: config.args,
-    env: { ...processEnv, ...config.env },  // 用户配置的 env 覆盖
-  });
-}
-```
-
-### 7.4 重要细节
-
-1. **黑名单而非白名单**：保留 `PATH`、`HOME`、`SHELL` 等，否则 MCP server（如 Python/Node 脚本）无法运行。
-2. **源配置 `env` 优先级最高**：用户在 source config 中显式配置的 `env` 会覆盖净化后的 processEnv——这样用户可以**故意**把某个 env 变量传给特定 MCP server（README 第 637 行）。
-3. **注释要求同步**（行 41）：「This list is duplicated in `packages/session-tools-core/src/handlers/transform-data.ts (BLOCKED_ENV_VARS)`」——黑名单在两处重复，新增条目要同步。
-4. **此净化仅适用于 stdio MCP**：HTTP/SSE MCP server 不继承任何 env，因为它们是远程的。
-5. **Agent SDK 子进程使用另一套净化**：`packages/shared/src/agent/options.ts:185-204` 的 `buildClaudeSubprocessEnv` 删除 Claude 特定的 Bedrock 路由变量（`CLAUDE_CODE_USE_BEDROCK`, `AWS_BEARER_TOKEN_BEDROCK`, `ANTHROPIC_BEDROCK_BASE_URL`），保留通用 AWS env（CLAUDE.md 第 30 行）——这是为了不破坏 Bedrock 之外使用 AWS 凭据的工具。
-
-### 7.5 Local MCP 启用开关
-
-`workspaces/storage.ts:479` 的 `isLocalMcpEnabled(rootPath)` 控制是否启用 stdio MCP。`mcp-pool.ts:240-245` 在禁用时过滤掉 stdio source：
-
-```ts
-if (!isLocalMcpEnabled && source.config.mcp?.transport === 'stdio') {
-  this.debug(`Filtering out stdio source "${slug}" (local MCP disabled)`);
-  continue;
-}
-```
-
-禁用时 source 状态会变成 `'local_disabled'`（`types.ts:415-417`）。
-
----
-
-## 8. OAuth Provider 路由细节
-
-### 8.1 detectProvider（`credential-manager.ts:394-402`）
-
-```
-provider === 'google'     → 'google'
-provider === 'slack'      → 'slack'
-provider === 'microsoft'  → 'microsoft'
-api.authType === 'oauth'  → 'generic'
-否则                       → 'mcp'
-```
-
-### 8.2 Service 推断
-
-Google / Slack / Microsoft 都支持「从 baseUrl 推断 service」（如 `gmail.googleapis.com → gmail`），逻辑在 `types.ts:50-155`：
-
-- 用 `new URL()` 解析（行 56-58），避免字符串匹配误判
-- hostname 优先，hostname 不够时回退到 pathname 前缀
-- Microsoft Graph 在 hostname 相同情况下根据 path 区分（outlook/calendar/onedrive 等）
-- 无法推断时**返回 undefined**而非猜测（行 145-146）——强制用户在 config 中显式声明
-
-### 8.3 Generic OAuth 自动发现（`credential-manager.ts:506-517`）
-
-对没有显式 `oauth` 配置块的 generic OAuth source，复用 MCP OAuth 自动发现（RFC 9728/8414）+ 动态客户端注册（DCR）。`prepareMcpOAuth` 内部完成发现，结果 relabel 为 `'generic'` provider（行 515）。
-
-### 8.4 OAuth Relay（WebUI 支持）
-
-`OAUTH_RELAY_CALLBACK_URL = 'https://agents.craft.do/auth/callback'`（行 31）——为了让 Google 等只允许预注册回调 URL 的 provider 支持 WebUI 部署，所有 WebUI OAuth 都走这个稳定 relay。具体目标服务器 callback URL 通过 outer state envelope 传递（CLAUDE.md `WebUI source OAuth uses a stable relay redirect URI`）。
-
----
-
-## 9. 关键不变量（Invariants）
-
-### 9.1 类型层不变量
-
-1. **`SourceType` 固定为三种**（CLAUDE.md hard rule）：`mcp | api | local`
-2. **`McpTransport` 固定为三种**（`types.ts:244`）：`http | sse | stdio`
-3. **stdio MCP source 不需要凭据**（`credential-manager.ts:153`）
-4. **`isSourceUsable()` 是唯一过滤入口**（`storage.ts:400`）——任何代码判断「source 能否用」都必须走它
-5. **`isRefreshableSource()` 是唯一刷新判定入口**（`types.ts:234`）——注释明确：「Use this as the single guard for "can this source refresh?" instead of sprinkling provider/authType/renewEndpoint checks in multiple places」
-6. **`::` 作为凭据 key 分隔符**（`types.ts:130-132`）：因为 server name / URL 含 `/`
-
-### 9.2 安全不变量
-
-7. **stdio MCP 子进程永不拿到主进程凭据 env**（黑名单）
-8. **Agent SDK 子进程永不路由到 Claude Bedrock**（`buildClaudeSubprocessEnv` 删除三个变量）
-9. **`credentials.enc` 文件权限 0o600，目录 0o700**
-10. **AES-256-GCM 每次写入生成新 IV**（GCM 安全要求）
-11. **机器迁移即失效**：硬件 UUID 不同 → 解密失败 → 自动删除 → 提示重新登录
-
-### 9.3 行为不变量
-
-12. **`refreshExpiredCredentials` 必须在 buildServers 之前完成**（Issue #710）
-13. **同一 source 的 refresh 请求去重**（Microsoft 防止 refresh token rotation 冲突）
-14. **失败 source 进入 5 分钟 cooldown**（防止启动雪崩）
-15. **Skill prerequisite 在 context compaction 后重置**（LLM 丢失上下文，必须重读）
-16. **`MAX_REJECTIONS = 1`**：PrerequisiteManager 阻塞一次后强制放行（防模型死循环）
-17. **Skills 不走 Claude SDK plugin 机制**（`claude-agent.ts:1355` 注释）——所有 backend 共用 BaseAgent 的 read-before-execute 实现
-18. **`localMcpEnabled` 关闭时 stdio source 全部过滤**（`mcp-pool.ts:240`）
-
-### 9.4 数据完整性不变量
-
-19. **`saveSourceConfig` 切换到 `authType:'none'` 时主动清理 `source_apikey` 凭据**（`storage.ts:144-152`，防止「孤立凭据」复活）
-20. **`loadMcpCredential` 双槽位回退**（OAuth→bearer）：向后兼容历史 authType 切换（行 180-203）
-21. **`source_oauth` key 包含 workspaceId**：workspace 隔离，删除 workspace 时凭据可一起清理（`manager.ts:309-315` `deleteWorkspaceCredentials`）
-
----
-
-## 10. 未解决疑问 / 设计张力
-
-### 10.1 `requiredSources` 字段未实现
-
-`SkillMetadata.requiredSources`（`skills/types.ts:28`）声明 skill 依赖的 source slug，但代码搜索显示它只在 `parseSkillFile` 解析（`storage.ts:88`），在 `extractSkillPaths`（`base-agent.ts:930-984`）中未被使用。
-
-**疑问**：是否计划在 @mention skill 时自动启用未启用的 `requiredSources`？目前用户必须手动启用 source，否则 skill 引用的 source 工具不可用。
-
-### 10.2 PrerequisiteManager 的 `globs` 字段
-
-`SkillMetadata.globs`（`skills/types.ts:18`）也是预留字段，目前代码中未发现使用。推测原计划是「当用户附件匹配 glob 时自动 @mention skill」，但未实现。
-
-### 10.3 凭据 key 的 slug 改名问题
-
-凭据 key 是 `source_oauth::{ws}::{slug}`。如果用户重命名 source（slug 变化），新 slug 找不到旧凭据。代码中未发现 slug 改名时的凭据迁移逻辑——`saveSourceConfig` 也不处理。
-
-**疑问**：是否 UI 层禁止改名？或允许改名但接受凭据丢失？
-
-### 10.4 黑名单 vs 白名单的张力
-
-`BLOCKED_ENV_VARS` 是黑名单。新增敏感 env 变量时容易遗漏。注释（`client.ts:41`）要求同步 `session-tools-core`，但仍依赖人工维护。
-
-**疑问**：是否应改为「只允许已知安全变量」的白名单？但白名单会破坏 MCP server 兼容性（Python 需要 `PYTHONPATH`、Node 需要 `NODE_OPTIONS` 等）。
-
-### 10.5 `SourceCredentialManager.isExpired` 与 `CredentialManager.isExpired` 行为不一致
-
-- `CredentialManager.isExpired`（`manager.ts:596`）：无 `expiresAt` + 有 `refreshToken` → 视为已过期
-- `SourceCredentialManager.isExpired`（`credential-manager.ts:345`）：无 `expiresAt` → 视为未过期
-
-两者用于不同场景，但行为分歧可能导致边界 bug。
-
-### 10.6 Source CredentialManager 单例 vs 实例化
-
-`getSourceCredentialManager()` 是单例（`credential-manager.ts:1368-1378`），但 `TokenRefreshManager` 接受 `credManager` 作参数（构造函数），且 `pendingRefreshes` 是实例级状态。
-
-**疑问**：单例 `SourceCredentialManager` 的 `pendingRefreshes` 跨 session 共享是否合理？目前看是合理的——同一 source 的 refresh 应该全局去重——但需要明确文档化。
-
-### 10.7 Skills 缓存失效触发点
-
-`invalidateSkillsCache()`（`storage.ts:201-203`）清空全部缓存，但**未在代码搜索中发现调用点**。可能由上层 watcher（config-watcher-manager）触发，但需要进一步验证。如果未触发，5 分钟 TTL 是唯一失效机制。
-
----
-
-## 11. 跨子系统数据流（端到端示例）
-
-### 11.1 用户输入 `@[skill:datadog-api] 查 CPU 异常` 的完整流程
+### 三级存储图
 
 ```mermaid
 flowchart TD
-  A[用户输入<br/>@[skill:datadog-api] 查 CPU 异常] --> B[BaseAgent.chat]
-  B --> C[extractSkillPaths]
-  C --> D[loadAllSkills<br/>global+workspace+project]
-  D --> E{找到 datadog-api?}
-  E -- 否 --> F[yield error<br/>Skill(s) not found]
-  E -- 是 --> G[resolveSkillMentions<br/>→ Mentioned skill: Datadog API]
-  G --> H[registerSkillPrerequisites<br/>pendingSkillPaths = SKILL.md]
-  H --> I[formatSkillDirective<br/>MUST read SKILL.md first]
-  I --> J[chatImpl:<br/>directive + cleanMessage]
-
-  J --> K[Agent 调用 Read SKILL.md]
-  K --> L[PrerequisiteManager.trackReadTool<br/>清除 pending]
-  L --> M[Agent 读取 SKILL.md 内容<br/>理解如何调 Datadog]
-
-  M --> N[Agent 调用 api_datadog-api 工具]
-  N --> O{guide.md 已读?}
-  O -- 否 --> P[PrerequisiteManager 阻塞<br/>读 sources/datadog-api/guide.md]
-  O -- 是 --> Q[执行 fetch]
-  Q --> R[buildHeaders 注入凭据]
-  R --> S[Credentials 加载 source_apikey]
-  S --> T[~/.craft-agent/credentials.enc 解密]
-  T --> U[POST https://api.datadoghog.com/...]
-  U --> V[返回结果给 Agent]
+    subgraph G["global（最低优先级）"]
+        G1["~/.agents/skills/{slug}/SKILL.md"]
+    end
+    subgraph W["workspace（中）"]
+        W1["~/.craft-agent/workspaces/{id}/skills/{slug}/SKILL.md"]
+    end
+    subgraph P["project（最高优先级）"]
+        P1["{projectRoot}/.agents/skills/{slug}/SKILL.md"]
+    end
+    G --> MERGE["loadAllSkills: Map&lt;slug, skill&gt;<br/>先放 global，再 workspace 覆盖，再 project 覆盖"]
+    W --> MERGE
+    P --> MERGE
+    MERGE --> CACHE["缓存 5min / (wsRoot,projectRoot)"]
 ```
 
-### 11.2 新建 OAuth source 的端到端
+### How
 
-```mermaid
-sequenceDiagram
-  participant UI as Renderer UI
-  participant Server as Server (RPC)
-  participant SCM as SourceCredentialManager
-  participant Provider as Google OAuth
-  participant Vault as credentials.enc
+**加载**（`skills/storage.ts:216-247`）：`loadAllSkills(workspaceRoot, projectRoot?)` 用 `Map<slug>` 按 global→workspace→project 顺序覆盖。三个目录常量：`GLOBAL_AGENT_SKILLS_DIR = ~/.agents/skills`（`:33`）、`PROJECT_AGENT_SKILLS_DIR = '.agents/skills'`（`:36`）、workspace 走 `getWorkspaceSkillsPath()`。结果按 `(wsRoot, projectRoot)` 缓存 5 分钟（`:197-198`），`invalidateSkillsCache()` 在工作目录变更或 skill 文件事件时清。
 
-  UI->>Server: createSource({provider:'google', api:{...}})
-  Server->>Server: saveSourceConfig (config.json 落盘)
-  UI->>Server: prepareOAuth(source)
-  Server->>SCM: prepareOAuth(source, {callbackPort})
-  SCM->>SCM: detectProvider → 'google'
-  SCM->>SCM: infer service from baseUrl
-  SCM->>Provider: 构造 auth URL (PKCE + state)
-  SCM-->>Server: PreparedOAuthFlow
-  Server-->>UI: {authUrl, state, flowId}
-  UI->>UI: 打开浏览器
+**解析**（`parseSkillFile` `:68`）：用 `gray-matter` 解 frontmatter，必填 `name`+`description`，可选 `globs`/`alwaysAllow`/`icon`/`requiredSources`。`requiredSources` 被 `normalizeRequiredSources()` 归一为去重字符串数组（`:42`），用于技能激活时自动启用对应 source。
 
-  Provider-->>UI: redirect to callback?code=...
-  UI->>Server: exchangeAndStore(source, 'google', {code, ...})
-  Server->>SCM: exchangeAndStore
-  SCM->>Provider: POST /token (code → tokens)
-  Provider-->>SCM: {access_token, refresh_token, expires_in, id_token?}
-  SCM->>Vault: save(source, StoredCredential)
-  SCM->>SCM: markSourceAuthenticated (config.json)
-  SCM-->>UI: AuthResult {success:true, email}
-```
+**Plugin 名同构**（`skills/types.ts:41`）：`AGENTS_PLUGIN_NAME = '.agents'`。SDK 用 `path.basename()` 推导 plugin 名，project（`{project}/.agents/`）和 global（`~/.agents/`）basename 都是 `.agents`，所以两者解析出的 skill 都叫 `.agents:{slug}`——这是能与 Claude Code 生态互通的关键。
+
+**单 slug 加载**（`loadSkillBySlug` `:257`）：按 project→workspace→global 顺序逐个目录查特定 slug，O(1) 而非 O(N)。
+
+**从 Claude Code 导入**：技能目录结构（`SKILL.md` + `.agents/skills`）与 Claude Code 完全一致，`~/.agents/skills` 即 Claude Code 全局技能目录，故「导入」无需转换——同目录直接被读取。`resources/resource-bundle.ts:759` 的 `importSkills()` 处理资源包批量导入到 workspace。
+
+**注入**：Claude 后端 SDK 原生支持 Skill 工具（`claude-agent.ts:1355` 注释「skills 由 BaseAgent.chat() 经 read-before-execute 处理，不走 plugin」）；Codex/Copilot 后端由 `BaseAgent.extractSkillPaths()`（`base-agent.ts:930`）解析 mention、注入 `SKILL.md` 路径。
 
 ---
 
-## 12. 文件路径索引
+## 五、MCP 子进程隔离
 
-### Sources 子系统
+### What / Why
 
-- `packages/shared/src/sources/types.ts` — 所有类型定义（SourceType, McpSourceConfig, ApiSourceConfig, LocalSourceConfig）
-- `packages/shared/src/sources/index.ts` — 公共导出
-- `packages/shared/src/sources/storage.ts` — 目录/CRUD/loadSource/isSourceUsable
-- `packages/shared/src/sources/credential-manager.ts` — SourceCredentialManager（OAuth/refresh/CRUD）
-- `packages/shared/src/sources/server-builder.ts` — SourceServerBuilder（build mcpServers/apiServers）
-- `packages/shared/src/sources/token-refresh-manager.ts` — TokenRefreshManager（限流+编排）
-- `packages/shared/src/sources/api-tools.ts` — 动态 API tool 工厂（createApiServer, buildHeaders）
-- `packages/shared/src/sources/builtin-sources.ts` — 内置 source（已迁移，仅保留 placeholder）
-- `packages/shared/src/mcp/client.ts:43-60` — stdio env 净化黑名单
-- `packages/shared/src/mcp/mcp-pool.ts:240-245` — localMcpEnabled 过滤
-- `packages/shared/src/mcp/validation.ts:304-495` — stdio MCP 连接验证
+stdio 传输的 MCP 源会被 spawn 成本地子进程（`StdioClientTransport`）。子进程默认继承父进程全部环境变量——但父进程持有 ANTHROPIC_API_KEY、AWS、GitHub token 等，绝不能泄漏给第三方 MCP server。故 spawn 前必须过滤敏感 env。
 
-### Credentials 子系统
+### How
 
-- `packages/shared/src/credentials/types.ts` — CredentialType / CredentialId / StoredCredential / credentialIdToAccount
-- `packages/shared/src/credentials/manager.ts` — CredentialManager（门面）
-- `packages/shared/src/credentials/backends/types.ts` — CredentialBackend 接口
-- `packages/shared/src/credentials/backends/secure-storage.ts` — AES-256-GCM 实现（核心）
-- `packages/shared/src/credentials/backends/env.ts` — 已禁用的 env backend
+`CraftMcpClient` 构造函数（`mcp/client.ts:77-109`）：stdio 分支里遍历 `process.env`，凡 key 在 `BLOCKED_ENV_VARS`（`:43-60`）里的全部跳过，剩余的与 `config.env` 合并后传入。黑名单覆盖：
 
-### Skills 子系统
+- Craft 自身鉴权：`ANTHROPIC_API_KEY`、`CLAUDE_CODE_OAUTH_TOKEN`
+- 云厂商：`AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`、`AWS_SESSION_TOKEN`
+- 通用 token：`GITHUB_TOKEN`、`GH_TOKEN`、`OPENAI_API_KEY`、`GOOGLE_API_KEY`、`STRIPE_SECRET_KEY`、`NPM_TOKEN`
 
-- `packages/shared/src/skills/types.ts` — SkillMetadata / LoadedSkill
-- `packages/shared/src/skills/storage.ts` — 三级目录加载 + 缓存 + 解析
-- `packages/shared/src/mentions/index.ts` — `[skill:slug]` 解析与 resolve
-- `packages/shared/src/agent/base-agent.ts:915-1054` — extractSkillPaths / chat 模板方法
-- `packages/shared/src/agent/core/prerequisite-manager.ts` — read-before-execute 强制
+要让某个 MCP server 拿到特定 env，用户必须在 source config 的 `env` 字段显式声明（README「Local MCP Server Isolation」段佐证，`README.md:629-637`）。该黑名单在 `session-tools-core` 另有一份镜像（`BLOCKED_ENV_VARS` 注释 `:40-41` 指出需同步）。
 
-### SessionManager 集成
+**生命周期**：`McpClientPool`（`mcp/mcp-pool.ts:101`）按 slug 管理连接池，`connect(slug, config)` 建 client、`disconnect(slug)` 关闭、`closeAll()`（`:214-217`）并行关闭全部。`sync()`（`:229`）把池对齐到期望的 source 集合。
 
-- `packages/server-core/src/sessions/SessionManager.ts:477-511` — refreshExpiredCredentials
-- `packages/server-core/src/sessions/SessionManager.ts:7352-7402` — source_activated auto-retry
-
-### Agent 子进程 env 净化
-
-- `packages/shared/src/agent/options.ts:185-204` — buildClaudeSubprocessEnv（Claude SDK 子进程）
-- `packages/shared/src/config/llm-connections.ts:902-961` — Bedrock 路由变量清理
-
-### 文档
-
-- `README.md:629-637` — Local MCP Server Isolation（用户向）
-- `README.md:123-131` — Sources 类型表
-- `packages/shared/CLAUDE.md` — 项目约定（不变量来源）
+**session-mcp-server 子进程**（`session-mcp-server/src/index.ts`）：独立 Node 进程，stdio 与主进程通信。它向 Codex 暴露会话级工具（plan/auth/callback），通过 stderr 的 `__CALLBACK__` 前缀 JSON 把 UI 事件（`plan_submitted`/`auth_request`）回传主进程（`:73-76`）。它不能直接读 `credentials.enc`，只能读主进程写入的 `.credential-cache.json`。
 
 ---
 
-## 13. 结论
+## 设计决策小结
 
-Craft Agents OSS 的三大子系统设计展现了几个值得学习的原则：
+1. **为什么三类 Source 同契约**：差异只在「连接方式」，连接后的产物（工具）对上层一致；统一契约让 `SourceServerBuilder.buildAll()`、`SourceCredentialManager`、`SourceManager.formatSourceState()` 各写一份即可服务全部类型，新增类型（如未来 git source）只需加 `type` 枚举值 + 对应子块 + credential 映射，不触动上层。
 
-1. **统一抽象 + 类型分支**：`LoadedSource` 三类型共享外层壳，差异隔离在 `mcp/api/local` 子配置；`StoredCredential` 单一 schema 兼容所有凭据类型。
-2. **关键路径单点过滤**：`isSourceUsable()` / `isRefreshableSource()` / `getCredentialId()` 各自是唯一决策入口，避免散落的分支逻辑。
-3. **安全默认 + 显式逃生口**：stdio MCP 默认净化敏感 env，但允许 source config 显式覆盖；OAuth 默认跨平台统一，但允许用户自定义 Google OAuth client。
-4. **跨版本兼容内建**：v1/v2 key 双重尝试 + 自动迁移、`StoredCredential` 全 optional 字段、MCP source OAuth/bearer 双槽位回退——三层兼容机制。
-5. **跨 backend 一致性**：Skills 故意不走 Claude SDK plugin，而是在 BaseAgent 层实现 read-before-execute，保证 Claude / Pi 行为一致。
+2. **为什么 v1/v2 双 key**：硬件 UUID（v2）比 hostname（v1）稳定，但存量用户和跨机器拷贝场景下 v2 可能解不开；双 key fallback + 透明重加密让升级和迁移零摩擦，是「向后兼容」的工程化落地，而非单纯兼容。
 
-主要的设计张力集中在：黑名单 env 净化的维护成本、skill `requiredSources` 与 `globs` 预留字段未实现、slug 改名时凭据迁移缺失——这些都是未来演进的潜在方向。
+3. **为什么 session-mcp-server 走缓存文件而非直接读 vault**：子进程无 OS 鉴权上下文，无法独立解密 `credentials.enc`；主进程解密后写 `.credential-cache.json`，子进程只读明文缓存——把机密性责任集中在主进程，子进程保持无状态、易隔离。
+
+4. **为什么 skill 三级 basename 都是 `.agents`**：与 Claude Code 生态目录约定对齐，SDK 推导 plugin 名用 `basename`，同 basename 才能让 project/global 技能归到同一 plugin 命名空间（`.agents:{slug}`），实现「放进去就能用」的零配置互通。
+
+---
+
+## 待解决疑问
+
+- `BLOCKED_ENV_VARS` 在 `mcp/client.ts` 与 `session-tools-core/.../transform-data.ts` 两处重复（注释明确要求同步，`:40-41`），未见自动同步机制，存在漂移风险。
+- `SecureStorageBackend.clearCache()` 暴露为 public 但无调用方标注，疑似仅测试用。
+- `getDocsSource()`（`builtin-sources.ts:36`）返回 placeholder 且 `enabled:false`，但 `craft-agents-docs` 实际作为 always-on MCP server 在 `craft-agent.ts` 直接配置——builtin source 体系已弃用，保留仅为兼容，未来可能移除。

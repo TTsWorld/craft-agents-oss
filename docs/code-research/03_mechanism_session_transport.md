@@ -1,441 +1,468 @@
-# Session 生命周期与传输协议
+# 核心机制：Session 生命周期与传输协议
 
-> Craft Agents 代码研究 · 第 3 章
-> 适用版本：2026-06 工作树
-> 范围：`packages/shared/src/sessions/**`、`packages/server-core/src/sessions/**`、`packages/server-core/src/transport/**`、`packages/shared/src/protocol/**`、`apps/electron/src/transport/**`、`apps/cli/src/**`、`packages/server/src/index.ts`
-
-## 0. 概览
+> 专题 C（v2.2.1）。研究 Craft Agents 如何用 JSONL 文件作为会话真理源、如何保证崩溃安全、以及三套 transport 如何共用同一组 RPC method。
+>
+> **代码版本**：`fe5acd4`（main，v0.10.4 之后）。所有引用均给出 `文件路径:行号/符号`。
 
-Craft Agents 把 "对话" 视作一条完整的生命周期：从工作区下的一个目录开始，落地为 JSONL 文件，跨进程通过 WebSocket 传输，最终与 Claude / Pi Agent 子进程绑定。本章回答七个问题：
+---
 
-1. **What/Why**：SessionManager 到底承担什么职责？
-2. **持久化**：JSONL 文件、状态字段、bundle、队列、slug 生成是如何组织的？
-3. **传输三态**：Electron / RPC-WS / CLI 三种入口有什么异同？
-4. **统一契约**：能力协商、推送通道、二进制流、错误与中断如何统一？
-5. **生命周期事件**：有哪些 Session 事件、如何路由？
-6. **远端鉴权**：TLS、Bearer、明文拒绝策略如何落地？
-7. **Handoff 语义**：硬中断与 UI 移交、远程摘要注入如何区分？
+## 这是什么机制
 
-## 1. What/Why：SessionManager
+**它是什么**：SessionManager 是 Craft Agents 会话的「内存态 + 持久化态」双重管理者。它把每个会话以 **JSONL 文件**形式落到磁盘（`{workspaceRootPath}/sessions/{id}/session.jsonl`），第 1 行是预计算好的 `SessionHeader`，第 2 行起每行一条 `StoredMessage`。所有前端形态（Electron 桌面、Headless Server、CLI、WebUI）都通过**同一套 WebSocket RPC 协议**调用同一组 `server.handle(channel, handler)` 注册的 method。
 
-`SessionManager`（`packages/server-core/src/sessions/SessionManager.ts:1102-1305`）是 **每个后端进程内的单例编排器**，把三件事缝在一起：
+**为什么需要它**：
+- **真理源单一可分享**：JSONL 是纯文本、自描述、可读、可 diff、可打包传输（`SessionBundle`）。会话不仅是程序状态，更是一份「文档」——能被分享、回放、跨机器迁移。这正是项目「文档为中心」主张的落地。
+- **崩溃安全**：Agent 会话动辄几十分钟、上百条消息。一旦落盘中途崩溃，不能整段丢失。atomic 写（tmp→rename）保证「要么旧文件完整、要么新文件完整，绝无半截」。
+- **跨形态复用**：同一份 `server-core` 内核要同时驱动 Electron（renderer 与 main 同进程）、Headless Server（远端 VPS）、CLI（终端连远端）。如果每种形态各写一套 method，内核会被 transport 细节污染。
 
-| 维度 | 实现 |
-|------|------|
-| 内存态 | `sessions: Map<string, ManagedSession>` —— 每个 `ManagedSession` 持有 `agent`、`messageQueue`、`isProcessing`、`wasInterrupted`、`llmConnection`、`browserHost` 等 |
-| 持久化 | 通过 `SessionPersistenceQueue` 异步落盘 |
-| 传输 | 通过 `setRpcServer(server)` 绑定 `WsRpcServer`，借助 `setEventSink` 推送广播事件 |
-| 浏览器托管 | 通过 `setBrowserPaneManager` + 每个 session 的 `browserHost` 实现"浏览器粘性"，避免在远程多客户端场景下乱开窗 |
+**设计核心**：
+1. **JSONL 而非 SQLite/嵌入式 DB**：会话首行只读 8KB header 即可填列表（`readSessionHeader`），消息按需懒加载（`loadMessagesFromDisk`）。文件即数据库，省去 DB 运维，且天然便携。
+2. **`{{SESSION_PATH}}` 便携 token**：写盘前把会话目录绝对路径替换成 token，读盘时再还原。这让会话能在不同机器、不同目录结构间无损迁移（远端传输、branch、Windows↔Mac）。
+3. **Transport 与 method 解耦**：handler 只认 `RpcServer` 接口的 `handle(channel, handler)`，不关心底下是本地 WS 还是远端 WS。三套 transport 共用同一 envelope 协议与同一组 channel 字符串。
 
-它的存在让上层（Electron 主进程 / 无头 server / CLI）只感知到一个面向 "会话" 的 RPC 接口（`session:*`），而不必关心底层是 Claude SDK 子进程还是 Pi 子进程，也不必关心落盘格式。
+> ⚠️ **对研究计划的一处修正**：计划假设存在「Electron IPC / WS RPC / stdio 三套 transport」。源码核实后，**真正统一的传输介质是 WebSocket RPC**（envelope + codec），三套「transport」实为同一 WS 协议的三个部署变体（见下文「Transport 抽象」一节）。`stdio` 只作为 MCP 子进程传输出现，并非客户端→服务端通道；Electron `ipcMain.handle` 仅用于少数 GUI 对话框桥（`__dialog:showMessageBox` 等），不承载主 RPC。
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant U as User (UI)
-    participant IPC as Electron/RPC 前端
-    participant SM as SessionManager
-    participant AG as Agent (Claude/Pi)
-    participant LLM as LLM Provider
-    participant PQ as PersistenceQueue
-    participant FS as sessions/*.jsonl
+---
 
-    U->>IPC: 发送消息
-    IPC->>SM: session:sendMessage(rpcContext.callerClientId)
-    SM->>SM: 创建 ManagedSession（懒加载）
-    SM->>AG: agent.sendMessage(text)
-    AG->>LLM: 流式请求
-    LLM-->>AG: token / tool_call
-    AG-->>SM: onMessage / onAssistantMessage
-    SM->>SM: sendEvent(SessionMessageStream)
-    SM-->>IPC: event 推送
-    IPC-->>U: 实时渲染
+## 关键源码地图
 
-    Note over AG,LLM: 中途 agent.redirect() (mid-stream steer) 或 中止
-    AG-->>SM: 完成 / 错误
-    SM->>PQ: enqueue(session)（500ms 合并）
-    PQ->>FS: writeSessionJsonl 原子写
-    SM->>IPC: SessionMessageStream(final=true)
-    SM->>IPC: SessionTokenUsageUpdate
-```
+| 关注点 | 文件 |
+|--------|------|
+| 会话内存管理 + 生命周期 | `packages/server-core/src/sessions/SessionManager.ts`（8090 行） |
+| JSONL 读/写/便携 token/atomic 写（同步版） | `packages/shared/src/sessions/jsonl.ts` |
+| 持久化队列/atomic 写（异步版）/header 签名 | `packages/shared/src/sessions/persistence-queue.ts` |
+| 会话类型定义（`SessionHeader`/`StoredSession`） | `packages/shared/src/sessions/types.ts` |
+| 磁盘布局/索引/`.tmp` 清理 | `packages/shared/src/sessions/storage.ts` |
+| WS RPC 服务端（连接/握手/心跳/push/replay） | `packages/server-core/src/transport/server.ts` |
+| WS RPC 客户端（全功能，renderer+Node） | `packages/server-core/src/transport/client.ts` |
+| 精简 CLI 客户端 | `apps/cli/src/client.ts` |
+| envelope 序列化/二进制 codec | `packages/server-core/src/transport/codec.ts` |
+| 客户端能力（capabilities）协商 | `packages/server-core/src/transport/capabilities.ts` |
+| push 类型约束辅助 | `packages/server-core/src/transport/push.ts` |
+| transport 接口（`RpcServer`/`RpcClient`/`EventSink`） | `packages/server-core/src/transport/types.ts` |
+| RPC channel 名 + push event map | `packages/shared/src/protocol/{channels,events,types}.ts` |
+| 核心 handler 注册（按 channel） | `packages/server-core/src/handlers/rpc/{index,sessions}.ts` |
+| transport bootstrap（装配 SM + WS server） | `packages/server-core/src/bootstrap/headless-start.ts` |
+| Electron 入口（实例化 SM、选 transport 模式） | `apps/electron/src/main/index.ts` |
+| runtime-config 签名（决定就地刷新 vs 重建） | `packages/server-core/src/sessions/runtime-config.ts` |
 
-## 2. 持久化层：JSONL、Bundle、Queue、Slug
+---
 
-### 2.1 JSONL 格式与原子写
+## 一、Session 生命周期
 
-每个会话对应一个工作区目录下的文件：`{workspaceRootPath}/sessions/{id}/session.jsonl`。文件结构（`packages/shared/src/sessions/jsonl.ts:80-164`、`packages/shared/src/sessions/types.ts:26-56`）：
+### 1.1 SessionManager 是什么 / 不是单例
 
-- 第 1 行：`SessionHeader`，包含所有持久化字段 + 预计算字段（`messageCount`、`preview`、`lastMessageRole`、`tokenUsage`、`lastFinalMessageId`）。
-- 第 2 行起：每行一条 `StoredMessage`。
+`SessionManager` **不是单例**：没有 `getInstance()`，构造函数公开，测试直接 `new SessionManager()`（`sessions/*.test.ts`）。它在 **bootstrap 阶段被实例化一次**，由调用方（Electron main / Headless）持有引用：
 
-写入采用 **临时文件 + rename** 的原子写策略（`writeSessionJsonl`，`packages/shared/src/sessions/jsonl.ts:150-164`）：
+- `apps/electron/src/main/index.ts:656` —— `createSessionManager: () => { const sm = new SessionManager(); sm.setBrowserPaneManager(...); return sm }`
+- 由 `bootstrapServer()`（`headless-start.ts`）在 `options.createSessionManager()` 处构造，随后注入依赖（platform、eventSink、rpcServer）。
 
-```
-writeFileSync(tmp, lines.join('\n') + '\n')
-unlinkSync(target)            // Windows 兼容
-renameSync(tmp, target)
-```
+核心内存态字段（`SessionManager.ts:1102-1149`）：
+- `sessions: Map<string, ManagedSession>` —— 活跃会话表。
+- `pendingDeltas` / `deltaFlushTimers` —— delta 批处理，把 50+/秒的流式事件降频到 ~20/秒再 push。
+- `messageLoadingPromises` —— 消息懒加载的 promise 去重（防并发加载竞态）。
+- `activeViewingSession: Map<workspaceId, sessionId>` —— 用户当前正在看的会话，用于「助手完成时是否标未读」判断。
+- `initGate: InitGate` —— 启动初始化门闩，IPC handler 通过 `waitForInit()` 等待磁盘会话加载完。
+- `lastTimestamp` —— 单调时钟，保证消息时间戳严格递增（`monotonic()`）。
 
-这样即使进程崩溃，要么旧文件完好，要么新文件完整，永远不会留下截断的半行。
-
-### 2.2 快速列表：8KB 头读取
-
-列表视图只读首行：
-
-```ts
-// packages/shared/src/sessions/jsonl.ts:80-97
-const fd = openSync(sessionFile, 'r');
-const buffer = Buffer.alloc(8192);
-const bytesRead = readSync(fd, buffer, 0, 8192, 0);
-```
-
-读取后 `expandSessionPath` 把可移植 token `{{SESSION_PATH}}` 还原成绝对路径，避免在不同机器上硬编码绝对路径。`makeSessionPathPortable`（同文件 30-41 行）负责写盘前的反向替换，覆盖 JSON 字符串里所有出现的位置（datatable src、planPath、attachment storedPath 等）。
-
-### 2.3 SESSION_PERSISTENT_FIELDS：单一来源
-
-`packages/shared/src/sessions/types.ts:26-56` 维护一个常量数组 `SESSION_PERSISTENT_FIELDS`，列出所有需要落盘的字段。`pickSessionFields()`（`sessions/utils.ts`）据此从内存对象抽取，确保新字段**一处添加、到处生效**——`SessionConfig`、`SessionHeader`、`SessionMetadata` 都靠它派生。
-
-关键字段分组：
-
-- **身份**：`id`、`workspaceRootPath`、`sdkSessionId`、`sdkCwd`
-- **时间戳**：`createdAt`、`lastUsedAt`、`lastMessageAt`
-- **配置**：`permissionMode`、`previousPermissionMode`、`workingDirectory`、`thinkingLevel`
-- **模型/连接**：`model`、`llmConnection`、`connectionLocked`
-- **分支**：`branchFromMessageId`、`branchFromSdkSessionId`、`branchFromSessionPath`、`branchFromSdkCwd`、`branchFromSdkTurnId`
-- **远程移交**：`transferredSessionSummary`、`transferredSessionSummaryApplied`
-- **自动化**：`triggeredBy`（`{automationName, event, timestamp}`）
-
-### 2.4 SessionPersistenceQueue：合并 + 签名比对
-
-`packages/shared/src/sessions/persistence-queue.ts:59-241` 实现了每个 session 一个队列项，500ms 防抖：
-
-- `enqueue(session)` 计算元数据签名（`computeMetadataSignature`），如果与队首一致则跳过，避免 UI 频繁刷新触发无效 IO。
-- 持久化时调用 `writeSessionJsonl` + 触发 `onExternalChange` 钩子。
-- 比较签名时忽略 `lastUsedAt`、`tokenUsage` 等高频变化字段，只关注结构性变化。
-
-### 2.5 Slug 生成：YYMMDD-adjective-noun
-
-`packages/shared/src/sessions/slug-generator.ts:49-78`：
-
-```ts
-function generateUniqueSessionId(existingIds, date = new Date()): string {
-  // 100 次 adjective-noun 组合 + 2..99 数字后缀
-  // 最终兜底：4 位随机 hex
-}
-```
-
-- 前缀时间排序（`generateDatePrefix`，YYMMDD）。
-- ~20,000 组合/天，碰撞处理自动加 `-2`、`-3`……
-- `parseSessionId` / `isHumanReadableId` 用于判定会话 ID 是否是新型人类可读格式。
-
-### 2.6 存储目录布局
-
-`packages/shared/src/sessions/storage.ts:70-115`：`ensureSessionDir` 创建子目录 `plans/`、`attachments/`、`long_responses/`、`data/`、`downloads/`，每个会话是一个完整的微文件系统。
-
-### 2.7 SessionBundle：搬家/分叉的载荷
-
-`packages/shared/src/sessions/bundle.ts:60-74`：
-
-```ts
-interface SessionBundle {
-  version: 1;
-  session: { header: SessionHeader; messages: StoredMessage[] };
-  files: BundleFile[];      // 路径相对化后的附件
-  branchInfo?: { ... };
-}
-```
-
-Bundle 把 session 的 header + 消息 + 关联文件打包，用于"移动到另一个工作区"或"分叉出新 session"的远程调度（与远程移交摘要配合，见 §7）。
-
-## 3. 传输层：三态对比
-
-Craft Agents 不为 Electron 单独写一套 `ipcMain/ipcRenderer`，而是 **所有入口都跑在 WsRpcServer + WsRpcClient 之上**。差异仅在客户端包装方式与部署形态。
-
-| 维度 | Electron 桌面 | RPC over WebSocket（无头 server） | CLI |
-|------|---------------|------------------------------------|-----|
-| 服务端启动 | `apps/electron/src/main/index.ts` 内嵌 `bootstrapServer`，在同一进程起 `WsRpcServer.listen()` | `packages/server/src/index.ts` 独立可执行，`bootstrapServer` + 显式 `listen()` | CLI 临时 `spawnServer`（`apps/cli/src/server-spawner.ts:55-149`），UUID token，stdout 解析 URL |
-| 客户端 | `WsRpcClient`（`packages/server-core/src/transport/client.ts:109`）+ `RoutedClient`（`apps/electron/src/transport/routed-client.ts:40-255`）make-before-break | 同样是 `WsRpcClient`，但常驻单一工作区 | `CliRpcClient`（`apps/cli/src/client.ts:38-239`）极简：无自动重连、无能力广播 |
-| 能力协商 | `LOCAL_CLIENT_CAPABILITIES`（openExternal/openFileDialog/confirmDialog/browser:invoke 等）通过 handshake 上报 | 服务端进程可能只暴露 `REMOTE_ELIGIBLE` 能力 | CLI 几乎不上报能力，只做最低限度的 request/response |
-| 鉴权 | 本地 loopback，通常无 token | `CRAFT_SERVER_TOKEN` bearer + 可选 TLS | UUID token 通过命令行参数传入子进程 |
-| 重连 | `WsRpcClient` 自带重连：`reconnectClientId`、`lastSeq`、环形缓冲回放（`EVENT_BUFFER_MAX_SIZE=500`、TTL 30s） | 同上 | CLI 默认无重连，断线即退出 |
-| 推送目标 | `RoutedClient` 把 `'all'`/`'workspace'`/`'client'` 路由到正确的本地或工作区客户端 | 单一连接，直接发送 | 单一连接，按 `PushTarget` 过滤 |
-| 典型用法 | 桌面 GUI 多工作区 | 团队/服务器部署，被多个远程客户端连接 | `craft-agent chat --workspace .` 一次性命令行会话 |
-
-### 3.1 WsRpcServer：握手与版本协商
-
-`packages/server-core/src/transport/server.ts:122-365` 的 `listen()`：
-
-1. 根据 `CRAFT_RPC_TLS_CERT/KEY/CA` 决定 `https` + `wss`，否则 `http` + `ws`；非 loopback 且无 TLS 直接拒绝（`packages/server/src/index.ts:315-336`）。
-2. `onConnection`：先读 handshake，校验 `protocolVersion` 主版本号、`clientId`、可选 `reconnectClientId` 与 `lastSeq`。
-3. 命中 reconnect 路径时进入缓冲回放：`server.ts:746-799` 的 `bufferAndMaybeSendEvent` 给每条 event 分配 `seq`，维护 `lastAckedSeq`，并在 `EVENT_BUFFER_MAX_SIZE=500` 或 TTL 30s 内可重放。
-4. 60s 超时（`HANDLER_TIMEOUT_MS`，`server.ts:642-683`）防止 request 挂死。
-5. 心跳 30s ping，连续两次未收到 pong 即 `terminate`。
-
-### 3.2 WsRpcClient：自动重连与 `__transport:reconnected`
-
-`packages/server-core/src/transport/client.ts:514-653` 的 `onMessage` 处理 6 类信封：
-
-- `handshake_ack`：服务端确认能力、广播允许的事件名。
-- `response` / `error`：匹配 `pendingRequests`。
-- `request`：服务端反向调用客户端能力（`invokeClient`）。
-- `event`：推送事件，校验 `seq` 是否连续，发现 gap 立即告警并触发重放请求。
-- `sequence_ack`：服务端确认已收到 seq。
-- 特殊事件 `__transport:reconnected`：客户端据此通知上层 "缓冲已回放完成"，上层可以选择刷新 UI。
-
-`reconnectNow`（同文件 240-319）实现指数退避，恢复后用最近 `lastSeq` 请求缺口。
-
-### 3.3 RoutedClient：多工作区 make-before-break
-
-`apps/electron/src/transport/routed-client.ts:40-255`：Electron 主进程可能同时承载多个工作区，每个工作区对应一条到 server 的 `WsRpcClient`。`RoutedClient` 把 RPC 调用按 `workspaceId` 分发：
-
-- `handleWorkspaceSwitch`：切换工作区前先把旧 client 标记 `draining`，新 client 建立（make）成功后再关闭旧的（break），避免切换瞬间丢消息。
-- `setWorkspaceMapping`：把 workspaceId 映射到底层 client。
-- 客户端能力由本地注册的处理器（openExternal 等）+ 远端上报组合而成。
-
-### 3.4 build-api：从 CHANNEL_MAP 生成强类型代理
-
-`apps/electron/src/transport/build-api.ts:25-65` 读 `CHANNEL_MAP`（`apps/electron/src/transport/channel-map.ts:19-420`，约 200 项），动态生成嵌套对象：
-
-```
-session.sendMessage(...)
-config.update(...)
-sources.list(...)
-```
-
-每个属性访问把路径拼成 dotted-key（如 `session.sendMessage`），最终走 `invoke('session.sendMessage', args)`。这样 `ElectronAPI` 的 TS 类型与 `CHANNEL_MAP` 严格一致，新增 RPC 方法只要改一处。
-
-### 3.5 CliRpcClient：极简客户端
-
-`apps/cli/src/client.ts:38-239` 只实现 `request` 与 `event` 监听，不维护 `clientId` 重连，也不上报能力。生命周期与一次 CLI 进程一致：发完消息 → 流式接收 → 退出。
-
-## 4. 统一契约：能力、推送、二进制、错误
-
-### 4.1 能力协商
-
-`packages/server-core/src/transport/capabilities.ts:11-36` 定义常量：
-
-```
-CLIENT_OPEN_EXTERNAL
-CLIENT_OPEN_PATH
-CLIENT_SHOW_ITEM_IN_FOLDER
-CLIENT_CONFIRM_DIALOG
-CLIENT_OPEN_FILE_DIALOG
-CLIENT_BROWSE_INVOKE
-```
-
-`LOCAL_CLIENT_CAPABILITIES` 是 Electron 桌面默认能力集合。客户端在 handshake 阶段把 `clientCapabilities` 数组上报，服务端在 `invokeClient` 前检查；缺失能力时直接返回 `ErrorCode.CAPABILITY_REQUIRED`，而不是降级执行。
-
-`packages/server-core/src/transport/browser-capability.ts:11-86` 专门处理浏览器能力，定义 `BrowserCapabilityRequest` 与 `ScreenshotResultWire`：
-
-```ts
-interface ScreenshotResultWire {
-  imageBytes: Uint8Array;   // 直接走 base64
-  mime: string;
-  width: number; height: number;
-}
-```
-
-### 4.2 二进制：Uint8Array base64 编码
-
-`packages/server-core/src/transport/codec.ts:1-156` 的线协议：
-
-- envelope JSON 用 `u8 type` 前缀 + UTF-8 JSON。
-- `Uint8Array` 字段在线上编码为 base64 字符串，`validateEnvelopeShape` 校验关键字段存在与类型匹配。
-- 截图、附件等二进制一律走 `Uint8Array` → base64 → 反向解码，避免在 JSON 里嵌字符串编码带来的双重转义。
-
-### 4.3 推送通道
-
-`packages/shared/src/protocol/events.ts:18-73` 用 `BroadcastEventMap` 列出所有可广播事件类型。`PushTarget`（`packages/shared/src/protocol/types.ts`）取值：
-
-- `'all'`：所有连接客户端。
-- `'workspace'`：同一工作区的客户端。
-- `'client'`：仅 `rpcContext.callerClientId` 指定的客户端。
-
-服务端 `WsRpcServer.push()` 据此选择订阅集合，再按 §3.1 分配 `seq`。
-
-### 4.4 错误与中断码
-
-`packages/shared/src/protocol/types.ts:11-172` 定义：
-
-- `ErrorCode`：`HANDLER_TIMEOUT`、`CAPABILITY_REQUIRED`、`WORKSPACE_NOT_FOUND`、`SESSION_NOT_FOUND`、`PERMISSION_DENIED`、`INTERNAL_ERROR` 等。
-- `AbortReason`：`UserStop`、`Redirect`、`PlanSubmitted`、`AuthRequest`、`CompactionNeeded`。这些既用于 `forceAbort`（硬中止），也用于 `interruptForHandoff`（UI 移交）。
-- `MessageEnvelope`：`request|response|event|error|handshake|handshake_ack|sequence_ack`。
-
-## 5. 生命周期事件
-
-`packages/shared/src/protocol/dto.ts:167-211` 用判别联合定义 40+ 种 `SessionEvent`，按语义分组：
-
-| 类别 | 事件 |
-|------|------|
-| 创建/删除 | `SessionCreated`、`SessionDeleted`、`SessionArchived`、`SessionUnarchived` |
-| 状态变更 | `SessionStatusChange`、`SessionStart`、`SessionEnd`、`SessionRestart` |
-| 消息流 | `SessionMessageStream`（chunk/final）、`SessionTokenUsageUpdate`、`SessionCleared` |
-| 标签/权限 | `SessionLabelAdd`、`SessionLabelRemove`、`SessionPermissionModeChange`、`SessionThinkingLevelChange` |
-| 移交 | `SessionHandoffRequest`、`SessionTransferredSummaryApplied` |
-| 工具/计划 | `SessionToolStart`、`SessionToolEnd`、`SessionPlanSubmitted`、`SessionPlanAccepted` |
-| 错误 | `SessionError`、`SessionAborted`（携带 `AbortReason`） |
-
-`SessionManager.sendEvent` 通过注入的 `eventSink` 把事件送给 `WsRpcServer`，再由后者按 `PushTarget` 分发。客户端通过 `EventChannel` 订阅，UI 层据此重渲染。
-
-## 6. 远端鉴权与传输安全
-
-`packages/server/src/index.ts` 是无头 server 的入口：
-
-1. **TLS 配置**（`:98-112`）：从环境变量读取
-   - `CRAFT_RPC_TLS_CERT` / `CRAFT_RPC_TLS_KEY`（必填一对）
-   - `CRAFT_RPC_TLS_CA`（可选，用于客户端证书校验）
-   - 任一缺失即降级为明文 `ws://`。
-
-2. **Bearer Token**（`:119`）：`CRAFT_SERVER_TOKEN` 作为启动参数或环境变量；客户端必须在 handshake 的 `auth.token` 字段携带相同值。校验失败立即关闭连接，不返回任何业务信封。
-
-3. **明文拒绝**（`:315-336`）：
-   ```
-   if (!isLoopback(host) && !usingTls) {
-     refuse(...);   // 直接拒绝启动
-   }
-   ```
-   远程监听 + 明文 = 必然泄露 token，因此服务端拒绝以明文承载远程流量。
-
-4. **心跳**：`WsRpcServer` 每 30s 发 ping，连续两次未收到 pong 即 `terminate`，防止僵尸连接占用 `seq` 缓冲。
-
-5. **协议版本**：handshake 携带 `protocolVersion: '1.0'`；主版本号不一致立即拒绝。次版本号差异视为兼容。
-
-CLI 场景（`apps/cli/src/server-spawner.ts:55-149`）：父进程生成 UUID token，通过 `--token` 参数传给子进程，stdout 解析 `WS_URL=...` 获取端口，避免硬编码端口泄漏。
-
-## 7. Handoff 语义：硬中止 vs UI 移交
-
-Craft Agents 区分两种"打断"：
-
-### 7.1 硬中止（Hard Abort）
-
-用于**真正取消**，调用 `agent.forceAbort(reason)`（`SessionManager.ts:5334, 6061`）：
-
-- `AbortReason.UserStop`：用户点击停止 → 立即中止当前 turn + 清理消息队列 + 关闭浏览器/MCP/automation（见 `deleteSession` `SessionManager.ts:5322-5419`）。
-- `AbortReason.Redirect`：UI 重定向 fallback（例如切到新会话），强制拆解旧 agent 子进程。
-- `AbortReason.CompactionNeeded`：上下文压缩前的硬拆，随后由新 turn 恢复。
-
-硬中止后 `ManagedSession.wasInterrupted = true`，下一条消息按"新 turn"处理。
-
-### 7.2 UI 移交中断（UI Handoff Interrupt）
-
-用于**把控制权交回 UI**，调用 `agent.interruptForHandoff(reason)`（`SessionManager.ts:3915, 3974`）：
-
-- `AbortReason.PlanSubmitted`：Agent 输出计划 → 中断当前 turn，UI 显示"接受 / 拒绝 / 编辑"按钮。
-- `AbortReason.AuthRequest`：Agent 请求权限/凭证 → 中断 turn，UI 弹出权限对话框。
-
-移交中断保留上下文：UI 响应后用 `resumeWithPermission` / `resumeWithPlanDecision` 继续同一 turn，agent 子进程不销毁。
-
-### 7.3 Mid-stream 行为：steer vs queue
-
-`SessionManager.sendMessage`（`SessionManager.ts:5421-5729`）在 `isProcessing === true` 时根据 `resolveMidStreamBehavior(connection)` 决定：
-
-```ts
-// SessionManager.ts:5480-5539
-if (managed.isProcessing) {
-  const behavior = connection ? resolveMidStreamBehavior(connection) : 'steer';
-  let steered = false;
-  if (behavior === 'steer') {
-    steered = agent?.redirect(message) ?? false;   // Pi：注入到当前 turn
-  }
-  // 'queue': 跳过 redirect，让当前 turn 自然结束
-  if (!steered) {
-    managed.messageQueue.push({...});
-    managed.wasInterrupted = true;
-  }
-}
-```
-
-- **steer**（默认 Pi / pi_compat）：调用 `agent.redirect()` 把新消息作为重定向注入当前 LLM turn，立即影响输出。
-- **queue**（默认 Anthropic）：不动当前 turn，消息进队列，等当前 turn 结束后回放。
-
-`resolveMidStreamBehavior`（`packages/shared/src/config/llm-connections.ts`）封装了"无显式配置时的 fallback"，禁止业务代码直接 `connection.midStreamBehavior ?? ...`。
-
-### 7.4 远程工作区移交摘要
-
-跨工作区迁移会话时（例如从个人空间移交到团队空间），目标会话首 turn 注入一次性隐藏摘要：
-
-```ts
-// SessionManager.ts:3307-3314
-if (managed.transferredSessionSummary && !managed.transferredSessionSummaryApplied) {
-  injectHiddenContext(managed.transferredSessionSummary);
-  managed.transferredSessionSummaryApplied = true;
-  sendEvent({ type: 'SessionTransferredSummaryApplied', ... });
-}
-```
-
-`transferredSessionSummary` 是 `SESSION_PERSISTENT_FIELDS` 的一员（`types.ts:53`），配合 `transferredSessionSummaryApplied` 防止重复注入。典型流程：
-
-```
-源工作区 → SessionBundle 导出 → 远端调度
-       ↓
-目标工作区 → 接收 Bundle + 摘要 → 首次 turn 注入 → 标记 applied
-```
-
-## 8. 状态机：从创建到归档
+### 1.2 生命周期状态机
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Pending: createSession (slug 生成)
-    Pending --> Active: 首条 sendMessage
-    Active --> Processing: agent.sendMessage 进入 LLM 流
-    Processing --> Active: turn 完成 (SessionEnd)
-    Processing --> AwaitingPlan: interruptForHandoff(PlanSubmitted)
-    AwaitingPlan --> Processing: UI accept → resumeWithPlanDecision
-    AwaitingPlan --> Active: UI reject → wasInterrupted=true
-    Processing --> AwaitingAuth: interruptForHandoff(AuthRequest)
-    AwaitingAuth --> Processing: resumeWithPermission
-    Active --> Steered: mid-stream 'steer' (agent.redirect)
-    Steered --> Active
-    Active --> Queued: mid-stream 'queue' (push messageQueue)
-    Queued --> Processing: 当前 turn 结束后回放
-    Active --> Archived: archiveSession (isArchived=true, archivedAt=ts)
-    Archived --> Active: unarchiveSession
-    Active --> [*]: deleteSession (forceAbort UserStop + 清理 browser/MCP)
-    Processing --> [*]: forceAbort (UserStop/Redirect)
+    [*] --> Constructed: new SessionManager()
+    Constructed --> Initializing: bootstrap 调 sm.initialize()
+    Initializing --> Loaded: loadSessionsFromDisk()<br/>仅读 header, 消息懒加载
+    Initializing --> Failed: initGate.markFailed(err)
+
+    Loaded --> ColdInMemory: createSession() / 列表展示<br/>messagesLoaded=false
+    ColdInMemory --> WarmInMemory: ensureMessagesLoaded()<br/>或 persistSession 触发冷加载
+    WarmInMemory --> WarmInMemory: sendMessage() / 持久化<br/>persistSession → enqueue(500ms debounce)
+    WarmInMemory --> ColdInMemory: 卸载(当前实现保留内存)
+
+    Loaded --> Recovering: persistSession 命中<br/>messagesLoaded=false
+    Recovering --> WarmInMemory: hydrateMessagesForColdPersist()<br/>重排队列里的 orphaned 消息
+
+    state WarmInMemory {
+        [*] --> Idle
+        Idle --> Processing: sendMessage 落盘+flush后<br/>setProcessing(true)
+        Processing --> Idle: 流式结束<br/>setProcessing(false)
+        Processing --> Queued: mid-stream 消息(queue模式)<br/>messageQueue.push
+        Queued --> Processing: processNextQueuedMessage()
+    }
+
+    WarmInMemory --> [*]: flushSession() / flushAllSessions()<br/>deleteSession()
 ```
 
-## 9. 参考文件索引
+**关键证据**：
 
-| 主题 | 路径 |
-|------|------|
-| 持久化字段 | `packages/shared/src/sessions/types.ts:26-56` |
-| JSONL 原子写 | `packages/shared/src/sessions/jsonl.ts:150-164` |
-| 8KB 头读取 | `packages/shared/src/sessions/jsonl.ts:80-97` |
-| 可移植路径 | `packages/shared/src/sessions/jsonl.ts:30-50` |
-| 持久化队列 | `packages/shared/src/sessions/persistence-queue.ts:59-241` |
-| Slug 生成 | `packages/shared/src/sessions/slug-generator.ts:49-78` |
-| 存储目录布局 | `packages/shared/src/sessions/storage.ts:70-115` |
-| SessionBundle | `packages/shared/src/sessions/bundle.ts:60-74` |
-| SessionManager 类 | `packages/server-core/src/sessions/SessionManager.ts:1102-1305` |
-| deleteSession + 硬中止 | `packages/server-core/src/sessions/SessionManager.ts:5322-5419` |
-| sendMessage + mid-stream | `packages/server-core/src/sessions/SessionManager.ts:5421-5729` |
-| PlanSubmitted 移交 | `packages/server-core/src/sessions/SessionManager.ts:3915` |
-| AuthRequest 移交 | `packages/server-core/src/sessions/SessionManager.ts:3974` |
-| 移交摘要注入 | `packages/server-core/src/sessions/SessionManager.ts:3307-3314` |
-| WsRpcServer | `packages/server-core/src/transport/server.ts:122-365` |
-| 缓冲与重放 | `packages/server-core/src/transport/server.ts:746-799` |
-| WsRpcClient | `packages/server-core/src/transport/client.ts:109-653` |
-| Codec（Uint8Array base64） | `packages/server-core/src/transport/codec.ts:1-156` |
-| 能力常量 | `packages/server-core/src/transport/capabilities.ts:11-36` |
-| BrowserCapability | `packages/server-core/src/transport/browser-capability.ts:11-86` |
-| RoutedClient | `apps/electron/src/transport/routed-client.ts:40-255` |
-| CHANNEL_MAP | `apps/electron/src/transport/channel-map.ts:19-420` |
-| buildClientApi | `apps/electron/src/transport/build-api.ts:25-65` |
-| 无头 server 入口 | `packages/server/src/index.ts:1-354` |
-| CliRpcClient | `apps/cli/src/client.ts:38-239` |
-| CLI server spawner | `apps/cli/src/server-spawner.ts:55-149` |
-| RPC channels | `packages/shared/src/protocol/channels.ts:6-200` |
-| 推送事件 | `packages/shared/src/protocol/events.ts:18-73` |
-| 协议类型/错误码 | `packages/shared/src/protocol/types.ts:11-172` |
-| SessionEvent 联合 | `packages/shared/src/protocol/dto.ts:167-211` |
+- `initialize()`（`SessionManager.ts:1799-1832`）：跑迁移 → `reinitializeAuth()` → 为每个 workspace 预激活 `ConfigWatcher`/`AutomationSystem`（**关键：headless 服务器无 UI 也要让定时器/事件自动化启动**）→ `loadSessionsFromDisk()` → `initGate.markReady()`。
+- `loadSessionsFromDisk()`（`SessionManager.ts:1835-1896`）：对每个 workspace 调 `listStoredSessions()` 拿**元数据列表**（`listStoredSessions` 内部用 `readSessionHeader` 只读首行），`createManagedSession(meta, ...)` 但 `enabledSourceSlugs: undefined` —— 消息与延迟字段**不读**，等真正访问时再懒加载。
+- `persistSession()`（`SessionManager.ts:1916-1921`）：若 `!managed.messagesLoaded` 先同步 `hydrateMessagesForColdPersist()`（避免把空 `messages: []` 覆盖磁盘真实消息），再 `enqueuePersist()`。
+- 冷加载恢复（`SessionManager.ts:1945-1965`）：从磁盘读回消息时，扫描 `role==='user' && isQueued===true` 的「孤儿排队消息」（崩溃/重启留下的），重新塞回 `messageQueue` 并 `setImmediate(processNextQueuedMessage)` —— 这是崩溃恢复的核心。
 
-## 10. 小结
+### 1.3 调用链：打开会话 → 发消息落盘 → push 到 UI → 崩溃恢复
 
-Craft Agents 的"会话"是一组**协议、文件、子进程**的复合体：
+```
+用户在 renderer 点「发送」
+  → WsRpcClient.invoke('sessions:sendMessage', ...)  [client.ts:177]
+    → WsRpcServer.onRequest() 按 channel 分发          [server.ts:642]
+      → registerSessionsHandlers 注册的 sendMessage handler [rpc/sessions.ts]
+        → SessionManager.sendMessage(sid, msg, ..., onAck)  [SessionManager.ts:5421]
+          1. ensureMessagesLoaded(managed)           [懒加载消息, 若需要]
+          2. managed.messages.push(userMessage)      [内存态更新]
+          3. persistSession(managed)                  [SessionManager.ts:1916]
+             → enqueuePersist() → sessionPersistenceQueue.enqueue(stored)  [persistence-queue.ts:73]
+                (500ms debounce 后)
+                → SessionPersistenceQueue.write()     [persistence-queue.ts:90]
+                   → readSessionHeader(disk) 对比签名  [防外部改动被覆盖]
+                   → writeFile(filePath+'.tmp', lines)
+                   → unlink(filePath) → rename(tmp, filePath)  [atomic]
+          4. await this.flushSession(sid)            [#616: 落盘后才回 ack]
+          5. onAck?.(userMessage.id)                 [RPC handler 据此同步回 "accepted"]
+          6. sendEvent({type:'user_message', ...}, workspaceId)  [SessionManager.ts:7486]
+             → this.eventSink('session:event', {to:'workspace', workspaceId}, event)
+                ↑ eventSink = wsServer.push.bind(wsServer)  [headless-start.ts:345]
+             → WsRpcServer.push() 给匹配 workspace 的所有 client 推送  [server.ts:190]
+                → bufferAndMaybeSendEvent() 分配 seq + 存 ring buffer + safeSend
+          7. (流式) agent 持续回调 → pendingDeltas 批处理 → sendEvent('assistant_delta'...)
+          8. setProcessing(false) → 结束
 
-- **协议层**统一在 WsRpcServer/WsRpcClient 之上，Electron、无头 server、CLI 只是在同一协议上的不同部署形态。
-- **持久化层**以 JSONL 单文件为核心，配合原子写、签名比对、slug 化 ID，兼顾速度与可移植。
-- **生命周期**用判别联合描述 40+ 事件，通过 `PushTarget` 精准路由。
-- **Handoff** 严格区分硬中止（销毁子进程）与 UI 移交（保留上下文），并由 `midStreamBehavior` 决定中流消息是即时 steer 还是排队 queue。
+[崩溃场景: 进程在 step 7 被 kill]
+  → 重启后 loadSessionsFromDisk() 读回最后完整落盘的 JSONL
+  → 用户重新打开会话 → ensureMessagesLoaded 读消息
+  → 若发现 orphaned isQueued 消息 → 重排队重发 (SessionManager.ts:1945)
+  → 上次半截写坏的 .tmp 被 storage.ts:363-365 启动时 unlinkSync 清理
+  → JSONL 解析对坏行容错 (parseMessagesResilient, jsonl.ts:287)
+```
 
-这种分层让 Craft Agents 能在桌面、团队服务器、一次性 CLI 三种场景下复用同一套业务逻辑，同时保持 Claude SDK / Pi SDK 两种后端可替换。
+---
+
+## 二、JSONL 持久化与崩溃安全
+
+### 2.1 文件格式
+
+```
+{workspaceRootPath}/sessions/{sessionId}/session.jsonl   ← 真理源
+  ├── Line 1: SessionHeader (元数据 + 预计算字段)
+  ├── Line 2: StoredMessage (JSON)
+  ├── Line 3: StoredMessage
+  └── ...
+session.jsonl.tmp   ← atomic 写临时文件（崩溃残留会被启动清理）
+meta/{pi,claude}-turn-anchors.json   ← turn 锚点 sidecar（分支正确性用）
+```
+
+- `SessionHeader`（`shared/src/sessions/types.ts:216-302`）：完整 `SessionConfig` + 预计算字段 `messageCount`/`lastMessageRole`/`preview`/`tokenUsage`/`lastFinalMessageId`。
+- **8KB header 缓冲**：`readSessionHeader` 一次只 `readSync(fd, buffer, 0, 8192, 0)`（`jsonl.ts:80-84`），注释明确「8KB is plenty for metadata header」。这让「列出一万个会话」只读每个文件首 8KB，不解析消息。
+- **预计算的意义**：列表 UI 需要的「最后一条角色」「预览」「未读最后消息 id」都在写盘时算好存 header，列表加载**零消息解析**。
+
+### 2.2 Atomic 写（崩溃安全核心）
+
+存在**两套 atomic 写实现**，对应两种调用路径：
+
+#### 同步版 `writeSessionJsonl`（`jsonl.ts:150-164`）
+
+用于一次性写整份会话（如 branch 复制、import）。
+
+```typescript
+const tmpFile = sessionFile + '.tmp'
+writeFileSync(tmpFile, lines.join('\n') + '\n')
+try { unlinkSync(sessionFile) } catch { /* ignore */ }   // Windows: rename 需先删
+renameSync(tmpFile, sessionFile)
+```
+
+#### 异步版 `SessionPersistenceQueue.write`（`persistence-queue.ts:90-166`）
+
+用于运行时高频持久化（每次 `persistSession`）。这是**主路径**。
+
+```typescript
+// 1. 防 .tmp 并发竞态：签名提前更新
+const finalSignature = getHeaderMetadataSignature(header)
+this.lastWrittenHeaderSignature.set(sessionId, finalSignature)   // ← 在写之前
+// 2. atomic 写
+const tmpFile = filePath + '.tmp'
+await writeFile(tmpFile, lines.join('\n') + '\n', 'utf-8')
+try { await unlink(filePath) } catch {}
+await rename(tmpFile, filePath)
+```
+
+**为什么原子**：`rename`（POSIX）/「先 unlink 再 rename」（Windows）是文件系统级的原子操作。若进程在 `writeFile(tmp)` 中途崩溃：
+- 真正的 `session.jsonl` 完好无损（还是旧版本）；
+- 只有 `.tmp` 损坏；
+- 下次启动 `storage.ts:363-365` 用 `unlinkSync(tmpFile)` 清理残留 `.tmp`；
+- 即便 `.tmp` 残留混入读取，`parseMessagesResilient`（`jsonl.ts:287-299`）逐行 `JSON.parse`，坏行跳过不抛错——「丢一条好过丢全部」。
+
+#### Header 签名：防止外部改动被覆盖
+
+`getHeaderMetadataSignature`（`persistence-queue.ts:24-35`）对 `name/labels/isFlagged/sessionStatus/permissionMode/hasUnread/lastReadMessageId` 这 7 个「易被外部改动」的元数据字段算一个 JSON 签名。
+
+`write()` 在落盘前对比三方签名（`persistence-queue.ts:115-130`）：
+- `localSig`（本次要写的）
+- `diskSig`（当前磁盘上的）
+- `previousSig`（自己上次写的）
+
+若 `diskSig !== previousSig`（说明**别人**改了磁盘，如另一个实例、fs.watch 编辑），则走 `mergeHeaderWithExternalMetadata`：保留磁盘上那 7 个字段的值，只更新自己的部分。这避免了「debounced 队列里的陈旧快照覆盖用户刚在另一个窗口改的标题」。
+
+签名**在 `writeFile` 之前**设置（`persistence-queue.ts:154-155`），是为了让 `unlink`/`rename` 触发的 `fs.watch` 事件能被识别为「自己写的」而非外部改动（参见 `SessionManager.ts` 的 `METADATA_WRITE_GUARD_MS`/`onSessionMetadataChange` 防回滚逻辑）。
+
+#### 串行化：防 .tmp 文件竞态
+
+`flush()`（`persistence-queue.ts:173-194`）用 `writeInProgress: Map` 跟踪正在进行的写，新 flush **等待上一次写完成**才开始。注释（`persistence-queue.ts:55-57`）说明：连续两次快速 flush（如 `clearSessionForRecovery` + `onSdkSessionIdUpdate`）若并发写同一 `.tmp` 会损坏。整个队列是 **per-session 串行**的。
+
+### 2.3 `{{SESSION_PATH}}` 便携 token
+
+**What**：写盘前把会话目录的绝对路径替换成字面量 token `{{SESSION_PATH}}`，读盘时还原成当前实际路径。
+
+**Why**：会话内容里到处埋着会话目录绝对路径——datatable 的 `src`、planPath、附件 `storedPath` 等。如果硬编码绝对路径：
+- 会话从 `/Users/alice/.craft-agent/.../sessions/abc/` 拷到 `/home/bob/.../sessions/abc/`，所有路径失效；
+- Windows `C:\foo` 与 Mac `/foo` 路径分隔符不同；
+- branch 一个会话到新目录，源消息里的路径全错（历史 bug `#782`，见 release-notes/0.7.4.md）。
+
+**How**（`jsonl.ts:23-50`）：
+
+```typescript
+const SESSION_PATH_TOKEN = '{{SESSION_PATH}}'
+
+// 写：在 JSON.stringify 之后做替换，覆盖 JSON 字符串里任何位置的路径
+export function makeSessionPathPortable(jsonLine, sessionDir) {
+  const normalized = normalizePath(sessionDir)
+  let result = jsonLine.replaceAll(normalized, SESSION_PATH_TOKEN)
+  if (sessionDir !== normalized) {
+    const jsonEscaped = sessionDir.replaceAll('\\', '\\\\')   // Windows: C:\foo → C:\\foo
+    result = result.replaceAll(jsonEscaped, SESSION_PATH_TOKEN)
+  }
+  return result
+}
+
+// 读：在 JSON.parse 之前还原
+export function expandSessionPath(jsonLine, sessionDir) {
+  if (!jsonLine.includes(SESSION_PATH_TOKEN)) return jsonLine
+  return jsonLine.replaceAll(SESSION_PATH_TOKEN, normalizePath(sessionDir))
+}
+```
+
+**关键设计**：替换发生在 **stringify 之后 / parse 之前**，作用于整行 JSON 字符串而非结构化字段。这意味着路径无论藏在消息内容的哪个嵌套层（datatable src、tool input、附件元数据），都能被无损处理，无需对每种字段类型写专门逻辑。
+
+`writeSessionJsonl`/`persistence-queue.write` 对 header 和每条 message 都调 `makeSessionPathPortable`；`readSessionJsonl`/`readSessionMessages`/`readSessionHeader` 都调 `expandSessionPath`。配套还有 `toPortablePath`/`expandPath`（`utils/paths.ts`）处理 `workspaceRootPath`/`workingDirectory`/`sdkCwd`（`~` 展开）。
+
+---
+
+## 三、Transport 抽象
+
+### 3.1 三套 transport 的真相
+
+| 维度 | 本地桌面（Electron renderer） | 远端 Headless Server | CLI |
+|------|------------------------------|---------------------|-----|
+| **传输介质** | WebSocket（同一协议） | WebSocket（同一协议） | WebSocket（同一协议） |
+| **Server 绑定** | `127.0.0.1:0`（随机端口，无 auth） | `0.0.0.0:9100`（+ bearer token / cookie auth / 可选 TLS） | 连到上述任一 server |
+| **Client 实现** | `WsRpcClient`（全功能：reconnect、capabilities、seq） | `WsRpcClient`（同） | `CliRpcClient`（精简：无 reconnect、无 capabilities） |
+| **auth** | 无（localhost 信任） | bearer token 或 web cookie | bearer token |
+| **二进制** | envelope codec（`__craftRpcType`+base64） | 同 | 同 |
+| **典型来源** | `apps/electron/src/main/index.ts`（`bootstrapServer`，`rpcHost='127.0.0.1'`） | `packages/server` + `bootstrapServer`（`requireAuth:true`） | `apps/cli/src/{client,index,server-spawner}` |
+
+**核心结论**：三套 transport **共用同一份 WS RPC 实现**（`WsRpcServer` + `WsRpcClient`/`CliRpcClient` + 同一 `MessageEnvelope` + 同一 `codec`）。差异仅在**配置**（host/port/auth/TLS）和**客户端能力**（全功能 vs 精简）。这就是「同一组 method」能跨形态复用的根因——根本没有三套独立的 transport 代码。
+
+> **Electron 为何 renderer 也走 WS 而非 ipcMain**：让 renderer 进程的代码与远端 thin-client renderer 完全一致（`routed-client.ts` 包装两个 `WsRpcClient`：一个连本地 embedded server，一个连远端）。这样「本地桌面」与「远端瘦客户端」只是连不同 URL，renderer 业务代码零差异。`ipcMain.handle` 仅残留用于对话框桥（`index.ts:538` `__dialog:showMessageBox`）等少数 GUI-only 能力。
+
+### 3.2 三 transport 对照（连接模型）
+
+```mermaid
+graph TB
+    subgraph "变体 A: 本地 Electron"
+        EM["Electron Main<br/>bootstrapServer<br/>WsRpcServer 127.0.0.1"]
+        ER["Electron Renderer<br/>WsRpcClient (mode=local)<br/>clientCapabilities=LOCAL_*"]
+        EM -- "ws://127.0.0.1:随机端口<br/>无 auth" --> ER
+    end
+
+    subgraph "变体 B: 远端 Headless"
+        HS["Headless Server (VPS)<br/>bootstrapServer<br/>WsRpcServer 0.0.0.0:9100<br/>requireAuth + TLS"]
+        WC["WebUI / 远端 Electron<br/>WsRpcClient (mode=remote)<br/>token 或 cookie"]
+        HS -- "wss://vps:9100<br/>bearer / cookie" --> WC
+    end
+
+    subgraph "变体 C: CLI"
+        CLI["apps/cli<br/>CliRpcClient (无 reconnect/caps)<br/>server-spawner 可选自启 server"]
+        CLI -. "ws/wss + token" .-> HS
+        CLI -. "ws + token" .-> EM
+    end
+
+    SM["SessionManager (同一实例)<br/>eventSink = wsServer.push.bind(wsServer)"]
+    EM --> SM
+    HS --> SM
+
+    HANDLERS["registerCoreRpcHandlers(server, deps)<br/>server.handle(channel, handler)<br/>← 同一组 RPC_CHANNELS"]
+    SM -. 注入 .-> HANDLERS
+```
+
+### 3.3 `RpcServer` / `RpcClient` 接口（解耦的关键）
+
+`transport/types.ts`：
+
+```typescript
+export interface RpcServer {
+  handle(channel: string, handler: HandlerFn): void        // 注册 method
+  push(channel: string, target: PushTarget, ...args: any[]): void  // server→client 推送
+  invokeClient(clientId: string, channel: string, ...args: any[]): Promise<any>  // server→client 反向调用
+  hasClientCapability(clientId: string, capability: string): boolean
+  findClientsWithCapability(capability: string, opts?): string[]
+}
+
+export interface RpcClient {
+  invoke(channel: string, ...args: any[]): Promise<any>     // 调 method
+  on(channel: string, callback): () => void                  // 订阅 push
+  handleCapability(channel: string, handler): void           // 响应 server 的反向调用
+}
+
+export type EventSink = (channel: string, target: PushTarget, ...args: any[]) => void
+```
+
+**设计要点**：
+- handler 只依赖 `RpcServer` 接口，`WsRpcServer` 是其唯一实现。**理论上换 transport（如纯 in-memory / Electron ipcMain）只需新实现这个接口**，handler 零改动。
+- `PushTarget`（`protocol/types.ts:140-143`）三态：`all` / `workspace` / `client`。`WsRpcServer.matchesTarget`（`server.ts:801-813`）据此筛选客户端。
+- SessionManager 通过 `setEventSink(sink)` 拿到一个 `EventSink`（`SessionManager.ts:1203-1205`），bootstrap 时 `setSessionEventSink(sm, wsServer.push.bind(wsServer))`（`headless-start.ts:345`）把它绑成 WS server 的 push。**SM 因此不知道 transport 是什么**，只知道「调 sink 就能广播」。
+
+### 3.4 Method 注册：按 channel 分域
+
+`RPC_CHANNELS`（`shared/src/protocol/channels.ts`）是**单一字符串常量源**，按命名空间组织（`sessions.*` / `window.*` / `file.*` / `messaging.*` ...）。值（如 `'sessions:sendMessage'`）是**稳定的线上契约**，key 路径可自由重组。
+
+`registerCoreRpcHandlers`（`rpc/index.ts:29-49`）按域分文件注册（`sessions.ts`/`files.ts`/`sources.ts`...），每个文件 `server.handle(RPC_CHANNELS.xxx, handler)`。handler 闭包捕获 `deps.sessionManager`，所以 method 调用最终落到 SM。Electron 额外注册 GUI-only handler（`registerGuiRpcHandlers`：system/workspace/browser/settings），headless 不注册。
+
+---
+
+## 四、协议细节：envelope / codec / handshake / push
+
+### 4.1 MessageEnvelope（线上统一信封）
+
+`protocol/types.ts:20-63`。所有 transport、所有方向共用一个信封类型：
+
+| `type` | 方向 | 用途 |
+|--------|------|------|
+| `handshake` | client→server | 握手：带 `protocolVersion`/`workspaceId`/`token`/`webContentsId`/`clientCapabilities`/（重连）`reconnectClientId`+`lastSeq` |
+| `handshake_ack` | server→client | 回 `clientId`/`registeredChannels`/`serverVersion`/`reconnected`/`stale` |
+| `request` | 双向 | RPC 调用（client→server 正常 method；server→client 是 capability 反向调用） |
+| `response` | 双向 | 回 `result` 或 `error` |
+| `event` | server→client | push 推送，带 `seq` |
+| `error` | server→client | 协议级错误（握手拒绝、版本不符） |
+| `sequence_ack` | client→server | 确认已处理到 `lastSeq`，触发 server 端 ring buffer 清理 |
+
+协议版本 `PROTOCOL_VERSION = '1.0'`（`protocol/types.ts:149`），握手时按 **major 版本**匹配（`server.ts:420-427`），major 不符直接 `4004` 关闭。
+
+### 4.2 Codec：二进制能力
+
+`transport/codec.ts`。问题：JSON 不支持 `Uint8Array`（图片缩略图、附件字节）。解法是自定的 wire 格式：
+
+```typescript
+// 序列化：遇 Uint8Array / ArrayBuffer / TypedArray → 替换成
+{ "__craftRpcType": "u8", "base64": "<base64>" }
+// 递归处理数组/对象所有层级
+serializeEnvelope(env) = JSON.stringify(encodeWireValue(env))
+
+// 反序列化：识别该形状 → base64 解码回 Uint8Array
+deserializeEnvelope(raw) = validateEnvelopeShape(decodeWireValue(JSON.parse(raw)))
+```
+
+`validateEnvelopeShape`（`codec.ts:122-144`）做结构校验，防畸形信封。`CodedError`（`protocol/types.ts:127-134`）保证错误经 JSON 往返后 `.code` 仍在——接收方**必须按 `err.code === 'X'` 分支，不能用 `instanceof`**（类身份在线上会丢失）。
+
+### 4.3 Handshake 与 Capabilities 协商
+
+**Server 端**（`server.ts:401-600`）：
+1. 收 `handshake`，5 秒超时（`server.ts:386-390`）。
+2. 校验 `protocolVersion` major。
+3. 若 `requireAuth`：先试 bearer token（`validateToken`），失败再试 HTTP upgrade 的 Cookie（`validateSessionCookie`，web UI 用）。
+4. **重连分支**（`envelope.reconnectClientId`）：在 `disconnectedClients` 里找，校验 `workspaceId`+`webContentsId` 身份一致，重放 ring buffer 里 `seq > lastSeq` 的事件；buffer 已驱逐则回 `stale:true` 让客户端全量刷新。
+5. **新连接**：生成 `clientId`，存 `capabilities: new Set(envelope.clientCapabilities)`，回 `handshake_ack` 带 `registeredChannels`（客户端据此避免调用不存在的 channel）。
+
+**Client 端**（`client.ts:151-171` + 握手逻辑）：构造时传 `clientCapabilities`，握手时一并发出。`handleCapability(channel, handler)` 注册本地能响应的反向调用。
+
+**Capabilities 集合**（`transport/capabilities.ts`）：本地 Electron 客户端广告 `LOCAL_CLIENT_CAPABILITIES`（`client:openExternal`/`openPath`/`showItemInFolder`/`confirmDialog`/`openFileDialog`/`browser:invoke`）。这些是「server 无法自己做的、需要客户端 OS 代劳」的能力。SM 调 `findClientsWithCapability(CLIENT_BROWSER_INVOKE, {workspaceId})` 找一个能托管浏览器面板的桌面客户端（`SessionManager.ts:1296-1303`），把 `browser_*` 工具调用反向 RPC 过去——这就是「远端 Agent 驱动本地浏览器」的能力协商闭环。
+
+### 4.4 Push 通道（delta 推送 + 可靠投递）
+
+**delta 批处理**（SessionManager 侧）：`pendingDeltas: Map<sessionId, PendingDelta>` + `deltaFlushTimers`（`SessionManager.ts:1105-1106`）。流式 token 高频到来时先攒，定时 flush，把 IPC 事件从 50+/秒降到 ~20/秒。
+
+**push 路由**（`server.ts:190-202`）：`push(channel, target, ...args)` 遍历 `clients`（在线）+ `disconnectedClients`（断线但 TTL 内，buffer 还在收），对匹配 target 的每个 client `bufferAndMaybeSendEvent`。
+
+**可靠投递 seq 机制**（`server.ts:747-799`）：
+- 每个 client 有 `lastSentSeq`（单调递增）+ `lastAckedSeq` + `eventBuffer`（ring buffer）。
+- `bufferAndMaybeSendEvent`：`seq = ++lastSentSeq`，envelope 带 seq，存进 buffer（共享同一份序列化字符串，省内存），在线则立即 `safeSend`。
+- client 每 `SEQUENCE_ACK_INTERVAL_MS=5s` 发 `sequence_ack(lastSeq)`，server 据此驱逐 buffer 里已确认的旧事件（`server.ts:613-627`）。
+- buffer 有 TTL（`EVENT_BUFFER_TTL_MS=30s`）和容量（`EVENT_BUFFER_MAX_SIZE=500`）双重驱逐（`evictBuffer`，`server.ts:776-799`）。
+
+**断线重连 replay**（`server.ts:716-744`）：client 断开时进入 `disconnectedClients`（保留 `DISCONNECTED_CLIENT_TTL_MS=60s`），期间 buffer 继续收事件。重连时按 `lastSeq` 重放差量；若 `lastSeq < firstBufferedSeq - 1`（说明 buffer 已驱逐中间段），回 `stale:true` 强制客户端全量刷新。
+
+```mermaid
+sequenceDiagram
+    participant C as Client (WsRpcClient)
+    participant S as Server (WsRpcServer)
+    participant SM as SessionManager
+
+    Note over C,S: 握手
+    C->>S: handshake {protocolVersion, capabilities, workspaceId}
+    S->>C: handshake_ack {clientId, registeredChannels}
+
+    Note over C,SM: 正常 RPC
+    C->>S: request {channel:'sessions:sendMessage', args}
+    S->>SM: handler(ctx, ...args)
+    SM-->>S: result
+    S->>C: response {result}
+
+    Note over SM,C: push (流式 delta)
+    SM->>S: eventSink('session:event', {to:'workspace'}, event)
+    S->>S: seq++, buffer, evict
+    S->>C: event {seq:N, channel, args}
+    C->>C: lastSeenSeq=N
+    C-->>S: sequence_ack {lastSeq:N}   (每 5s)
+    S->>S: 驱逐 buffer 中 seq<=N 的事件
+
+    Note over C,S: 断线重连
+    C--xS: (网络断开, client 进 disconnectedClients, 60s TTL)
+    SM->>S: eventSink(...)  (buffer 继续收)
+    C->>S: handshake {reconnectClientId, lastSeq:N}
+    S->>S: 校验身份, evictBuffer, 算 replay
+    alt buffer 完整
+        S->>C: handshake_ack {reconnected:true} + 重放 seq>N 事件
+    else buffer 已驱逐
+        S->>C: handshake_ack {reconnected:true, stale:true}
+        C->>C: 触发全量刷新
+    end
+```
+
+---
+
+## 五、关键设计决策
+
+### 5.1 为什么 JSONL 而不是 SQLite/嵌入式 DB
+
+1. **会话是文档，不是行**：Craft Agents 的核心主张是「文档为中心」。JSONL 让会话天然可读、可 diff、可分享、可打包（`SessionBundle`）、可被外部工具处理。SQLite 是黑盒二进制，丧失这些。
+2. **首行 header = 零成本列表**：列表只需 8KB header 读取（`readSessionHeader`），消息懒加载。对「万级会话 + 频繁列表」场景，比「SELECT * 全字段再过滤」更省，且无需 DB 索引调优。
+3. **崩溃恢复简单**：append-only 语义 + 按行解析容错（`parseMessagesResilient`）。坏一行丢一条，不会 corrupt 整个 DB。
+4. **运维零成本**：无 DB 进程、无 schema 迁移、无并发锁。文件系统就是事务（atomic rename）。
+5. **便携性**：`{{SESSION_PATH}}` token 让会话跨机器迁移零摩擦——这是 DB 方案做不到的。
+
+代价：写放大（每次 persist 重写整份文件，非增量 append）。但 debounced 队列（500ms）+ per-session 串行 + 典型会话几百条消息，写量可控。这是「便携/可读」换「写性能」的有意识取舍。
+
+### 5.2 为什么三 transport 共用同一组 method
+
+1. **解耦的极致**：handler 只认 `RpcServer.handle` 接口。本地桌面、远端 server、CLI 三个部署形态用**同一份 handler 代码**，差异全在 bootstrap 配置。
+2. **renderer 业务代码零分支**：Electron renderer 用 `WsRpcClient` 连本地 embedded server，远端 thin-client renderer 用 `WsRpcClient` 连 VPS——**两份 renderer 代码完全相同**，只差 URL（`routed-client.ts` 包装切换）。这极大降低了「本地 vs 远端」两套代码路径的维护成本与 bug 面。
+3. **单一协议演进**：envelope/codec/handshake 只有一套。新增 capability、改 error code、加重连，所有形态同步受益。
+4. **能力协商自然落地**：因为 server 能反向 `invokeClient`，远端 Agent 驱动本地浏览器（`client:browser:invoke`）这种「跨主机能力调用」无需额外机制——就是 capability + 反向 RPC。
+
+### 5.3 为什么签名要「写之前」更新（顺序不变量）
+
+`persistence-queue.ts:154-161` 把 `lastWrittenHeaderSignature` 的更新放在 `writeFile`/`unlink`/`rename` **之前**。原因：`unlink`/`rename` 会触发 `fs.watch` 事件，SM 的 `onSessionMetadataChange` 会比对「自己上次写的签名」判断「这是不是我写的」。若签名在写之后才更新，watch 事件先到，SM 会误判为外部改动并回滚内存元数据——形成抖动。提前更新签名让「自写事件」被正确识别。这是典型的「顺序即不变量」设计，注释（`persistence-queue.ts:150-153`）明确点出。
+
+---
+
+## 待解决疑问
+
+1. **`ManagedSession` 完整字段定义**：本次未读 `ManagedSession` interface（在 `SessionManager.ts` 内部），只看到内存态 Map 的 key 类型。`_metadataWriteGuardUntil`/`messagesLoaded`/`messageQueue`/`wasInterrupted` 等运行时字段的完整形状需另查。
+2. **`refreshConnectionRuntime` 完整链路**：runtime-config 的 `buildRestartRequiredSignature`/`buildBackendRuntimeSignature`（`runtime-config.ts:50-70`）已读，但 `tryRefreshAgentRuntime` → 就地刷新 vs `disposeManagedAgentRuntime` 重建的决策树（`SessionManager.ts:2950-3080`）未逐行展开，仅从 CLAUDE.md 旁证理解。
+3. **`create-managed-session` 工厂**：`createManagedSession(meta, workspace, opts)`（`sessions/index.ts` 导出）的完整实现未读，只知它从 `SessionMetadata` 构造 `ManagedSession` 且不加载消息。
+4. **delta flush 的具体降频策略**：`pendingDeltas`/`deltaFlushTimers` 的 flush 间隔值与合并逻辑未在本次读到的代码段中确认（需定位 flush timer 设置点）。
+5. **WebUI cookie auth 全链路**：`validateSessionCookie` 的实现（web UI 会话 cookie 如何签发/校验）在 router worker 层，本次未深入。
+
+---
+
+## 摘要
+
+SessionManager 以 `sessions/{id}/session.jsonl` 为唯一真理源：首行 8KB `SessionHeader`（预计算 messageCount/preview 等）支撑万级会话秒列，消息按需懒加载。崩溃安全靠 atomic 写（`writeFile(.tmp)`→`unlink`→`rename`，两套同步/异步实现）+ 启动清理残留 `.tmp` + 坏行容错解析；header 7 字段签名在「写之前」更新以防外部改动被陈旧快照覆盖。`{{SESSION_PATH}}` token 在 stringify 后/parse 前对整行替换，让会话跨机器/跨平台/branch 无损迁移。三套「transport」实为同一 WebSocket RPC（`WsRpcServer`+`WsRpcClient`/`CliRpcClient`+统一 envelope+codec），差异仅在 host/auth/TLS 与客户端能力；handler 只认 `RpcServer.handle` 接口，故 Electron renderer/远端/CLI 共用同一组 `RPC_CHANNELS` method。SM 的 `eventSink` 绑到 `wsServer.push`，push 经 delta 批处理降频、按 seq 可靠投递、断线 60s 内 ring buffer replay（buffer 驱逐则回 stale 全量刷新）。capabilities 协商（`client:browser:invoke` 等）让远端 Agent 能反向驱动本地客户端 OS 能力。

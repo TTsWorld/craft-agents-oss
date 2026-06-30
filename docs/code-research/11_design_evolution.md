@@ -1,446 +1,596 @@
-# 第一性原理设计演化
+# 从 0 设计：Craft Agents 工作站：一步一步演进
 
-> Craft Agents OSS v0.10.4 · 代码研究 · 第 11 章
-> 范围：基于 docs/code-research/ 下已完成的事实型报告（01 架构、02 Agent 内核、03 会话传输、04 Sources/Credentials/Skills、05 数据流），从第一性原理重组设计决策链。
-> 重要声明：本章忽略按时间顺序的 commit 流，把每个设计决策视为"为了解决前一个设计的某个问题而引入"。引用格式 `relative-path:line`。
+> 本文档从第一性原理推演 Craft Agents（craft.do 开源 Agent 工作站，Bun monorepo，双 SDK）的设计演化链。**刻意忽略 commit 时间顺序**，回答："如果今天从零设计这套系统，最小方案是什么？为什么会被一步步逼成今天的样子？"所有结论附源码锚点（`文件路径` + 函数/类型），推断明确标注。
+>
+> 前置参考：`01_architecture.md`（架构全景）、`02_mechanism_agent.md`（Agent 内核三层抽象）、`03_mechanism_session_transport.md`（会话与传输）、`04_mechanism_sources_credentials_skills.md`（Sources/凭证/技能）、`05_data_flow.md`（数据流）、`09_evolution_history.md`（commit 史）。
 
-## 0. 总览：把 12 个设计决策串成一条演化链
+---
+
+## 这一节解决什么问题
+
+本节不复述源码，也不复述提交历史。它要做的是：**抛开时间线，用一条"问题→决策→代价"的因果链，解释 Craft Agents 为何长成今天这样**——为什么是双 SDK 而不是单 SDK？为什么 JSONL 而不是 SQLite？为什么 Electron renderer 也走 WS 而不是 IPC？为什么会有 `claudeCliPath` 这种"指鹿为马"的字段名？
+
+读完应能：用一句话解释任何一个"奇怪设计"是被什么问题逼出来的；说出 3 个尚未解决的设计张力及现状。
+
+---
+
+## 第一性原理
+
+**系统要解决的根本问题**：让人类以"管理文档"的方式与多家最强 AI Agent（Claude、Pi/Gemini/GPT/Copilot 等）协作——会话是一等公民（可收件、可状态流转、可标签、可归档、可分享），且能零配置接入任意 MCP/REST API/本地源、被 IM 自动化事件驱动、跨桌面/远端/CLI/Web 四形态复用同一内核。
+
+**最小可行设计**：一个进程 + 一个 SDK（Claude Agent SDK）+ 一个 Electron 窗口 + 会话存内存。这正是 OSS 起点（`0fe831b`，v0.2.x，`package.json` 名为单数 `craft-agent`，`description: "Claude Code-like agent for Craft documents"`）的形态——它够用，但只够用一瞬。
+
+**不可违背的约束**：
+- **崩溃安全**：Agent 会话动辄几十分钟、上百条消息，落盘中途崩溃不能整段丢失。
+- **跨形态复用**：同一份业务逻辑必须同时驱动 Electron / Headless Server / CLI / WebUI，否则四份代码迅速漂移。
+- **多 Provider 中立**：不能强绑单一 LLM 厂商（Anthropic），否则一个上游变更就瘫痪。
+- **机密性**：OAuth token / API key 不能明文落盘，也不能频繁弹系统钥匙串。
+- **进程隔离**：第三方 MCP server、Pi SDK、WhatsApp 协议栈崩溃不能拖垮主进程。
+- **可观测/可分享**：会话必须可读、可 diff、可跨机器迁移——它是"文档"。
+
+**主要权衡轴**：
+- 简单性 vs 可靠性（atomic write 的写放大 vs SQLite 的运维）
+- 灵活性 vs 学习成本（双 backend 抽象 vs 单 SDK 直连）
+- 便携性 vs 性能（JSONL 文件 vs 嵌入式 DB）
+- 上游跟随 vs 自主控制（native binary 化石 vs 自管 CLI）
+
+---
+
+## 北极星三角：三位一体的取舍标准是否成立？
+
+研究目标要求核实「**文档为中心（Document-Centric）+ Agent 原生（Agent-Native）+ 跨形态复用（Multi-Form Reuse）**」三位一体是否真是贯穿全局的取舍标准。**结论：成立，且三条轴互为因果**——下面给源码锚点逐一论证。
+
+```mermaid
+flowchart TD
+    DC["① 文档为中心 Document-Centric<br/>JSONL 即文档 / 可分享 / 可迁移"]
+    AN["② Agent 原生 Agent-Native<br/>会话是一等公民 / 零配置连接 / IM 自动化"]
+    MR["③ 跨形态复用 Multi-Form Reuse<br/>server-core 泛型内核 / WS RPC / capabilities"]
+
+    DC -->|"会话即文档→必须可分享可迁移<br/>→催生 SessionBundle + {{SESSION_PATH}}"| AN
+    AN -->|"会话是一等公民→必须随处可用<br/>→催生 server-core 剥离 + 四形态"| MR
+    MR -->|"四形态共用内核→会话格式必须中立<br/>→JSONL 而非 SQLite/进程内存"| DC
+
+    DC -.锚点.-> A1["sessions/jsonl.ts:80 readSessionHeader<br/>sessions/bundle.ts SessionBundle"]
+    AN -.锚点.-> A2["sessions/SessionManager.ts:7558 executePromptAutomation<br/>messaging-gateway registry.ts:106 setAutomationBinder"]
+    MR -.锚点.-> A3["bootstrap/headless-start.ts:258 bootstrapServer&lt;T,T&gt;<br/>transport/types.ts:15 RpcServer"]
+```
+
+### ① 文档为中心（Document-Centric）—— 锚点坐实
+
+**JSONL 即文档**：会话以 `{workspaceRootPath}/sessions/{id}/session.jsonl` 落盘，首行 `SessionHeader`（预计算 messageCount/preview/tokenUsage），第 2 行起每行一条 `StoredMessage`（`packages/shared/src/sessions/jsonl.ts:5` 注释「Line 1 = SessionHeader, Lines 2+ = StoredMessage」）。`readSessionHeader` 只读首行 8KB（`jsonl.ts:80-84`，`Buffer.alloc(8192)` 注释「8KB is plenty for metadata header」）——这是"会话是文档"的物理体现：列表 UI 像翻文件柜抽屉卡片，零消息解析。
+
+**可分享**：`SessionBundle`（`packages/shared/src/sessions/bundle.ts:4` 注释「portable representation of a session directory」）把整个会话目录打包成可传输形态，`apps/viewer` 是纯前端只读分享视图（`agents.craft.do/s/<id>`）——会话像 Google Doc 一样可发链接。
+
+**可迁移**：`{{SESSION_PATH}}` 便携 token（`jsonl.ts:23`）在 stringify 后/parse 前对整行 JSON 替换绝对路径，让会话从 Mac 拷到 Linux、从 `/Users/alice` 拷到 `/home/bob` 无损迁移。**这条决策直接排除了 SQLite**——黑盒二进制 DB 做不到便携、可读、可 diff（详见决策链 D2）。
+
+### ② Agent 原生（Agent-Native）—— 锚点坐实
+
+**会话是一等公民**：`SessionManager`（`packages/server-core/src/sessions/SessionManager.ts`，8090 行）是业务核心，会话有完整生命周期状态机（Idle→Processing→Handoff→Idle）、收件箱语义（`hasUnread`/`lastReadMessageId`/未读摘要）、状态工作流（`sessionStatus`）、标签（`labels`）、归档。**这不是"聊天记录"，而是"待办文档"**。
+
+**零配置连接任意服务**：三类 Source 同契约（`SourceType = 'mcp' | 'api' | 'local'`，`packages/shared/src/sources/types.ts:16`），靠 `type` 字段选互斥子块，连接产出的"工具"对上层一致——接新服务只需声明 config，不写代码（决策链 D4）。
+
+**IM 自动化驱动**：`executePromptAutomation`（`SessionManager.ts:7558`）让 cron/标签变化/工具调用等事件自动 spawn 会话；`messaging-gateway` 通过 `setAutomationBinder`（`registry.ts:106`）把会话绑定到 Telegram topic / Lark 群——Agent "住"在 IM 里，这是"Agent Native"的产品化。
+
+### ③ 跨形态复用（Multi-Form Reuse）—— 锚点坐实
+
+**泛型内核**：`bootstrapServer<TSessionManager, THandlerDeps>()`（`packages/server-core/src/bootstrap/headless-start.ts:258`）把"可变部分"（`platformFactory`/`createSessionManager`/`createHandlerDeps`/`registerAllRpcHandlers`/...）全部抽成回调 options，"不变部分"是固定启动序列（token 校验→platform→配置→启动锁→SessionManager→WsRpcServer→handler 注册→event sink）。Electron main（`apps/electron/src/main/index.ts:627`）与 Headless Server（`packages/server/src/index.ts:168`）调**同一段启动代码**。
+
+**WS RPC 统一传输**：`RpcServer`/`RpcClient` 接口（`transport/types.ts:15-32`）是跨形态契约基石。Electron renderer 经 `WsRpcClient` 连 `ws://127.0.0.1`，远端 thin-client 连 `wss://vps`，CLI 用 `CliRpcClient`——**业务代码零分支**，差异仅在 URL 与客户端能力（决策链 D3）。
+
+**capabilities 协商**：`LOCAL_CLIENT_CAPABILITIES`（`capabilities.ts:29`，含 `client:browser:invoke`）让远端 server 能反向 `invokeClient` 调用本地客户端的 OS 能力（如驱动本地浏览器面板）——这是"远端算力 + 本地 GUI"可组合的必要条件（决策链 D8）。
+
+### 三角的因果闭环
+
+三条轴不是并列的，而是**互为因果的闭环**：
+- 因为"文档为中心"（JSONL），会话天然可分享可迁移 → 催生"Agent 原生"（会话是一等公民，能被分享/自动化）。
+- 因为"Agent 原生"（会话要随处可用），内核必须脱离单一宿主 → 催生"跨形态复用"（server-core 剥离）。
+- 因为"跨形态复用"（四形态共用内核），会话格式必须中立便携 → 反向强化"文档为中心"（JSONL 而非进程内存/SQLite）。
+
+**这就是贯穿全局的取舍标准。**后续每一个设计决策，都可以追溯到这三条轴之一被某个"问题"逼到了墙角。
+
+---
+
+## 总体演进地图
+
+```mermaid
+flowchart TD
+    D0["D0 最小设计<br/>单 SDK + Electron 单体 + 会话存内存"]
+    D1["D1 多 Provider<br/>双 backend 抽象 ClaudeAgent/PiAgent"]
+    D2["D2 持久化<br/>JSONL 即文档 + atomic 写"]
+    D3["D3 内核剥离<br/>server-core + WS RPC + 四形态"]
+    D4["D4 Sources 统一<br/>三类同契约 + 凭证统一"]
+    D5["D5 Agent-Native 连接<br/>自动发现/读文档/配凭证"]
+    D6["D6 进程隔离<br/>subprocess 隔离 Pi/MCP/WhatsApp"]
+    D7["D7 外部接入<br/>automation event-bus + messaging-gateway"]
+    D8["D8 远端 GUI 桥接<br/>capabilities 协商 + 反向 invoke"]
+    D9["D9 权限治理<br/>三级模式 + env 黑名单 + 凭证隔离"]
+    D10["D10 Prompt 缓存<br/>volatile/stable 分离"]
+    D11["D11 上游跟随治理<br/>native binary / scope 迁移 / 版本锁定"]
+
+    D0 --> D1
+    D0 --> D2
+    D1 --> D6
+    D2 --> D3
+    D3 --> D7
+    D3 --> D8
+    D4 --> D5
+    D4 --> D9
+    D6 --> D9
+    D1 --> D10
+    D1 --> D11
+    D6 --> D11
+```
+
+| 决策 | 最小设计 | 暴露问题 | 新增设计 | 复杂度代价 | 当前代码锚点 |
+|------|----------|----------|----------|------------|--------------|
+| D1 | 单 Claude SDK | 要接 OpenAI 等 | 双 backend 抽象 | 双 SDK 同步防漂移 | `backend/types.ts:337` `AgentBackend` |
+| D2 | 会话存内存 | 崩溃/分享/回放 | JSONL + atomic 写 | 写放大/解析/header 维护 | `jsonl.ts:80` `persistence-queue.ts:157` |
+| D3 | Electron 单体 | 远端/CLI/无头 | server-core + WS RPC | transport 抽象/capabilities | `headless-start.ts:258` `transport/types.ts:15` |
+| D4 | 硬编码工具 | 接任意 API/MCP | 三类 Source 同契约 | Source/credential 复杂度 | `sources/types.ts:16` |
+| D5 | 手动配置 | "说一句就连" | 自动发现/读文档/配凭证 | 不可预测性/权限模型 | `BaseAgent.extractSkillPaths` |
+| D6 | 单进程 | MCP/Pi 崩溃 | subprocess 隔离 | 多进程通信复杂度 | `pi-agent.ts:388` `whatsapp/index.ts:153` |
+| D7 | 本地触发 | 外部系统接入 | event-bus + gateway | 协议收敛/循环依赖治理 | `registry.ts:106` `event-fanout.ts:26` |
+| D8 | 本地浏览器 | 远端缺 GUI | capabilities 协商 | 反向 RPC/安全 | `capabilities.ts:29` |
+| D9 | 全放行 | 安全/机密 | 三级权限 + env 黑名单 | 三套实现同步 | `mode-types.ts:24` `mcp/client.ts` |
+| D10 | 全进 system prompt | 击穿缓存 | volatile/stable 分离 | 每 turn 仅一次约束 | `prompt-builder.ts:105` |
+| D11 | caret 版本 | 上游频繁冲突 | native binary + 精确锁定 | bundle 膨胀/命名化石 | `runtime-resolver.ts:19` |
+
+---
+
+## 分阶段推演
+
+### D1：单 SDK → 多 Provider 需求 → 双 backend 抽象
+
+**最小方案**：直接调 `@anthropic-ai/claude-agent-sdk` 的 `query()`，UI/Session 层 import SDK。
+
+**为什么不够**：用户要接 OpenAI、Gemini、Copilot、OpenRouter、Ollama。若每个 provider 直接在 UI 层分支，每个特性（权限、技能、流式中断、源管理）都要写 N 遍且极易漂移。OSS 早期 v0.4.0 曾试过"Codex/OpenAI 独立 backend"路线（`packages/codex-types`），**只活了一个版本就被 Pi SDK 统一取代**（v0.5.0 release notes Breaking Changes：standalone Codex/Copilot backends replaced by unified Pi SDK backend）——这是"自造多 provider 抽象成本过高"的实证。
+
+**新增设计**：建立三层抽象——`AgentBackend`（接口，统一对外契约）→ `BaseAgent`（抽象类，收敛横切逻辑）→ `ClaudeAgent`/`PiAgent`（具体类，特化差异）。`factory.ts` 按 `providerType` 路由，新增厂商默认走 Pi 通道。
+
+**复杂度代价**：
+- **双 SDK 同步防漂移**：两套 SDK 的运行模型根本不同（Claude 是原生二进制 in-process 异步流，Pi 是 JSONL-over-stdio 子进程）。`BaseAgent` 收敛了"不变部分"（生命周期、权限、技能注入），但"特异部分"（steer 机制、thinking 映射、prompt 落点）仍需两处实现。release notes 反复出现漂移证据：v0.6.0「Aligned tool listing across all backends to prevent drift」、v0.9.2「Pi backend silently dropped the Craft system prompt … Anthropic backend was unaffected」。
+- **mid-stream 行为不对称**：Pi 原生 `.steer()` 无副作用，Claude 的 steer 是模拟（无工具调用时失败），被迫做成"每连接可配 + provider 默认"。
+
+**当前代码锚点**：
+- `packages/shared/src/agent/backend/types.ts:337` `AgentBackend`（接口，~40 方法 + 7 回调）
+- `packages/shared/src/agent/base-agent.ts:162` `BaseAgent`（`chat()` 模板方法 `:1008`，`chatImpl` 抽象 `:1069`）
+- `packages/shared/src/agent/claude-agent.ts:471` `ClaudeAgent extends BaseAgent`（向后兼容别名 `CraftAgent` `:2900`）
+- `packages/shared/src/agent/pi-agent.ts:157` `PiAgent extends BaseAgent`
+- `packages/shared/src/agent/backend/factory.ts:132` `createBackend`（按 `config.provider` switch）；`:251` `providerTypeToAgentProvider`
 
 ```mermaid
 flowchart LR
-  D1["1.单SDK"] -->|多provider需求| D2["2.双SDK"]
-  D2 -->|多形态共享内核| D3["3.多形态"]
-  D3 -->|跨端复用| D4["4.WsRpc抽象"]
-  D4 -->|崩溃恢复| D5["5.JSONL增量"]
-  D5 -->|凭据安全| D6["6.AES+机器绑定"]
-  D6 -->|统一权限/mention| D7["7.Source抽象"]
-  D7 -->|token预算| D8["8.volatile/stable分离"]
-  D8 -->|计划只读需求| D9["9.三态权限"]
-  D9 -->|用户体验| D10["10.mid-stream queue/steer"]
-  D10 -->|多客户端订阅| D11["11.EventSink+环形"]
-  D11 -->|场景化| D12["12.cron+事件自动化"]
-  D12 -->|多平台分发| D13["13.messaging-gateway"]
-
-  D2 -.暴露问题.-> P2[网络拦截器只对Pi生效]
-  D3 -.暴露问题.-> P3[Bun/Node/Electron 三runtime分裂]
-  D4 -.暴露问题.-> P4[EventEmitter 多订阅/重放弱]
-  D5 -.暴露问题.-> P5[8KB header 上限]
-  D7 -.暴露问题.-> P7[Skill requiredSources 未实现]
-  D11 -.暴露问题.-> P11[背压/能力协商复杂度]
+    A["单 SDK 直连"] --> B{"要接多 Provider"}
+    B --> C["v0.4 独立 backend 各写一套"]
+    C --> D{"维护成本爆炸"}
+    D --> E["v0.5 Pi SDK 统一 + 三层抽象"]
+    E --> F["AgentBackend/BaseAgent/ClaudeAgent,PiAgent"]
 ```
+
+---
+
+### D2：单会话内存态 → 崩溃/分享/回放需求 → JSONL 即文档 + atomic 写
+
+**最小方案**：会话消息存进程内存 `Message[]`，不落盘。
+
+**为什么不够**：
+- **崩溃即丢失**：Agent 会话动辄几十分钟。进程被 kill / 断电 / 崩溃，整段对话没了。
+- **无法分享**：内存态无法像文档一样发链接、跨机器迁移。
+- **无法回放/分支**：没有持久化就没有 fork 对话探索不同路径。
+
+**新增设计**：会话以 JSONL 文件落盘（首行 header + 每行一条 message），atomic 写保证崩溃安全，`{{SESSION_PATH}}` token 保证跨机器迁移。
+
+**复杂度代价**：
+- **写放大**：每次 persist 重写整份文件（非增量 append），而非 SQLite 的行级写。但 debounced 队列（500ms）+ per-session 串行 + 典型会话几百条消息，写量可控——这是"便携/可读"换"写性能"的有意识取舍。
+- **header 维护**：列表 UI 需要的 messageCount/preview/lastFinalMessageId 必须在写盘时预计算进 header，否则列表加载要解析全部消息。
+- **签名防回退竞态**：atomic write 的 `unlink`/`rename` 会触发 `fs.watch`，SM 的 watcher 可能误判为外部改动并回滚内存元数据——被迫引入"签名在写之前更新"的顺序不变量（`persistence-queue.ts:154`）。
+- **冷启动恢复**：要扫描 `isQueued===true` 的孤儿消息重排队（崩溃遗留），还要启动时清理残留 `.tmp`。
+
+**为什么不是 SQLite**：JSONL 让会话天然可读、可 diff、可分享（`SessionBundle`）、可被外部工具处理、可跨机器迁移（`{{SESSION_PATH}}`）。SQLite 是黑盒二进制，丧失这些——**这直接服务于"文档为中心"北极星**。
+
+**当前代码锚点**：
+- `packages/shared/src/sessions/jsonl.ts:80` `readSessionHeader`（8KB 首行）、`:23` `SESSION_PATH_TOKEN`、`:150` 同步 atomic 写
+- `packages/shared/src/sessions/persistence-queue.ts:157` 异步 atomic 写（`writeFile(.tmp)`→`unlink`→`rename`）、`:154` 签名提前更新
+- `packages/shared/src/sessions/bundle.ts:4` `SessionBundle`（portable representation）
+- `packages/shared/src/sessions/storage.ts:363` 启动清理残留 `.tmp`
+
+---
+
+### D3：单桌面形态 → 远端/CLI/多设备需求 → 内核剥离 server-core + WS RPC
+
+**最小方案**：Agent 逻辑、UI、传输全塞进 Electron 主进程，renderer 经 Electron IPC 调主进程。
+
+**为什么不够**：
+- **强绑 Electron**：无法在 Linux VPS / Docker / CI 无头运行，无法做远端 server。
+- **无法多形态复用**：CLI、WebUI、移动端各写一份业务逻辑，迅速漂移。
+- **IPC 污染内核**：handler 直接依赖 `ipcMain.handle`，换传输就要重写所有 method。
+
+**新增设计**：把"server 生命周期 + RPC + session 编排 + handler"抽成泛型 `bootstrapServer<TSessionManager, THandlerDeps>()`，让 Electron 与 headless 用**同一段启动代码**。**关键决策：Electron renderer 也走 WS RPC 而非 Electron IPC**——main 内嵌 WsRpcServer，renderer 经 `WsRpcClient` 连 `ws://127.0.0.1`。这样"本地桌面"与"远端瘦客户端"renderer 代码完全相同，只差 URL。
+
+**复杂度代价**：
+- **transport 抽象层**：要定义 `RpcServer`/`RpcClient` 接口、envelope 信封、codec（二进制 Uint8Array 经 base64 往返）、handshake、capabilities 协商。
+- **capabilities 协商机制**：远端 server 缺 GUI，要能反向 `invokeClient` 调本地浏览器/对话框——引入 `LOCAL_CLIENT_CAPABILITIES` + `hasClientCapability`/`findClientsWithCapability`。
+- **协议形式化**：channels/DTO/event map 必须落到 `shared/protocol` 并有 wire-format 稳定性测试，否则跨形态版本不兼容。
+- **Electron IPC 残留**：少数 GUI-only 能力（`__dialog:showMessageBox`、`shell.openExternal`）仍走 `ipcMain.handle`，形成"主 RPC 走 WS、GUI 桥走 IPC"的双轨。
+
+**当前代码锚点**：
+- `packages/server-core/src/bootstrap/headless-start.ts:258` `bootstrapServer<T,T>`
+- `packages/server-core/src/transport/types.ts:15` `RpcServer` 接口（`handle`/`push`/`invokeClient`/`hasClientCapability`）
+- `apps/electron/src/preload/bootstrap.ts:103` renderer 经 `WsRpcClient` 连本地 WS（非 IPC）
+- `apps/electron/src/transport/routed-client.ts` `RoutedClient`（LOCAL_ONLY vs REMOTE_ELIGIBLE 路由）
+
+> **推断**：v0.6.0 的 `pi-agent-server` 子进程化（"Agent 逻辑可脱离 Electron 进程"）为 v0.7.0 的 server-core 剥离做了技术验证（时间相邻 + 同主题），是"剥离子进程可行"的先行实验。
+
+---
+
+### D4：硬编码工具 → 接任意 API/MCP 需求 → 三类 Source 同契约 + 凭证统一
+
+**最小方案**：工具集硬编码在代码里（Read/Write/Bash 等内置工具）。
+
+**为什么不够**：用户要接 Linear、Slack、GitHub、自定义 REST API、本地 Obsidian 库。每接一个都得写一套独立的连接、鉴权、prompt 注入逻辑——膨胀且易错。这是"零配置连接任意服务"产品承诺的硬需求。
+
+**新增设计**：三类 Source 共用 `FolderSourceConfig`，靠 `type: 'mcp' | 'api' | 'local'` 选互斥子块。**差异只在"如何连接"，连接产出的"工具"对上层一致**：MCP 源暴露 stdio/http MCP 工具，API 源被 `api-tools.ts` 包装成 in-process SDK MCP server，local 源提供文件路径上下文。凭证由 `SourceCredentialManager` 按规则映射到统一的 `source_oauth/source_bearer/source_apikey/source_basic` 四个槽。
+
+**复杂度代价**：
+- **Source 契约复杂度**：`FolderSourceConfig` 要容纳三种互斥子块 + 各自的 authType/transport/renewEndpoint。
+- **凭证体系膨胀**：OAuth（prepare/exchange/refresh，provider 路由 google/slack/microsoft/generic/mcp）、bearer/apikey/basic、自定义 renew endpoint、token 自动刷新限流（5min cooldown 防狂刷被封）。
+- **跨进程凭证传递**：MCP 子进程无 keychain 访问权，主进程要把解密 token 写 `.credential-cache.json` 给子进程读——机密性责任集中在主进程。
+- **builtin source 弃用残留**：`getDocsSource()` 返回 placeholder 但 `craft-agents-docs` 实际作为 always-on MCP 直接配置，builtin 体系已弃用却保留兼容（`04` 报告待解决疑问）。
+
+**当前代码锚点**：
+- `packages/shared/src/sources/types.ts:16` `SourceType = 'mcp' | 'api' | 'local'`、`:441` `FolderSourceConfig`、`:451` `type: SourceType`
+- `packages/shared/src/sources/credential-manager.ts:1329` `sourceNeedsAuthentication`
+- `packages/shared/src/credentials/backends/secure-storage.ts:44` `credentials.enc`（AES-256-GCM）
+- `packages/session-mcp-server/src/index.ts:95-145` 子进程读 `.credential-cache.json`
+
+---
+
+### D5：手动配置 → agent-native「说一句就连」需求 → 自动发现/读文档/配凭证
+
+**最小方案**：用户手动填 baseUrl、API key、写系统提示词告诉 Agent 怎么用。
+
+**为什么不够**：产品主张是"agent-native"——用户 `[source:linear]` 一 mention，Agent 就该自动连上、读懂 guide、调对工具。手动配置违背"零配置连接任意服务"承诺。
+
+**新增设计**：
+- **@mention 即时激活**：`parseMentions()` 解析 `[source:linear]`/`[skill:commit]`，`SourceManager.formatSourceState()` 每轮生成 `<sources>` XML 块注入 prompt，对有 guide 的源强制要求"先 Read guide.md 才能调工具"。
+- **技能 read-before-execute**：`BaseAgent.extractSkillPaths()` 解析 `[skill:slug]` 成 `SKILL.md` 绝对路径但**不读文件**，由 `PrerequisiteManager` 在工具调用前拦截，直到读完才放行——这让 Agent "发现"技能而非"被告知"。
+- **OAuth 自动发现**：WebUI OAuth relay 用稳定回调 `https://agents.craft.do/auth/callback`，把真正回调编码进 state 信封，Google 等只需注册一个地址。
+
+**复杂度代价**：
+- **不可预测性**：Agent 自动激活源、自动读 guide，行为路径变长，调试困难。
+- **权限模型复杂化**：自动激活的源可能触发危险工具，被迫引入三级权限模式（safe/ask/allow-all）+ source 激活 mid-turn 自动重试去重（`autoRetryPending`，#804）。
+- **guide 强制读取的脆弱性**：依赖 LLM 真的去 Read guide.md，若 LLM 跳过就读不懂工具。
+
+**当前代码锚点**：
+- `packages/shared/src/agent/base-agent.ts:930` `extractSkillPaths`、`:1022` `prerequisiteManager.registerSkillPrerequisites`
+- `packages/shared/src/agent/core/source-manager.ts:159` `formatSourceState`
+- `packages/shared/src/mentions/index.ts:62` `parseMentions`
+- `packages/shared/src/auth/oauth-relay.ts` WebUI OAuth relay
+
+---
+
+### D6：单进程 → MCP/Pi 崩溃隔离需求 → subprocess 隔离
+
+**最小方案**：所有逻辑（Agent SDK、MCP server、IM 协议栈）跑在主进程。
+
+**为什么不够**：
+- **Pi SDK 是 ESM + 重依赖**，直接进 Electron 主进程有打包/隔离问题。
+- **第三方 MCP server 可能崩溃/段错误**，拖垮主进程等于拖垮所有会话。
+- **WhatsApp 用 Baileys 重实现非官方协议**，密码学依赖（libsignal/curve25519）**只能跑在 Node，Bun 跑不了**。
+
+**新增设计**：把不稳定/异构的部分 spawn 成独立子进程，用 stdio 协议通信。
+- `pi-agent-server`：JSONL over stdio（崩溃/段错误隔离、工具执行隔离、内存隔离）。
+- `session-mcp-server`：MCP stdio（向 Codex 暴露会话工具，回调用 stderr `__CALLBACK__` 前缀 JSON）。
+- `messaging-whatsapp-worker`：NDJSON over stdio（强制 Node，Baileys 全树 bundle）。
+
+**复杂度代价**：
+- **多进程通信复杂度**：三套不同的 stdio 协议（JSONL / MCP / NDJSON），每套要定义消息类型、分帧、错误处理。
+- **Node vs Bun runtime 分裂**：WhatsApp worker 必须 Node，但主进程是 Bun/Electron。Electron 宿主用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1`，Bun/headless 宿主必须显式传 `node`——**同一份 worker 代码，两种 spawn 方式**。
+- **凭证跨进程传递**：子进程无 OS 鉴权上下文，只能读主进程写的明文缓存文件，refresh 必须回主进程。
+- **生命周期管理**：`McpClientPool`/`closeAll` 要并行关闭全部子进程，处理僵尸进程。
+
+**当前代码锚点**：
+- `packages/shared/src/agent/pi-agent.ts:388` spawn `pi-agent-server`（JSONL stdio）
+- `packages/messaging-gateway/src/adapters/whatsapp/index.ts:153` spawn WhatsApp worker（`nodeBin ?? process.execPath` + `ELECTRON_RUN_AS_NODE`）
+- `packages/session-mcp-server/src/index.ts:10` stderr `__CALLBACK__` 回调机制
+- `packages/shared/src/mcp/client.ts` `BLOCKED_ENV_VARS`（env 黑名单，防泄漏主进程 token 给 MCP 子进程）
+
+---
+
+### D7：本地触发 → 外部系统接入需求 → automation event-bus + messaging-gateway
+
+**最小方案**：Agent 只能由用户在 UI 点"发送"触发。
+
+**为什么不够**：产品主张是"Agent Native"——Agent 要能"住"在 IM 里，被定时/cron、标签变化、工具调用等事件自动驱动，把输出推回 Telegram topic / Lark 群。否则 Agent 只是个"等用户敲键盘"的工具，不是"原生自动化"。
+
+**新增设计**：
+- **automation event-bus**：`executePromptAutomation` 让事件（`SchedulerTick`/`LabelAdd`/`SessionStatusChange`/`PreToolUse`...）自动 spawn 带 `triggeredBy` 的会话。
+- **messaging-gateway**：三平台 adapter（Telegram grammY / Lark / WhatsApp worker），把 session 事件渲染回 IM，入站消息路由到绑定 session。
+- **fan-out sink**：`createFanOutSink` 把 WS push sink 与 `registry.onSessionEvent` 叠加，任一抛错不阻塞其他。
+- **binder 钩子**：`setAutomationBinder` 让 gateway 把会话绑定到 topic，**避免 SessionManager 反向 import messaging 造成循环依赖**。
+
+**复杂度代价**：
+- **协议收敛复杂度**：三平台 IM 协议各异（Telegram Bot API / Lark OpenAPI / WhatsApp Baileys），adapter 要统一入站/出站/附件/交互卡片。
+- **循环依赖治理**：SessionManager 是内核，不能反向依赖具体 IM 平台。`setAutomationBinder`（注册时由 gateway 调用 SM）+ `eventSink`（SM 调 gateway）的双向钩子是精心设计的依赖反转。
+- **worker Node 强制**：WhatsApp worker 跑 Node，但 gateway 跑在 Bun/Electron 宿主——runtime 分裂（见 D6）。
+
+**当前代码锚点**：
+- `packages/server-core/src/sessions/SessionManager.ts:7558` `executePromptAutomation`、`:1190` `setAutomationBinder`
+- `packages/messaging-gateway/src/registry.ts:106` `setAutomationBinder`（注释 `:103`「without the [reverse import]」）
+- `packages/messaging-gateway/src/event-fanout.ts:26` `createFanOutSink`
+- `packages/messaging-gateway/src/gateway.ts:342` `onSessionEvent`
+
+---
+
+### D8：本地浏览器 → 远端 agent 缺 GUI → capabilities 协商 + 反向 invoke
+
+**最小方案**：浏览器工具只在本地 Electron 可用（renderer 直接驱动 BrowserView）。
+
+**为什么不够**：远端 headless server / Docker 上的 agent 没有 GUI，无法用浏览器工具（填表、截图、抓取）。但用户本地有 Electron——能不能"借"本地浏览器给远端 agent？
+
+**新增设计**：WS handshake 时客户端声明能力（`LOCAL_CLIENT_CAPABILITIES`，含 `client:browser:invoke`）。server 用 `findClientsWithCapability(CLIENT_BROWSER_INVOKE, {workspaceId})` 找一个能托管浏览器面板的桌面客户端，把 `browser_*` 工具调用**反向 RPC** 过去。浏览器 tab 按 workspace 隔离（`BrowserInstance` 带 `workspaceId`）。
+
+**复杂度代价**：
+- **反向 RPC 机制**：`RpcServer.invokeClient` 打破了"client→server"的单向心智模型，server 要能主动调 client。
+- **跨主机安全**：远端 server 调本地浏览器，要防跨 workspace 窗口劫持/复用——release notes 列了 5+ 个相关 bugfix。
+- **能力声明维护**：新增客户端能力要同步 handshake 协议、capabilities 集合、客户端实现。
+
+**当前代码锚点**：
+- `packages/server-core/src/transport/capabilities.ts:29` `LOCAL_CLIENT_CAPABILITIES`、`:26` `CLIENT_BROWSER_INVOKE`
+- `packages/server-core/src/transport/types.ts:15` `RpcServer.invokeClient`/`hasClientCapability`/`findClientsWithCapability`
+- `packages/server-core/src/sessions/SessionManager.ts:1296` `findClientsWithCapability` 找浏览器宿主
+- `packages/server-core/src/sessions/RemoteBrowserPaneManager.ts`
+
+---
+
+### D9：全放行 → 安全/机密需求 → 三级权限 + env 黑名单 + 凭证隔离
+
+**最小方案**：所有工具默认放行，凭证明文存 config.json。
+
+**为什么不够**：
+- **危险工具**：Agent 自动跑 Bash、删文件、调付费 API，没有闸门会闯祸。
+- **机密泄漏**：明文存 OAuth token / API key，任何能读 config.json 的进程（包括第三方 MCP 子进程）都能偷。
+- **第三方 MCP 隔离**：MCP server 子进程默认继承父进程全部 env，父进程持有 `ANTHROPIC_API_KEY`/`AWS_*`/`GITHUB_TOKEN`，绝不能泄漏给第三方。
+
+**新增设计**：
+- **三级权限模式**（硬编码固定）：`safe`（Explore，只读）/ `ask`（Ask to Edit，逐次确认）/ `allow-all`（Execute，全自动）。
+- **AES-256-GCM 凭证存储**：`credentials.enc`，key 从机器硬件 UUID 派生（v2），v1（hostname）双 key fallback + 透明重加密。
+- **env 黑名单**：spawn MCP 子进程前过滤 `BLOCKED_ENV_VARS`（`ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN`/`AWS_*`/`GITHUB_TOKEN`/`OPENAI_API_KEY`...），用户要给特定 MCP env 必须显式声明。
+- **子进程凭证缓存**：MCP 子进程只读主进程写的 `.credential-cache.json`，无法独立解密 `credentials.enc`。
+
+**复杂度代价**：
+- **三套实现同步**：`BLOCKED_ENV_VARS` 在 `mcp/client.ts` 与 `session-tools-core/runtime/sandbox-env.ts` **两处重复**，注释明确要求同步但无自动机制（漂移风险）。
+- **v1/v2 双 key 维护**：硬件 UUID 比 hostname 稳定，但存量用户/跨机器拷贝场景 v2 可能解不开，双 key fallback 是"向后兼容"的工程化落地。
+- **三级模式硬编码**：`PermissionMode` 固定三档（`packages/shared/CLAUDE.md` hard rule），无法自定义中间态。
+
+**当前代码锚点**：
+- `packages/shared/src/agent/mode-types.ts:24` `PermissionMode`、`:265` `SAFE_MODE_CONFIG`（blockedTools = Write/Edit/MultiEdit/NotebookEdit）
+- `packages/shared/src/agent/mode-manager.ts:1803` `shouldAllowToolInMode`
+- `packages/shared/src/mcp/client.ts` `BLOCKED_ENV_VARS`
+- `packages/session-tools-core/src/runtime/sandbox-env.ts` `BLOCKED_ENV_VARS`（镜像副本）
+- `packages/shared/src/credentials/backends/secure-storage.ts:44` `credentials.enc`、`:65` `getStableMachineId`（v2 硬件 UUID）、`:198` v1/v2 fallback
+
+---
+
+### D10：全进 system prompt → 击穿缓存 → volatile/stable 分离
+
+**最小方案**：每 turn 把所有上下文（时间、session_state、源状态、工作目录）塞进 system prompt。
+
+**为什么不够**：把每 turn 都变的时间戳/session_state 塞进 system prompt，会**作废 prompt cache 的前缀**，连带整条历史的缓存命中归零（`cacheRead=0`）。issue #862 的根因。这是 LLM 应用的性能杀手。
+
+**新增设计**：`PromptBuilder` 把附加上下文切成两组：
+- **Volatile（易变）**：日期时间、session_state、源状态——每 turn 都可能变，放 user 尾。
+- **Stable（稳定）**：工作区能力、工作目录——会话内不变，可进 system 前缀。
+
+Claude 全部上下文走 user 尾（system 保持可缓存）；Pi 把 stable 折进 system 前缀、volatile 走 user 尾。
+
+**复杂度代价**：
+- **每 turn 仅一次约束**：`buildVolatileContextParts` 会 consume 一次性 mode-change 信号，**每个 turn 必须且只能调用一次**——绝不能为算 cache-debug hash 再调一次。这是极易踩坑的不变量。
+- **双 backend 落点不对称**：Claude 全走 user 尾，Pi 分流 system/user——两套实现要各自正确处理。
+- **session_state 维护**：plans/data 路径、权限模式、一次性信号都要塞进 volatile block，且要保证 stringify 后字符串稳定。
+
+**当前代码锚点**：
+- `packages/shared/src/agent/core/prompt-builder.ts:105` `buildVolatileContextParts`（注释「MUST be called exactly once per turn」）、`:146` `buildStableContextParts`（「Pure and idempotent」）
+- `packages/shared/src/agent/claude-agent.ts:2168` Claude 走 user 尾
+- `packages/shared/src/agent/pi-agent.ts:2050` Pi 分流（注释引用 #862）
+
+---
+
+### D11：caret 版本 → 上游频繁冲突 → native binary + 精确锁定
+
+**最小方案**：依赖用 caret（`^0.2.x`），跟随上游 minor 升级。
+
+**为什么不够**：
+- **上游分发模型突变**：Claude Agent SDK 0.2.113 把分发从 `cli.js` 脚本改为 per-platform native binary，旧路径全部失效，`--preload` 不再支持。
+- **scope 冻结**：Pi SDK 的 `@mariozechner/*` scope 被 frozen，必须迁移到 `@earendil-works/*`。
+- **升级频繁冲突**：caret 范围内的 minor 升级反复 break，无法信任 caret。
+
+**新增设计**：
+- **native binary 适配**：通过 build-script 别名 `@anthropic-ai/claude-agent-sdk-binary/claude` 解析 binary，`electron-builder.yml` 把 thin core + binary alias 作为 extraResources 打包。
+- **精确版本锁定**：Claude SDK 从 `^0.2.x` 退化为 `0.3.170` 精确锁定；Pi 锁 `0.79.9`。
+- **bunfig linker 锁定**：Bun 1.3 默认改 `isolated` linker，但 Vite+esbuild 依赖 hoisted 布局，被迫锁 `linker = "hoisted"`。
+
+**复杂度代价**：
+- **`claudeCliPath` 命名化石**：字段名保留 CLI 时代，实际指向 native binary（`runtime-resolver.ts:19` 注释「Field is named `claudeCliPath` for back-compat — semantically it is the SDK executable, JS or native」）。
+- **`--preload` 失效化石**：网络拦截器（`unified-network-interceptor.ts`）只剩 Pi subprocess 用（经 Bun `--require`），Claude native binary 不再支持 `--preload`（`runtime-resolver.ts:24-26` 注释）——`_intent` rich tool intent 成了 Phase-2 待迁移到 Claude 的未竟工作。
+- **bundle 膨胀**：+210MB/平台（per-platform native binary）成为永久成本。
+- **zod 双版本**：`session-tools-core` 锁 `zod@^3.23.0`，其余 `zod@^4.0.0`（详见张力段）。
+
+**当前代码锚点**：
+- `packages/shared/src/agent/backend/internal/runtime-resolver.ts:16-26` `claudeCliPath` 化石 + `--preload` 失效注释
+- `package.json:141` `@anthropic-ai/claude-agent-sdk: 0.3.170`（精确锁定）
+- `package.json:146-147` `@earendil-works/pi-ai/pi-coding-agent: 0.79.9`
+- `bunfig.toml` `linker = "hoisted"` + `preload = ["./packages/shared/src/unified-network-interceptor.ts"]`
+
+---
+
+## 最终系统形态
 
 ```mermaid
-mindmap
-  root((Craft Agents<br/>设计哲学))
-    文档为中心
-      TipTap 富文本编辑器
-      Markdown 渲染共享(ui包)
-      Session = JSONL 单文件
-    Agent 原生
-      权限三态内置
-      Skill @mention 扩展
-      Volatile/Stable 上下文
-      mid-stream queue/steer
-    跨形态复用
-      同一 SessionManager
-      同一 bootstrapServer
-      WsRpc 抽象 IPC/WS
-      共享 UI 包
-    多 provider 中立
-      Claude SDK + Pi SDK 双后端
-      Source 三类型抽象
-      messaging 多平台桥接
+flowchart TD
+    subgraph 客户端["客户端形态（共用 server-core 内核）"]
+        ER["Electron Renderer<br/>(RoutedClient: 本地WS + 可选远端WS)"]
+        CLI["CLI<br/>(CliRpcClient)"]
+        WEB["WebUI 浏览器<br/>(JWT cookie + WS)"]
+        THIN["Electron Thin-client<br/>(CRAFT_SERVER_URL 纯远端)"]
+        VIEW["Viewer<br/>(纯前端, 解析 JSONL)"]
+    end
+
+    subgraph 内核["跨形态内核 (server-core bootstrapServer)"]
+        BS["bootstrapServer&lt;T,T&gt;<br/>token校验→platform→配置→锁<br/>→SessionManager→WsRpcServer→handler"]
+        SM["SessionManager<br/>(会话编排 8090行)"]
+        RPC["WsRpcServer<br/>(handle/push/invokeClient)"]
+        HAND["registerCoreRpcHandlers<br/>(同一组 RPC_CHANNELS)"]
+    end
+
+    subgraph 后端["Agent 后端 (双 SDK)"]
+        BE["AgentBackend 接口"]
+        BASE["BaseAgent 抽象"]
+        CL["ClaudeAgent<br/>(原生二进制 in-process)"]
+        PI["PiAgent<br/>(JSONL stdio 子进程)"]
+    end
+
+    subgraph 子进程["带外子进程 (崩溃隔离)"]
+        PISUB["pi-agent-server"]
+        MCPSUB["session-mcp-server<br/>(→Codex)"]
+        WASUB["whatsapp-worker<br/>(强制 Node)"]
+    end
+
+    subgraph 外部["外部系统"]
+        SOURCES["Sources<br/>(mcp/api/local 三类同契约)"]
+        IM["messaging-gateway<br/>(Telegram/Lark/WhatsApp)"]
+        DISK["session.jsonl<br/>(JSONL 即文档)"]
+        CRED["credentials.enc<br/>(AES-256-GCM)"]
+    end
+
+    ER -->|"ws://127.0.0.1 或 wss://"| BS
+    CLI -->|"ws/wss"| BS
+    WEB -->|"JWT cookie + ws"| BS
+    THIN -->|"wss"| BS
+    VIEW -.->|"无 RPC, 读 JSONL"| DISK
+
+    BS --> SM
+    BS --> RPC
+    BS --> HAND
+    SM --> BE
+    BE --> BASE
+    BASE --> CL
+    BASE --> PI
+    PI -->|"JSONL stdio"| PISUB
+    SM -->|"MCP stdio"| MCPSUB
+    IM -->|"NDJSON stdio"| WASUB
+
+    SM --> SOURCES
+    SM -.->|"event-bus + binder"| IM
+    SM --> DISK
+    SOURCES --> CRED
 ```
 
----
+**最重要的边界与为何必须分开**：
 
-## 一、单 SDK → 双 SDK（Claude + Pi）
-
-### 设计 1：单一 Claude SDK 后端
-
-- **要解决的问题**：理论上最少需要一个能跑 Anthropic Messages API 的后端就够了。
-- **最小方案**：直接调用 `@anthropic-ai/claude-agent-sdk`，把所有 Agent 行为收口到 Claude。
-- **实际选择**：项目引入了第二条 Pi SDK 后端，承载 Google/OpenAI/Copilot/ChatGPT 等非 Anthropic 路由。
-- **复杂度代价**：
-  - 多了一个独立子进程 `pi-agent-server`（JSONL over stdio）
-  - 多了一个向 Codex 暴露 session 工具的 `session-mcp-server`（stdio MCP）
-  - 网络拦截器 `unified-network-interceptor.ts` 仅对 Pi 生效（Claude 自 0.2.113 起改原生二进制，不再接受 Bun `--preload`）
-  - 同一份 session-scoped 工具（如 SubmitPlan）需要 `session-tools-core` 共享处理器以避免漂移
-- **当前代码锚点**：
-  - `packages/shared/src/agent/backend/factory.ts:132` `createBackend` 按 `provider` 分发
-  - `packages/shared/src/agent/backend/factory.ts:63` `DRIVER_REGISTRY` 持有 `anthropicDriver / piDriver`
-  - `packages/shared/src/agent/claude-agent.ts` vs `packages/shared/src/agent/pi-agent.ts` 两条并行实现
-  - `packages/pi-agent-server/src/index.ts:14` 注释明确「将 Pi SDK 的 ESM + 重依赖隔离到独立进程」
-  - `packages/shared/CLAUDE.md`：「网络拦截器当前 Pi-only，Claude 路径的 rich tool intent 是 Phase-2 工作」
+1. **客户端 ↔ 内核**：经 WS RPC（`RpcServer`/`RpcClient` 接口）。分开是为了让"本地桌面"和"远端瘦客户端"renderer 代码零差异，只差 URL。若用 Electron IPC，远端形态就无法复用 renderer。
+2. **内核 ↔ 后端**：经 `AgentBackend` 接口。分开是为了让 `SessionManager` 对"Anthropic 还是 Pi"无感，新增厂商零改内核。
+3. **内核 ↔ 子进程**：经 stdio 协议（JSONL/MCP/NDJSON）。分开是为了崩溃隔离——Pi 段错误 / WhatsApp 协议栈崩溃 / 第三方 MCP server 异常都不能拖垮主进程。
+4. **内核 ↔ 外部 IM**：经 event-bus + binder 钩子（依赖反转）。分开是为了不让内核反向依赖具体 IM 平台（循环依赖），保持内核纯净。
+5. **内核 ↔ 磁盘**：经 JSONL + atomic write。分开是为了"文档为中心"——会话可读、可 diff、可分享、可跨机器迁移，这是 SQLite 做不到的。
 
 ---
 
-## 二、单形态 → 多形态（Electron / Server / CLI / WebUI / Viewer）
+## 设计取舍总结
 
-### 设计 2：多产品形态共享同一内核
-
-- **要解决的问题**：单一 Electron 桌面应用无法满足三类需求——长会话常驻、跨机器访问、脚本化、浏览器分享。
-- **最小方案**：保留 Electron 桌面 + 写一个独立的远端 server，两套代码分别维护。
-- **实际选择**：抽出 `server-core` 包作为「bootstrapServer + WsRpcServer + SessionManager + PlatformServices」的共享底座，让 Electron main 与远端 Bun server 共用同一份入口。形态列表：
-  - `apps/electron`：主形态桌面
-  - `packages/server`：headless 服务器
-  - `apps/cli`：终端客户端
-  - `apps/webui`：浏览器 thin client
-  - `apps/viewer`：只读会话分享
-- **复杂度代价**：
-  - 需要一套 `PlatformServices` 抽象，让 `createElectronPlatform`（nativeImage/shell）与 `createHeadlessPlatform`（sharp + 子进程退出）形态无关
-  - 三种 runtime 分裂：Bun（server/CLI/subprocess）、Node（WhatsApp worker）、Electron 39（桌面）
-  - 构建/打包链复杂：`scripts/electron-build-{main,preload,renderer,resources}.ts` + `scripts/build-server.ts`（跨平台）+ `scripts/build-wa-worker.ts`
-- **当前代码锚点**：
-  - `apps/electron/src/transport/server.ts:1` re-export `@craft-agent/server-core/transport`
-  - `packages/server/src/index.ts:168` 调用同一 `bootstrapServer`
-  - `packages/server-core/src/runtime/platform.ts:39` `PlatformServices` 接口
-  - `apps/electron/src/main/platform.ts:21` vs `packages/server-core/src/runtime/platform-headless.ts:44`
-  - `apps/webui/src/App.tsx:24` 直接 `import('@/App')` 复用 Electron 渲染层
+| 设计选择 | 替代方案 | 为什么选择当前方案 | 代价 |
+|----------|----------|--------------------|------|
+| **JSONL 文件** | SQLite / 嵌入式 DB | 文档为中心：可读、可 diff、可分享、可跨机器迁移（`{{SESSION_PATH}}`）；8KB header 零成本列表 | 写放大（每次重写整份）；签名防回退竞态 |
+| **双 backend 抽象** | 单 SDK 直连 / 每 provider 独立 backend | 多 Provider 中立；新增厂商走 Pi 通道零改内核；横切逻辑（权限/技能）只在 BaseAgent 写一次 | 双 SDK 同步防漂移（release notes 反复显形）；mid-stream 行为不对称 |
+| **WS RPC 统一传输**（含 Electron renderer） | Electron IPC + 远端 HTTP | 跨形态复用：本地/远端 renderer 代码零差异；capabilities 反向 invoke 自然落地 | transport 抽象层（envelope/codec/handshake）；Electron IPC 残留双轨 |
+| **subprocess 隔离** | 全 in-process | 崩溃隔离（Pi 段错误/MCP 异常/WhatsApp 协议栈不拖垮主进程）；runtime 隔离（Node vs Bun） | 三套 stdio 协议；Node/Bun runtime 分裂；凭证跨进程传递 |
+| **atomic write + debounce** | 同步写 / append-only | 崩溃安全（要么旧完整要么新完整）；高频流式不阻塞主线程 | 写放大；header 签名顺序不变量 |
+| **三级权限硬编码** | 可配置权限矩阵 | 简单可预测；safe 模式硬编码阻止 Write/Edit 保底安全 | 无法自定义中间态 |
+| **volatile/stable 分离** | 全进 system prompt | 保 prompt cache 前缀（#862 根因）；避免 cacheRead 归零 | 每 turn 仅一次约束（易踩坑）；双 backend 落点不对称 |
+| **capabilities 协商** | 远端禁用 GUI 工具 | 远端算力 + 本地 GUI 可组合（thin-client 模式成立的必要条件） | 反向 RPC 打破单向心智；跨 workspace 安全 |
 
 ---
 
-## 三、纯 IPC → WsRpc 抽象
+## 未解决的设计张力（≥3）
 
-### 设计 3：把 Electron IPC 与 WebSocket 统一成同一个 RpcServer/RpcClient
+### 张力 1：Claude SDK native binary vs `--preload` 拦截器
 
-- **要解决的问题**：如果 Electron 用 `ipcMain/ipcRenderer`、远端用 WebSocket，两套调用代码会大幅漂移。
-- **最小方案**：在 Electron 内部用 IPC，在跨进程时再写一层 WS 适配。
-- **实际选择**：**所有入口都跑在 WsRpcServer + WsRpcClient 之上**，Electron main 也内嵌一个 `WsRpcServer.listen()`，渲染层通过 preload 暴露的 `buildClientApi(client, CHANNEL_MAP)` 把 `RpcClient.invoke(channel, ...args)` 包装成与原 `ElectronAPI` 同形的代理对象。
-- **复杂度代价**：
-  - 需要能力协商（`CLIENT_OPEN_EXTERNAL / CLIENT_CONFIRM_DIALOG / CLIENT_BROWSE_INVOKE` 等），缺失能力时直接返回 `CAPABILITY_REQUIRED` 而不是降级执行
-  - 需要环形缓冲 + 重连回放（`EVENT_BUFFER_MAX_SIZE=500`、TTL 30s）
-  - Electron 多工作区需要 `RoutedClient` make-before-break 切换
-  - 协议版本、心跳、握手都必须形式化
-- **当前代码锚点**：
-  - `packages/server-core/src/transport/types.ts` `RpcServer / RpcClient / EventSink` 接口
-  - `packages/server-core/src/transport/server.ts:122-365` `WsRpcServer.listen()`
-  - `packages/server-core/src/transport/server.ts:746-799` `bufferAndMaybeSendEvent` 缓冲回放
-  - `apps/electron/src/transport/channel-map.ts:19-420` ~200 项的 RPC 通道映射表
-  - `apps/electron/src/transport/build-api.ts:25-65` `buildClientApi` Proxy 动态代理
-  - `apps/electron/src/transport/routed-client.ts:40-255` 多工作区 make-before-break
+**现状**：Claude Agent SDK 0.2.113 起是 per-platform native binary（非 Bun 子进程，in-process 异步流），**不支持 `--preload`**。网络拦截器 `unified-network-interceptor.ts`（注入 `_intent`/`_displayName` 元数据，用于大响应摘要时提供 rich tool intent）**只剩 Pi subprocess 能用**（经 Bun `--require interceptorPath`），Claude 后端完全不跑拦截器。
 
----
+**妥协方式**：`_intent` 在 Claude 后端为空，大响应摘要时 fallback 到 `userRequest`。`CLAUDE.md` 明确这是"Phase-2 待迁移到 Claude 的工作"。**根因**：native binary 是闭源二进制，无法像 Bun 进程那样 `--preload` 注入 JS——这是上游分发模型变更强加的限制，非项目可控。
 
-## 四、会话 = 单文件 JSON → JSONL 增量
+**锚点**：`packages/shared/src/agent/backend/internal/runtime-resolver.ts:24-26`（注释「Not used for Claude anymore — the new native SDK binary doesn't accept `--preload`」）；`bunfig.toml` `preload = ["./packages/shared/src/unified-network-interceptor.ts"]`。
 
-### 设计 4：JSONL 单文件 + 原子写 + 8KB 头读取
+### 张力 2：zod 双版本并存
 
-- **要解决的问题**：单 JSON 整体重写有三大痛点——大会话写慢、崩溃时截断风险、列表渲染要解析全部消息。
-- **最小方案**：用 SQLite，每次消息一个事务。
-- **实际选择**：每个会话一个 `session.jsonl` 文件：
-  - 第 1 行 `SessionHeader`（含 `messageCount / preview / lastMessageRole / tokenUsage / lastFinalMessageId` 预计算字段）
-  - 第 2 行起每行一条 `StoredMessage`
-  - 写入用 `writeFileSync(.tmp) → unlinkSync(target) → renameSync(.tmp, target)` 三步原子替换
-  - 列表只读首 8KB
-- **复杂度代价**：
-  - 需要 `SessionPersistenceQueue` 做 500ms 防抖 + 元数据签名比对（避免 UI 频繁刷新触发无效 IO）
-  - 需要 `{{SESSION_PATH}}` 可移植 token 让跨机器加载可行
-  - 8KB header 上限是隐式约束（未来 header 加大对象需注意）
-  - Windows 上 `unlink → rename` 仍不是完美原子（`unlink` 后到 `rename` 前的窗口里若有读请求会 ENOENT）
-- **当前代码锚点**：
-  - `packages/shared/src/sessions/jsonl.ts:150-164` `writeSessionJsonl` 原子写
-  - `packages/shared/src/sessions/jsonl.ts:80-97` 8KB 头读取
-  - `packages/shared/src/sessions/jsonl.ts:23-50` `{{SESSION_PATH}}` token
-  - `packages/shared/src/sessions/types.ts:26-56` `SESSION_PERSISTENT_FIELDS` 单一来源
-  - `packages/shared/src/sessions/persistence-queue.ts:59-241` 500ms 防抖 + 签名比对
-  - `packages/shared/src/sessions/slug-generator.ts:49-78` YYMMDD-adjective-noun slug
+**现状**：`session-tools-core` 锁 `zod@^3.23.0`，而 `session-mcp-server`、`shared`、根 package.json 都是 `zod@^4.0.0`。两套 zod 主版本共存于同一 monorepo。
+
+**妥协方式**：`session-tools-core` 是会话工具共享逻辑（被 Claude 与 Codex 共用），锁 v3 大概率是因为某个上游依赖（可能是 Claude SDK 或 MCP SDK 的 schema 定义）仍用 v3，强行升 v4 会破坏 schema 兼容。两版本经 hoisted linker 共存于 node_modules 顶层。**风险**：zod v3/v4 的 API 有 breaking change（如 `.parse` 行为、错误格式），若两版本的对象跨边界传递可能出隐性 bug。
+
+**锚点**：`packages/session-tools-core/package.json:17` `"zod": "^3.23.0"`；`packages/session-mcp-server/package.json:19` `"zod": "^4.0.0"`；`packages/shared/package.json:87` `"zod": ">=4.0.0"`；`package.json:201` `"zod": "^4.0.0"`。
+
+> **推断**：v3 锁定是上游 SDK schema 兼容的被动约束，非主动选择——但缺乏注释说明具体阻塞点，属技术债。
+
+### 张力 3：Bun 主 runtime vs Node 强制（WhatsApp worker）
+
+**现状**：整个 monorepo 以 Bun 为 runtime + test，但 WhatsApp worker（Baileys 重实现非官方 WA 多设备协议）**必须 Node**——其密码学依赖（libsignal/curve25519）Bun 跑不了。
+
+**妥协方式**：worker 打包成单文件 `worker.cjs`（`--platform=node --format=cjs --target=node20`，Baileys 全树 bundle）。spawn 方式按宿主分裂：Electron 宿主用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1`（让 Electron 内置 Node 以 Node 模式重入），Bun/headless 宿主必须显式传 `node`（`nodeBin`）。**这造成"同一份 worker，两种 spawn 方式"的运维分裂**——若 headless 部署环境没装 Node，WhatsApp 直接不可用。
+
+**锚点**：`packages/messaging-gateway/src/adapters/whatsapp/index.ts:153` `const nodeBin = cfg.nodeBin ?? process.execPath`；`:164` `env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }`；`packages/messaging-gateway/src/bootstrap.ts:42-46`（注释「for Electron ... but wrong [for Bun]」）；`scripts/build-wa-worker.ts` `--platform=node`。
+
+### 张力 4（附加）：双 SDK 长期并存 vs 收敛为单 SDK
+
+**现状**：Claude Agent SDK（Anthropic 原生）与 Pi SDK（`@earendil-works/*`，多 provider 统一抽象）已并存 4 个月（v0.5.0 至今）。两套 SDK 的运行模型、中断语义、缓存模型根本不同，`BaseAgent` 只能收敛"不变部分"。
+
+**妥协方式**：靠 release notes 治理"prevent drift"（v0.6.0）、修复"Pi backend silently dropped system prompt"（v0.9.2）。**未解**：是否会收敛为单 SDK（若 Pi SDK 未来也支持 Claude 原生能力，或 Claude SDK 开放多 provider），需作者/路线图确认。这是系统最大的长期包袱。
+
+**锚点**：`packages/shared/src/agent/backend/{claude,pi}/` 双驱动；`package.json:141,146-147` 双 SDK 依赖。
 
 ---
 
-## 五、凭据明文 → AES-256-GCM + 机器绑定
+## 如果重新实现
 
-### 设计 5：单一加密文件 `~/.craft-agent/credentials.enc`
+**会保留的设计**：
+1. **JSONL 即文档 + atomic write**——"文档为中心"是产品差异化核心，JSONL 的便携/可读/可分享无可替代。
+2. **`bootstrapServer<T,T>` 泛型内核 + WS RPC 统一传输**——跨形态复用是架构基石，让"本地/远端/CLI/Web"共用一份代码。
+3. **三层 Agent 抽象（AgentBackend/BaseAgent/具体类）**——多 Provider 中立的必要抽象，避免每特性写 N 遍。
+4. **subprocess 崩溃隔离**——第三方 MCP / 不稳定 SDK 必须隔离，否则一个崩溃拖垮全部会话。
+5. **volatile/stable prompt 分离**——LLM 应用的缓存命中是性能生死线。
 
-- **要解决的问题**：明文 JSON 存凭据不可接受；OS keychain 三套实现（macOS Keychain / Windows DPAPI / Linux libsecret）复杂且会触发系统弹窗，对 headless server 部署不友好。
-- **最小方案**：用 OS keychain，按平台分支。
-- **实际选择**：单一加密文件 + AES-256-GCM + PBKDF2 100k 迭代，密钥派生自硬件 UUID（`getStableMachineId`）。
-  - 文件布局：64B Header（magic `CRAFT01\0` + flags + salt + reserved）+ IV(12) + AuthTag(16) + Ciphertext
-  - 文件权限 `0o600`、目录 `0o700`
-  - 每次写入重新生成 IV（GCM 安全要求）
-- **复杂度代价**：
-  - 需要双重 key 尝试（v2 硬件 UUID / v1 hostname）完成无缝迁移
-  - 损坏即删除的兜底策略（解不开就清空让用户重登）
-  - `StoredCredential` 全字段 optional 以兼容 API key / OAuth / AWS IAM / GCP Service Account
-  - 多 header 凭据（如 Datadog 双 key）只能 JSON 字符串塞进 `value` 字段
-  - 机器迁移即失效：解密失败 → 自动删除 → 提示重新登录（这是设计而非缺陷）
-- **当前代码锚点**：
-  - `packages/shared/src/credentials/backends/secure-storage.ts:14-25` 文件格式注释
-  - `packages/shared/src/credentials/backends/secure-storage.ts:35-58` 常量定义
-  - `packages/shared/src/credentials/backends/secure-storage.ts:65-99` `getStableMachineId`
-  - `packages/shared/src/credentials/backends/secure-storage.ts:233-255` v1/v2 双 key
-  - `packages/shared/src/credentials/backends/secure-storage.ts:281-316` `saveStoreSync` 写路径
-  - `packages/shared/src/credentials/manager.ts:1-6` 注释明确「避免 OS keychain 弹窗」
-  - `packages/shared/src/credentials/types.ts:130-207` key 格式
+**可以简化的设计**：
+1. **Electron IPC 残留双轨**——`__dialog:showMessageBox` 等 GUI 桥可统一进 WS capability，消除"主 RPC 走 WS、GUI 桥走 IPC"的认知负担。
+2. **`BLOCKED_ENV_VARS` 两处重复**——应抽到单一包，消除手动同步的漂移风险。
+3. **`claudeCliPath` 命名化石**——可做大版本重命名（`sdkExecutablePath`），但需权衡迁移成本。
+
+**需要重新验证的设计**：
+1. **双 SDK 并存**——若 Pi SDK 已足够覆盖 Claude 能力，或 Claude SDK 开放多 provider，可考虑收敛为单 SDK，消除最大长期包袱。
+2. **zod 双版本**——应追查 v3 锁定的具体阻塞点，评估能否统一升 v4。
+3. **三级权限硬编码**——是否需要可配置的中间态（如"只读 + 特定工具放行"），需用户场景验证。
 
 ---
 
-## 六、无 Source → 三类型 Source（mcp/api/local）
+## 事实与推断边界
 
-### 设计 6：统一 `LoadedSource` 外壳 + mcp/api/local 三类型互斥子配置
+**明确事实（源码直接证明）**：
+- `bootstrapServer<TSessionManager, THandlerDeps>` 泛型（`headless-start.ts:258`）。
+- `AgentBackend` 接口（`backend/types.ts:337`）/ `BaseAgent` 抽象（`base-agent.ts:162`）/ `ClaudeAgent`（`claude-agent.ts:471`，别名 `CraftAgent` `:2900`）/ `PiAgent`（`pi-agent.ts:157`）。
+- JSONL 首行 8KB header（`jsonl.ts:80-84`）；atomic write `writeFile(.tmp)`→`unlink`→`rename`（`persistence-queue.ts:157-161`）；`{{SESSION_PATH}}` token（`jsonl.ts:23`）。
+- `claudeCliPath` 命名化石 + `--preload` 失效（`runtime-resolver.ts:16-26` 注释）。
+- zod 双版本（`session-tools-core@^3.23.0` vs 其余 `@^4.0.0`）。
+- WhatsApp worker 强制 Node + `ELECTRON_RUN_AS_NODE`（`whatsapp/index.ts:153-164`）。
+- 三类 Source 同契约（`sources/types.ts:16` `SourceType`）。
+- capabilities 协商（`capabilities.ts:29` `LOCAL_CLIENT_CAPABILITIES`）。
+- automation event-bus + binder 钩子（`registry.ts:106` + 注释 `:103`）。
+- 精确版本锁定（`package.json:141` `0.3.170`；`:146-147` `0.79.9`）。
 
-- **要解决的问题**：Agent 要调用三类外部资源——MCP server、REST API、本地文件系统——若各写一套集成代码，权限/UI/凭据管理都会分裂。
-- **最小方案**：每类资源一个独立子系统，互不共享。
-- **实际选择**：抽出 `LoadedSource` 抽象：
-  - 三类型共享 `name/slug/icon/tagline/connectionStatus` UI 字段
-  - 凭据 key 统一格式 `source_{oauth|bearer|apikey|basic}::{workspaceId}::{sourceSlug}`
-  - `isSourceUsable()` / `isRefreshableSource()` 是唯一过滤/刷新判定入口
-  - 类型固定不变量：「Source types are fixed: mcp, api, local」（CLAUDE.md hard rule）
-- **复杂度代价**：
-  - 三类型的传输方式、生命周期、隔离级别都不同，子配置必须互斥
-  - `getCredentialId` 决策树需要分 mcp/api 两套规则
-  - `loadMcpCredential` 需要双槽位回退（OAuth→bearer）兼容历史 authType 切换
-  - slug 改名会导致凭据丢失（key 含 slug，无迁移逻辑）
-  - stdio MCP source 必须 env 净化（黑名单 `BLOCKED_ENV_VARS`），且黑名单要在 `mcp/client.ts` 与 `session-tools-core/handlers/transform-data.ts` 两处同步
-- **当前代码锚点**：
-  - `packages/shared/src/sources/types.ts:16` `SourceType = 'mcp' | 'api' | 'local'`
-  - `packages/shared/src/sources/types.ts:441-528` `LoadedSource` 外壳
-  - `packages/shared/src/sources/credential-manager.ts:304-336` `getCredentialId` 决策树
-  - `packages/shared/src/sources/storage.ts:400-411` `isSourceUsable` 唯一过滤入口
-  - `packages/shared/src/mcp/client.ts:43-60` stdio env 净化黑名单
-  - `packages/shared/src/mcp/mcp-pool.ts:240-245` `localMcpEnabled` 过滤
+**合理推断（基于代码结构/注释）**：
+- v0.4.0 独立 Codex backend 路线只活一个版本就被 Pi SDK 取代，推断为多 provider 抽象自造成本过高（release notes 未直述动机）。
+- `pi-agent-server` 子进程化（v0.6）为 v0.7 server-core 剥离做了技术验证（时间相邻 + 同主题）。
+- Claude SDK 从 caret 退化为精确锁定，推断为 SDK 升级频繁冲突（版本字符串变化是硬证据）。
+- zod v3 锁定推断为上游 SDK schema 兼容的被动约束（无注释说明具体阻塞点）。
 
----
-
-## 七、固定 prompt → volatile/stable 上下文分离
-
-### 设计 7：把每 turn 都变的内容与会话内不变的内容分块
-
-- **要解决的问题**：若把时间戳、模式状态、Source 状态等每轮都变的内容塞进系统前缀，会反复 re-stamp 上游 prompt-cache 前缀，让所有下游历史命中失败（issue #862）。
-- **最小方案**：所有上下文都放用户消息尾部。
-- **实际选择**：分两块：
-  - **Volatile**（每轮可能变化）：日期时间（分钟精度）、`<session_state>`（权限模式、`plansFolderPath`、`dataFolderPath`）、Source 状态
-  - **Stable**（会话内不变）：`<workspace_capabilities>`（local-mcp 启停）、工作目录上下文
-  - Claude：全部拼到用户消息尾部
-  - Pi：Stable 折进系统前缀，Volatile 路由到用户尾部（Pi 系统前缀缓存对每分钟时间戳极敏感）
-- **复杂度代价**：
-  - `buildVolatileContextParts` 消费一次性 `consumeModeChangeUserSignal`，**每 turn 只能调用一次**——再次调用会吞掉信号
-  - cache-debug hash 必须哈希产出的字符串，不能重新调用 builder
-  - Claude/Pi 拼装位置不同，需要两套 prompt 装配逻辑
-- **当前代码锚点**：
-  - `packages/shared/src/agent/core/prompt-builder.ts:75-159` `buildContextParts`
-  - `packages/shared/src/agent/core/prompt-builder.ts:115` `consumeModeChangeUserSignal` 注释
-  - `packages/shared/src/agent/mode-manager.ts:318` `consumeUserModeSignal`
-  - `packages/shared/CLAUDE.md` L45 不变量：「Volatile 只算一次」
-
----
-
-## 八、无权限 → 三级权限模式（safe/ask/allow-all）
-
-### 设计 8：固定三态权限 + Bash/PowerShell AST 校验
-
-- **要解决的问题**：Agent 自主调工具需要安全阀；简单的 yes/do-not-ask 二态无法满足「计划模式只读」与「危险操作询问」两个独立需求。
-- **最小方案**：两态——全部允许 / 全部拒绝。
-- **实际选择**：三态固定（不可扩展，CLAUDE.md hard rule）：
-  - `safe`（UI: explore）：只读，Bash 走 AST 校验，MCP/API 走只读模式匹配
-  - `ask`（UI: ask to edit）：全部允许，危险操作 PreToolUse 触发弹窗
-  - `allow-all`（UI: auto）：全部放行
-- **复杂度代价**：
-  - 需要 `shouldAllowToolInMode`（`mode-manager.ts:1803`）作为唯一权威判定函数
-  - 需要 `bash-validator.ts` 按 AST 分支处理 pipeline/redirect/process_substitution 等 10+ reason
-  - 需要 `powershell-validator.ts` 复用 .NET `System.Management.Automation` 解析器
-  - `hasDangerousSubstitution`（`mode-manager.ts:579`）检测 `$()`、反引号、`<(`，单引号内的 `$(` 要豁免
-  - `normalizeWindowsPathsForBashParser`（`:983`）专门修复 bash-parser 把 `"C:\path\"` 中 `\"` 误当转义引号的 bug
-  - `isPathWithinDirectory` 必须做 `realpathSync.native` 防 symlink 逃逸
-- **当前代码锚点**：
-  - `packages/shared/src/agent/mode-types.ts` `PermissionMode`
-  - `packages/shared/src/agent/mode-manager.ts:1775` `ALWAYS_ALLOWED_TOOLS`
-  - `packages/shared/src/agent/mode-manager.ts:1803` `shouldAllowToolInMode`
-  - `packages/shared/src/agent/mode-manager.ts:1083` `getBashRejectionReason`
-  - `packages/shared/src/agent/bash-validator.ts` `validateBashCommand`
-  - `packages/shared/src/agent/powershell-validator.ts`
-
----
-
-## 九、同步发送 → mid-stream queue/steer
-
-### 设计 9：根据 provider 默认走 queue 或 steer，且后端代码不感知差异
-
-- **要解决的问题**：用户在 LLM turn 进行中再发消息时，简单 lock 会拒绝用户（差体验），简单 abort 会浪费已生成 token（差成本）。
-- **最小方案**：全局 lock，turn 期间所有新消息排队。
-- **实际选择**：分两种语义：
-  - `queue`（默认 anthropic）：当前 turn 跑完，新消息排队下一 turn
-  - `steer`（默认 pi/pi_compat）：调 `agent.redirect()` 把新消息作为重定向注入当前 LLM turn
-  - **后端代码（claude-agent.ts / pi-agent.ts）完全不感知 queue/steer 差异**——queue 模式只是跳过 `agent.redirect()`
-  - `resolveMidStreamBehavior(connection)` 是唯一读取入口，禁止业务代码 `connection.midStreamBehavior ?? ...` 直接 fallback
-- **复杂度代价**：
-  - Claude 后端无原生 `.steer()`，硬中断浪费 token；Pi 后端的 steer 在 parallel-tool 时 args-only delta 会被错误识别为新 tool call（已由 `sanitizeOpenAiHistoryInPlace` 事后补救）
-  - Claude 在 `steer` 模式失败时需自行 `forceAbort(Redirect)` 并返回 false 进入 queue 重放
-  - Claude 事件适配器会在同一 SDK user message 的 tool_result 之间穿插合成事件（`task_backgrounded / shell_backgrounded / shell_killed`），需 `SourceActivationDrainController` 用 `'batch-boundary'` 策略在批末触发；Pi 用 `'fire-on-non-tool-result'` 策略在第一个非 tool_result 事件触发
-- **当前代码锚点**：
-  - `packages/shared/src/config/llm-connections.ts:487` `resolveMidStreamBehavior`
-  - `packages/shared/src/config/llm-connections.ts:475` `defaultMidStreamBehavior`
-  - `packages/server-core/src/sessions/SessionManager.ts:5480-5539` mid-stream 决策点
-  - `packages/shared/src/agent/source-activation-drain.ts:49` `SourceActivationDrainController`
-  - `packages/shared/src/unified-network-interceptor.ts:1503` `sanitizeOpenAiHistoryInPlace`
-
----
-
-## 十、单后端处理 → EventSink + ring buffer 广播
-
-### 设计 10：单一广播口 + 50ms 批合并 + PushTarget 三态路由 + 30s 缓冲回放
-
-- **要解决的问题**：流式输出每个 token 都触发 IPC 帧，每秒可能 50+ 帧，UI 卡顿；多客户端订阅（同 workspace 多窗口）+ 断线重连场景下，原生 EventEmitter 不够用。
-- **最小方案**：用 Node EventEmitter 直接广播。
-- **实际选择**：三层机制叠加：
-  1. **Delta 批处理**：`queueDelta / flushDelta` 50ms 合并，把每秒 50+ 帧降到 ~20 帧
-  2. **PushTarget 路由**：`'all'` / `'workspace'` / `'client'` 三态，避免跨 workspace 互相打扰
-  3. **环形缓冲 + 重连回放**：每客户端 500 条 / 30s TTL，断线 client 保留 60s
-- **复杂度代价**：
-  - `EventSink` 类型签名 `...args: any[]` 较宽松，无法让编译器保证 channel 与 payload 形状一致（已知技术债）
-  - 需要握手协议携带 `protocolVersion: '1.0'` + `reconnectClientId` + `lastSeq`
-  - 客户端发现 seq gap 立即告警并触发重放请求，需要 `__transport:reconnected` 特殊事件通知上层
-  - 心跳 30s ping，连续两次未收到 pong 即 terminate
-  - 服务端 60s `HANDLER_TIMEOUT_MS` 防 request 挂死
-- **当前代码锚点**：
-  - `packages/server-core/src/transport/types.ts` `EventSink` 类型
-  - `packages/server-core/src/sessions/SessionManager.ts:7486-7498` `sendEvent` 调 eventSink
-  - `packages/server-core/src/sessions/SessionManager.ts:7504-7548` `queueDelta / flushDelta`
-  - `packages/shared/src/protocol/types.ts` `EVENT_BUFFER_MAX_SIZE=500` / `EVENT_BUFFER_TTL_MS=30000`
-  - `packages/server-core/src/transport/server.ts:190` `WsRpcServer.push`
-  - `packages/server-core/src/transport/server.ts:746-799` `bufferAndMaybeSendEvent`
-
----
-
-## 十一、无自动化 → cron + event-bus automation
-
-### 设计 11：自带 SchedulerService（cron）+ 事件总线 + matcher 适配器
-
-- **要解决的问题**：手动触发 Agent 太笨重；只支持 cron 又太死板——很多场景是「当某事件发生时跑 Agent」（如 PreToolUse、PermissionModeChange、SessionStart）。
-- **最小方案**：只支持 cron 定时触发。
-- **实际选择**：事件总线 + cron 调度双驱动：
-  - 事件：`LabelAdd / LabelRemove / PermissionModeChange / FlagChange / SessionStatusChange / SchedulerTick / PreToolUse / PostToolUse / SessionStart / SessionEnd`
-  - matcher 统一走 `utils.ts` 的 `matcherMatches*` 适配器
-  - 可经 `telegramTopic` 把自动触发的会话落到 Telegram 论坛 topic
-- **复杂度代价**：
-  - 事件总线 + 调度器两套触发源需要统一匹配逻辑
-  - 自动触发的会话需要带 `triggeredBy: {automationName, event, timestamp}` 元数据，要进 `SESSION_PERSISTENT_FIELDS`
-  - 与 messaging-gateway 集成需要 `setAutomationBinder` 钩子注入 SessionManager
-- **当前代码锚点**：
-  - `packages/shared/src/automations/automation-system.ts` SchedulerService + event-bus
-  - `packages/shared/src/automations/utils.ts` `matcherMatches*` 适配器
-  - `packages/shared/src/sessions/types.ts:26-56` `triggeredBy` 字段
-  - `packages/messaging-gateway/src/registry.ts` `MessagingGatewayRegistry.bindAutomationSession`
-
----
-
-## 十二、无消息桥 → messaging-gateway（Telegram/WhatsApp/Lark）
-
-### 设计 12：统一 gateway + 三适配器 + 独立 WhatsApp Node worker
-
-- **要解决的问题**：用户在哪里，Agent 就要能在哪里被触达——Telegram、WhatsApp、Lark/飞书三平台都要支持；但 WhatsApp 用 Baileys（非官方、长连接、Node-only），Bun 和 Electron 都跑不了。
-- **最小方案**：只支持 Telegram（grammy）。
-- **实际选择**：三层架构：
-  - `messaging-gateway` 本体：负责统一事件总线与会话绑定，适配器分 `telegram / whatsapp / lark`
-  - `messaging-whatsapp-worker`：独立 `worker.cjs` 子进程承载 Baileys（必须 Node）
-  - `TopicRegistry / MessagingGatewayRegistry.bindAutomationSession` 负责会话绑定
-- **复杂度代价**：
-  - 三种 runtime 分裂在这里达到顶点：Bun（gateway 主进程）+ Node（WhatsApp worker）+ Electron（桌面）
-  - Baileys 长连接的 pair/rehydrate 状态需要独立 `pairing.ts / binding-store.ts`
-  - 凭据 key 需要新增 `messaging_bearer::{workspaceId}::{platform}` 类型
-  - OAuth relay `https://agents.craft.do/auth/callback` 是为了让 Google 等只允许预注册回调 URL 的 provider 支持 WebUI 部署
-- **当前代码锚点**：
-  - `packages/messaging-gateway/src/adapters/{telegram,whatsapp,lark}/`
-  - `packages/messaging-gateway/src/gateway.ts` 统一入口
-  - `packages/messaging-whatsapp-worker/package.json:5` 描述明确「Baileys-based, unofficial API」
-  - `packages/messaging-whatsapp-worker/src/worker.cjs` Node-only 子进程
-  - `packages/messaging-gateway/src/topic-registry.ts` 会话绑定
-  - `packages/messaging-gateway/src/registry.ts` `bindAutomationSession`
-
----
-
-## 北极星：Craft Agents 的核心设计哲学
-
-> **「文档为中心、Agent 原生、跨形态复用」三位一体。**
-
-一句话拆解：
-
-- **文档为中心**：TipTap 富文本编辑器是一等公民，会话本身就是 JSONL 单文件（可分享、可移植、可外包），Markdown 渲染在 ui 包共享给所有形态。
-- **Agent 原生**：权限三态、Skill @mention、Volatile/Stable 上下文、mid-stream queue/steer、PrerequisiteManager read-before-execute——这些都不是「外挂功能」，而是内核基础设施，任何 backend 都自动获得。
-- **跨形态复用**：同一 `bootstrapServer` + 同一 `SessionManager` + 同一 `WsRpcServer` 在 Electron / headless server / CLI / WebUI / Viewer 五种形态下共用，差异仅折叠在 `PlatformServices` 与客户端包装方式上。
-
-支撑这条北极星的次级原则：
-
-```mermaid
-mindmap
-  root((支撑原则))
-    单一来源真源
-      SESSION_PERSISTENT_FIELDS
-      CHANNEL_MAP
-      isSourceUsable/isRefreshableSource
-      resolveMidStreamBehavior
-    跨版本兼容内建
-      v1/v2 key 双重尝试
-      StoredCredential 全 optional
-      MCP source OAuth/bearer 双槽位
-      CRAFT01 文件头预留版本
-    安全默认 + 显式逃生口
-      stdio MCP 默认净化 env
-      source config 可显式覆盖
-      AES-256-GCM 每次新 IV
-      机器迁移即失效
-    跨 backend 一致性
-      Skills 不走 SDK plugin
-      session-tools-core 共享处理器
-      ProviderDriver 接口统一
-```
-
----
-
-## 未解决的设计张力
-
-### 张力 1：native binary 与 preload 的不兼容
-
-- **现状**：Claude SDK 自 0.2.113 起改用 per-platform 原生 `claude` 二进制（`@anthropic-ai/claude-agent-sdk-binary/<binary>`），不再接受 Bun `--preload` 标志。
-- **后果**：曾经依赖拦截器实现的功能（rich tool intent、fast-mode override、MalformedBodyError 校验、OpenAI SSE 剥离）对 Claude 失效，目前只对 Pi 生效。
-- **代码锚点**：`packages/shared/CLAUDE.md` L44；`packages/shared/src/unified-network-interceptor.ts:857` 仅在 Pi 子进程通过 `args.unshift('--require', interceptorPath)` 加载（`pi-agent.ts:419`）。
-- **未来**：Phase-2 计划迁到 SDK hooks 或本地代理，但研究树中未见进展。
-
-### 张力 2：zod 双版本
-
-- **现状**：`packages/shared` 声明 `zod: ">=4.0.0"`，`packages/session-mcp-server` 声明 `zod: "^4.0.0"`。两套版本范围不完全一致，存在 transitive 漂移风险。
-- **后果**：如果某个 transitive 依赖锁到 zod 3.x，可能在运行时出现 schema 不兼容（zod 4 的 discriminatedUnion 与 3.x 不互通）。
-- **代码锚点**：`packages/shared/package.json:87`；`packages/session-mcp-server/package.json:19`。
-- **风险**：MCP schema 与 SDK schema 必须严格对齐，否则 Pi 后端通过 `session-mcp-server` 调用 SubmitPlan 等工具时会失败。
-
-### 张力 3：Bun vs Node 的 runtime 分裂
-
-- **现状**：项目同时存在三种 runtime：
-  - **Bun**：`packages/server` 入口、CLI、`pi-agent-server` 子进程、`session-mcp-server` 子进程
-  - **Node**：`messaging-whatsapp-worker`（Baileys 必须 Node）、Electron main（Electron 39 内嵌的 Node）
-  - **Electron**：渲染层（Chromium）
-- **后果**：
-  - 构建脚本必须区分：`scripts/build-server.ts`（Bun 跨平台编译）+ `scripts/build-wa-worker.ts`（Node 单独打 worker.cjs）+ `scripts/electron-build-{main,preload,renderer,resources}.ts`
-  - `bunfig.toml:9` 必须用 hoisted linker 而非 isolated，否则 Vite/esbuild 的传递依赖（i18next / tiptap / pdfjs-dist）会被破坏
-  - Bun 不支持 Baileys 的某些 Node-only API（如 `crypto.createCipheriv` 的某些 legacy 行为）
-- **代码锚点**：`bunfig.toml:9`；`packages/messaging-whatsapp-worker/package.json:16`；`package.json:8-15` `trustedDependencies`（含 electron、koffi、sharp 等原生模块）。
-- **未来**：如果 Bun 完全兼容 Baileys 或 Baileys 出官方 Node 替代品，可消除一条 runtime；目前看是长期债务。
-
----
-
-## 附录：跨设计的「问题 → 设计 → 新问题」演进矩阵
-
-| # | 旧设计遗留痛点 | 新设计 | 新设计引入的新债务 |
-|---|---|---|---|
-| 1 | 单 Claude SDK 无法接 Google/OpenAI/Copilot | 双 SDK（Claude+Pi） | 网络拦截器只对 Pi；session-tools-core 防漂移 |
-| 2 | 单 Electron 无法常驻/跨机/脚本化 | 多形态（Electron/Server/CLI/WebUI/Viewer） | 三 runtime 分裂；构建链复杂 |
-| 3 | IPC vs WS 两套调用代码 | WsRpc 抽象统一 | 能力协商、环形缓冲、握手协议复杂度 |
-| 4 | 单 JSON 整体重写慢/崩溃截断 | JSONL + 原子写 + 8KB 头 | 8KB 上限；Windows unlink-rename 非完美原子 |
-| 5 | OS keychain 弹窗/跨平台不一致 | AES-256-GCM 单文件 | 双 key 迁移；机器迁移即失效 |
-| 6 | MCP/API/local 各写一套 | Source 三类型统一抽象 | getCredentialId 决策树；slug 改名丢凭据 |
-| 7 | 每轮 re-stamp 破坏 prompt cache | Volatile/Stable 分离 | 每 turn 只能调一次；cache-debug 不能复算 |
-| 8 | 二态权限无法表达计划只读 | 三态 safe/ask/allow-all | AST 校验 + Windows 路径修复；不可扩展 |
-| 9 | 简单 lock 拒绝用户/浪费 token | mid-stream queue/steer | Claude 无原生 steer；parallel-tool args-only 漂移 |
-| 10 | EventEmitter 多订阅/重放弱 | EventSink + 环形缓冲 | 类型签名宽松；心跳/超时/握手协议全套 |
-| 11 | 手动触发太笨重 | cron + 事件总线自动化 | 自动触发会话需 trigger 元数据；binder 钩子 |
-| 12 | 单 Telegram 不够 | messaging-gateway 多平台 | Baileys Node-only；三 runtime 顶点；OAuth relay |
-
----
-
-## 未解决疑问
-
-1. **网络拦截器迁移到 Claude SDK hooks 的具体方案**：CLAUDE.md 明确列为 Phase-2 工作但研究树中未见设计文档。是否计划用 SDK 的 `onBeforeRequest` 钩子（如果 SDK 提供）还是写本地代理？关键挑战是 rich tool intent（如 `_intent / _displayName` 抽取）需要在响应流中处理，hooks 是否足够表达力未确认。
-
-2. **zod 双版本是否会随 SDK 升级而崩**：`@anthropic-ai/claude-agent-sdk` 内部用的 zod 版本（推测 3.x，因为 0.3.170 发布时 zod 4 仍在 RC）与项目强制要求的 zod 4.x 在 discriminatedUnion API 上不兼容。如果 SDK 在某次小版本升级后开始用 zod 4 的 API，是否会破坏 `packages/shared` 现有的 schema？目前类型检查通过，但隐藏的运行时漂移未覆盖。
-
-3. **远端 server 的「remote workspace」与本地 workspace 的会话所有权边界**：`packages/server/src/index.ts:266` 显式过滤 `!ws.remoteServer` 来初始化 messaging，提示存在 remote-owned workspace；其在桌面 thin client 下的会话同步、权限边界、凭据隔离如何在第一性原理下统一仍是开放问题——这关系到北极星「跨形态复用」是否真的无懈可击。
+**仍不确定**：
+- 双 SDK 是否会收敛为单 SDK（需作者/路线图确认）。
+- zod v3 锁定的具体阻塞依赖。
+- 内部闭源仓库的真实开发节奏（OSS 仓库只有 Sync 快照，11/95 提交为 `Sync from internal repository`）。
