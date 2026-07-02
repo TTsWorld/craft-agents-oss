@@ -1,7 +1,8 @@
 /**
- * Colors module - re-exports all color types, resolution, and validation.
+ * 颜色模块入口
  *
- * Import via: `import { EntityColor, resolveEntityColor } from '@craft-agent/shared/colors'`
+ * 把本目录下的类型、解析、校验、默认值和迁移函数集中重新导出。
+ * 外部可以通过 `import { EntityColor, resolveEntityColor } from '@craft-agent/shared/colors'` 统一引用。
  */
 export {
   type SystemColorName,

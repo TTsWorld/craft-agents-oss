@@ -1,3 +1,8 @@
+/**
+ * SessionBadges — React 组件
+ * 
+ * 所属目录：app-shell
+ */
 import { useMemo } from "react"
 import { parseLabelEntry } from "@craft-agent/shared/labels"
 import { EntityListLabelBadge } from "@/components/ui/entity-list-label-badge"
@@ -9,9 +14,11 @@ interface SessionBadgesProps {
   item: SessionMeta
 }
 
+/** SessionBadges - 把会话关联的标签 ID 解析成可视化徽章 */
 export function SessionBadges({ item }: SessionBadgesProps) {
   const ctx = useSessionListContext()
 
+  // 将会话保存的标签条目解析成完整的标签配置对象
   const resolvedLabels = useMemo(() => {
     if (!item.labels || item.labels.length === 0 || ctx.flatLabels.length === 0) return []
     return item.labels
@@ -24,6 +31,7 @@ export function SessionBadges({ item }: SessionBadgesProps) {
       .filter((l): l is { config: LabelConfig; rawValue: string | undefined } => l != null)
   }, [item.labels, ctx.flatLabels])
 
+  // 没有可解析标签时不渲染任何内容
   if (resolvedLabels.length === 0) return null
 
   return (

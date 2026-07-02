@@ -1,8 +1,8 @@
 /**
- * Provider Icons
+ * 提供商图标
  *
- * Maps LLM provider types and base URLs to their respective brand icons.
- * Used in AI Settings page and anywhere connection logos are needed.
+ * 把 LLM provider 类型与基础 URL 映射到对应的品牌图标。
+ * AI 设置页以及任何需要显示连接 logo 的地方都会用到。
  */
 
 import awsIcon from '@/assets/provider-icons/aws.svg'
@@ -23,7 +23,7 @@ import vercelIcon from '@/assets/provider-icons/vercel.svg'
 import type { LlmProviderType } from '@craft-agent/shared/config/llm-connections'
 
 /**
- * Icon URLs for each provider
+ * 各 provider 的图标 URL
  */
 export const providerIcons = {
   anthropic: claudeIcon,
@@ -44,7 +44,7 @@ export const providerIcons = {
 
 export type ProviderIconKey = keyof typeof providerIcons
 
-/** Human-readable provider names */
+/** 可读的 provider 名称 */
 const providerDisplayNames: Record<string, string> = {
   anthropic: 'Anthropic',
   openai: 'OpenAI',
@@ -60,9 +60,9 @@ const providerDisplayNames: Record<string, string> = {
   vercel: 'Vercel',
 }
 
-/** Get a human-readable provider name from provider type and optional base URL */
+/** 根据 provider 类型与可选 base URL 获取可读的 provider 名称 */
 export function getProviderDisplayName(providerType: string, baseUrl?: string | null): string {
-  // Try URL detection first for compat providers
+  // 对兼容 provider 优先通过 URL 检测
   if (baseUrl) {
     const url = baseUrl.toLowerCase()
     if (url.includes('openrouter.ai')) return 'OpenRouter'
@@ -76,7 +76,7 @@ export function getProviderDisplayName(providerType: string, baseUrl?: string | 
 }
 
 /**
- * Detect provider from base URL
+ * 根据 base URL 检测 provider
  */
 function detectProviderFromUrl(baseUrl: string): ProviderIconKey | null {
   const url = baseUrl.toLowerCase()
@@ -97,9 +97,8 @@ function detectProviderFromUrl(baseUrl: string): ProviderIconKey | null {
 }
 
 /**
- * Map Pi SDK auth provider names to icon keys.
- * For Pi connections, we show the actual upstream provider's icon
- * instead of the generic Pi logo.
+ * 把 Pi SDK 的 auth provider 名称映射到图标键。
+ * 对于 Pi 连接，我们显示实际上游 provider 的图标，而不是通用 Pi logo。
  */
 function piAuthProviderToIcon(piAuthProvider: string): ProviderIconKey | null {
   switch (piAuthProvider) {
@@ -136,8 +135,8 @@ function piAuthProviderToIcon(piAuthProvider: string): ProviderIconKey | null {
 }
 
 /**
- * Domain map for providers without static SVG icons.
- * Used to generate Google Favicon V2 URLs as fallback.
+ * 没有静态 SVG 图标的 provider 的域名映射。
+ * 用于生成 Google Favicon V2 URL 作为兜底。
  */
 const PI_AUTH_PROVIDER_DOMAINS: Record<string, string> = {
   groq: 'groq.com',
@@ -148,33 +147,33 @@ const PI_AUTH_PROVIDER_DOMAINS: Record<string, string> = {
 }
 
 /**
- * Get provider icon URL for a given provider type and optional base URL.
- * Base URL detection takes precedence for compatible providers (openai_compat, pi_compat).
- * For Pi connections, resolves to the upstream provider's icon via piAuthProvider.
+ * 根据 provider 类型与可选 base URL 获取 provider 图标 URL。
+ * 对兼容 provider（openai_compat、pi_compat）优先通过 base URL 检测。
+ * 对 Pi 连接，通过 piAuthProvider 解析到实际上游 provider 的图标。
  *
- * @param providerType - The LLM provider type
- * @param baseUrl - Optional custom base URL for detection
- * @param piAuthProvider - Optional Pi SDK auth provider (e.g. 'openai-codex', 'github-copilot')
- * @returns Icon URL string or null if no matching icon
+ * @param providerType - LLM provider 类型
+ * @param baseUrl - 可选的自定义 base URL，用于检测
+ * @param piAuthProvider - 可选的 Pi SDK auth provider（例如 'openai-codex'、'github-copilot'）
+ * @returns 图标 URL 字符串；未匹配时返回 null
  */
 export function getProviderIcon(
   providerType: LlmProviderType | string,
   baseUrl?: string | null,
   piAuthProvider?: string | null
 ): string | null {
-  // For compatible providers, try to detect from URL first
+  // 对兼容 provider 优先通过 URL 检测
   if (baseUrl && (providerType === 'openai_compat' || providerType === 'pi_compat')) {
     const detectedProvider = detectProviderFromUrl(baseUrl)
     if (detectedProvider) {
       return providerIcons[detectedProvider]
     }
-    // Manifest has no bundled SVG — fall back to Google Favicon V2 (same trick used for groq/xai elsewhere).
+    // Manifest 没有内置 SVG，用 Google Favicon V2 兜底（groq/xai 等地方也这样做）
     if (baseUrl.toLowerCase().includes('manifest.build')) {
       return 'https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&size=128&url=https://app.manifest.build'
     }
   }
 
-  // Map provider type to icon
+  // 根据 provider 类型映射图标
   switch (providerType) {
     case 'anthropic':
       return providerIcons.anthropic
@@ -185,20 +184,20 @@ export function getProviderIcon(
       return providerIcons.copilot
     case 'pi':
     case 'pi_compat': {
-      // Resolve to actual upstream provider icon
+      // 解析到实际上游 provider 图标
       if (piAuthProvider) {
         const iconKey = piAuthProviderToIcon(piAuthProvider)
         if (iconKey) return providerIcons[iconKey]
-        // Favicon fallback for providers without static SVGs
+        // 没有静态 SVG 的 provider 用 favicon 兜底
         const domain = PI_AUTH_PROVIDER_DOMAINS[piAuthProvider]
         if (domain) {
           return `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&size=128&url=https://${domain}`
         }
       }
-      return null  // Unknown/custom Pi provider — caller shows brain icon
+      return null  // 未知/自定义 Pi provider，调用方显示 brain 图标
     }
     default:
-      // Try URL detection as fallback
+      // 兜底：尝试 URL 检测
       if (baseUrl) {
         const detectedProvider = detectProviderFromUrl(baseUrl)
         if (detectedProvider) {

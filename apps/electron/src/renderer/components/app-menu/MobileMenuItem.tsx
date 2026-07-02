@@ -2,20 +2,22 @@ import * as React from 'react'
 import * as Icons from 'lucide-react'
 import { cn } from '@/lib/utils'
 
+/** 移动端菜单每一行组件。 */
+
 export type MobileMenuItemAffordance = 'chevron' | 'external' | 'none'
 
 export interface MobileMenuItemProps {
-  /** Lucide icon component or null for a custom node. */
+  /** Lucide 图标组件，或传入自定义节点；不传则不显示图标。 */
   icon?: React.ReactNode
   label: string
   /**
-   * Right-side trailing affordance.
-   * - `chevron`  → drills into a sub-page
-   * - `external` → opens an external URL
-   * - `none`     → fires a callback in place
+   * 右侧尾部提示图标。
+   * - chevron  → 进入子页面
+   * - external → 打开外部链接
+   * - none     → 原地触发回调
    */
   affordance?: MobileMenuItemAffordance
-  /** Sub-text rendered below the label. Optional. */
+  /** 标签下方可选的说明文字。 */
   description?: string
   onClick: () => void
   destructive?: boolean
@@ -23,8 +25,11 @@ export interface MobileMenuItemProps {
 }
 
 /**
- * Touch-friendly menu row. 44px minimum tap target, full-row tap surface,
- * subtle alpha-based active state (no hover styling — touch users have no hover).
+ * 适合触摸的菜单行。
+ *
+ * - 最小点击区域 44px，符合 iOS HIG；
+ * - 整行可点；
+ * - 使用 active 状态（半透明背景），不设置 hover（触摸设备没有 hover）。
  */
 export function MobileMenuItem({
   icon,

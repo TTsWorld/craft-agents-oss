@@ -1,35 +1,38 @@
 /**
- * EscapeInterruptContext
+ * EscapeInterruptContext（双 Esc 中断上下文）
  *
- * Provides state for the double-Esc interrupt feature.
- * When processing, first Esc shows a warning overlay; second Esc within 1 second interrupts.
+ * 当 AI 正在处理（processing）时，用户按一次 Esc 先显示警告遮罩，
+ * 1 秒内再按一次 Esc 才真正中断处理。
  *
- * This is a separate context to avoid prop drilling through the component tree:
- * AppShell -> MainContentPanel -> ChatPage -> ChatDisplay -> InputContainer -> FreeFormInput
+ * 单独抽成一个 Context，避免把状态通过 props 一层层从 AppShell 传到 FreeFormInput，
+ * 这种跨层级传值在 React 里叫“prop drilling”，Context 就是用来解决它的。
  */
 
 import * as React from 'react'
 import { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react'
 
 interface EscapeInterruptContextType {
-  /** Whether the escape warning overlay should be shown */
+  /** 是否显示 Esc 警告遮罩 */
   showEscapeOverlay: boolean
-  /** Trigger the first escape press - shows overlay and returns false. If already showing, returns true (proceed with interrupt) */
+  /** 处理一次 Esc 按键：
+   * - 第一次按：显示遮罩，返回 false（不要中断）
+   * - 在超时时间内再按：关闭遮罩，返回 true（可以中断）
+   */
   handleEscapePress: () => boolean
-  /** Dismiss the overlay (called after timeout or after interrupt) */
+  /** 关闭遮罩（超时后或真正中断后调用） */
   dismissOverlay: () => void
 }
 
 const EscapeInterruptContext = createContext<EscapeInterruptContextType | null>(null)
 
-// Time window (ms) for second Esc press to trigger interrupt
+// 第二次 Esc 按下的有效时间窗口（毫秒）
 const ESC_TIMEOUT_MS = 2000
 
 export function EscapeInterruptProvider({ children }: { children: React.ReactNode }) {
   const [showEscapeOverlay, setShowEscapeOverlay] = useState(false)
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Clear timeout on unmount
+  // 组件卸载时清理定时器，防止内存泄漏
   useEffect(() => {
     return () => {
       if (timeoutRef.current) {
@@ -47,26 +50,26 @@ export function EscapeInterruptProvider({ children }: { children: React.ReactNod
   }, [])
 
   /**
-   * Handle an Escape key press.
-   * Returns true if the caller should proceed with the interrupt (second press within timeout).
-   * Returns false if this was the first press (overlay shown, waiting for second press).
+   * 处理 Esc 按键。
+   * 返回 true 表示调用方应当继续执行中断（第二次按，且在超时内）。
+   * 返回 false 表示这是第一次按（只显示遮罩，等待第二次）。
    */
   const handleEscapePress = useCallback((): boolean => {
     if (showEscapeOverlay) {
-      // Second press within timeout - proceed with interrupt
+      // 第二次按，且在超时内，执行中断
       dismissOverlay()
       return true
     }
 
-    // First press - show overlay and start timeout
+    // 第一次按，显示遮罩并启动超时
     setShowEscapeOverlay(true)
 
-    // Clear any existing timeout
+    // 清理已有的旧定时器，避免多个定时器互相覆盖
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current)
     }
 
-    // Auto-dismiss after timeout
+    // 超时后自动关闭遮罩
     timeoutRef.current = setTimeout(() => {
       setShowEscapeOverlay(false)
       timeoutRef.current = null

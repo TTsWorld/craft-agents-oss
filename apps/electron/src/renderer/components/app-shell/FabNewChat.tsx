@@ -1,3 +1,9 @@
+/**
+ * FabNewChat - 紧凑/移动端布局的悬浮新建聊天按钮。
+ *
+ * 固定在右下角、方便拇指点击；桌面端隐藏，由顶部栏菜单 + ⌘N 处理。
+ * 通过 portal 渲染到 document.body，避免被 transform 祖先影响 fixed 定位。
+ */
 import { createPortal } from "react-dom"
 import { Plus } from "lucide-react"
 import { useTranslation } from "react-i18next"
@@ -9,15 +15,12 @@ interface FabNewChatProps {
 }
 
 /**
- * Floating action button for creating a new chat on compact/mobile layouts.
- * Bottom-right, thumb-reach. Hidden on desktop — the top-bar menu + ⌘N handle it there.
+ * FabNewChat - 紧凑/移动端布局的悬浮新建聊天按钮。
  *
- * Rendered through a portal to `document.body` so `position: fixed` is truly
- * viewport-relative. Without the portal, the FAB lives inside the navigator
- * panel which is wrapped in a transformed `motion.div` (CompactPanelTransition),
- * and any ancestor with `transform` becomes the containing block for `fixed`
- * descendants — the FAB would otherwise pin to the top of the screen instead
- * of the bottom.
+ * 固定在右下角、方便拇指点击；桌面端隐藏，由顶部栏菜单 + ⌘N 处理。
+ * 通过 portal 渲染到 document.body，确保 position: fixed 以视口为基准。
+ * 如果不使用 portal，FAB 会位于被 transform 的 motion.div（CompactPanelTransition）内部，
+ * 而任何带 transform 的祖先都会成为 fixed 子元素的包含块，导致 FAB 错位到屏幕顶部而非底部。
  */
 export function FabNewChat({ onClick, className }: FabNewChatProps) {
   const { t } = useTranslation()
@@ -31,7 +34,7 @@ export function FabNewChat({ onClick, className }: FabNewChatProps) {
         "fixed right-4 z-30 size-14 rounded-full",
         "bg-accent text-white",
         "flex items-center justify-center",
-        // Layered shadow: ambient drop + accent-tinted glow + subtle inner highlight
+        // 多层阴影：环境投影 + 主题色光晕 + 轻微内高光
         "shadow-[0_10px_30px_-8px_rgba(0,0,0,0.45),0_6px_18px_-6px_rgba(109,93,252,0.55),inset_0_1px_0_0_rgba(255,255,255,0.15)]",
         "transition-all duration-150",
         "hover:scale-105 hover:shadow-[0_14px_34px_-8px_rgba(0,0,0,0.5),0_8px_22px_-6px_rgba(109,93,252,0.65),inset_0_1px_0_0_rgba(255,255,255,0.2)]",

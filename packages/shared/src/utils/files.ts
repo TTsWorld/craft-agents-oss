@@ -4,34 +4,45 @@ import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 
 /**
- * Strip UTF-8 BOM (Byte Order Mark) from a string.
- * BOM (\uFEFF) can appear when files are written by certain editors or tools
- * and causes JSON.parse() to fail with "Unexpected token" errors.
+ * 去除字符串开头的 UTF-8 BOM（字节顺序标记）。
+ * 某些编辑器或工具写入的文件可能带 BOM（\uFEFF），会导致 JSON.parse() 报 "Unexpected token" 错误。
+ *
+ * @param text - 待处理的字符串
+ * @returns 去掉 BOM 后的字符串
  */
 export function stripBom(text: string): string {
   return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
 }
 
 /**
- * Parse a JSON string, stripping any leading UTF-8 BOM.
- * Use this instead of raw JSON.parse() for any content that may originate from a file.
+ * 安全解析 JSON 字符串，自动去除开头的 UTF-8 BOM。
+ * 对于可能来自文件的内容，请用本函数代替原生 JSON.parse()。
+ *
+ * @param text - JSON 字符串
+ * @returns 解析后的值（unknown 类型，使用时通常需 as 断言）
  */
 export function safeJsonParse(text: string): unknown {
   return JSON.parse(stripBom(text));
 }
 
 /**
- * Read and parse a JSON file, handling UTF-8 BOM transparently.
- * Replaces the common JSON.parse(readFileSync(path, 'utf-8')) pattern.
+ * 读取并解析 JSON 文件，透明处理 UTF-8 BOM。
+ * 替代常见的 JSON.parse(readFileSync(path, 'utf-8')) 写法。
+ *
+ * @param filePath - JSON 文件路径
+ * @returns 解析后的值；泛型 T 类似 Go 的泛型约束，调用方指定返回类型
  */
 export function readJsonFileSync<T = unknown>(filePath: string): T {
   return JSON.parse(stripBom(readFileSync(filePath, 'utf-8'))) as T;
 }
 
 /**
- * Atomically write a file by writing to a temp file then renaming.
- * This prevents partial writes from corrupting the file on crash/interrupt.
- * Uses write-to-temp-then-rename pattern which is atomic on POSIX systems.
+ * 原子写入文件：先写入临时文件再重命名。
+ * 防止崩溃/中断时产生部分写入导致文件损坏。
+ * 在 POSIX 系统上，write-to-temp-then-rename 是原子的。
+ *
+ * @param filePath - 目标文件路径
+ * @param data - 要写入的字符串
  */
 export function atomicWriteFileSync(filePath: string, data: string): void {
   const tmpPath = filePath + '.tmp';
@@ -39,12 +50,16 @@ export function atomicWriteFileSync(filePath: string, data: string): void {
     writeFileSync(tmpPath, data);
     renameSync(tmpPath, filePath);
   } catch (error) {
-    // Clean up temp file if rename failed
+    // 重命名失败时清理临时文件
     try { unlinkSync(tmpPath); } catch {}
     throw error;
   }
 }
 
+/**
+ * 文件附件描述。
+ * TS 的 `interface` 用于定义对象形状，类似 Go 中带 json tag 的 struct。
+ */
 export interface FileAttachment {
   type: 'image' | 'text' | 'pdf' | 'office' | 'audio' | 'unknown';
   path: string;
@@ -53,13 +68,13 @@ export interface FileAttachment {
   base64?: string;
   text?: string;
   size: number;
-  /** Path where file is stored in session attachments folder (set by Electron app) */
+  /** 文件在会话 attachments 文件夹中的存储路径（由 Electron 应用设置） */
   storedPath?: string;
-  /** Path to converted markdown version (for office files) */
+  /** 转换后的 markdown 路径（针对 office 文件） */
   markdownPath?: string;
 }
 
-// Supported image types for Claude API
+// Claude API 支持的图片类型
 const IMAGE_EXTENSIONS: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -76,7 +91,7 @@ const IMAGE_EXTENSIONS: Record<string, string> = {
   '.svg': 'image/svg+xml',
 };
 
-// Text file extensions
+// 文本文件扩展名
 const TEXT_EXTENSIONS = new Set([
   '.txt', '.md', '.json', '.js', '.ts', '.tsx', '.jsx',
   '.py', '.rb', '.go', '.rs', '.java', '.c', '.cpp', '.h',
@@ -86,7 +101,7 @@ const TEXT_EXTENSIONS = new Set([
   '.csv', '.log', '.conf', '.ini', '.cfg',
 ]);
 
-// Office file extensions (will be converted to markdown via markitdown-js)
+// Office 文件扩展名（会通过 markitdown-js 转换为 markdown）
 const OFFICE_EXTENSIONS: Record<string, string> = {
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -96,7 +111,7 @@ const OFFICE_EXTENSIONS: Record<string, string> = {
   '.ppt': 'application/vnd.ms-powerpoint',
 };
 
-// Audio file extensions (forwarded as base64; backends decide how to handle)
+// 音频文件扩展名（以 base64 转发；后端决定如何处理）
 const AUDIO_EXTENSIONS: Record<string, string> = {
   '.ogg': 'audio/ogg',
   '.opus': 'audio/ogg',
@@ -109,46 +124,46 @@ const AUDIO_EXTENSIONS: Record<string, string> = {
   '.webm': 'audio/webm',
 };
 
-const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB limit
-const MAX_TEXT_SIZE = 100 * 1024; // 100KB for text files
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB 总限制
+const MAX_TEXT_SIZE = 100 * 1024; // 文本文件 100KB 上限
 
-// Claude API image limits - images exceeding these will fail silently
-// See: https://docs.anthropic.com/en/docs/build-with-claude/vision
-const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB - Claude API hard limit
-const MAX_IMAGE_DIMENSION = 8000; // 8000x8000 max pixels
-const OPTIMAL_IMAGE_EDGE = 1568; // Recommended max edge for quality/cost balance (~1.15MP)
+// Claude API 图片限制 - 超限会静默失败
+// 参见：https://docs.anthropic.com/en/docs/build-with-claude/vision
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB - Claude API 硬限制
+const MAX_IMAGE_DIMENSION = 8000; // 最大 8000x8000 像素
+const OPTIMAL_IMAGE_EDGE = 1568; // 推荐最大边长，平衡质量与成本（约 1.15MP）
 
 /**
- * Result of validating an image for Claude API compatibility
+ * 图片校验结果。
  */
 export interface ImageValidationResult {
   valid: boolean;
-  /** Hard error - image cannot be sent */
+  /** 硬错误 - 图片无法发送 */
   error?: string;
-  /** Error code for programmatic handling */
+  /** 错误码，用于程序化处理 */
   errorCode?: 'dimension_exceeded' | 'size_exceeded';
-  /** Warning - image will work but may have issues */
+  /** 警告 - 图片可用但可能有问题 */
   warning?: string;
-  /** Image needs resizing for optimal performance */
+  /** 建议缩放以获得最佳性能 */
   needsResize?: boolean;
-  /** Suggested new dimensions if resize needed */
+  /** 需要缩放时的建议尺寸 */
   suggestedSize?: { width: number; height: number };
 }
 
 /**
- * Validate an image for Claude API compatibility
- * Returns validation result with errors, warnings, and resize suggestions
+ * 校验图片是否符合 Claude API 要求。
+ * 返回包含错误、警告和缩放建议的校验结果。
  *
- * @param size - File size in bytes
- * @param width - Image width in pixels (optional, for dimension checking)
- * @param height - Image height in pixels (optional, for dimension checking)
+ * @param size - 文件大小（字节）
+ * @param width - 图片宽度（像素，可选）
+ * @param height - 图片高度（像素，可选）
  */
 export function validateImageForClaudeAPI(
   size: number,
   width?: number,
   height?: number
 ): ImageValidationResult {
-  // Check file size first (hard limit - cannot resize to fix)
+  // 先检查文件大小（硬限制，无法通过缩放修复）
   if (size > MAX_IMAGE_SIZE) {
     const sizeMB = (size / 1024 / 1024).toFixed(1);
     return {
@@ -158,9 +173,9 @@ export function validateImageForClaudeAPI(
     };
   }
 
-  // Check dimensions if provided
+  // 如果提供了宽高，检查尺寸
   if (width !== undefined && height !== undefined) {
-    // Hard limit on dimensions - can be fixed by resizing
+    // 尺寸硬限制 - 可通过缩放修复
     if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
       return {
         valid: false,
@@ -169,7 +184,7 @@ export function validateImageForClaudeAPI(
       };
     }
 
-    // Check if resize is recommended for optimal performance
+    // 检查是否建议缩放以优化性能
     const maxEdge = Math.max(width, height);
     if (maxEdge > OPTIMAL_IMAGE_EDGE) {
       const scale = OPTIMAL_IMAGE_EDGE / maxEdge;
@@ -188,32 +203,35 @@ export function validateImageForClaudeAPI(
   return { valid: true };
 }
 
-// Export constants for use in other modules
+// 导出常量供其他模块使用
 export const IMAGE_LIMITS = {
   MAX_SIZE: MAX_IMAGE_SIZE,
-  /** Max raw file size before base64 encoding (base64 inflates by 4/3, so 5MB base64 ≈ 3.75MB raw) */
+  /** base64 编码前的最大原始大小（base64 会膨胀 4/3，所以 5MB base64 ≈ 3.75MB 原始大小） */
   MAX_RAW_SIZE: Math.floor(MAX_IMAGE_SIZE * 3 / 4),
   MAX_DIMENSION: MAX_IMAGE_DIMENSION,
   OPTIMAL_EDGE: OPTIMAL_IMAGE_EDGE,
-  /** JPEG quality for photo-like images */
+  /** 照片类图片的 JPEG 质量 */
   JPEG_QUALITY_HIGH: 90,
-  /** JPEG quality for fallback compression when size still exceeds limits */
+  /** 尺寸仍超限时回退压缩的 JPEG 质量 */
   JPEG_QUALITY_FALLBACK: 75,
 } as const;
 
 /**
- * Extract file paths from input text
- * Handles:
- * - Absolute paths (/path/to/file)
- * - Home-relative paths (~/path/to/file)
- * - Quoted paths ("path with spaces")
- * - Shell-escaped paths (/path/to/file\ with\ spaces)
- * - Paths with spaces ending in .extension
+ * 从输入文本中提取文件路径。
+ * 支持：
+ * - 绝对路径（/path/to/file）
+ * - 家目录相对路径（~/path/to/file）
+ * - 带引号路径（"path with spaces"）
+ * - Shell 转义路径（/path/to/file\ with\ spaces）
+ * - 以 .extension 结尾且含空格的路径
+ *
+ * @param input - 包含路径的输入文本
+ * @returns 提取到的路径数组
  */
 export function extractFilePaths(input: string): string[] {
   const paths: string[] = [];
 
-  // Match quoted paths first (handles spaces naturally)
+  // 先匹配带引号路径（天然支持空格）
   const quotedRegex = /["']([^"']+)["']/g;
   let match;
   while ((match = quotedRegex.exec(input)) !== null) {
@@ -223,12 +241,12 @@ export function extractFilePaths(input: string): string[] {
     }
   }
 
-  // Match shell-escaped paths (backslash before spaces): /path/to/file\ name.ext
-  const escapedRegex = /(?:^|\s)((?:\/|~\/)[^\s"']*(?:\\ [^\s"']*)+)/g;
+  // 匹配 shell 转义路径（空格前带反斜杠）：/path/to/file\ name.ext
+  const escapedRegex = /(?:^|\s)((?:\/|\/\/)[^\s"']*(?:\\ [^\s"']*)+)/g;
   while ((match = escapedRegex.exec(input)) !== null) {
     let path = match[1];
     if (path) {
-      // Unescape the path
+      // 去掉转义
       path = path.replace(/\\ /g, ' ');
       if (!paths.includes(path)) {
         paths.push(path);
@@ -236,12 +254,12 @@ export function extractFilePaths(input: string): string[] {
     }
   }
 
-  // Try to match paths with spaces by looking for any file extension
-  // This handles: /Users/test/Screenshot 2024-01-01.png
+  // 尝试匹配带空格的路径：找以 / 或 ~/ 开头、以任意 .extension 结尾的路径
+  // 处理：/Users/test/Screenshot 2024-01-01.png
   const lines = input.split('\n');
   for (const line of lines) {
-    // Look for paths that start with / or ~/ and end with any .extension
-    const pathMatch = line.match(/^((?:\/|~\/)[^\n]+?)(\.[a-zA-Z0-9]{1,10})(\s|$)/);
+    // 找以 / 或 ~/ 开头、以任意 .extension 结尾的路径
+    const pathMatch = line.match(/^((?:\/|\/\/)[^\n]+?)(\.[a-zA-Z0-9]{1,10})(\s|$)/);
     if (pathMatch && pathMatch[1] && pathMatch[2]) {
       const fullPath = pathMatch[1] + pathMatch[2];
       if (!paths.includes(fullPath)) {
@@ -250,8 +268,8 @@ export function extractFilePaths(input: string): string[] {
     }
   }
 
-  // Match simple unquoted paths (no spaces, starting with / or ~)
-  const unquotedRegex = /(?:^|\s)((?:\/|~\/)[^\s"']+)/g;
+  // 匹配简单无引号路径（无空格，以 / 或 ~ 开头）
+  const unquotedRegex = /(?:^|\s)((?:\/|\/\/)[^\s"']+)/g;
   while ((match = unquotedRegex.exec(input)) !== null) {
     const path = match[1];
     if (path && !paths.includes(path)) {
@@ -263,23 +281,26 @@ export function extractFilePaths(input: string): string[] {
 }
 
 /**
- * Check if a string looks like a file path
+ * 判断字符串是否像文件路径。
  */
 function looksLikeFilePath(str: string): boolean {
-  // Must start with / or ~/
+  // 必须以 / 或 ~/ 开头
   if (!str.startsWith('/') && !str.startsWith('~/')) {
     return false;
   }
-  // Must have some content after the prefix
+  // 前缀后必须有内容
   if (str.length < 2) {
     return false;
   }
-  // Should have a file extension or be a directory
+  // 应有文件扩展名或为目录
   return true;
 }
 
 /**
- * Resolve a path (handle ~ expansion)
+ * 解析路径（处理 ~ 展开）。
+ *
+ * @param filePath - 待解析路径
+ * @returns 解析后的绝对路径
  */
 export function resolvePath(filePath: string): string {
   if (filePath.startsWith('~/')) {
@@ -290,8 +311,11 @@ export function resolvePath(filePath: string): string {
 }
 
 /**
- * Determine the type of a file based on extension
- * Falls back to 'text' for unknown extensions (will try to read as text)
+ * 根据扩展名判断文件类型。
+ * 未知扩展名回退为 'text'（会尝试按文本读取）。
+ *
+ * @param filePath - 文件路径
+ * @returns 文件类型
  */
 export function getFileType(filePath: string): 'image' | 'text' | 'pdf' | 'office' | 'audio' | 'unknown' {
   const ext = extname(filePath).toLowerCase();
@@ -312,13 +336,15 @@ export function getFileType(filePath: string): 'image' | 'text' | 'pdf' | 'offic
     return 'text';
   }
 
-  // For unknown extensions, default to 'text' - we'll try to read it as text
-  // Binary files will show garbled content but at least they'll attach
+  // 未知扩展名默认按文本处理——二进制文件会显示乱码，但至少能附加
   return 'text';
 }
 
 /**
- * Get MIME type for a file
+ * 获取文件的 MIME 类型。
+ *
+ * @param filePath - 文件路径
+ * @returns MIME 类型字符串
  */
 export function getMimeType(filePath: string): string {
   const ext = extname(filePath).toLowerCase();
@@ -339,7 +365,7 @@ export function getMimeType(filePath: string): string {
     return audioMime;
   }
 
-  // Default to text for known text extensions
+  // 已知文本扩展名默认 text/plain
   if (TEXT_EXTENSIONS.has(ext)) {
     return 'text/plain';
   }
@@ -348,7 +374,10 @@ export function getMimeType(filePath: string): string {
 }
 
 /**
- * Read a file and return attachment info
+ * 读取文件并返回附件信息。
+ *
+ * @param filePath - 文件路径
+ * @returns FileAttachment；读取失败返回 null
  */
 export function readFileAttachment(filePath: string): FileAttachment | null {
   try {
@@ -381,13 +410,13 @@ export function readFileAttachment(filePath: string): FileAttachment | null {
     };
 
     if (type === 'image') {
-      // Read as base64 for images
+      // 图片以 base64 读取
       const buffer = readFileSync(resolved);
       attachment.base64 = buffer.toString('base64');
     } else if (type === 'text') {
-      // Read as text for text files (with size limit)
+      // 文本文件（受大小限制）
       if (stats.size > MAX_TEXT_SIZE) {
-        // Read only first part of large text files
+        // 大文本只读取前一部分
         const buffer = readFileSync(resolved);
         attachment.text = buffer.toString('utf-8').slice(0, MAX_TEXT_SIZE) +
           `\n\n[File truncated - showing first ${MAX_TEXT_SIZE / 1024}KB of ${Math.round(stats.size / 1024)}KB]`;
@@ -395,18 +424,16 @@ export function readFileAttachment(filePath: string): FileAttachment | null {
         attachment.text = readFileSync(resolved, 'utf-8');
       }
     } else if (type === 'pdf') {
-      // Read PDF as base64
+      // PDF 以 base64 读取
       const buffer = readFileSync(resolved);
       attachment.base64 = buffer.toString('base64');
     } else if (type === 'office') {
-      // Read Office files as base64 (will be converted to markdown later)
+      // Office 文件以 base64 读取（后续再转换为 markdown）
       const buffer = readFileSync(resolved);
       attachment.base64 = buffer.toString('base64');
     } else if (type === 'audio') {
-      // Read audio as base64 — backends that recognize 'audio' decide how to
-      // forward it (transcription, native audio input, etc). Backends that
-      // don't recognize 'audio' fall through to their existing 'unknown'
-      // branches so the attachment is at least visible.
+      // 音频以 base64 读取——识别 'audio' 的后端决定如何转发（转录、原生音频输入等）；
+      // 不识别的后端会落到原有 'unknown' 分支，至少保证附件可见。
       const buffer = readFileSync(resolved);
       attachment.base64 = buffer.toString('base64');
     }
@@ -421,8 +448,11 @@ export function readFileAttachment(filePath: string): FileAttachment | null {
 }
 
 /**
- * Process input text and extract any file attachments
- * Returns the cleaned text and any file attachments
+ * 处理输入文本并提取其中的文件附件。
+ * 返回清理后的文本和所有文件附件。
+ *
+ * @param input - 输入文本
+ * @returns { text, attachments, errors }
  */
 export function processInputWithFiles(input: string): {
   text: string;
@@ -433,14 +463,14 @@ export function processInputWithFiles(input: string): {
   const attachments: FileAttachment[] = [];
   const errors: string[] = [];
 
-  // Process each path
+  // 逐个处理路径
   for (const path of paths) {
     try {
       const attachment = readFileAttachment(path);
       if (attachment) {
         attachments.push(attachment);
       } else {
-        // File doesn't exist - might just be text that looks like a path
+        // 文件不存在——可能只是看起来像路径的普通文本
       }
     } catch (error) {
       if (error instanceof Error) {
@@ -449,15 +479,15 @@ export function processInputWithFiles(input: string): {
     }
   }
 
-  // Remove successfully attached file paths from the text
+  // 从文本中移除已成功附加的文件路径
   let cleanedText = input;
   for (const attachment of attachments) {
-    // Remove the path from the text (both quoted and unquoted forms)
+    // 移除带引号和不带引号的形式
     cleanedText = cleanedText.replace(`"${attachment.path}"`, '');
     cleanedText = cleanedText.replace(`'${attachment.path}'`, '');
     cleanedText = cleanedText.replace(attachment.path, '');
 
-    // Also try with original path (before resolution)
+    // 也尝试用原始路径（解析前）
     const originalPath = paths.find(p => resolvePath(p) === attachment.path);
     if (originalPath && originalPath !== attachment.path) {
       cleanedText = cleanedText.replace(`"${originalPath}"`, '');
@@ -466,16 +496,18 @@ export function processInputWithFiles(input: string): {
     }
   }
 
-  // Clean up extra whitespace
+  // 清理多余空白
   cleanedText = cleanedText.replace(/\s+/g, ' ').trim();
 
   return { text: cleanedText, attachments, errors };
 }
 
 /**
- * Read from clipboard (cross-platform)
- * Checks for: 1) File URLs (copied files), 2) Images
- * Returns FileAttachment[] - could be multiple files
+ * 从剪贴板读取（跨平台）。
+ * 检查：1) 文件 URL（复制的文件）；2) 图片。
+ * 返回 FileAttachment[]，可能包含多个文件。
+ *
+ * @returns 附件数组
  */
 export function readClipboard(): FileAttachment[] {
   if (process.platform === 'darwin') {
@@ -489,13 +521,13 @@ export function readClipboard(): FileAttachment[] {
 }
 
 /**
- * Read from clipboard on macOS
- * Checks for: 1) File URLs (copied files in Finder), 2) Images
+ * 从 macOS 剪贴板读取。
+ * 检查：1) 文件 URL（Finder 中复制的文件）；2) 图片。
  */
 function readClipboardMacOS(): FileAttachment[] {
   const attachments: FileAttachment[] = [];
 
-  // First, check for file URLs in clipboard (when files are copied in Finder)
+  // 首先检查剪贴板中的文件 URL（Finder 中复制文件时）
   try {
     const scriptFile = join(tmpdir(), `craft-clipboard-files-${Date.now()}.js`);
     const jxaScript = `
@@ -539,15 +571,15 @@ if (fileURLs && !fileURLs.isNil()) {
       }
     }
   } catch {
-    // File URL reading failed
+    // 文件 URL 读取失败
   }
 
-  // If we got files, return them
+  // 拿到文件就直接返回
   if (attachments.length > 0) {
     return attachments;
   }
 
-  // Otherwise, check for image data in clipboard
+  // 否则检查剪贴板中的图片数据
   const imageAttachment = readClipboardImageDataMacOS();
   if (imageAttachment) {
     return [imageAttachment];
@@ -557,13 +589,13 @@ if (fileURLs && !fileURLs.isNil()) {
 }
 
 /**
- * Read from clipboard on Windows
- * Uses PowerShell to access clipboard for files and images
+ * 从 Windows 剪贴板读取。
+ * 使用 PowerShell 访问文件和图片。
  */
 function readClipboardWindows(): FileAttachment[] {
   const attachments: FileAttachment[] = [];
 
-  // Check for file paths in clipboard (copied files in Explorer)
+  // 检查剪贴板中的文件路径（资源管理器中复制的文件）
   try {
     const psScript = `
       Add-Type -AssemblyName System.Windows.Forms
@@ -582,7 +614,7 @@ function readClipboardWindows(): FileAttachment[] {
 
     if (result !== 'no_files' && result.length > 0) {
       try {
-        // PowerShell returns single item as string, array as JSON array
+        // PowerShell 单条返回字符串，数组返回 JSON 数组
         const paths = result.startsWith('[') ? JSON.parse(result) : [result.replace(/^"|"$/g, '')];
         for (const filePath of paths) {
           const attachment = readFileAttachment(filePath);
@@ -591,19 +623,19 @@ function readClipboardWindows(): FileAttachment[] {
           }
         }
       } catch {
-        // JSON parse failed
+        // JSON 解析失败
       }
     }
   } catch {
-    // File reading failed
+    // 文件读取失败
   }
 
-  // If we got files, return them
+  // 拿到文件就直接返回
   if (attachments.length > 0) {
     return attachments;
   }
 
-  // Check for image data in clipboard
+  // 检查剪贴板中的图片数据
   const imageAttachment = readClipboardImageDataWindows();
   if (imageAttachment) {
     return [imageAttachment];
@@ -613,13 +645,13 @@ function readClipboardWindows(): FileAttachment[] {
 }
 
 /**
- * Read image data from Windows clipboard using PowerShell
+ * 用 PowerShell 从 Windows 剪贴板读取图片数据。
  */
 function readClipboardImageDataWindows(): FileAttachment | null {
   const tempFile = join(tmpdir(), `craft-clipboard-${Date.now()}.png`);
 
   try {
-    // PowerShell script to save clipboard image to file
+    // PowerShell 脚本：把剪贴板图片保存到文件
     const psScript = `
       Add-Type -AssemblyName System.Windows.Forms
       $img = [System.Windows.Forms.Clipboard]::GetImage()
@@ -640,22 +672,22 @@ function readClipboardImageDataWindows(): FileAttachment | null {
       return readImageFile(tempFile);
     }
   } catch {
-    // PowerShell clipboard image extraction failed
+    // PowerShell 剪贴板图片提取失败
   }
 
   return null;
 }
 
 /**
- * Read from clipboard on Linux
- * Uses xclip or xsel for clipboard access
+ * 从 Linux 剪贴板读取。
+ * 使用 xclip 或 xsel 访问剪贴板。
  */
 function readClipboardLinux(): FileAttachment[] {
   const attachments: FileAttachment[] = [];
 
-  // Check for file URIs in clipboard (GNOME/KDE file managers use this format)
+  // 检查剪贴板中的 file URI（GNOME/KDE 文件管理器使用此格式）
   try {
-    // Try xclip first (most common)
+    // 先尝试 xclip（最常见）
     let result: string | null = null;
     try {
       result = execSync('xclip -selection clipboard -t text/uri-list -o 2>/dev/null', {
@@ -664,7 +696,7 @@ function readClipboardLinux(): FileAttachment[] {
         timeout: 5000,
       }).trim();
     } catch {
-      // xclip not available, try xsel
+      // xclip 不可用，尝试 xsel
       try {
         result = execSync('xsel --clipboard --output 2>/dev/null', {
           encoding: 'utf-8',
@@ -672,16 +704,16 @@ function readClipboardLinux(): FileAttachment[] {
           timeout: 5000,
         }).trim();
       } catch {
-        // xsel also not available
+        // xsel 也不可用
       }
     }
 
     if (result && result.startsWith('file://')) {
-      // Parse file:// URIs
+      // 解析 file:// URI
       const lines = result.split('\n');
       for (const line of lines) {
         if (line.startsWith('file://')) {
-          // Decode URI and convert to path
+          // URI 解码并转为路径
           const filePath = decodeURIComponent(line.replace('file://', ''));
           const attachment = readFileAttachment(filePath);
           if (attachment) {
@@ -691,15 +723,15 @@ function readClipboardLinux(): FileAttachment[] {
       }
     }
   } catch {
-    // File reading failed
+    // 文件读取失败
   }
 
-  // If we got files, return them
+  // 拿到文件就直接返回
   if (attachments.length > 0) {
     return attachments;
   }
 
-  // Check for image data in clipboard
+  // 检查剪贴板中的图片数据
   const imageAttachment = readClipboardImageDataLinux();
   if (imageAttachment) {
     return [imageAttachment];
@@ -709,12 +741,12 @@ function readClipboardLinux(): FileAttachment[] {
 }
 
 /**
- * Read image data from Linux clipboard using xclip
+ * 用 xclip 从 Linux 剪贴板读取图片数据。
  */
 function readClipboardImageDataLinux(): FileAttachment | null {
   const tempFile = join(tmpdir(), `craft-clipboard-${Date.now()}.png`);
 
-  // Try xclip for image/png content
+  // 先用 xclip 取 image/png
   try {
     execSync(`xclip -selection clipboard -t image/png -o > "${tempFile}" 2>/dev/null`, {
       shell: '/bin/bash',
@@ -727,14 +759,14 @@ function readClipboardImageDataLinux(): FileAttachment | null {
       if (stats.size > 0) {
         return readImageFile(tempFile);
       }
-      // Empty file, cleanup
+      // 空文件，清理
       try { unlinkSync(tempFile); } catch {}
     }
   } catch {
-    // xclip image extraction failed
+    // xclip 图片提取失败
   }
 
-  // Try wl-paste for Wayland
+  // 再尝试 Wayland 的 wl-paste
   try {
     execSync(`wl-paste --type image/png > "${tempFile}" 2>/dev/null`, {
       shell: '/bin/bash',
@@ -747,23 +779,23 @@ function readClipboardImageDataLinux(): FileAttachment | null {
       if (stats.size > 0) {
         return readImageFile(tempFile);
       }
-      // Empty file, cleanup
+      // 空文件，清理
       try { unlinkSync(tempFile); } catch {}
     }
   } catch {
-    // wl-paste failed
+    // wl-paste 失败
   }
 
   return null;
 }
 
 /**
- * Read image data directly from macOS clipboard (for screenshots, copied images)
+ * 直接从 macOS 剪贴板读取图片数据（截图、复制图片）。
  */
 function readClipboardImageDataMacOS(): FileAttachment | null {
   const tempFile = join(tmpdir(), `craft-clipboard-${Date.now()}.png`);
 
-  // Method 1: Try pngpaste first (most reliable if installed via: brew install pngpaste)
+  // 方法 1：优先用 pngpaste（最可靠；可通过 brew install pngpaste 安装）
   try {
     execSync(`pngpaste "${tempFile}" 2>/dev/null`, { stdio: 'pipe' });
     if (existsSync(tempFile)) {
@@ -771,10 +803,10 @@ function readClipboardImageDataMacOS(): FileAttachment | null {
       if (result) return result;
     }
   } catch {
-    // pngpaste not available or failed
+    // pngpaste 不可用或失败
   }
 
-  // Method 2: Use osascript with JXA (JavaScript for Automation)
+  // 方法 2：用 osascript + JXA（JavaScript for Automation）
   try {
     const scriptFile = join(tmpdir(), `craft-clipboard-script-${Date.now()}.js`);
     const jxaScript = `
@@ -783,10 +815,10 @@ ObjC.import('Foundation');
 
 var pb = $.NSPasteboard.generalPasteboard;
 
-// Try PNG first
+// 先尝试 PNG
 var imgData = pb.dataForType($.NSPasteboardTypePNG);
 
-// If no PNG, try TIFF
+// 没有 PNG 则尝试 TIFF
 if (!imgData || imgData.isNil()) {
   imgData = pb.dataForType($.NSPasteboardTypeTIFF);
 }
@@ -814,14 +846,14 @@ if (imgData && !imgData.isNil()) {
       if (imageResult) return imageResult;
     }
   } catch {
-    // JXA method failed
+    // JXA 方法失败
   }
 
   return null;
 }
 
 /**
- * Helper to read image file and create attachment
+ * 读取临时图片文件并创建附件。
  */
 function readImageFile(tempFile: string): FileAttachment | null {
   try {
@@ -829,17 +861,17 @@ function readImageFile(tempFile: string): FileAttachment | null {
     const buffer = readFileSync(tempFile);
     const base64 = buffer.toString('base64');
 
-    // Clean up temp file
+    // 清理临时文件
     try {
       unlinkSync(tempFile);
     } catch {
-      // Ignore cleanup errors
+      // 忽略清理错误
     }
 
     return {
       type: 'image',
       path: 'clipboard',
-      name: `pasted-image.png`, // Renderer assigns sequential name
+      name: `pasted-image.png`, // Renderer 会分配顺序名称
       mimeType: 'image/png',
       base64,
       size: stats.size,
@@ -850,10 +882,11 @@ function readImageFile(tempFile: string): FileAttachment | null {
 }
 
 /**
- * Format a single absolute path to relative if it's within cwd
- * @param absolutePath - The absolute path to format
- * @param cwd - Current working directory (defaults to process.cwd())
- * @returns Relative path prefixed with ./ or original path if outside cwd
+ * 将单个绝对路径格式化为相对于 cwd 的路径。
+ *
+ * @param absolutePath - 待格式化的绝对路径
+ * @param cwd - 当前工作目录（默认 process.cwd()）
+ * @returns cwd 内的相对路径（带 ./ 前缀）；cwd 外返回原路径
  */
 export function formatSinglePathToRelative(absolutePath: string, cwd?: string): string {
   const basePath = cwd || process.cwd();
@@ -869,19 +902,19 @@ export function formatSinglePathToRelative(absolutePath: string, cwd?: string): 
 }
 
 /**
- * Format absolute file paths in text to relative paths from cwd
- * Converts paths like /Users/john/project/src/file.ts to ./src/file.ts
+ * 将文本中的绝对文件路径格式化为相对于 cwd 的路径。
+ * 例如 /Users/john/project/src/file.ts → ./src/file.ts
  *
- * @param text - Text containing file paths
- * @param cwd - Current working directory (defaults to process.cwd())
- * @returns Text with absolute paths converted to relative paths
+ * @param text - 包含文件路径的文本
+ * @param cwd - 当前工作目录（默认 process.cwd()）
+ * @returns 转换后的文本
  */
 export function formatPathsToRelative(text: string, cwd?: string): string {
   const basePath = cwd || process.cwd();
 
-  // Regex to match absolute file paths
-  // Matches paths starting with / followed by path segments
-  // Handles paths with common file extensions and directory paths
+  // 匹配绝对文件路径的正则：
+  // 以 / 开头，后跟常见根路径段，再跟路径段
+  // 处理常见文件扩展名和目录路径
   const absolutePathRegex = /(\/(?:Users|home|var|tmp|opt|etc)[^\s\n:,\]\})"'`]*)/g;
 
   return text.replace(absolutePathRegex, (match) => {
@@ -890,12 +923,12 @@ export function formatPathsToRelative(text: string, cwd?: string): string {
 }
 
 /**
- * Format file paths in tool input objects to relative paths
- * Handles common tool input patterns like { file_path: "..." } or { path: "..." }
+ * 将工具输入对象中的文件路径格式化为相对路径。
+ * 处理常见工具输入模式，如 { file_path: "..." } 或 { path: "..." }。
  *
- * @param input - Tool input object
- * @param cwd - Current working directory (defaults to process.cwd())
- * @returns New object with paths formatted to relative
+ * @param input - 工具输入对象
+ * @param cwd - 当前工作目录（默认 process.cwd()）
+ * @returns 路径已格式化为相对路径的新对象
  */
 export function formatToolInputPaths(
   input: Record<string, unknown> | undefined,
@@ -910,7 +943,7 @@ export function formatToolInputPaths(
     if (typeof value === 'string' && pathKeys.includes(key) && value.startsWith('/')) {
       result[key] = formatSinglePathToRelative(value, cwd);
     } else if (typeof value === 'string') {
-      // Also format paths embedded in string values
+      // 也格式化字符串值中嵌入的路径
       result[key] = formatPathsToRelative(value, cwd);
     } else {
       result[key] = value;

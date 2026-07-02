@@ -1,7 +1,7 @@
 /**
- * AvatarGroup - Display overlapping avatars with overflow indicator
+ * AvatarGroup — 头像组。
  *
- * Shows up to `max` avatars with slight overlap, plus a "+N" badge for overflow.
+ * 最多显示 `max` 个头像，轻微重叠；超出时显示 "+N" 徽标。
  */
 
 import * as React from 'react'
@@ -9,10 +9,12 @@ import { cn } from '@/lib/utils'
 
 interface AvatarGroupProps {
   children: React.ReactNode
-  max?: number  // Max avatars to show before "+N" indicator
+  /** 最多显示几个头像，超出显示 "+N" */
+  max?: number
   className?: string
 }
 
+/** 头像组组件 */
 export function AvatarGroup({ children, max = 3, className }: AvatarGroupProps) {
   const childArray = React.Children.toArray(children)
   const shown = childArray.slice(0, max)

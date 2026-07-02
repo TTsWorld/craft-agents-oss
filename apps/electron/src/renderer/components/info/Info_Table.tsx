@@ -1,9 +1,8 @@
 /**
  * Info_Table
  *
- * Clean definition list style key-value display.
- * Use for Connection info, metadata display, etc.
- * No card wrapper - integrates cleanly with page.
+ * 简洁的「键-值」定义列表，用于展示连接信息、元数据等。
+ * 本身不带卡片外框，可无缝嵌入页面其他布局中。
  */
 
 import * as React from 'react'
@@ -11,19 +10,19 @@ import { cn } from '@/lib/utils'
 
 export interface Info_TableProps {
   children: React.ReactNode
-  /** Optional footer content (e.g., error alert) */
+  /** 底部可选内容，例如错误提示 */
   footer?: React.ReactNode
-  /** Label column width in pixels (default: 120) */
+  /** 左侧标签列宽度，单位像素（默认 120） */
   labelWidth?: number
   className?: string
 }
 
 export interface Info_TableRowProps {
-  /** Left column label */
+  /** 左侧标签文本 */
   label: string
-  /** Right column value (shorthand) */
+  /** 右侧值（简单内容可直接用） */
   value?: React.ReactNode
-  /** Right column content (for complex content, use instead of value) */
+  /** 右侧复杂内容，优先级高于 value */
   children?: React.ReactNode
   className?: string
 }

@@ -1,8 +1,8 @@
 /**
  * SettingsToggle
  *
- * Toggle switch row with label and optional description.
- * Designed for use inside SettingsCard.
+ * 设置页专用的开关行组件，左侧是标签和描述，右侧是 Switch。
+ * 设计为放在 SettingsCard 内部使用。
  */
 
 import * as React from 'react'
@@ -11,24 +11,24 @@ import { cn } from '@/lib/utils'
 import { settingsUI } from './SettingsUIConstants'
 
 export interface SettingsToggleProps {
-  /** Toggle label (string or JSX for custom rendering) */
+  /** 开关标签（支持字符串或 JSX） */
   label: React.ReactNode
-  /** Optional description below label */
+  /** 标签下方的描述说明 */
   description?: string
-  /** Current checked state */
+  /** 当前是否选中 */
   checked: boolean
-  /** Change handler */
+  /** 状态变化时的回调 */
   onCheckedChange: (checked: boolean) => void
-  /** Disabled state */
+  /** 是否禁用 */
   disabled?: boolean
-  /** Additional className */
+  /** 额外 className */
   className?: string
-  /** Whether the toggle is inside a card (affects padding) */
+  /** 是否在卡片内部，决定 padding */
   inCard?: boolean
 }
 
 /**
- * SettingsToggle - Toggle switch with label and description
+ * SettingsToggle - 带标签的开关组件
  *
  * @example
  * <SettingsCard>

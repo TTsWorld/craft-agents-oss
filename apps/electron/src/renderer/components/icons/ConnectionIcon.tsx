@@ -1,14 +1,16 @@
 /**
- * ConnectionIcon
+ * ConnectionIcon —— 为某个 LLM 连接显示对应服务商的图标。
  *
- * Displays the provider logo for an LLM connection.
- * Falls back to the first letter of the connection name if no icon is available.
+ * 如果找不到服务商图标，会回退到一个带“大脑”图标的占位方块。
+ * 在以下场景使用：
+ * - AI 设置（连接列表）
+ * - FreeFormInput（模型展示）
+ * - Session List（连接徽标）
+ * - New Session（模型选择器分组名）
  *
- * Used in:
- * - AI Settings (connections list)
- * - FreeFormInput (model display)
- * - Session List (connection badge)
- * - New Session (model selector group names)
+ * 对 Go 同学的小提示：
+ * - `Pick<...>` 是 TypeScript 的工具类型，表示“从大类型里挑几个字段”，类似 Go 里从大 struct 取子集。
+ * - `& { type?: string }` 是交叉类型，给原类型再追加可选字段，相当于在原有字段基础上“扩展”。
  */
 
 import { Brain } from 'lucide-react'
@@ -18,23 +20,25 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@craft-agent/ui'
 import type { LlmConnectionWithStatus } from '../../../shared/types'
 
 interface ConnectionIconProps {
-  /** The connection to display an icon for */
+  /** 要展示图标的 LLM 连接 */
   connection: Pick<LlmConnectionWithStatus, 'name' | 'providerType' | 'baseUrl' | 'piAuthProvider'> & { type?: string; defaultModel?: string }
-  /** Size in pixels (default: 16) */
+  /** 图标尺寸，单位 px（默认 16） */
   size?: number
-  /** Additional CSS classes */
+  /** 额外的 CSS 类名 */
   className?: string
-  /** Show tooltip with connection name + model on hover (default: false) */
+  /** 悬停时是否显示包含连接名和模型的提示框（默认 false） */
   showTooltip?: boolean
 }
 
 export function ConnectionIcon({ connection, size = 16, className = '', showTooltip = false }: ConnectionIconProps) {
+  // 根据 providerType / type / baseUrl / piAuthProvider 解析出对应服务商图标 URL
   const providerIcon = getProviderIcon(
     connection.providerType || connection.type || '',
     connection.baseUrl,
     connection.piAuthProvider
   )
 
+  // 如果有服务商图标就用 <img> 展示；否则用默认的大脑占位图标
   const iconElement = providerIcon ? (
     <img
       src={providerIcon}
@@ -56,8 +60,10 @@ export function ConnectionIcon({ connection, size = 16, className = '', showTool
     </div>
   )
 
+  // 不需要提示框时直接返回图标元素
   if (!showTooltip) return iconElement
 
+  // 需要提示框时，用 Tooltip 组件包裹图标，显示连接名和默认模型
   return (
     <Tooltip>
       <TooltipTrigger asChild>

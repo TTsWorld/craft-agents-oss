@@ -1,8 +1,17 @@
+/**
+ * api-key-input 注册项
+ *
+ * 演示自定义 API 端点（custom endpoint）的 API Key 输入表单，包括协议切换、Base URL、模型列表等。
+ * 涉及概念：provider（模型提供商）、pi_compat（自定义端点兼容模式）、
+ * API key（调用 LLM 服务所需的密钥）。
+ */
 import type { ComponentEntry } from './types'
 import { ApiKeyInput, type ApiKeySubmitData } from '@/components/apisetup/ApiKeyInput'
 
+// logSubmit 把表单提交内容打印到控制台，playground 里不会真的发送请求。
 const logSubmit = (data: ApiKeySubmitData) => console.log('[Playground] Submit:', JSON.stringify(data, null, 2))
 
+/** api-key-input 组件注册列表。 */
 export const apiKeyInputComponents: ComponentEntry[] = [
   {
     id: 'api-key-custom-endpoint',

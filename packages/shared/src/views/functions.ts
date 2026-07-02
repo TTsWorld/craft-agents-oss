@@ -1,16 +1,15 @@
 /**
  * View Custom Functions
  *
- * Pure helper functions registered as Filtrex `extraFunctions`.
- * Available in view expressions alongside built-in math functions.
- * All functions are safe, side-effect-free, and handle edge cases gracefully.
+ * 这里注册的是 Filtrex 的 extraFunctions（额外函数），可在视图表达式里和内置数学函数一起用。
+ * 所有函数都是纯函数、无副作用，并对边界情况做安全处理。
  */
 
 import { extractLabelId } from '../labels/values';
 
 /**
- * Days elapsed since a timestamp (in ms).
- * Returns 0 if timestamp is falsy or in the future.
+ * 计算从某个时间戳（毫秒）到现在过去了多少天。
+ * 如果时间戳为假值，或在将来，则返回 0。
  * @example daysSince(lastUsedAt) > 7
  */
 function daysSince(timestamp: number): number {
@@ -20,8 +19,8 @@ function daysSince(timestamp: number): number {
 }
 
 /**
- * Hours elapsed since a timestamp (in ms).
- * Returns 0 if timestamp is falsy or in the future.
+ * 计算从某个时间戳（毫秒）到现在过去了多少小时。
+ * 如果时间戳为假值，或在将来，则返回 0。
  * @example hoursSince(lastUsedAt) > 24
  */
 function hoursSince(timestamp: number): number {
@@ -31,10 +30,9 @@ function hoursSince(timestamp: number): number {
 }
 
 /**
- * Check if an array or string contains a value.
- * Works with label arrays and string fields.
- * For label arrays, also matches by extracted label ID so that
- * contains(labels, "priority") matches entries like "priority::3".
+ * 判断数组或字符串是否包含某个值。
+ * 对标签数组会同时按“原始值”和“提取后的 label ID”匹配，
+ * 所以 contains(labels, "priority") 能匹配到 "priority::3" 这类条目。
  * @example contains(labels, 'bug')
  * @example contains(name, 'feat')
  */
@@ -52,8 +50,8 @@ function contains(collection: unknown, value: unknown): boolean {
 }
 
 /**
- * Get length of an array or string.
- * Returns 0 for non-array/non-string values.
+ * 返回数组或字符串的长度。
+ * 如果不是数组或字符串，返回 0。
  * @example length(labels) > 3
  * @example length(name) > 20
  */
@@ -65,7 +63,7 @@ function length(value: unknown): number {
 }
 
 /**
- * Check if a string starts with a prefix.
+ * 判断字符串是否以某个前缀开头。
  * @example startsWith(name, 'feat')
  */
 function startsWith(str: unknown, prefix: unknown): boolean {
@@ -76,7 +74,7 @@ function startsWith(str: unknown, prefix: unknown): boolean {
 }
 
 /**
- * Convert string to lowercase for case-insensitive comparison.
+ * 把字符串转成小写，用于大小写不敏感比较。
  * @example lower(model) == 'opus'
  */
 function lower(str: unknown): string {
@@ -87,8 +85,11 @@ function lower(str: unknown): string {
 }
 
 /**
- * All custom functions to register with Filtrex.
- * Keys are the function names available in expressions.
+ * 所有要注册给 Filtrex 的自定义函数。
+ * 对象的 key 就是表达式里可用的函数名。
+ *
+ * Record<string, Function> 表示“一个对象，键是字符串，值是函数”，
+ * 类似 Golang 的 map[string]func(...any) any，只是 TS 用 Function 类型更宽松。
  */
 export const VIEW_FUNCTIONS: Record<string, Function> = {
   daysSince,

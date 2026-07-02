@@ -1,9 +1,9 @@
 /**
  * AutomationEventTimeline
  *
- * Compact timeline showing recent automation executions.
- * Displayed as a section within AutomationInfoPage.
- * Webhook entries are expandable to show execution details.
+ * 紧凑的时间线，展示最近自动化的执行记录。
+ * 作为 AutomationInfoPage 中的一个区块显示。
+ * Webhook 条目可展开，查看执行详情。
  */
 
 import { useState, useCallback } from 'react'
@@ -15,7 +15,7 @@ import { type ExecutionEntry, type ExecutionStatus } from './types'
 import { formatShortRelativeTime } from './utils'
 
 // ============================================================================
-// Helpers
+// 辅助函数
 // ============================================================================
 
 const statusConfig: Record<ExecutionStatus, { icon: React.ElementType; classes: string }> = {
@@ -35,7 +35,7 @@ function formatDuration(ms: number): string {
 }
 
 // ============================================================================
-// Component
+// 组件
 // ============================================================================
 
 export interface AutomationEventTimelineProps {
@@ -59,7 +59,7 @@ function CopyButton({ details }: { details: import('./types').WebhookDetails }) 
     if (details.attempts && details.attempts > 1) meta.attempts = details.attempts
     if (details.error) meta.error = details.error
 
-    // Build copy text: structured metadata + raw response body (which may be truncated / not valid JSON)
+    // 构造复制文本：结构化元数据 + 原始响应体（可能被截断，也不一定是合法 JSON）
     let text = JSON.stringify(meta, null, 2)
     if (details.responseBody) {
       text += '\n\n--- Response Body ---\n' + details.responseBody
@@ -128,20 +128,20 @@ export function AutomationEventTimeline({ entries, className, onReplay }: Automa
               role={isWebhook ? 'button' : undefined}
               tabIndex={isWebhook ? 0 : undefined}
             >
-              {/* Status icon */}
+              {/* 状态图标 */}
               <StatusIcon className={cn('h-3.5 w-3.5 shrink-0', config.classes)} />
 
-              {/* Time */}
+              {/* 执行时间 */}
               <span className="text-xs text-muted-foreground w-16 shrink-0 tabular-nums">
                 {formatShortRelativeTime(entry.timestamp)}
               </span>
 
-              {/* Action summary — truncated prompt text */}
+              {/* 动作摘要（截断的 prompt 文案） */}
               <span className="flex-1 min-w-0 truncate text-xs text-foreground/70">
                 {entry.actionSummary || entry.error || '—'}
               </span>
 
-              {/* Session deep link */}
+              {/* 跳转到对应 session 的链接 */}
               {entry.sessionId && (
                 <button
                   className="shrink-0 text-[11px] text-accent hover:underline cursor-pointer"
@@ -151,7 +151,7 @@ export function AutomationEventTimeline({ entries, className, onReplay }: Automa
                 </button>
               )}
 
-              {/* Retry button for failed webhook entries */}
+              {/* Webhook 失败时的重试按钮 */}
               {entry.status === 'error' && isWebhook && onReplay && (
                 <button
                   className="shrink-0 text-[11px] text-accent hover:underline cursor-pointer"
@@ -161,7 +161,7 @@ export function AutomationEventTimeline({ entries, className, onReplay }: Automa
                 </button>
               )}
 
-              {/* Expand chevron for webhook entries */}
+              {/* Webhook 条目的展开箭头 */}
               {isWebhook && (
                 <ChevronDown className={cn(
                   'h-3 w-3 shrink-0 text-foreground/40 transition-transform duration-150',
@@ -170,7 +170,7 @@ export function AutomationEventTimeline({ entries, className, onReplay }: Automa
               )}
             </div>
 
-            {/* Expanded webhook details */}
+            {/* Webhook 展开详情 */}
             {isExpanded && entry.webhookDetails && (
               <div className="mx-4 mb-3 mt-0.5 rounded-md border border-border/40 bg-foreground/[0.02] px-3 py-2.5 text-xs relative">
                 <div className="absolute top-2 right-2">

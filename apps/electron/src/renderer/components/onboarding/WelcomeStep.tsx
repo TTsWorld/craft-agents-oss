@@ -2,20 +2,21 @@ import { useTranslation } from "react-i18next"
 import { CraftAgentsSymbol } from "@/components/icons/CraftAgentsSymbol"
 import { StepFormLayout, ContinueButton } from "./primitives"
 
+// 欢迎步骤的 props 接口
 interface WelcomeStepProps {
   onContinue: () => void
-  /** Whether this is an existing user updating settings */
+  /** 是否是已有用户在更新设置 */
   isExistingUser?: boolean
-  /** Whether the app is loading (e.g., checking Git Bash on Windows) */
+  /** 是否处于加载状态（例如在 Windows 上检测 Git Bash 时） */
   isLoading?: boolean
 }
 
 /**
- * WelcomeStep - Initial welcome screen for onboarding
+ * WelcomeStep - 引导流程的欢迎页
  *
- * Shows different messaging for new vs existing users:
- * - New users: Welcome to Craft Agents
- * - Existing users: Update your API connection settings
+ * 根据新用户 / 老用户展示不同文案：
+ * - 新用户：欢迎使用 Craft Agents
+ * - 老用户：更新 API 连接设置
  */
 export function WelcomeStep({
   onContinue,

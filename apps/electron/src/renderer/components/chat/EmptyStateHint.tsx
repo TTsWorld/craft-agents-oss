@@ -1,15 +1,8 @@
 /**
- * EmptyStateHint - Rotating workflow suggestions for empty chat state
+ * EmptyStateHint - 空聊天气泡的“灵感提示”组件
  *
- * Displays inspirational hints showing what users can do with the agent.
- * Each hint contains inline entity badges (sources, files, folders, skills)
- * with generic Lucide icons.
- *
- * Entity token format in hints:
- * - {source:Gmail} → Globe icon + "Gmail" label
- * - {file:screenshot} → Paperclip icon + "screenshot" label
- * - {folder} → Folder icon + "folder" label
- * - {skill} → Zap icon + "skill" label
+ * 当聊天窗口为空时，随机展示一条可用工作流示例，并在文本中插入 source、file、folder、skill 等实体徽标。
+ * 该组件运行在 Electron renderer 进程（可以理解为桌面应用的“前端”），使用 React + TSX 编写。
  */
 
 import * as React from 'react'
@@ -17,36 +10,35 @@ import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 
 // ============================================================================
-// Types
+// 类型定义
 // ============================================================================
 
-/** Entity types that can appear in hints */
+/** 提示语中可能出现的实体类型 */
 type EntityType = 'source' | 'file' | 'folder' | 'skill'
 
-/** Parsed segment of a hint - either text or an entity */
+/**
+ * 将提示语切分后的片段
+ * - text: 普通文本
+ * - entity: 需要渲染成徽标的实体（source 可带 provider 以区分具体服务）
+ */
 type HintSegment =
   | { type: 'text'; content: string }
   | { type: 'entity'; entityType: EntityType; label: string; provider?: string }
 
-/** A complete hint with its segments */
+/** 一条解析后的提示语，包含唯一 id 和若干片段 */
 interface ParsedHint {
   id: string
   segments: HintSegment[]
 }
 
 // ============================================================================
-// Hint Templates
+// 提示语模板
 // ============================================================================
 
 /**
- * Hint templates with entity placeholders.
- * Format: {type:label} or {type} for default label
- *
- * Supported tokens:
- * - {source:name} - Source with specific provider (gmail, slack, github, etc.)
- * - {file:label} - File attachment with custom label
- * - {folder} - Working directory
- * - {skill} - Custom skill
+ * i18n 模板 key 列表。
+ * 实际文案由 react-i18next 从翻译文件中读取，这里只列出所有可能的工作流场景。
+ * 模板中可包含占位符，例如 {source:Gmail}、{file:screenshot}、{folder}、{skill}。
  */
 const HINT_TEMPLATE_KEYS = [
   'hints.summarizeGmail',
@@ -67,23 +59,23 @@ const HINT_TEMPLATE_KEYS = [
 ]
 
 // ============================================================================
-// Parsing
+// 解析模板
 // ============================================================================
 
 /**
- * Parse a hint template into segments
- * Tokens: {source:Gmail}, {file:screenshot}, {folder}, {skill}
+ * 将单条提示语模板解析为 ParsedHint。
+ * 通过正则匹配 {type} 或 {type:label}，把文本和实体拆成有序片段。
  */
 function parseHintTemplate(template: string, id: string): ParsedHint {
   const segments: HintSegment[] = []
-  // Regex matches {type} or {type:label}
+  // 正则捕获 {source|file|folder|skill} 以及可选的 :label
   const tokenRegex = /\{(source|file|folder|skill)(?::([^}]+))?\}/g
 
   let lastIndex = 0
   let match
 
   while ((match = tokenRegex.exec(template)) !== null) {
-    // Add text before the token
+    // token 之前的普通文本
     if (match.index > lastIndex) {
       segments.push({
         type: 'text',
@@ -94,8 +86,7 @@ function parseHintTemplate(template: string, id: string): ParsedHint {
     const entityType = match[1] as EntityType
     const labelOrProvider = match[2]
 
-    // For source type, the second part is the provider/label
-    // For other types, it's just a custom label
+    // source 的 label 同时用于显示和 provider 判断；其余类型仅作为显示 label
     if (entityType === 'source') {
       segments.push({
         type: 'entity',
@@ -114,7 +105,7 @@ function parseHintTemplate(template: string, id: string): ParsedHint {
     lastIndex = match.index + match[0].length
   }
 
-  // Add remaining text
+  // 剩余文本
   if (lastIndex < template.length) {
     segments.push({
       type: 'text',
@@ -126,16 +117,18 @@ function parseHintTemplate(template: string, id: string): ParsedHint {
 }
 
 /**
- * Parse all hint templates using translation function
+ * 使用翻译函数 t() 解析所有提示语模板。
+ * 当语言切换导致 t 函数变化时，会重新解析。
  */
 function parseAllHints(t: (key: string) => string): ParsedHint[] {
   return HINT_TEMPLATE_KEYS.map((key, index) => parseHintTemplate(t(key), `hint-${index}`))
 }
 
 // ============================================================================
-// Entity Badge Component
+// 实体徽标子组件
 // ============================================================================
 
+/** EntityBadge 的 props：实体类型、显示文字、可选 provider */
 interface EntityBadgeProps {
   entityType: EntityType
   label: string
@@ -143,7 +136,9 @@ interface EntityBadgeProps {
 }
 
 /**
- * EntityBadge - Inline label for hint entities with subtle badge styling
+ * EntityBadge - 内联实体徽标
+ *
+ * 用带圆角和浅背景的小标签展示实体名称。当前 provider 未参与样式，保留字段供以后扩展。
  */
 function EntityBadge({ label }: EntityBadgeProps) {
   return (
@@ -154,28 +149,28 @@ function EntityBadge({ label }: EntityBadgeProps) {
 }
 
 // ============================================================================
-// Main Component
+// 主组件
 // ============================================================================
 
 export interface EmptyStateHintProps {
-  /** Specific hint index to display (for playground testing) */
+  /** 指定显示第几条提示（测试/Playground 用） */
   hintIndex?: number
-  /** Custom class name */
+  /** 自定义外层 className */
   className?: string
 }
 
 /**
- * EmptyStateHint - Displays a random workflow suggestion
+ * EmptyStateHint - 展示随机工作流提示
  *
- * Shows what users can accomplish with the agent by displaying
- * example workflows with inline entity badges.
+ * 组件挂载时随机选择一条提示，也可通过 hintIndex 指定。
+ * 使用 React.useMemo 缓存解析结果，避免每次渲染都重新切分字符串。
  */
 export function EmptyStateHint({ hintIndex, className }: EmptyStateHintProps) {
   const { t } = useTranslation()
-  // Parse all hints once (re-parse when language changes)
+  // 解析全部提示语；仅在 t 变化时重新执行
   const allHints = React.useMemo(() => parseAllHints(t), [t])
 
-  // Select a hint - either specified index or random on mount
+  // 初始化时随机选择一条；如果外部传了 hintIndex，则以传入值为准
   const [selectedIndex] = React.useState(() => {
     if (hintIndex !== undefined && hintIndex >= 0 && hintIndex < allHints.length) {
       return hintIndex
@@ -183,7 +178,7 @@ export function EmptyStateHint({ hintIndex, className }: EmptyStateHintProps) {
     return Math.floor(Math.random() * allHints.length)
   })
 
-  // Update if hintIndex prop changes
+  // 当 hintIndex prop 变化时，显示指定提示
   const displayIndex = hintIndex !== undefined ? hintIndex : selectedIndex
   const hint = allHints[displayIndex % allHints.length]
 
@@ -214,16 +209,12 @@ export function EmptyStateHint({ hintIndex, className }: EmptyStateHintProps) {
   )
 }
 
-/**
- * Get the total number of available hints (for playground variant generation)
- */
+/** 返回当前可用的提示总数（供 Playground 生成变体用） */
 export function getHintCount(): number {
   return HINT_TEMPLATE_KEYS.length
 }
 
-/**
- * Get hint template key by index (for debugging/testing)
- */
+/** 按索引返回提示模板 i18n key（调试用） */
 export function getHintTemplate(index: number): string {
   return HINT_TEMPLATE_KEYS[index % HINT_TEMPLATE_KEYS.length]
 }

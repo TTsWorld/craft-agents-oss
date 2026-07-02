@@ -1,30 +1,30 @@
 /**
- * Native Claude OAuth with PKCE
+ * 原生 Claude OAuth with PKCE
  *
- * Implements browser-based OAuth using PKCE (Proof Key for Code Exchange) -
- * the standard secure flow for public clients (desktop/mobile apps) that
- * does not require a client secret.
+ * 基于浏览器实现的 PKCE（Proof Key for Code Exchange）流程，
+ * 这是公共客户端（桌面/移动应用）的标准安全流程，不需要 client secret。
  *
- * Based on: https://github.com/grll/claude-code-login
+ * 参考实现：https://github.com/grll/claude-code-login
  */
+
 import { randomBytes, createHash } from 'node:crypto'
 import { CLAUDE_OAUTH_CONFIG } from './claude-oauth-config'
 import { openUrl } from '../utils/open-url.ts'
 import { APP_VERSION } from '../version/index.ts'
 import { debug } from '../utils/debug.ts'
 
-// OAuth configuration from shared config
+// 从共享配置里取出常量
 const CLAUDE_CLIENT_ID = CLAUDE_OAUTH_CONFIG.CLIENT_ID
 const CLAUDE_AUTH_URL = CLAUDE_OAUTH_CONFIG.AUTH_URL
 const CLAUDE_TOKEN_URL = CLAUDE_OAUTH_CONFIG.TOKEN_URL
 const REDIRECT_URI = CLAUDE_OAUTH_CONFIG.REDIRECT_URI
 const OAUTH_SCOPES = CLAUDE_OAUTH_CONFIG.SCOPES
-const STATE_EXPIRY_MS = 10 * 60 * 1000 // 10 minutes
+/** state 有效期：10 分钟 */
+const STATE_EXPIRY_MS = 10 * 60 * 1000
 
 /**
- * Resolved Anthropic identity returned alongside the OAuth tokens (issue #838).
- * Populated from the token-exchange response when present; entirely optional and
- * fail-soft — a missing block simply means no identity is surfaced in the UI.
+ * 从 token 响应里解析出的 Anthropic 身份信息（issue #838）。
+ * 如果响应里没有这部分，也不会报错；缺失时 UI 里不展示身份即可。
  */
 export interface ClaudeOAuthIdentity {
   account?: {
@@ -37,6 +37,9 @@ export interface ClaudeOAuthIdentity {
   }
 }
 
+/**
+ * Claude token 结果，继承身份信息。
+ */
 export interface ClaudeTokens extends ClaudeOAuthIdentity {
   accessToken: string
   refreshToken?: string
@@ -44,17 +47,15 @@ export interface ClaudeTokens extends ClaudeOAuthIdentity {
   scopes?: string[]
 }
 
-// One-time guard so the runtime confirmation log (keys only, never values) fires
-// at most once per process — just enough to confirm the response shape on the
-// real `platform.claude.com` endpoint without spamming logs on every re-auth.
+// 一次性守卫：进程内只打印一次 token 响应的 key（绝不打印 value），
+// 用于确认 platform.claude.com 真实返回了哪些字段，避免反复重登时刷日志。
 let loggedTokenResponseShape = false
 
 /**
- * Normalize the raw token-response identity blocks into {@link ClaudeOAuthIdentity}.
- * Reads `email_address` with an `email` fallback (the exact field name is not
- * fully confirmed on platform.claude.com — see the one-time keys-only log in
- * {@link exchangeClaudeCode}). Returns an empty object when neither block is
- * present, so it spreads cleanly into the token result.
+ * 把 token 响应里的原始 identity 块解析成 {@link ClaudeOAuthIdentity}。
+ *
+ * 优先读 `email_address`，没有则回退到 `email`（因为平台具体字段名尚未完全确认）。
+ * 如果两个块都没有，返回空对象，这样用展开运算符 `...parseClaudeOAuthIdentity(data)` 时不会污染结果。
  */
 export function parseClaudeOAuthIdentity(data: {
   account?: { uuid?: string; email_address?: string; email?: string }
@@ -76,6 +77,9 @@ export function parseClaudeOAuthIdentity(data: {
   return identity
 }
 
+/**
+ * 当前 OAuth 流程的状态：state、PKCE verifier、创建和过期时间。
+ */
 export interface ClaudeOAuthState {
   state: string
   codeVerifier: string
@@ -83,18 +87,18 @@ export interface ClaudeOAuthState {
   expiresAt: number
 }
 
-// In-memory state storage for the current OAuth flow
+// 当前 OAuth 流程的内存状态。注意：这不是服务端存储，仅用于单次本地登录。
 let currentOAuthState: ClaudeOAuthState | null = null
 
 /**
- * Generate a secure random state parameter
+ * 生成一个密码学安全的 state 参数，防止 CSRF。
  */
 function generateState(): string {
   return randomBytes(32).toString('hex')
 }
 
 /**
- * Generate PKCE code verifier and challenge
+ * 生成 PKCE verifier 和 challenge。
  */
 function generatePKCE(): { codeVerifier: string; codeChallenge: string } {
   const codeVerifier = randomBytes(32).toString('base64url')
@@ -105,11 +109,10 @@ function generatePKCE(): { codeVerifier: string; codeChallenge: string } {
 }
 
 /**
- * Prepare the OAuth flow by generating PKCE, state, and the auth URL.
- * Does NOT open the browser — the caller is responsible for that.
+ * 准备 OAuth 流程：生成 PKCE、state 和授权 URL。
+ * 不打开浏览器——调用方自行决定在哪里打开。
  *
- * Returns the authorization URL. The caller should open it on the user's
- * machine (client-side), not on the server.
+ * 返回的授权 URL 应该在用户机器上的浏览器打开（客户端），而不是服务端。
  */
 export function prepareClaudeOAuth(): string {
   const state = generateState()
@@ -138,10 +141,10 @@ export function prepareClaudeOAuth(): string {
 }
 
 /**
- * Start the OAuth flow by generating the login URL and opening the browser.
+ * 启动 OAuth 流程：生成登录 URL 并在本地打开浏览器。
  *
- * @deprecated Use prepareClaudeOAuth() + open browser on the client instead.
- * This function opens the browser on the server host, which fails in remote mode.
+ * @deprecated 推荐用 prepareClaudeOAuth() 在客户端打开浏览器。
+ * 本函数在服务端主机打开浏览器，在 remote 模式下会失败。
  */
 export async function startClaudeOAuth(
   onStatus?: (message: string) => void
@@ -150,7 +153,7 @@ export async function startClaudeOAuth(
 
   const authUrl = prepareClaudeOAuth()
 
-  // Open browser (server-side — broken in remote mode)
+  // 在服务端主机打开浏览器（remote 模式下不可用）
   onStatus?.('Opening browser for authentication...')
   await openUrl(authUrl)
 
@@ -160,7 +163,7 @@ export async function startClaudeOAuth(
 }
 
 /**
- * Check if there is a valid OAuth state in progress
+ * 检查当前是否有未过期的 OAuth 流程在进行中。
  */
 export function hasValidOAuthState(): boolean {
   if (!currentOAuthState) return false
@@ -168,30 +171,29 @@ export function hasValidOAuthState(): boolean {
 }
 
 /**
- * Get the current OAuth state (for debugging/display)
+ * 获取当前 OAuth 状态（用于调试或展示）。
  */
 export function getCurrentOAuthState(): ClaudeOAuthState | null {
   return currentOAuthState
 }
 
 /**
- * Clear the current OAuth state
+ * 清除当前 OAuth 状态。
  */
 export function clearOAuthState(): void {
   currentOAuthState = null
 }
 
 /**
- * Exchange an authorization code for tokens
+ * 用授权码换取 token。
  *
- * Call this after the user has authenticated and copied the authorization code
- * from the callback page.
+ * 在用户登录并从回调页复制授权码后调用。
  */
 export async function exchangeClaudeCode(
   authorizationCode: string,
   onStatus?: (message: string) => void
 ): Promise<ClaudeTokens> {
-  // Verify we have valid state
+  // 先校验本地是否有有效的 state
   if (!currentOAuthState) {
     throw new Error('No OAuth state found. Please start the authentication flow again.')
   }
@@ -201,7 +203,7 @@ export async function exchangeClaudeCode(
     throw new Error('OAuth state expired (older than 10 minutes). Please try again.')
   }
 
-  // Clean up the authorization code in case it has URL fragments
+  // 清理授权码，去掉可能附带的 URL fragment 和多余参数
   const cleanedCode = authorizationCode.split('#')[0]?.split('&')[0] ?? authorizationCode
 
   onStatus?.('Exchanging authorization code for tokens...')
@@ -243,15 +245,14 @@ export async function exchangeClaudeCode(
       refresh_token?: string
       expires_in?: number
       scope?: string
-      // Resolved identity (issue #838). Optional — read defensively.
+      // 解析出的身份信息（issue #838），可选字段，防御性读取
       account?: { uuid?: string; email_address?: string; email?: string }
       organization?: { uuid?: string; name?: string }
     }
 
-    // Runtime confirmation (issue #838): log the response KEYS ONLY — never
-    // values/secrets — once per process, to confirm `account`/`organization`
-    // are present on platform.claude.com and the exact nested field names
-    // (`email_address` vs `email`). Object.keys never emits secret values.
+    // 运行时确认（issue #838）：每个进程只打印一次响应 KEY（绝不打印 value），
+    // 确认 platform.claude.com 是否返回 account/organization 以及具体字段名。
+    // Object.keys 不会泄漏敏感值。
     if (!loggedTokenResponseShape) {
       loggedTokenResponseShape = true
       debug('[claude-oauth] token response keys: ' + Object.keys(data).join(','))
@@ -259,7 +260,7 @@ export async function exchangeClaudeCode(
       if (data.organization) debug('[claude-oauth] organization keys: ' + Object.keys(data.organization).join(','))
     }
 
-    // Clear state after successful exchange
+    // 成功后清除本地 state
     clearOAuthState()
 
     onStatus?.('Authentication successful!')
@@ -280,10 +281,10 @@ export async function exchangeClaudeCode(
 }
 
 /**
- * Convenience function that combines startClaudeOAuth and exchangeClaudeCode
- * for use cases where the code is provided via a callback
+ * 便捷函数：把 startClaudeOAuth 和 exchangeClaudeCode 组合起来，
+ * 适用于通过回调提供授权码的场景。
  *
- * @deprecated Use startClaudeOAuth and exchangeClaudeCode separately
+ * @deprecated 建议分开调用 startClaudeOAuth 和 exchangeClaudeCode
  */
 export async function authenticateWithClaude(options?: {
   onStatus?: (message: string) => void

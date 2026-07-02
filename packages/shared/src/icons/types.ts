@@ -1,63 +1,75 @@
 /**
- * Unified Icon Types
+ * 统一的图标类型（Unified Icon Types）
  *
- * Shared type definitions for the centralised icon system.
- * Used by EntityIcon base component and all entity-specific wrappers
- * (SourceAvatar, SkillAvatar, StatusIcon).
+ * 这是 craft-agent 项目里“集中式图标系统”的共享类型定义。
+ * 你可以把它理解成 Go 中某个包的 exported types：本文件只声明“长什么样”，
+ * 具体绘制逻辑由 EntityIcon 组件和各实体封装层（SourceAvatar、SkillAvatar、StatusIcon）实现。
  *
- * This module is browser-safe (no Node.js dependencies).
+ * 本模块是纯浏览器侧的（browser-safe，可直接在浏览器运行），不包含 Node.js 依赖。
  */
 
 // ============================================================================
-// Core Types
+// 核心类型（Core Types）
 // ============================================================================
 
 /**
- * Icon configuration as stored in entity config files.
- * The `icon` field can be an emoji string, an HTTP(S) URL, or undefined
- * (in which case local icon files are auto-discovered).
+ * 实体配置里 icon 字段的类型，也就是“配置文件里怎么写图标”。
+ *
+ * 在 Go 里类似这样声明一个可选字段：
+ *   type IconConfig struct {
+ *       Icon *string // emoji 字符串或 URL，nil 表示自动发现本地文件
+ *   }
+ *
+ * 这里的 `icon?: string` 表示该字段可选，等价于 Go 里的指针或 omitempty。
  */
 export interface IconConfig {
-  /** Emoji string, HTTP(S) URL, or undefined (auto-discover file) */
+  /** emoji 字符串、HTTP(S) URL，或 undefined（留空表示自动发现本地图标文件） */
   icon?: string
 }
 
 /**
- * Resolved icon ready for rendering by EntityIcon.
- * Produced by the useEntityIcon hook after cache lookup / IPC loading.
+ * 经过解析后、真正交给 EntityIcon 渲染的图标数据结构。
+ *
+ * 可以理解为“后端处理完返回给前端展示的 DTO”：
+ * 原始配置（IconConfig）会经过 useEntityIcon hook 做缓存查找 / IPC 加载，
+ * 最终转换成这个 ResolvedEntityIcon。
  */
 export interface ResolvedEntityIcon {
-  /** The kind of icon that was resolved */
+  /** 图标类型：emoji（表情）、file（文件/图片）、fallback（降级占位） */
   kind: 'emoji' | 'file' | 'fallback'
   /**
-   * For emoji: the emoji string (e.g. "🔧").
-   * For file: data URL (base64-encoded image or themed SVG data URL).
-   * For fallback: undefined.
+   * 实际要显示的内容：
+   * - emoji：emoji 字符串，例如 "🔧"；
+   * - file：data URL（base64 编码的图片，或跟随主题的 SVG data URL）；
+   * - fallback：undefined，表示没有具体值，由 UI 使用默认占位。
    */
   value?: string
   /**
-   * Whether the icon responds to currentColor styling.
-   * - true: SVGs that use currentColor - status/label color can be applied via CSS
-   * - false: Emojis, raster images, SVGs with hardcoded colors
+   * 该图标是否响应 currentColor 样式。
+   * - true：SVG 使用了 currentColor，父级颜色类（如 text-success）可以通过 CSS 级联改变图标颜色；
+   * - false：emoji、位图、或颜色写死的 SVG，无法被外部颜色控制。
    */
   colorable: boolean
   /**
-   * Raw SVG content (sanitized) for inline rendering.
-   * Only present when colorable=true, enabling CSS color inheritance.
-   * EntityIcon renders this inline (dangerouslySetInnerHTML) so parent
-   * color classes (e.g. 'text-success') cascade into SVG fills/strokes.
+   * 经过净化处理（sanitized）后的原始 SVG 字符串，用于内联渲染。
+   * 仅在 colorable=true 时存在，这样父级 CSS 颜色才能透传到 SVG 的 fill/stroke。
+   * EntityIcon 会把它作为 dangerouslySetInnerHTML 插入（类似 Go 模板里的 HTML 原样输出，但要确保来源可信）。
    */
   rawSvg?: string
 }
 
 // ============================================================================
-// Size System
+// 尺寸系统（Size System）
 // ============================================================================
 
-/** Standard size variants shared across all entity icons */
+/** 图标的标准尺寸枚举，类似 Go 的 type alias + 联合类型限制 */
 export type IconSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl'
 
-/** Size → Tailwind container class (width & height) */
+/**
+ * 尺寸到 Tailwind 容器类名的映射表。
+ * Record<IconSize, string> 表示“键必须是 IconSize，值必须是 string”，
+ * 和 Go 的 map[IconSize]string 语义接近。
+ */
 export const ICON_SIZE_CLASSES: Record<IconSize, string> = {
   xs: 'h-3.5 w-3.5',
   sm: 'h-4 w-4',
@@ -66,7 +78,10 @@ export const ICON_SIZE_CLASSES: Record<IconSize, string> = {
   xl: 'h-7 w-7',
 }
 
-/** Size → Tailwind emoji font size (visually balanced within container) */
+/**
+ * 尺寸到 Tailwind emoji 字体大小的映射表。
+ * 这些字号经过视觉平衡调整，让 emoji 在不同容器尺寸下看起来更协调。
+ */
 export const ICON_EMOJI_SIZES: Record<IconSize, string> = {
   xs: 'text-[10px]',
   sm: 'text-[11px]',

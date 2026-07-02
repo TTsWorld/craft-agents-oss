@@ -1,8 +1,16 @@
 /**
- * IMessagingGatewayRegistry — abstract interface for messaging gateway access.
+ * 文件：messaging-registry-interface.ts
+ * 位置：packages/server-core/src/handlers
+ * 职责：定义消息网关注册表 IMessagingGatewayRegistry 及其相关数据类型。
  *
- * RPC handlers in server-core program against this interface;
- * the concrete MessagingGatewayRegistry satisfies it at runtime.
+ * 架构角色：
+ *   - server-core 的 RPC handler 只依赖这个接口，不直接依赖 @craft-agent/messaging-gateway。
+ *   - 这样 renderer / RPC 层不需要导入 gateway 包，避免循环依赖和包体积问题。
+ *   - 类似 Go 中在 handler 层定义 port（接口），由 messaging-gateway 包提供 adapter。
+ *
+ * Agent 开发关注点：
+ *   - 消息网关允许外部 IM 平台（Telegram、WhatsApp、Lark 等）驱动 Agent 会话。
+ *   - 访问控制分两层：workspace/platform 级 和 binding/session 级，防止未授权用户调用 Agent。
  */
 
 export interface MessagingBindingInfo {
@@ -11,23 +19,22 @@ export interface MessagingBindingInfo {
   sessionId: string
   platform: string
   channelId: string
-  /** Telegram supergroup forum topic id; undefined for DMs / non-Telegram. */
+  /** Telegram 超级群的话题 ID；DM 或非 Telegram 平台为 undefined。 */
   threadId?: number
   channelName?: string
   enabled: boolean
   createdAt: number
   /**
-   * Per-binding access policy. Optional for back-compat with legacy clients
-   * that don't yet display this field. Phase 3 wires the renderer.
+   * 单条 binding 的访问策略。
+   * 可选是为了兼容旧客户端；Phase 3 会把 renderer 也接入。
    */
   accessMode?: 'inherit' | 'allow-list' | 'open'
   allowedSenderIds?: string[]
 }
 
 /**
- * Workspace-level Telegram supergroup configuration. Set by pairing the
- * workspace to a supergroup via the new `/pair <code>` workspace flow;
- * unset via `unbindWorkspaceSupergroup`.
+ * Workspace 级别的 Telegram 超级群配置。
+ * 通过 `/pair <code>` 流程绑定；通过 unbindWorkspaceSupergroup 解绑。
  */
 export interface MessagingSupergroupInfo {
   chatId: string
@@ -46,9 +53,8 @@ export interface MessagingPlatformRuntimeInfo {
 }
 
 /**
- * A user authorised to drive the workspace's bot at the platform level.
- * Mirrors `PlatformOwner` in `@craft-agent/messaging-gateway` — kept here
- * to avoid the renderer / RPC layer importing the gateway package directly.
+ * 被授权在平台级别驱动 workspace bot 的用户。
+ * 与 @craft-agent/messaging-gateway 里的 PlatformOwner 镜像，避免 renderer/RPC 层直接引用 gateway。
  */
 export interface MessagingPlatformOwnerInfo {
   userId: string
@@ -58,14 +64,14 @@ export interface MessagingPlatformOwnerInfo {
 }
 
 /**
- * Why a sender ended up in the pending list. Drives the UI's "Allow" button
- * label and the gateway's promotion semantics.
+ * 发送者进入 pending 列表的原因。
+ * 用于 UI 决定“Allow”按钮文案，以及 gateway 的晋升语义。
  */
 export type MessagingPendingRejectReason = 'not-owner' | 'not-on-binding-allowlist'
 
 /**
- * A sender the gateway recently rejected. Surfaces in Settings → Messaging
- * as "Pending requests".
+ * 最近被 gateway 拒绝的发送者。
+ * 在 Settings → Messaging 中显示为“Pending requests”。
  */
 export interface MessagingPendingSenderInfo {
   platform: string
@@ -74,10 +80,11 @@ export interface MessagingPendingSenderInfo {
   username?: string
   lastAttemptAt: number
   attemptCount: number
-  /** Why the sender was rejected. Optional for back-compat with persisted
-   *  entries written by an earlier build that lacked the field. */
+  /**
+   * 拒绝原因。可选是为了兼容早期构建写入的持久化数据。
+   */
   reason?: MessagingPendingRejectReason
-  /** Binding context (only for 'not-on-binding-allowlist' rejects). */
+  /** binding 上下文（仅 'not-on-binding-allowlist' 原因有值）。 */
   bindingId?: string
   sessionId?: string
   channelId?: string
@@ -88,11 +95,19 @@ export type MessagingPlatformAccessMode = 'open' | 'owner-only'
 
 export type MessagingBindingAccessMode = 'inherit' | 'allow-list' | 'open'
 
+/**
+ * 消息网关配置信息。
+ *
+ * TS 特性：
+ *   - `Record<string, T | undefined>` 表示键是 string，值可能不存在，
+ *     类似 Go 的 `map[string]*T`（通过 nil 表示不存在）。
+ *   - platforms 的值是联合类型：普通平台只有 enabled；Telegram 还可以有 supergroup/accessMode/owners。
+ */
 export interface MessagingConfigInfo {
   enabled: boolean
   /**
-   * Per-platform config. Telegram may carry optional `supergroup`,
-   * `accessMode`, and `owners` fields; other platforms only use `enabled`.
+   * 每个平台的配置。Telegram 可能有 supergroup、accessMode、owners；
+   * 其他平台目前只用 enabled。
    */
   platforms: Record<
     string,
@@ -107,40 +122,47 @@ export interface MessagingConfigInfo {
   runtime: Record<string, MessagingPlatformRuntimeInfo | undefined>
 }
 
+/**
+ * 消息网关注册表接口。
+ *
+ * TS 特性：
+ *   - 方法返回复杂的 discriminated union，例如 bindAutomationSession 返回
+ *     `{ ok: true; ... } | { ok: false; reason: ...; error?: string }`。
+ *   - 调用方通过 `if (result.ok)` 分支，类似 Go 中通过 `if err != nil` 分支，
+ *     TS 编译器会自动收窄到对应分支的类型。
+ */
 export interface IMessagingGatewayRegistry {
-  /** Get bindings for a workspace. */
+  /** 获取某个 workspace 的所有 binding。 */
   getBindings(workspaceId: string): MessagingBindingInfo[]
 
-  /** Get messaging config and runtime state for a workspace. */
+  /** 获取某个 workspace 的配置和运行时状态。 */
   getConfig(workspaceId: string): MessagingConfigInfo | null
 
-  /** Update messaging config for a workspace. */
+  /** 更新某个 workspace 的消息配置。 */
   updateConfig(workspaceId: string, config: Partial<MessagingConfigInfo>): Promise<void>
 
-  /** Generate a pairing code for binding a session to a chat. */
+  /** 生成配对码，用于把 session 绑定到某个聊天。 */
   generatePairingCode(workspaceId: string, sessionId: string, platform: string): { code: string; expiresAt: number; botUsername?: string }
 
   /**
-   * Generate a pairing code that, when typed in a Telegram supergroup,
-   * registers that supergroup at the workspace level. Phase A of the topics
-   * feature — currently Telegram-only.
+   * 生成 Telegram 超级群配对码。
+   * 用户在超级群里输入配对码后，该群会被注册为 workspace 级别的超级群。
+   * 目前仅 Telegram 支持，属于 topics 特性的 Phase A。
    */
   generateSupergroupPairingCode(
     workspaceId: string,
     platform: string,
   ): { code: string; expiresAt: number; botUsername?: string }
 
-  /** Read the workspace's currently paired Telegram supergroup, if any. */
+  /** 读取当前 workspace 已配对的 Telegram 超级群，若无返回 null。 */
   getWorkspaceSupergroup(workspaceId: string): MessagingSupergroupInfo | null
 
-  /** Unbind the workspace from its currently paired Telegram supergroup. */
+  /** 解绑 workspace 当前已配对的 Telegram 超级群。 */
   unbindWorkspaceSupergroup(workspaceId: string): Promise<void>
 
   /**
-   * Bind a freshly-spawned automation session to a Telegram forum topic in
-   * the paired supergroup (creating the topic if it doesn't exist yet).
-   * Best-effort — returns a discriminated result instead of throwing so
-   * callers can log + continue without blocking the session.
+   * 把新创建的自动化 session 绑定到已配对超级群的某个话题（不存在则创建）。
+   * 尽力而为，返回可辨识结果，调用方可选择记录日志后继续，不阻塞 session。
    */
   bindAutomationSession(args: {
     workspaceId: string
@@ -156,27 +178,26 @@ export interface IMessagingGatewayRegistry {
   >
 
   /**
-   * Drop a cached automation topic entry. Does not delete the Telegram topic
-   * itself. Useful when an automation is renamed/removed and the user wants
-   * the next use of the same name to create a fresh topic.
+   * 删除本地缓存的自动化话题条目。
+   * 不会真正删除 Telegram 话题本身；用于 automation 改名/移除后希望下次同名重建话题的场景。
    */
   removeAutomationTopic(workspaceId: string, topicName: string): Promise<void>
 
-  /** Unbind all bindings for a session, optionally limited to one platform. */
+  /** 解绑某个 session 的所有 binding，可指定 platform 过滤。 */
   unbindSession(workspaceId: string, sessionId: string, platform?: string): void
 
-  /** Unbind one specific binding row by ID. */
+  /** 根据 ID 解绑某一条 binding。 */
   unbindBinding(workspaceId: string, bindingId: string): boolean
 
-  /** Test a Telegram bot token. */
+  /** 测试 Telegram bot token 是否有效。 */
   testTelegramToken(token: string): Promise<{ success: boolean; botName?: string; botUsername?: string; error?: string }>
 
-  /** Save Telegram token and (re)initialize the adapter. */
+  /** 保存 Telegram token 并（重新）初始化 adapter。 */
   saveTelegramToken(workspaceId: string, token: string): Promise<void>
 
   /**
-   * Test Lark/Feishu credentials by exchanging them for a tenant access
-   * token. Domain selects which Open Platform to talk to.
+   * 测试 Lark/Feishu 凭证，换取 tenant access token。
+   * domain 参数决定调用哪个开放平台。
    */
   testLarkCredentials(creds: {
     appId: string
@@ -184,49 +205,49 @@ export interface IMessagingGatewayRegistry {
     domain: 'lark' | 'feishu'
   }): Promise<{ success: boolean; botName?: string; error?: string }>
 
-  /** Save Lark/Feishu credentials and (re)initialize the adapter. */
+  /** 保存 Lark/Feishu 凭证并（重新）初始化 adapter。 */
   saveLarkCredentials(workspaceId: string, creds: {
     appId: string
     appSecret: string
     domain: 'lark' | 'feishu'
   }): Promise<void>
 
-  /** Disable a platform for a workspace, preserving WhatsApp auth state unless forgotten separately. */
+  /** 停用某平台，保留 WhatsApp 授权状态（除非单独 forget）。 */
   disconnectPlatform(workspaceId: string, platform: string): Promise<void>
 
-  /** Disable a platform and forget its local auth/device state when supported. */
+  /** 停用某平台，并在支持时清除本地授权/设备状态。 */
   forgetPlatform(workspaceId: string, platform: string): Promise<void>
 
   /**
-   * Start the WhatsApp connect flow (spawns the worker, emits QR or pairing-code
-   * prompts via WA_UI_EVENT). Throws if WhatsApp support is not configured.
+   * 启动 WhatsApp 连接流程。
+   * 会启动 worker，并通过 WA_UI_EVENT 发送二维码或配对码提示。
    */
   startWhatsAppConnect(workspaceId: string): Promise<void>
 
   /**
-   * Submit a phone number to the running WhatsApp worker to request a pairing
-   * code. Must be called after startWhatsAppConnect.
+   * 向运行中的 WhatsApp worker 提交手机号请求配对码。
+   * 必须在 startWhatsAppConnect 之后调用。
    */
   submitWhatsAppPhone(workspaceId: string, phoneNumber: string): Promise<void>
 
   // -------------------------------------------------------------------------
-  // Access control (Phase 2/3)
+  // 访问控制（Phase 2/3）
   // -------------------------------------------------------------------------
 
-  /** Read the platform's owners list (workspace-scoped). */
+  /** 读取平台级别的 owner 列表（workspace 作用域）。 */
   getPlatformOwners(workspaceId: string, platform: string): MessagingPlatformOwnerInfo[]
 
-  /** Replace the platform's owners list. */
+  /** 替换平台级别的 owner 列表。 */
   setPlatformOwners(
     workspaceId: string,
     platform: string,
     owners: MessagingPlatformOwnerInfo[],
   ): MessagingPlatformOwnerInfo[]
 
-  /** Read the workspace's platform-level access policy. */
+  /** 读取 workspace 的平台级访问策略。 */
   getPlatformAccessMode(workspaceId: string, platform: string): MessagingPlatformAccessMode
 
-  /** Set the workspace's platform-level access policy. */
+  /** 设置 workspace 的平台级访问策略。 */
   setPlatformAccessMode(
     workspaceId: string,
     platform: string,
@@ -234,24 +255,23 @@ export interface IMessagingGatewayRegistry {
   ): void
 
   /**
-   * List senders the gateway recently rejected. Surfaces in Settings →
-   * Messaging as "Pending requests". Optional `platform` filter.
+   * 列出最近被拒绝的发送者。
+   * 在 Settings → Messaging 显示为“Pending requests”。
+   * platform 参数可选，用于过滤。
    */
   getPendingSenders(workspaceId: string, platform?: string): MessagingPendingSenderInfo[]
 
-  /** Drop a pending sender without promoting them. */
+  /** 丢弃某个 pending 发送者，不提升权限。 */
   dismissPendingSender(workspaceId: string, platform: string, userId: string): boolean
 
   /**
-   * Allow a pending sender. Branches on the entry's `reason`:
-   * - `'not-owner'` → adds to platform owners.
-   * - `'not-on-binding-allowlist'` → appends to that binding's allow-list
-   *   (does NOT touch workspace owners).
+   * 允许某个 pending 发送者。
+   * 根据 entry.reason 分支：
+   *   - 'not-owner' → 加入 platform owners。
+   *   - 'not-on-binding-allowlist' → 加入对应 binding 的 allow-list（不动 workspace owners）。
    *
-   * `entryKey` lets the UI target a specific row when a sender has
-   * multiple pending rows (e.g. workspace + binding-level rejects).
-   * Throws when the entry can't be found or the targeted binding has
-   * been unbound between reject and Allow.
+   * entryKey 让 UI 能精确定位某一行，因为同一个发送者可能在 workspace 和 binding 都有 pending。
+   * 找不到记录或对应 binding 已被解绑时抛出。
    */
   allowPendingSender(
     workspaceId: string,
@@ -260,7 +280,7 @@ export interface IMessagingGatewayRegistry {
     entryKey?: { reason?: MessagingPendingRejectReason; bindingId?: string },
   ): { owners: MessagingPlatformOwnerInfo[]; bindingId?: string }
 
-  /** Update the access policy on a single binding. */
+  /** 更新单条 binding 的访问策略。 */
   setBindingAccess(
     workspaceId: string,
     bindingId: string,

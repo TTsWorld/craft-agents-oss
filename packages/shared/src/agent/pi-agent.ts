@@ -1,16 +1,24 @@
 /**
- * Pi Backend (Subprocess RPC Client)
+ * Pi 后端（子进程 RPC 客户端）
  *
- * Thin subprocess client for the Pi coding agent. Spawns a pi-agent-server
- * subprocess and communicates via JSONL over stdin/stdout.
+ * 本模块是 craft-agents 中基于 Pi SDK（@earendil-works/pi-coding-agent，OpenAI 兼容协议
+ * 的另一家 LLM）的具体 agent 实现。它本身不直接调用 LLM，而是 spawn 一个
+ * pi-agent-server 子进程，通过 stdin/stdout 的 JSONL 协议与之通信。
  *
- * The subprocess runs the Pi SDK (@earendil-works/pi-coding-agent) in-process,
- * handles tool wrapping, permission enforcement, and LLM queries.
- * This file manages subprocess lifecycle, JSONL protocol, event forwarding,
- * and proxy tool routing for MCP/API sources.
+ * 子进程内部跑着 Pi SDK，负责：工具包装（tool wrapping）、权限校验（permission
+ * enforcement）、LLM 查询等。本文件只管：子进程生命周期、JSONL 协议、事件转发、
+ * 以及把 MCP / API source 的代理工具路由到主进程执行。
  *
- * Auth is API key based. Keys are retrieved from the credential manager
- * and passed to the subprocess during initialization.
+ * 鉴权基于 API key / OAuth token，凭据从 credential manager 取出，在 init 阶段传给
+ * 子进程。
+ *
+ * 关键概念（给有 Go 背景的同学）：
+ * - spawn / ChildProcess：Node 启动子进程，类似 exec.Command 但走 pipe
+ * - AsyncGenerator（async function*）：TS 里用 yield 流式产出事件，类似 Go channel
+ * - MCP（Model Context Protocol）：模型可调用的外部工具/数据源协议
+ * - session：一次对话上下文；workspace：工作区；source：MCP/API 数据源
+ * - permission mode：safe/ask/allow-all，决定工具调用是否要拦截
+ * - event adapter：把 Pi SDK 的事件格式翻译成 craft-agents 内部的 AgentEvent 格式
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -19,6 +27,7 @@ import type { AgentEvent } from '@craft-agent/core/types';
 import type { FileAttachment } from '../utils/files.ts';
 import { getProxyEnvVars } from '../config/proxy-env.ts';
 
+// type-only import：只引入类型，不占运行时（TS 特有，类似 Go 里的 interface 定义）
 import type {
   BackendConfig,
   BackendRuntimeUpdate,
@@ -32,30 +41,30 @@ import { SourceActivationDrainController } from './source-activation-drain.ts';
 import type { PermissionMode } from './mode-manager.ts';
 import type { ThinkingLevel } from './thinking-levels.ts';
 
-// Import models from centralized registry
+// 从集中式模型注册表取模型定义
 import { getModelById } from '../config/models.ts';
 
-// BaseAgent provides common functionality
+// BaseAgent 提供通用能力（权限、source 管理、prompt 构建等），PiAgent 继承它
 import { BaseAgent } from './base-agent.ts';
 import type { Workspace } from '../config/storage.ts';
 
-// Event adapter
+// 事件适配器：把 Pi SDK 事件转成 craft-agents 的 AgentEvent
 import { PiEventAdapter } from './backend/pi/event-adapter.ts';
 import { EventQueue } from './backend/event-queue.ts';
 
-// System prompt for Craft Agent context
+// 系统提示词（注入 craft-agents 上下文）
 import { getSystemPrompt } from '../prompts/system.ts';
 import { getCoAuthorPreference } from '../config/preferences.ts';
 import { loadProjectById, getProjectAssetsPath, listProjectAssets, getProjectMemoryPath, loadProjectMemory } from '../projects/storage.ts';
 import type { ProjectPromptContext } from '../projects/types.ts';
 
-// Credential manager for token storage
+// 凭据管理器（加密存储 token）
 import { getCredentialManager } from '../credentials/manager.ts';
 
-// ChatGPT OAuth token refresh (used when Pi routes ChatGPT auth)
+// ChatGPT OAuth token 刷新（当 Pi 走 ChatGPT 鉴权时使用）
 import { refreshChatGptTokens } from '../auth/chatgpt-oauth.ts';
 
-// Session-scoped tool callbacks (for SubmitPlan, source auth, etc.)
+// 会话级工具回调（SubmitPlan、source 鉴权等）
 import {
   registerSessionScopedToolCallbacks,
   mergeSessionScopedToolCallbacks,
@@ -65,10 +74,10 @@ import {
 } from './session-scoped-tools.ts';
 import { attachSessionSelfManagementBindings } from './session-self-management-bindings.ts';
 
-// Session tool proxy definitions (for registering with subprocess)
+// 会话工具的代理定义（用于向子进程注册）
 import { getSessionToolProxyDefs, SESSION_TOOL_NAMES } from './backend/pi/session-tool-defs.ts';
 
-// Session tool registry (for executing proxy tool calls)
+// 会话工具注册表（用于在主进程执行代理工具调用）
 import {
   SESSION_BACKEND_TOOL_NAMES,
   SESSION_TOOL_REGISTRY,
@@ -77,40 +86,43 @@ import {
 import { createClaudeContext, type SessionToolContext } from './claude-context.ts';
 import { getPermissionModeDiagnostics } from './mode-manager.ts';
 
-// call_llm pre-execution pipeline
+// call_llm 预执行流水线
 
-// McpClientPool for source tool proxying (centralized pool from main process)
+// McpClientPool：source 工具代理用的集中式连接池（主进程持有）
 import type { McpClientPool } from '../mcp/mcp-pool.ts';
 
-// Path utilities
+// 路径工具
 import { join } from 'path';
 import { homedir } from 'os';
 
-// Session storage (plans folder path)
+// 会话存储（plans 目录路径）
 import { getSessionDataPath, getSessionPath, getSessionPlansPath } from '../sessions/storage.ts';
 
-// Error typing
+// 错误类型
 import { parseError, type AgentError } from './errors.ts';
 
-// Centralized PreToolUse pipeline
+// 集中式 PreToolUse 流水线（工具执行前的统一权限/改写检查）
 import { runPreToolUseChecks, type PreToolUseCheckResult } from './core/pre-tool-use.ts';
 import { getRtkPath } from './core/rtk-detector.ts';
 import { getRtkEnabled, getBrowserToolEnabled } from '../config/storage.ts';
 import type { RtkContext } from './core/rtk-rewrite.ts';
 
-// Workspace slug extraction for skill qualification
+// 从 workspace 路径提取 slug（用于 skill 资格判定）
 import { extractWorkspaceSlug } from '../utils/workspace.ts';
 
-// LLM tool types
+// LLM 工具相关类型与超时常量
 import { LLM_QUERY_TIMEOUT_MS, type LLMQueryRequest, type LLMQueryResult } from './llm-tool.ts';
 import { executeBrowserToolCommand } from './browser-tool-runtime.ts';
 import { saveBinaryResponse } from '../utils/binary-detection.ts';
 
 // ============================================================
-// PiAgent Implementation
+// PiAgent 实现
 // ============================================================
 
-/** Backend-executed session tools currently supported by PiAgent. */
+/**
+ * PiAgent 当前支持的「后端执行型」会话工具集合。
+ * 这些工具的实际逻辑跑在主进程（不是子进程），通过代理协议暴露给模型。
+ */
 export const PI_BACKEND_SESSION_TOOL_NAMES = new Set<string>([
   'call_llm',
   'spawn_session',
@@ -118,11 +130,12 @@ export const PI_BACKEND_SESSION_TOOL_NAMES = new Set<string>([
 ]);
 
 /**
- * Map a transport `err.code` to an agent-facing string for `browser_tool` failures.
- * Returns null for unknown codes so callers can fall back to the raw `err.message`.
+ * 把 transport 层的 `err.code`（字符串错误码）翻译成给用户看的提示文案，
+ * 针对 `browser_tool` 的失败场景。未知 code 返回 null，调用方回退用原始 message。
  *
- * Receiver-side check: keyed on `err.code === 'X'`, never `instanceof CodedError` —
- * the transport reconstructs a plain `Error` with `.code` attached.
+ * 注意：接收端只能用 `err.code === 'X'` 判断，不能用 `instanceof CodedError` ——
+ * 跨进程序列化后，对方收到的是一个普通 Error，类身份（class identity）会丢失，
+ * 只剩 `.code` 字段被附加回来。
  */
 function mapBrowserToolErrorCode(code: string): string | null {
   switch (code) {
@@ -150,43 +163,48 @@ function mapBrowserToolErrorCode(code: string): string | null {
 }
 
 /**
- * Backend implementation using the Pi coding agent SDK via subprocess.
+ * 基于 Pi coding agent SDK 的后端实现（通过子进程）。
  *
- * Spawns a pi-agent-server subprocess and communicates via JSONL protocol.
- * Extends BaseAgent for common functionality (permission mode, source management,
- * planning heuristics, config watching, usage tracking).
+ * 它会 spawn 一个 pi-agent-server 子进程，用 JSONL 协议通信。继承 BaseAgent 复用
+ * 通用能力：权限模式、source 管理、规划启发式、配置监听、用量统计。
+ *
+ * 给 Go 同学：TS 里 `class X extends Y` 类似 Go 的嵌入（embedding），但可以 override
+ * 方法。`private` / `protected` / `public` 是编译期访问控制，运行时不强制。
  */
 export class PiAgent extends BaseAgent {
   protected backendName = 'Craft Agents Backend';
 
   // ============================================================
-  // Subprocess State
+  // 子进程状态
   // ============================================================
 
-  // Subprocess process handle
+  // 子进程句柄（spawn 返回的 ChildProcess）
   private subprocess: ChildProcess | null = null;
+  // readline 接口：按行读取子进程 stdout，做 JSONL 解析
   private readline: ReadlineInterface | null = null;
+  // 子进程就绪 Promise：spawn 后等待 ready 消息才 resolve
   private subprocessReady: Promise<void> | null = null;
+  // 上面 Promise 的 resolve 句柄，ready 消息到达时调用
   private subprocessReadyResolve: (() => void) | null = null;
 
-  // Pi session ID (managed by subprocess, reported back)
+  // Pi 会话 ID（由子进程管理，初始化后回报给主进程）
   private piSessionId: string | null = null;
 
-  // Callback server port (managed by subprocess)
+  // 回调服务器端口（由子进程管理）
   private callbackPort: number = 0;
 
-  // State
+  // 处理状态
   private _isProcessing: boolean = false;
+  // 中断原因（可选，配合 AbortReason 区分用户停止 / 计划提交 / 鉴权等）
   private abortReason?: AbortReason;
 
-  // Event adapter
+  // 事件适配器：把 Pi SDK 事件翻译成 craft-agents 的 AgentEvent
   private adapter: PiEventAdapter;
 
-  // Event queue for streaming (AsyncGenerator pattern over subprocess JSONL)
+  // 事件队列：基于 AsyncGenerator 模式从子进程 JSONL 流里产出事件
   private eventQueue = new EventQueue();
 
-  // Error deduplication — suppress identical consecutive errors after a threshold
-  // to prevent a broken subprocess from flooding the user's session.
+  // 错误去重：当子进程反复抛同一个错误时，超过阈值后抑制，避免淹没用户会话
   private lastSubprocessError: string | null = null;
   private subprocessErrorRepeatCount = 0;
   private static readonly MAX_IDENTICAL_SUBPROCESS_ERRORS = 3;
@@ -229,109 +247,106 @@ export class PiAgent extends BaseAgent {
     this.subprocessErrorRepeatCount = 0;
   }
 
-  // Ring buffer of recent subprocess stderr. Always on (independent of CRAFT_DEBUG)
-  // so that connection-test and other failures can surface what the subprocess
-  // actually said, instead of a bare "timed out" with no context.
+  // 子进程 stderr 的环形缓冲（始终开启，与 CRAFT_DEBUG 无关）。这样连接测试
+  // 等失败路径能拿到子进程真正说了什么，而不是一个干巴巴的 "timed out"。
   private stderrBuffer: string[] = [];
   private stderrBufferBytes = 0;
   private static readonly STDERR_BUFFER_MAX_BYTES = 8 * 1024;
 
   private recordStderr(chunk: string): void {
     if (!chunk) return;
-    // If a single chunk is larger than the cap, keep only its tail so the
-    // buffer always holds the most-recent output even in pathological cases.
+    // 单个 chunk 超过上限时只保留尾部，保证缓冲里永远是最新输出
     const effective = chunk.length > PiAgent.STDERR_BUFFER_MAX_BYTES
       ? chunk.slice(chunk.length - PiAgent.STDERR_BUFFER_MAX_BYTES)
       : chunk;
     this.stderrBuffer.push(effective);
     this.stderrBufferBytes += effective.length;
-    // Drop oldest chunks until we're back under the cap, but always keep at
-    // least one entry so a single-chunk tail survives.
+    // 丢最早的 chunk 直到回到上限以下，但至少保留一个，防止单 chunk 尾巴被清空
     while (this.stderrBufferBytes > PiAgent.STDERR_BUFFER_MAX_BYTES && this.stderrBuffer.length > 1) {
       const dropped = this.stderrBuffer.shift()!;
       this.stderrBufferBytes -= dropped.length;
     }
   }
 
-  /** Returns the most recent subprocess stderr output (up to ~8KB). Empty string if nothing captured. */
+  /** 返回最近一段子进程 stderr（最多约 8KB）。没捕获过则返回空串。 */
   getRecentStderr(): string {
     return this.stderrBuffer.join('');
   }
 
-  // Pending permission requests (used by handlePreToolUseRequest for ask-mode prompting)
+  // 待处理的权限请求（ask 模式下，handlePreToolUseRequest 用来弹窗询问用户）
   private pendingPermissions: Map<string, {
     resolve: (allowed: boolean) => void;
     toolName: string;
   }> = new Map();
 
-  // Pending tool executions (correlation map for subprocess tool_execute_request -> main process -> tool_execute_response)
+  // 待处理的工具执行（关联映射：子进程 tool_execute_request -> 主进程执行 -> tool_execute_response）
   private pendingToolExecutions: Map<string, {
     resolve: (result: { content: string; isError: boolean }) => void;
     reject: (error: Error) => void;
   }> = new Map();
 
-  // Pending mini completions (correlation map for subprocess mini_completion_result)
+  // 待处理的 mini completion（关联映射，对应子进程 mini_completion_result）
   private pendingMiniCompletions: Map<string, {
     resolve: (text: string | null) => void;
     reject: (error: Error) => void;
   }> = new Map();
 
-  // Pending llm_query calls (correlation map for subprocess llm_query_result).
-  // Separate from pendingMiniCompletions because the payload shape differs:
-  // queryLlm returns a full LLMQueryResult, not just text.
+  // 待处理的 llm_query 调用（关联映射，对应子进程 llm_query_result）。
+  // 与 pendingMiniCompletions 分开，因为返回结构不同：queryLlm 返回完整的
+  // LLMQueryResult，不只是文本。
   private pendingLlmQueries: Map<string, {
     resolve: (result: LLMQueryResult) => void;
     reject: (error: Error) => void;
   }> = new Map();
 
-  // Pending ensure_session_ready requests (branch preflight handshake)
+  // 待处理的 ensure_session_ready 请求（分支预检握手用）
   private pendingEnsureSessionReady: Map<string, {
     resolve: (sessionId: string | null) => void;
     reject: (error: Error) => void;
   }> = new Map();
 
-  // Pending compact requests (manual compaction RPC)
+  // 待处理的 compact 请求（手动压缩上下文的 RPC）
   private pendingCompactions: Map<string, {
     resolve: (result: { summary: string; firstKeptEntryId: string; tokensBefore: number } | null) => void;
     reject: (error: Error) => void;
   }> = new Map();
 
-  // Pending auto-compaction toggle requests
+  // 待处理的自动压缩开关请求
   private pendingAutoCompactionToggles: Map<string, {
     resolve: (enabled: boolean) => void;
     reject: (error: Error) => void;
   }> = new Map();
 
-  // Pending runtime config updates (custom endpoint model capability refresh)
+  // 待处理的运行时配置更新（自定义端点模型能力刷新）
   private pendingRuntimeConfigUpdates: Map<string, {
     resolve: (updated: boolean) => void;
     reject: (error: Error) => void;
   }> = new Map();
 
-  // Metadata captured before PreToolUse stripping, keyed by toolCallId.
-  // This provides a deterministic bridge when side-channel metadata store misses.
+  // PreToolUse 剥离之前捕获的元数据，按 toolCallId 索引。
+  // 当旁路元数据存储命中失败时，这里提供确定性的兜底桥接。
   private preToolMetadataByCallId: Map<string, {
     intent?: string;
     displayName?: string;
     capturedAt: number;
   }> = new Map();
 
-  // Current user message (for context in summarization)
+  // 当前用户消息（用于摘要等场景的上下文）
   private currentUserMessage: string = '';
 
-  // Pool reference for convenience (from this.config.mcpPool)
+  // 便捷引用的连接池（取自 this.config.mcpPool）
   private get mcpPool(): McpClientPool | undefined { return this.config.mcpPool; }
 
-  // Cached session tool context (lazy-created on first session tool call)
+  // 会话工具上下文（懒构造，首次调用会话工具时才建）
   private _sessionToolContext: SessionToolContext | null = null;
 
-  // RPC request counter for unique IDs
+  // RPC 请求计数器，用来生成唯一 ID
   private rpcIdCounter: number = 0;
 
-  // OAuth token refresh (ChatGPT Plus)
+  // OAuth token 刷新（ChatGPT Plus 场景）
   /**
-   * @deprecated Use onBackendAuthRequired (inherited from BaseAgent) instead.
-   * Kept as a getter/setter alias for backward compatibility.
+   * @deprecated 改用继承自 BaseAgent 的 onBackendAuthRequired。保留 getter/setter
+   * 别名仅为向后兼容。
    */
   get onChatGptAuthRequired(): ((reason: string) => void) | null {
     return this.onBackendAuthRequired;
@@ -341,12 +356,11 @@ export class PiAgent extends BaseAgent {
   }
   private tokenRefreshInProgress: Promise<void> | null = null;
 
-  // Global mutex: keyed by connectionSlug so multiple PiAgent instances
-  // sharing the same connection don't race concurrent token refreshes.
+  // 全局互斥：按 connectionSlug 加锁。同一连接上多个 PiAgent 实例不会并发刷新 token。
   private static globalRefreshMutex: Map<string, Promise<void>> = new Map();
 
   // ============================================================
-  // Constructor
+  // 构造函数
   // ============================================================
 
   constructor(config: BackendConfig) {
@@ -365,17 +379,15 @@ export class PiAgent extends BaseAgent {
       this.adapter.setMiniModel(config.miniModel);
     }
 
-    // Set session dir on adapter for concurrent-safe toolMetadataStore lookups
+    // 把 session 目录告诉 adapter，方便它做并发安全的 toolMetadataStore 查询
     if (config.session?.id && config.workspace.rootPath) {
       this.adapter.setSessionDir(join(config.workspace.rootPath, 'sessions', config.session.id));
     }
 
-    // Wire the adapter's async overflow fallback into the event queue. The
-    // fallback fires when the SDK doesn't emit a compaction_start after a
-    // held overflow agent_end (e.g. _overflowRecoveryAttempted was already
-    // true). It runs outside adaptEvent() so it can't yield through the
-    // generator — instead, it calls these callbacks to enqueue the buffered
-    // error and terminate the iterator.
+    // 把 adapter 的异步溢出兜底挂到事件队列上。当 SDK 在「held 溢出 agent_end」
+    // 之后没有发 compaction_start（比如 _overflowRecoveryAttempted 已经为 true）时，
+    // 兜底会触发。它在 adaptEvent() 之外运行，没法 yield 进生成器，所以通过
+    // 这两个回调把缓冲的错误入队并终止迭代器。
     this.adapter.setOverflowFallbackHandlers(
       (event) => this.eventQueue.enqueue(event),
       () => this.eventQueue.complete(),
@@ -387,8 +399,8 @@ export class PiAgent extends BaseAgent {
   }
 
   /**
-   * Guardrail: ensure every backend-mode session tool from core is implemented here.
-   * This fails fast in development/CI instead of surfacing as runtime "Unknown session tool".
+   * 保护性检查：确保 core 里声明的每个「后端执行型」会话工具在本类里都有实现。
+   * 在开发/CI 阶段直接 fail-fast，而不是运行时才报 "Unknown session tool"。
    */
   private assertBackendSessionToolParity(): void {
     const missing = [...SESSION_BACKEND_TOOL_NAMES].filter(
@@ -403,12 +415,11 @@ export class PiAgent extends BaseAgent {
   }
 
   // ============================================================
-  // Subprocess Management
+  // 子进程管理
   // ============================================================
 
   /**
-   * Ensure the subprocess is spawned and ready.
-   * Lazy initialization -- spawns on first use.
+   * 确保子进程已 spawn 并就绪。懒初始化——首次使用时才 spawn。
    */
   private async ensureSubprocess(): Promise<void> {
     if (this.subprocess && this.subprocessReady) {
@@ -420,7 +431,17 @@ export class PiAgent extends BaseAgent {
   }
 
   /**
-   * Spawn the pi-agent-server subprocess and set up JSONL communication.
+   * spawn pi-agent-server 子进程，建立 JSONL 通信。
+   *
+   * 这个方法较长，关键步骤：
+   * 1. 解析运行时（node 路径、pi-server 路径、cwd）
+   * 2. 准备 ready Promise、sessionId、sessionDir
+   * 3. 组装 spawn 参数（可选 preload 网络拦截器）
+   * 4. 预刷新 Copilot token（OAuth 场景）
+   * 5. 取凭据（piAuth / legacy apiKey）+ 派生 AWS 环境变量
+   * 6. spawn 子进程，绑定 stdout/stderr/exit/error 事件
+   * 7. 发送 init 命令，等 ready
+   * 8. 开启自动压缩，注册会话工具与 source 工具的代理定义
    */
   private async spawnSubprocess(): Promise<void> {
     const runtime = getBackendRuntime(this.config);

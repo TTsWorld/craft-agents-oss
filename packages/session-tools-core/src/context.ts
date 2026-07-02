@@ -1,10 +1,8 @@
 /**
- * Session Tools Core - Context Interface
+ * session-tools-core 的上下文接口
  *
- * Defines the abstract context interface that both Claude (in-process)
- * and Codex (subprocess) implementations must provide.
- *
- * This enables writing tool handlers once and running them in both environments.
+ * 定义了 Claude（同进程）和 Codex（子进程）两种实现都必须提供的抽象上下文接口。
+ * 一套 tool handler 只需写一份，就能在两个环境里复用。
  */
 
 import type {
@@ -18,12 +16,12 @@ import type {
 } from './types.ts';
 
 // ============================================================
-// Source Credential Types
+// Source 凭证类型
 // ============================================================
 
 /**
- * Loaded source with context for credential operations.
- * Note: guide field omitted as credential manager doesn't use it.
+ * 已加载的 source，包含凭证操作所需的上下文。
+ * 注意：guide 字段被省略了，因为 credential manager 不会用到它。
  */
 export interface LoadedSource {
   config: SourceConfig;
@@ -33,96 +31,90 @@ export interface LoadedSource {
 }
 
 // ============================================================
-// Callback Interface
+// 回调接口
 // ============================================================
 
 /**
- * Callbacks for session tool operations.
- * Both Claude and Codex implement this interface differently:
- * - Claude: Direct function calls via registry
- * - Codex: JSON messages over stderr
+ * session tool 的回调接口。
+ * Claude 和 Codex 会以不同方式实现这个接口：
+ * - Claude：直接通过 registry 调用函数
+ * - Codex：通过 stderr 发送 JSON 消息
  */
 export interface SessionToolCallbacks {
   /**
-   * Called when a plan is submitted.
-   * Claude: calls onPlanSubmitted callback
-   * Codex: sends __CALLBACK__ message to stderr
+   * 提交计划时调用。
+   * Claude：调用 onPlanSubmitted 回调
+   * Codex：向 stderr 发送 __CALLBACK__ 消息
    */
   onPlanSubmitted(planPath: string): void;
 
   /**
-   * Called when authentication is requested.
-   * Claude: calls onAuthRequest callback + forceAbort
-   * Codex: sends __CALLBACK__ message to stderr
+   * 需要认证时调用。
+   * Claude：调用 onAuthRequest 回调 + forceAbort
+   * Codex：向 stderr 发送 __CALLBACK__ 消息
    */
   onAuthRequest(request: AuthRequest): void;
 }
 
 // ============================================================
-// File System Interface
+// 文件系统接口
 // ============================================================
 
 /**
- * File system abstraction for portability.
- * Allows mocking in tests and different implementations in different environments.
+ * 可移植的文件系统抽象。
+ * 方便在测试里 mock，也允许不同运行环境使用不同实现。
  */
 export interface FileSystemInterface {
-  /** Check if file/directory exists */
+  /** 判断文件/目录是否存在 */
   exists(path: string): boolean;
 
-  /** Read file as UTF-8 string */
+  /** 以 UTF-8 字符串读取文件 */
   readFile(path: string): string;
 
-  /** Read file as Buffer (for binary/images) */
+  /** 以 Buffer 读取文件（用于二进制/图片） */
   readFileBuffer(path: string): Buffer;
 
-  /** Write file */
+  /** 写入文件 */
   writeFile(path: string, content: string): void;
 
-  /** Check if path is a directory */
+  /** 判断路径是否为目录 */
   isDirectory(path: string): boolean;
 
-  /** List directory contents */
+  /** 列出目录内容 */
   readdir(path: string): string[];
 
-  /** Get file stats */
+  /** 获取文件状态 */
   stat(path: string): { size: number; isDirectory(): boolean };
 }
 
 // ============================================================
-// Credential Manager Interface
+// 凭证管理器接口
 // ============================================================
 
 /**
- * Credential manager abstraction.
- * Claude has full access to credential stores.
- * Codex may have limited or no access (relies on main process).
+ * 凭证管理器抽象。
+ * Claude 拥有完整的凭证存储访问权限；
+ * Codex 可能只有受限或没有访问权限（依赖主进程）。
  */
 export interface CredentialManagerInterface {
-  /**
-   * Check if a source has valid, non-expired credentials
-   */
+  /** 检查某个 source 是否有有效且未过期的凭证 */
   hasValidCredentials(source: LoadedSource): Promise<boolean>;
 
-  /**
-   * Get the current access token for a source (null if expired/missing)
-   */
+  /** 获取 source 当前的 access token（过期或缺失时返回 null） */
   getToken(source: LoadedSource): Promise<string | null>;
 
-  /**
-   * Refresh the access token for a source
-   */
+  /** 刷新 source 的 access token */
   refresh(source: LoadedSource): Promise<string | null>;
 }
 
 // ============================================================
-// Validator Interface
+// 校验器接口
 // ============================================================
 
 /**
- * Config validation interface.
- * Claude uses full Zod validators from packages/shared.
- * Codex uses simplified validators from session-tools-core.
+ * 配置校验接口。
+ * Claude 使用 packages/shared 里的完整 Zod 校验器；
+ * Codex 使用 session-tools-core 里的简化校验器。
  */
 export interface ValidatorInterface {
   validateConfig(): import('./types.js').ValidationResult;
@@ -138,229 +130,198 @@ export interface ValidatorInterface {
 }
 
 // ============================================================
-// Session Tool Context
+// Session Tool 上下文
 // ============================================================
 
 /**
- * Main context interface for session tools.
+ * session tool 的主上下文接口。
  *
- * Both Claude and Codex create their own implementation of this interface:
- * - Claude: createClaudeContext() with direct access to Electron internals
- * - Codex: createCodexContext() with callback IPC and limited capabilities
+ * Claude 和 Codex 会各自实现这个接口：
+ * - Claude：createClaudeContext()，直接访问 Electron 内部
+ * - Codex：createCodexContext()，通过 IPC 回调，能力受限
  */
 export interface SessionToolContext {
   // ============================================================
-  // Session Info
+  // Session 信息
   // ============================================================
 
-  /** Unique session identifier */
+  /** 当前 session 的唯一标识 */
   sessionId: string;
 
-  /** Absolute path to workspace folder (~/.craft-agent/workspaces/{id}) */
+  /** workspace 文件夹的绝对路径（~/.craft-agent/workspaces/{id}） */
   workspacePath: string;
 
-  /** Path to sources folder within workspace */
+  /** workspace 内 sources 目录的路径 */
   get sourcesPath(): string;
 
-  /** Path to skills folder within workspace */
+  /** workspace 内 skills 目录的路径 */
   get skillsPath(): string;
 
-  /** Path to session's plans folder */
+  /** 当前 session 的 plans 目录路径 */
   plansFolderPath: string;
 
-  /** Working directory (project root) for the session, if set */
+  /** session 的工作目录（项目根目录），如果已设置 */
   workingDirectory?: string;
 
   // ============================================================
-  // Callbacks (transport-agnostic)
+  // 回调（与传输方式无关）
   // ============================================================
 
   callbacks: SessionToolCallbacks;
 
   // ============================================================
-  // File System
+  // 文件系统
   // ============================================================
 
   fs: FileSystemInterface;
 
   // ============================================================
-  // Validators (optional - may use basic or full)
+  // 校验器（可选，可能使用基础或完整版本）
   // ============================================================
 
   validators?: ValidatorInterface;
 
   // ============================================================
-  // Optional Capabilities
+  // 可选能力
   // ============================================================
 
   /**
-   * Get credential manager for source authentication checks.
-   * Only available in Claude (has keychain access).
+   * 获取用于 source 认证检查的 credential manager。
+   * 仅在 Claude 中可用（能访问钥匙串）。
    */
   credentialManager?: CredentialManagerInterface;
 
-  /**
-   * Load a source config from the workspace.
-   */
+  /** 从 workspace 加载一个 source 的配置 */
   loadSourceConfig(sourceSlug: string): SourceConfig | null;
 
-  /**
-   * Save a source config to the workspace.
-   */
+  /** 把一个 source 的配置保存到 workspace */
   saveSourceConfig?(source: SourceConfig): void;
 
-  /**
-   * Infer Google service from URL.
-   */
+  /** 从 URL 推断 Google 服务类型 */
   inferGoogleService?(url?: string): GoogleService | undefined;
 
-  /**
-   * Infer Slack service from URL.
-   */
+  /** 从 URL 推断 Slack 服务类型 */
   inferSlackService?(url?: string): SlackService | undefined;
 
-  /**
-   * Infer Microsoft service from URL.
-   */
+  /** 从 URL 推断 Microsoft 服务类型 */
   inferMicrosoftService?(url?: string): MicrosoftService | undefined;
 
-  /**
-   * Check if Google OAuth is configured.
-   */
+  /** 检查 Google OAuth 是否已配置 */
   isGoogleOAuthConfigured?(clientId?: string, clientSecret?: string): boolean;
 
   // ============================================================
-  // Icon Management (for source_test)
+  // 图标管理（供 source_test 使用）
   // ============================================================
 
-  /**
-   * Check if a value is a URL that can be used as an icon.
-   */
+  /** 判断一个值是否可以作为图标的 URL */
   isIconUrl?(value: string): boolean;
 
   /**
-   * Download an icon from URL to the source folder.
-   * Returns the path to the cached icon, or null if download failed.
+   * 从 URL 下载图标并缓存到 source 目录。
+   * 返回缓存图标的本地路径，下载失败则返回 null。
    */
   downloadSourceIcon?(sourceSlug: string, iconUrl: string): Promise<string | null>;
 
-  /**
-   * Derive a service URL from a source config (for favicon fetching).
-   */
+  /** 从 source 配置推导服务 URL（用于获取 favicon） */
   deriveServiceUrl?(source: SourceConfig): string | null;
 
-  /**
-   * Get a high-quality logo URL from a service URL.
-   */
+  /** 从服务 URL 获取高质量 logo URL */
   getHighQualityLogoUrl?(serviceUrl: string, slug: string): Promise<string | null>;
 
-  /**
-   * Download an icon to a specific destination path.
-   */
+  /** 把图标下载到指定目标路径 */
   downloadIcon?(destPath: string, url: string, tag: string): Promise<string | null>;
 
   // ============================================================
-  // MCP Connection Validation (for source_test)
+  // MCP 连接校验（供 source_test 使用）
   // ============================================================
 
-  /**
-   * Validate a stdio MCP connection by spawning the command.
-   */
+  /** 通过 spawn 命令验证 stdio MCP 连接。 */
   validateStdioMcpConnection?(config: StdioMcpConfig): Promise<StdioValidationResult>;
 
-  /**
-   * Validate an HTTP/SSE MCP connection.
-   */
+  /** 验证 HTTP/SSE MCP 连接。 */
   validateMcpConnection?(config: HttpMcpConfig): Promise<McpValidationResult>;
 
   // ============================================================
-  // API Testing (for source_test)
+  // API 测试（供 source_test 使用）
   // ============================================================
 
-  /**
-   * Test an API source connection with full credential handling.
-   */
+  /** 测试 API source 的连接，包含完整的凭证处理。 */
   testApiSource?(source: SourceConfig): Promise<ApiTestResult>;
 
-  /**
-   * Test a Google source (OAuth token validation).
-   */
+  /** 测试 Google source（OAuth token 校验）。 */
   testGoogleSource?(source: SourceConfig): Promise<ApiTestResult>;
 
   // ============================================================
-  // Preferences (for update_user_preferences)
+  // 用户偏好（供 update_user_preferences 使用）
   // ============================================================
 
   /**
-   * Submit developer feedback. Injected by each backend:
-   * - Claude: writes JSON files to ~/.craft-agent/feedback/
-   * - Codex/Pi: could send over IPC or write directly
+   * 提交开发者反馈。由各后端注入：
+   * - Claude：写入 ~/.craft-agent/feedback/ 的 JSON 文件
+   * - Codex/Pi：可以通过 IPC 发送或直接写入
    */
   submitFeedback?(feedback: import('./types.ts').DeveloperFeedback): void;
 
   /**
-   * Update user preferences. Injected by each backend:
-   * - Claude: calls updatePreferences() from config/preferences.ts
-   * - Codex/session-mcp-server: writes directly to preferences.json
-   * - Pi: calls updatePreferences() from config/preferences.ts
+   * 更新用户偏好。由各后端注入：
+   * - Claude：调用 config/preferences.ts 的 updatePreferences()
+   * - Codex/session-mcp-server：直接写入 preferences.json
+   * - Pi：调用 config/preferences.ts 的 updatePreferences()
    */
   updatePreferences?(updates: Record<string, unknown>): void;
 
   // ============================================================
-  // Session Self-Management (for set_session_labels, etc.)
+  // Session 自我管理（供 set_session_labels 等使用）
   // ============================================================
 
-  /** Set labels on a session. Defaults to current session if no ID given. Injected by backend. */
+  /** 为 session 设置标签。未传 ID 时默认当前 session。由各后端注入。 */
   setSessionLabels?(sessionId: string | undefined, labels: string[]): void | Promise<void>;
 
-  /** Set status on a session. Defaults to current session if no ID given. Injected by backend. */
+  /** 为 session 设置状态。未传 ID 时默认当前 session。由各后端注入。 */
   setSessionStatus?(sessionId: string | undefined, status: string): void | Promise<void>;
 
-  /** Get detailed info about a session. Defaults to current session if no ID given. Injected by backend. */
+  /** 获取某个 session 的详细信息。未传 ID 时默认当前 session。由各后端注入。 */
   getSessionInfo?(sessionId?: string): SessionInfo | null;
 
-  /** List sessions in the workspace with pagination. Injected by backend. */
+  /** 分页列出 workspace 中的 session。由各后端注入。 */
   listSessions?(options?: ListSessionsOptions): ListSessionsResult;
 
   /**
-   * List background tasks (running + recently-terminal) for a session from the
-   * main-process registry. Defaults to the current session if no ID given.
-   * Injected by backend (SessionManager). Returns [] in backends that don't
-   * track background tasks.
+   * 从主进程注册表列出某个 session 的后台任务（运行中 + 最近终止的）。
+   * 未传 ID 时默认当前 session。由各后端（SessionManager）注入。
+   * 在不跟踪后台任务的后端中返回 []。
    */
   listBackgroundTasks?(sessionId?: string): BackgroundTaskInfo[];
 
-  /** Resolve label display names to IDs against configured labels. Injected by backend. */
+  /** 将标签显示名解析为 ID。由各后端注入。 */
   resolveLabels?(labels: string[]): ResolvedLabelsResult;
 
-  /** Resolve a status display name to its ID against configured statuses. Injected by backend. */
+  /** 将状态显示名解析为 ID。由各后端注入。 */
   resolveStatus?(status: string): ResolvedStatusResult;
 
   // ============================================================
-  // Inter-Session Messaging
+  // 跨 Session 消息
   // ============================================================
 
   /**
-   * Send a message to another session. Injected by backend (SessionManager).
-   * Resolves with how the message was received so the sender can give the model
-   * a truthful ack (delivered immediately vs. queued behind a busy turn) instead
-   * of an unconditional "message sent".
+   * 向另一个 session 发送消息。由各后端（SessionManager）注入。
+   * resolve 后返回消息的接收方式，让调用方给模型一个真实的确认（立即送达 vs.
+   * 排在忙碌的 turn 后面），而不是无条件返回"消息已发送"。
    */
   sendAgentMessage?(sessionId: string, message: string, attachments?: Array<{ path: string; name?: string }>): Promise<SendAgentMessageResult>;
 
   /**
-   * Activate a source in the running session: add to enabledSourceSlugs,
-   * build its MCP/API servers, apply to the agent.
+   * 在运行中的 session 里激活一个 source：加入 enabledSourceSlugs，
+   * 构建其 MCP/API server，并应用到 agent。
    *
-   * Only available in backends that run alongside SessionManager (Claude in-process, Pi subprocess).
-   * Codex and other backends leave this undefined — callers should degrade gracefully (restart required).
+   * 仅在挨着 SessionManager 运行的后端里可用（Claude 同进程、Pi 子进程）。
+   * Codex 等后端不会实现这个函数——调用方应优雅降级（需要重启 session）。
    *
-   * `availability` is always `'next-turn'` when activation succeeds: both Claude SDK
-   * (frozen `mcpServers` at `query()` start) and Pi (subprocess reloads proxy tools
-   * on the next `handlePrompt`) require the current turn to end before new tools
-   * are callable. The backend handles this via the existing source_activated + auto_retry
-   * machinery — the current turn is aborted and the renderer resends the user's
-   * original message with a `[{slug} activated]` suffix.
+   * `availability` 成功时总是 `'next-turn'`：Claude SDK 的 `mcpServers`
+   * 在 `query()` 开始时冻结，Pi 子进程会在下一次 `handlePrompt` 重新加载代理 tool，
+   * 两者都需要当前 turn 结束后新 tool 才能被调用。后端通过已有的
+   * source_activated + auto_retry 机制处理：当前 turn 被中止，renderer 会用
+   * `[{slug} activated]` 后缀重新发送用户原消息。
    */
   activateSourceInSession?(sourceSlug: string): Promise<{
     ok: boolean;
@@ -369,64 +330,58 @@ export interface SessionToolContext {
   }>;
 
   // ============================================================
-  // Messaging Gateway (for list/unbind messaging channels)
+  // 消息网关（供 list/unbind messaging channels 使用）
   // ============================================================
 
-  /** Get messaging bindings for a session. Injected by backend when messaging is configured. */
+  /** 获取某个 session 的消息绑定。仅在配置了消息网关时由各后端注入。 */
   getMessagingBindings?(sessionId: string): Array<{
     platform: string;
     channelId: string;
-    /** Telegram supergroup forum topic id; undefined for DMs / non-Telegram. */
+    /** Telegram 超级群论坛话题 ID；DM 或非 Telegram 场景为 undefined。 */
     threadId?: number;
     channelName?: string;
     enabled: boolean;
   }>;
 
-  /** Unbind messaging channels from a session. Returns count of removed bindings. */
+  /** 解除 session 的消息通道绑定。返回被移除的绑定数量。 */
   unbindMessagingChannel?(sessionId: string, platform?: string): number;
 
   // ============================================================
-  // Session Paths (for transform_data / render_template)
+  // Session 路径（供 transform_data / render_template 使用）
   // ============================================================
 
-  /**
-   * Absolute path to the session directory.
-   * Used by transform_data for resolving input files.
-   */
+  /** session 目录的绝对路径。transform_data 用它解析输入文件。 */
   sessionPath?: string;
 
-  /**
-   * Absolute path to the session's data directory.
-   * Used by transform_data and render_template for output files.
-   */
+  /** session 数据目录的绝对路径。transform_data 和 render_template 用它输出文件。 */
   dataPath?: string;
 }
 
 // ============================================================
-// Session Self-Management Types — Resolution
+// Session 自我管理类型 —— 解析结果
 // ============================================================
 
-/** Result of resolving label names/IDs against configured labels. */
+/** 将标签名/ID 解析为配置标签后的结果。 */
 export interface ResolvedLabelsResult {
-  /** Resolved label IDs (ready to store) */
+  /** 已解析出的标签 ID（可直接存储） */
   resolved: string[];
-  /** Labels that couldn't be matched to any configured label */
+  /** 无法匹配到任何配置标签的输入 */
   unknown: string[];
-  /** All valid label IDs (for error messages) */
+  /** 所有有效标签 ID（用于报错提示） */
   available: string[];
   /**
-   * Optional per-input rejection reason, keyed by the original input string.
-   * Populated by `resolveSessionLabels()` from `@craft-agent/shared/labels`.
-   * Handlers use this to build clearer errors (e.g. "label X doesn't accept a value").
+   * 按原始输入字符串记录的拒绝原因（可选）。
+   * 由 `@craft-agent/shared/labels` 的 `resolveSessionLabels()` 填充。
+   * handler 用它生成更清晰的错误，例如“标签 X 不接受取值”。
    */
   reasons?: Record<string, string>;
 }
 
-/** Result of resolving a status name/ID against configured statuses. */
+/** 将状态名/ID 解析为配置状态后的结果。 */
 export interface ResolvedStatusResult {
-  /** Matched status ID, or null if unknown */
+  /** 匹配到的状态 ID，未知则为 null */
   resolved: string | null;
-  /** All valid status IDs (for error messages) */
+  /** 所有有效状态 ID（用于报错提示） */
   available: string[];
   /**
    * Category of the matched status ('open' | 'closed'), when resolved. Lets the
@@ -437,10 +392,10 @@ export interface ResolvedStatusResult {
 }
 
 // ============================================================
-// Session Self-Management Types
+// Session 自我管理类型
 // ============================================================
 
-/** Full metadata for a single session (returned by get_session_info). */
+/** 单个 session 的完整元数据（get_session_info 返回）。 */
 export interface SessionInfo {
   id: string;
   name: string;
@@ -455,7 +410,7 @@ export interface SessionInfo {
   isActive: boolean;
 }
 
-/** Compact session summary (returned by list_sessions). */
+/** session 的精简摘要（list_sessions 返回）。 */
 export interface SessionListItem {
   id: string;
   name: string;
@@ -464,7 +419,7 @@ export interface SessionListItem {
   createdAt: number;
 }
 
-/** Options for list_sessions filtering and pagination. */
+/** list_sessions 的过滤与分页选项。 */
 export interface ListSessionsOptions {
   status?: string;
   label?: string;
@@ -474,7 +429,7 @@ export interface ListSessionsOptions {
   offset?: number;
 }
 
-/** Paginated result from list_sessions. */
+/** list_sessions 的分页结果。 */
 export interface ListSessionsResult {
   total: number;
   returned: number;
@@ -517,12 +472,10 @@ export interface BackgroundTaskInfo {
 }
 
 // ============================================================
-// MCP Validation Types
+// MCP 校验类型
 // ============================================================
 
-/**
- * Config for stdio MCP connection validation
- */
+/** stdio MCP 连接校验的配置。 */
 export interface StdioMcpConfig {
   command: string;
   args?: string[];
@@ -530,21 +483,19 @@ export interface StdioMcpConfig {
 }
 
 /**
- * Config for HTTP/SSE MCP connection validation.
- * Derived from McpSourceConfig to stay in sync automatically (DRY).
+ * HTTP/SSE MCP 连接校验的配置。
+ * 从 McpSourceConfig 派生，保持同步（DRY）。
  *
- * `accessToken` is the resolved OAuth / bearer token for sources whose
- * credential lives in the credential store (no `headerNames`). The probe
- * forwards it to the underlying impl, which builds an
- * `Authorization: Bearer …` header — matching the runtime path.
+ * `accessToken` 是凭证仓库中解析出的 OAuth / bearer token，
+ * 用于那些凭证存在凭证存储且没有 `headerNames` 的 source。
+ * probe 会把它透传给底层实现，由后者组装成 `Authorization: Bearer …` header，
+ * 与运行时路径保持一致。
  */
 export type HttpMcpConfig = Required<Pick<McpSourceConfig, 'url'>>
   & Pick<McpSourceConfig, 'authType' | 'headers' | 'headerNames' | 'transport'>
   & { accessToken?: string };
 
-/**
- * Result from stdio MCP validation
- */
+/** stdio MCP 校验结果。 */
 export interface StdioValidationResult {
   success: boolean;
   error?: string;
@@ -554,9 +505,7 @@ export interface StdioValidationResult {
   serverVersion?: string;
 }
 
-/**
- * Result from HTTP MCP validation
- */
+/** HTTP MCP 校验结果。 */
 export interface McpValidationResult {
   success: boolean;
   error?: string;
@@ -567,9 +516,7 @@ export interface McpValidationResult {
   serverVersion?: string;
 }
 
-/**
- * Result from API source test
- */
+/** API source 测试结果。 */
 export interface ApiTestResult {
   success: boolean;
   status?: number;
@@ -578,14 +525,12 @@ export interface ApiTestResult {
 }
 
 // ============================================================
-// Context Factory Helpers
+// 上下文工厂辅助函数
 // ============================================================
 
-/**
- * Create a basic file system implementation using Node.js fs.
- */
+/** 使用 Node.js fs 创建一个基础文件系统实现。 */
 export function createNodeFileSystem(): FileSystemInterface {
-  // Dynamic import to work in both environments
+  // 动态引入，以便在两种环境里都能工作
   const fs = require('node:fs');
 
   return {

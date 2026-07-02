@@ -1,7 +1,8 @@
 /**
- * PairingCodeDialog — shows a 6-digit pairing code for binding a session
- * to a messaging channel. The user runs `/pair <code>` in their bot chat
- * to complete the binding.
+ * PairingCodeDialog —— 显示 6 位配对码，用于把某个 session 绑定到消息通道。
+ *
+ * 用户在 bot 聊天中发送 `/pair <code>` 完成绑定。
+ * 这个对话框本身只负责展示；真正的配对状态监听在 MessagingDialogHost 里。
  */
 
 import * as React from 'react'
@@ -22,9 +23,9 @@ interface PairingCodeDialogProps {
   platform: 'telegram' | 'whatsapp' | 'lark'
   code: string | null
   expiresAt: number | null
-  /** Bot username (without @) — enables the "Open bot" deep link. */
+  // Bot 用户名（不带 @），用于生成“打开 bot”的 deep link
   botUsername?: string
-  /** Error text to show in place of the code (e.g., rate limit, adapter down). */
+  // 替代配对码显示的错误文本，例如限流、适配器离线等
   error?: string
 }
 

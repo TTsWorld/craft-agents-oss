@@ -1,3 +1,11 @@
+/**
+ * CompactWorkingDirectorySelector — 紧凑模式下的工作目录选择器
+ *
+ * Working Directory 是 Agent 执行工具时的当前目录（类似 shell 的 cwd）。
+ * 这个组件是紧凑/触摸模式下 WorkingDirectoryBadge 的替代方案，
+ * 用 Drawer（底部抽屉）代替桌面端的 Popover + cmdk，让每个选项都是全宽点击区。
+ * 状态通过与桌面端共用的 useWorkingDirectoryState 管理。
+ */
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, X, Search } from 'lucide-react'
@@ -17,24 +25,19 @@ import { PATH_SEP, getPathBasename } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 
 export interface CompactWorkingDirectorySelectorProps {
+  /** 当前工作目录路径 */
   workingDirectory?: string
+  /** 工作目录变化回调 */
   onWorkingDirectoryChange: (path: string) => void
+  /** Session 文件夹路径 */
   sessionFolderPath?: string
+  /** 是否为空 Session */
   isEmptySession?: boolean
+  /** Workspace ID */
   workspaceId?: string
 }
 
-/**
- * CompactWorkingDirectorySelector — bottom-sheet working-directory picker.
- *
- * Drop-in replacement for `WorkingDirectoryBadge` in compact / touch mode.
- * Matches the `CompactSourceSelector` pattern: trigger badge + drawer so
- * every option is a full-width tap target and positioning is anchor-free.
- * The desktop `Popover` + `cmdk` variant continues to live in
- * `FreeFormInput.tsx` for non-compact layouts.
- *
- * State is shared with the desktop surface via `useWorkingDirectoryState`.
- */
+/** 紧凑模式工作目录选择器 */
 export function CompactWorkingDirectorySelector({
   workingDirectory,
   onWorkingDirectoryChange,
@@ -75,8 +78,8 @@ export function CompactWorkingDirectorySelector({
     onClose: closeDrawer,
   })
 
-  // Drawer-side text filter. The hook stores the raw filter string; this
-  // surface does its own JS filtering since there's no cmdk to delegate to.
+  // Drawer 内的文本过滤。Hook 只保存原始 filter 字符串；
+  // 这里没有 cmdk，所以由组件自己做 JS 过滤。
   const filteredRecent = React.useMemo(() => {
     const q = filter.trim().toLowerCase()
     if (!q) return sortedRecent
@@ -135,7 +138,7 @@ export function CompactWorkingDirectorySelector({
           )}
 
           <div className="px-2 pb-2 flex flex-col gap-0.5 max-h-[50vh] overflow-y-auto">
-            {/* Current folder — pinned at top, non-interactive */}
+            {/* 当前目录 — 置顶、不可交互 */}
             {hasFolder && (
               <div className="flex items-center gap-3 px-3 py-3 rounded-[10px] bg-foreground/5">
                 <Icon_Folder className="h-5 w-5 shrink-0 text-foreground/60" />
@@ -154,7 +157,7 @@ export function CompactWorkingDirectorySelector({
               </div>
             )}
 
-            {/* Recent folders */}
+            {/* 最近目录 */}
             {filteredRecent.length === 0 && filter.trim() ? (
               <div className="px-4 py-6 text-center text-sm text-foreground/50">
                 {t('chat.noFoldersFound')}
@@ -193,7 +196,7 @@ export function CompactWorkingDirectorySelector({
             )}
           </div>
 
-          {/* Bottom actions — full-width tap targets */}
+          {/* 底部操作 — 全宽点击区 */}
           <div className="px-2 pt-2 pb-4 border-t border-border/30 flex flex-col gap-1">
             <button
               type="button"
@@ -228,9 +231,8 @@ export function CompactWorkingDirectorySelector({
   )
 }
 
-// Local path formatter — bare path (no "in " prefix). The desktop badge uses
-// "in <path>" for the tooltip; drawer rows show the path on its own line so
-// the preposition would read oddly.
+// 本地路径格式化：裸路径（不带 "in " 前缀）。
+// 桌面端 badge 的 tooltip 用 "in <path>"；抽屉行单独一行显示路径，再加介词会读起来奇怪。
 function formatPath(path: string | undefined, homeDir: string): string {
   if (!path) return ''
   if (homeDir && path.startsWith(homeDir)) {

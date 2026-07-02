@@ -1,21 +1,22 @@
+/**
+ * TopBarButton — 顶部栏统一按钮。
+ *
+ * 固定 28×28px，居中内容，圆角 + hover 效果。
+ * 用于 Craft logo、前进/后退、侧边栏切换等。
+ */
 import * as React from "react"
 import { cn } from "@/lib/utils"
 
 interface TopBarButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  /** The icon or content to display inside the button */
+  /** 按钮内部显示的图标或内容 */
   children: React.ReactNode
-  /** Whether the button is in an active/pressed state (e.g., dropdown open) */
+  /** 是否处于激活/按下状态（例如下拉菜单打开时） */
   isActive?: boolean
-  /** Additional class names */
+  /** 额外类名 */
   className?: string
 }
 
-/**
- * TopBarButton - Consistent button style for the app's top bar
- *
- * Fixed size 28x28px with centered content, rounded corners, and hover effects.
- * Used for: Craft logo, back/forward navigation, sidebar toggle, etc.
- */
+/** 顶部栏按钮 */
 export const TopBarButton = React.forwardRef<HTMLButtonElement, TopBarButtonProps>(
   ({ children, isActive, className, disabled, ...props }, ref) => {
     return (

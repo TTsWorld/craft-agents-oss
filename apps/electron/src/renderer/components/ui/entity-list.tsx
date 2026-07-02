@@ -1,14 +1,14 @@
 /**
- * EntityList — Reusable container for rendering a scrollable list of EntityRow items.
+ * EntityList — 可滚动实体列表容器
  *
- * Handles:
- * - ScrollArea wrapping with proper padding
- * - Optional grouped layout with section headers
- * - Collapsible groups with chevron toggle and item count
- * - Empty state rendering (centered, outside ScrollArea)
- * - Header (e.g. search bar) and footer (e.g. infinite scroll sentinel) slots
+ * 负责渲染 EntityRow 的通用容器，处理：
+ * - ScrollArea 包裹与内边距
+ * - 可选分组布局与分组标题
+ * - 可折叠分组（ Chevron 切换 + 折叠时显示数量）
+ * - 空状态居中展示（在 ScrollArea 外部）
+ * - header（如搜索栏）与 footer（如无限滚动锚点）插槽
  *
- * Domain-specific logic (filtering, keyboard nav, multi-select) lives in the consumer.
+ * 业务逻辑（过滤、键盘导航、多选）由调用方维护。
  */
 
 import * as React from 'react'
@@ -27,55 +27,58 @@ import { cn } from '@/lib/utils'
 // Types
 // ============================================================================
 
+/** EntityListGroup：类型定义 */
 export interface EntityListGroup<T> {
-  /** Unique key for the group */
+  /** 分组唯一 key */
   key: string
-  /** Label shown in the section header */
+  /** 分组标题 */
   label: string
-  /** Items in this group (empty array for collapsed groups — items are excluded from the data pipeline) */
+  /** 该分组下的条目（折叠占位组传空数组，真正条目由调用方过滤） */
   items: T[]
-  /** Whether this group supports collapse/expand (default: false) */
+  /** 是否支持折叠/展开（默认 false） */
   collapsible?: boolean
-  /** Number of hidden items when collapsed. Present on collapsed placeholder groups (items will be []). */
+  /** 折叠后隐藏的数量，用于占位组显示 */
   collapsedCount?: number
 }
 
+/** EntityListProps：组件 props 类型定义 */
 export interface EntityListProps<T> {
-  /** Flat item list (used when not grouped) */
+  /** 平铺列表（未分组时使用） */
   items?: T[]
-  /** Grouped items with section headers (takes precedence over items) */
+  /** 分组列表（优先级高于 items） */
   groups?: EntityListGroup<T>[]
-  /** Render function for each item */
+  /** 每个条目的渲染函数 */
   renderItem: (item: T, index: number, isFirstInGroup: boolean) => React.ReactNode
-  /** Unique key extractor */
+  /** 唯一 key 提取器 */
   getKey: (item: T) => string
-  /** Empty state content — rendered centered, outside ScrollArea */
+  /** 空状态内容 — 在 ScrollArea 外部居中渲染 */
   emptyState?: React.ReactNode
-  /** Header content above the list (e.g. search bar) — rendered outside ScrollArea */
+  /** 列表上方内容（如搜索栏）— 在 ScrollArea 外部 */
   header?: React.ReactNode
-  /** Footer content after all items (e.g. infinite scroll sentinel) — inside ScrollArea */
+  /** 列表末尾内容（如无限滚动锚点）— 在 ScrollArea 内部 */
   footer?: React.ReactNode
-  /** Ref for the inner list container (for keyboard navigation zones) */
+  /** 内部列表容器的 ref（用于键盘导航聚焦区） */
   containerRef?: React.Ref<HTMLDivElement>
-  /** Props spread on the inner list container (role, aria-label, data-focus-zone) */
+  /** 展开到内部列表容器上的属性（role、aria-label、data-focus-zone 等） */
   containerProps?: Record<string, string>
-  /** Ref to the ScrollArea viewport element (for scroll-based pagination) */
+  /** ScrollArea 视口 ref（用于基于滚动的分页） */
   viewportRef?: React.RefObject<HTMLDivElement>
-  /** Additional ScrollArea class */
+  /** ScrollArea 额外 className */
   scrollAreaClassName?: string
+  /** 外层容器额外 className */
   className?: string
-  /** Set of collapsed group keys (for collapsible groups) */
+  /** 已折叠分组的 key 集合 */
   collapsedGroups?: Set<string>
-  /** Called when a collapsible group header is clicked */
+  /** 点击可折叠分组标题时触发 */
   onToggleCollapse?: (groupKey: string) => void
-  /** Collapse all collapsible groups */
+  /** 折叠所有可折叠分组 */
   onCollapseAll?: () => void
-  /** Expand all collapsible groups */
+  /** 展开所有可折叠分组 */
   onExpandAll?: () => void
 }
 
 // ============================================================================
-// Section Header
+// 分组标题
 // ============================================================================
 
 function SectionHeader({ label }: { label: string }) {
@@ -88,7 +91,7 @@ function SectionHeader({ label }: { label: string }) {
   )
 }
 
-/** Collapsible group header with chevron toggle and item count when collapsed */
+/** 可折叠分组标题：带 Chevron 切换，折叠时显示隐藏数量 */
 function CollapsibleGroupHeader({
   label,
   isCollapsed,
@@ -140,9 +143,10 @@ function CollapsibleGroupHeader({
 }
 
 // ============================================================================
-// Component
+// 组件
 // ============================================================================
 
+/** 实体列表组件 */
 export function EntityList<T>({
   items,
   groups,
@@ -161,12 +165,12 @@ export function EntityList<T>({
   onCollapseAll,
   onExpandAll,
 }: EntityListProps<T>) {
-  // Determine if we have content
+  // 判断是否有内容
   const hasGroups = groups && groups.length > 0
   const hasItems = items && items.length > 0
   const isEmpty = !hasGroups && !hasItems
 
-  // Empty state — rendered outside everything for proper centering
+  // 空状态在 ScrollArea 外部渲染，以便正确居中
   if (isEmpty && emptyState) {
     return (
       <div className={cn('flex flex-col flex-1', className)}>

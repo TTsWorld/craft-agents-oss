@@ -1,3 +1,11 @@
+/**
+ * planner 注册项
+ *
+ * 这个文件演示一个类似任务看板（Planner）的复合 UI：项目、标题、任务、详情面板、
+ * 拖拽排序、会话关联和同步状态徽章。
+ * 涉及概念：session（关联到任务）、workspace（项目所属工作区）、
+ * sync state（本地/上传中/已上传等离线同步状态）。
+ */
 import * as React from 'react'
 import type { ComponentEntry } from './types'
 import { DragDropManager } from '@dnd-kit/dom'
@@ -434,6 +442,7 @@ function uniqueOrdered(values: string[]): string[] {
   })
 }
 
+// 主演示组件：三栏 Planner 看板（项目列表 + 任务导航 + 任务详情），支持拖拽排序和快速添加任务。
 function PlannerBoard() {
   const [activeProjectId, setActiveProjectId] = React.useState('p2')
   const [headingsState, setHeadingsState] = React.useState<PlannerHeading[]>(initialHeadings)
@@ -1126,6 +1135,7 @@ function PlannerSyncStatePalette() {
   )
 }
 
+/** planner 组件注册列表。 */
 export const plannerComponents: ComponentEntry[] = [
   {
     id: 'planner-things-board',

@@ -1,8 +1,7 @@
 /**
- * Re-export PreviewHeader components from @craft-agent/ui
+ * 从 @craft-agent/ui 重新导出 PreviewHeader 组件。
  *
- * This provides backwards compatibility for existing Electron components.
- * The actual implementation is now in the shared UI package.
+ * 为现有 Electron 组件提供向后兼容；实际实现已移到共享 UI 包。
  */
 
 export {

@@ -1,10 +1,20 @@
+/**
+ * AttachmentPreview - 输入框上方的附件预览条。
+ *
+ * 以 ChatGPT 风格的小卡片展示已附加文件：
+ * - 图片显示缩略图
+ * - 文档显示文件图标 + 文件名
+ * - 悬停显示删除按钮
+ * - 文件过多时横向滚动
+ * - 文件读取中显示占位 loading
+ */
 import * as React from "react"
 import { X, Image as ImageIcon } from "lucide-react"
 import { Spinner, FileTypeIcon, getFileTypeLabel } from "@craft-agent/ui"
 import { cn } from "@/lib/utils"
 import type { FileAttachment } from "../../../shared/types"
 
-// Re-export for backward compatibility
+// 为了向后兼容重新导出
 export { FileTypeIcon, getFileTypeLabel }
 
 interface AttachmentPreviewProps {
@@ -15,14 +25,14 @@ interface AttachmentPreviewProps {
 }
 
 /**
- * AttachmentPreview - ChatGPT-style attachment preview strip
+ * AttachmentPreview - 附件预览条。
  *
- * Shows attached files as small bubbles above the textarea:
- * - Image thumbnails for image files (48x48px)
- * - Icon + filename for text/PDF/code files
- * - X button on hover to remove
- * - Horizontally scrollable when many files
- * - Loading placeholders while files are being read
+ * 在文本框上方以小卡片形式展示已附加文件：
+ * - 图片显示缩略图（48x48px）
+ * - 文本/PDF/代码文件显示图标 + 文件名
+ * - 悬停显示删除按钮
+ * - 文件过多时横向滚动
+ * - 读取中显示 loading 占位
  */
 export function AttachmentPreview({ attachments, onRemove, disabled, loadingCount = 0 }: AttachmentPreviewProps) {
   if (attachments.length === 0 && loadingCount === 0) return null
@@ -37,7 +47,7 @@ export function AttachmentPreview({ attachments, onRemove, disabled, loadingCoun
           disabled={disabled}
         />
       ))}
-      {/* Loading placeholders */}
+      {/* 读取中的占位卡片 */}
       {Array.from({ length: loadingCount }).map((_, i) => (
         <LoadingBubble key={`loading-${i}`} />
       ))}
@@ -64,7 +74,7 @@ function AttachmentBubble({ attachment, onRemove, disabled }: AttachmentBubblePr
   const hasThumbnail = !!attachment.thumbnailBase64
   const hasImageBase64 = isImage && attachment.base64
 
-  // For images, use full base64; for docs, use Quick Look thumbnail
+  // 图片使用完整 base64；文档使用 Quick Look 缩略图
   const imageSrc = hasImageBase64
     ? `data:${attachment.mimeType};base64,${attachment.base64}`
     : hasThumbnail
@@ -73,7 +83,7 @@ function AttachmentBubble({ attachment, onRemove, disabled }: AttachmentBubblePr
 
   return (
     <div className="relative group shrink-0 select-none">
-      {/* Remove button - appears on hover */}
+      {/* 删除按钮：悬停时显示 */}
       {!disabled && (
         <button
           onClick={onRemove}
@@ -92,7 +102,7 @@ function AttachmentBubble({ attachment, onRemove, disabled }: AttachmentBubblePr
       )}
 
       {isImage ? (
-        /* IMAGE: Square thumbnail only */
+        /* 图片：仅方形缩略图 */
         <div className="h-16 w-16 rounded-[8px] overflow-hidden bg-background shadow-minimal">
           {imageSrc ? (
             <img src={imageSrc} alt={attachment.name} className="h-full w-full object-cover" />
@@ -103,9 +113,9 @@ function AttachmentBubble({ attachment, onRemove, disabled }: AttachmentBubblePr
           )}
         </div>
       ) : (
-        /* DOCUMENT: Bubble with thumbnail/icon + 2-line text */
+        /* 文档：缩略图/图标 + 两行文字 */
         <div className="h-16 flex items-center gap-2.5 rounded-[8px] bg-foreground/5 pl-1.5 pr-3">
-          {/* A4-like preview */}
+          {/* A4 纸风格的预览 */}
           <div className="h-12 w-9 rounded-[6px] overflow-hidden bg-background shadow-minimal flex items-center justify-center shrink-0">
             {hasThumbnail ? (
               <img
@@ -117,7 +127,7 @@ function AttachmentBubble({ attachment, onRemove, disabled }: AttachmentBubblePr
               <FileTypeIcon type={attachment.type} mimeType={attachment.mimeType} className="h-5 w-5" />
             )}
           </div>
-          {/* 2-line filename + type */}
+          {/* 文件名 + 文件类型（最多两行） */}
           <div className="flex flex-col min-w-0 max-w-[120px]">
             <span className="text-xs font-medium line-clamp-2 break-all" title={attachment.name}>
               {attachment.name}

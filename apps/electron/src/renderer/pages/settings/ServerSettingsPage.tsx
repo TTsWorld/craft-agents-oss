@@ -1,8 +1,7 @@
 /**
  * ServerSettingsPage
  *
- * Configure the Electron app to act as a remote server,
- * accessible from other machines on the network.
+ * 配置 Electron 应用作为远程服务器，允许局域网内其他机器访问。
  */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -25,11 +24,13 @@ import {
   SettingsInputRow,
 } from '@/components/settings'
 
+/** 页面元数据：设置导航中的“服务器”页面 */
 export const meta: DetailsPageMeta = {
   navigator: 'settings',
   slug: 'server',
 }
 
+/** 服务器表单状态 */
 interface ServerFormState {
   enabled: boolean
   port: string
@@ -38,6 +39,7 @@ interface ServerFormState {
   token: string
 }
 
+/** 将持久化配置转换为表单状态 */
 function configToForm(config: ServerConfig): ServerFormState {
   return {
     enabled: config.enabled,
@@ -48,6 +50,7 @@ function configToForm(config: ServerConfig): ServerFormState {
   }
 }
 
+/** 将表单状态转换为持久化配置 */
 function formToConfig(form: ServerFormState): ServerConfig {
   return {
     enabled: form.enabled,
@@ -58,6 +61,7 @@ function formToConfig(form: ServerFormState): ServerConfig {
   }
 }
 
+/** 服务器设置页面 */
 export default function ServerSettingsPage() {
   const { t } = useTranslation()
 
@@ -172,7 +176,7 @@ export default function ServerSettingsPage() {
       <ScrollArea className="flex-1">
         <div className="px-5 py-7 max-w-3xl mx-auto space-y-5">
 
-          {/* Enable toggle + restart banner */}
+          {/* 启用开关 + 重启提示横幅 */}
           <SettingsSection title={t("settings.server.remoteAccess")}>
             <SettingsCard>
               <SettingsToggle
@@ -199,7 +203,7 @@ export default function ServerSettingsPage() {
             )}
           </SettingsSection>
 
-          {/* Connection + TLS — only visible when server mode is relevant */}
+          {/* 连接配置与 TLS —— 仅在服务器模式相关时显示 */}
           {showServerDetails && (
             <SettingsSection title={t("settings.server.connectionSection")}>
               <SettingsCard>
@@ -275,7 +279,7 @@ export default function ServerSettingsPage() {
             </SettingsSection>
           )}
 
-          {/* Save/Reset */}
+          {/* 保存/重置 */}
           {error && (
             <p className="text-xs text-destructive px-1">{error}</p>
           )}

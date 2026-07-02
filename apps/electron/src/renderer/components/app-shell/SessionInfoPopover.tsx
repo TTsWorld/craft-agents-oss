@@ -1,3 +1,9 @@
+/**
+ * SessionInfoPopover - 会话信息弹窗/抽屉。
+ *
+ * 展示当前会话的标题编辑框和文件列表。
+ * 桌面端用 Popover，紧凑/移动端用 Drawer。
+ */
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -27,6 +33,7 @@ const DEFAULT_DRAWER_CONTENT_CLASS = [
   'overflow-hidden rounded-[14px] border border-border/60 bg-background shadow-modal-small',
 ].join(' ')
 
+/** SessionInfoPopover - 会话信息浮层 */
 export function SessionInfoPopover({
   sessionId,
   sessionFolderPath,
@@ -44,6 +51,7 @@ export function SessionInfoPopover({
     setOpen(nextOpen)
 
     if (!nextOpen) {
+      // 关闭后把焦点交回输入框
       requestAnimationFrame(() => {
         window.dispatchEvent(new CustomEvent('craft:focus-input', {
           detail: { sessionId },

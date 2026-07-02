@@ -1,3 +1,9 @@
+/**
+ * ActiveOptionBadges - 输入区上方的一排活动选项徽章。
+ *
+ * 包括：权限模式、工作流状态、标签徽章，以及右侧的会话信息入口。
+ * 这些徽章让用户一眼看到当前会话的配置，并可以快速修改。
+ */
 import * as React from 'react'
 import { useTranslation } from "react-i18next"
 import { cn } from '@/lib/utils'
@@ -22,7 +28,7 @@ import { openLabelLink } from '@/lib/open-label-link'
 import { SessionInfoPopover } from './SessionInfoPopover'
 
 // ============================================================================
-// Permission Mode Icon Component
+// 权限模式图标组件
 // ============================================================================
 
 function PermissionModeIcon({ mode, className }: { mode: PermissionMode; className?: string }) {
@@ -42,53 +48,55 @@ function PermissionModeIcon({ mode, className }: { mode: PermissionMode; classNa
   )
 }
 
+/** ActiveOptionBadgesProps：组件 props 类型定义 */
 export interface ActiveOptionBadgesProps {
-  /** Current permission mode */
+  /** 当前权限模式（safe / ask / allow-all） */
   permissionMode?: PermissionMode
-  /** Callback when permission mode changes */
+  /** 权限模式改变时的回调 */
   onPermissionModeChange?: (mode: PermissionMode) => void
-  /** Background tasks to display */
+  /** 要展示的后台任务 */
   tasks?: BackgroundTask[]
-  /** Session ID for opening preview windows */
+  /** 当前会话 ID，用于打开预览窗口 */
   sessionId?: string
-  /** Absolute path to the session folder (for Files header actions) */
+  /** 会话文件夹绝对路径（右侧 Files 入口用） */
   sessionFolderPath?: string
-  /** Callback when kill button is clicked on a task */
+  /** 终止任务时的回调 */
   onKillTask?: (taskId: string) => void
-  /** Callback to insert message into input field */
+  /** 向输入框插入文本的回调 */
   onInsertMessage?: (text: string) => void
-  /** Callback to show a task's output in a terminal overlay (optional) */
+  /** 在终端浮层中展示任务输出的回调（可选） */
   onShowTerminalOverlay?: (data: TerminalOverlayData) => void
-  /** Label entries applied to this session (e.g., ["bug", "priority::3"]) */
+  /** 当前会话已应用的标签条目，例如 ["bug", "priority::3"] */
   sessionLabels?: string[]
-  /** Available label configs (tree structure) for resolving label display */
+  /** 可用的标签配置树，用于把标签 ID 解析成可显示对象 */
   labels?: LabelConfig[]
-  /** Callback when a label is removed (legacy — prefer onLabelsChange) */
+  /** 移除标签的回调（旧接口，优先用 onLabelsChange） */
   onRemoveLabel?: (labelId: string) => void
-  /** Callback when session labels array changes (value edits or removals) */
+  /** 标签数组变化（修改值或移除）时的回调 */
   onLabelsChange?: (updatedLabels: string[]) => void
-  /** Label ID whose value popover should auto-open (set when a valued label is added via # menu) */
+  /** 需要自动打开值编辑浮层的标签 ID（通过 # 菜单新增带值标签时设置） */
   autoOpenLabelId?: string | null
-  /** Called after the auto-open has been consumed, so the parent can clear the signal */
+  /** 自动打开信号被消费后调用，父组件可据此清空该信号 */
   onAutoOpenConsumed?: () => void
-  // ── State/status badge (in dynamic stack) ──
-  /** Available workflow states */
+  // ── 状态徽章（也放在动态堆叠区） ──
+  /** 可用工作流状态列表 */
   sessionStatuses?: SessionStatus[]
-  /** Current session state ID */
+  /** 当前会话状态 ID */
   currentSessionStatus?: string
-  /** Callback when state changes */
+  /** 状态改变时的回调 */
   onSessionStatusChange?: (stateId: string) => void
-  /** Additional CSS classes */
+  /** 额外的 CSS 类名 */
   className?: string
 }
 
-/** Resolved label entry: config + parsed value + original index in sessionLabels */
+/** 解析后的标签条目：配置 + 原始值 + 在 sessionLabels 中的下标 */
 interface ResolvedLabelEntry {
   config: LabelConfig
   rawValue?: string
   index: number
 }
 
+/** ActiveOptionBadges - 活动选项徽章容器 */
 export function ActiveOptionBadges({
   permissionMode = 'ask',
   onPermissionModeChange,
@@ -109,9 +117,8 @@ export function ActiveOptionBadges({
   onSessionStatusChange,
   className,
 }: ActiveOptionBadgesProps) {
-  // Resolve session label entries to their config objects + parsed values.
-  // Entries may be bare IDs ("bug") or valued ("priority::3").
-  // Preserves the raw value and original index for editing/removal.
+  // 把 sessionLabels 里的条目解析成标签配置对象 + 原始值。
+  // 条目可能是裸 ID（"bug"）或带值（"priority::3"），保留原始下标方便编辑/删除。
   const resolvedLabels = React.useMemo((): ResolvedLabelEntry[] => {
     if (sessionLabels.length === 0 || labels.length === 0) return []
     const flat = flattenLabels(labels)
@@ -128,22 +135,20 @@ export function ActiveOptionBadges({
 
   const hasLabels = resolvedLabels.length > 0
 
-  // Resolve the current state from sessionStatuses for the badge display.
-  // Every session always has a state — fall back to the default state (or 'todo')
-  // when currentSessionStatus isn't explicitly set, matching SessionList's behavior.
+  // 从 sessionStatuses 里解析当前状态用于徽章展示。
+  // 每个会话总有状态；未显式设置时回退到 'todo'，和 SessionList 行为保持一致。
   const effectiveStateId = currentSessionStatus || 'todo'
   const resolvedState = sessionStatuses.length > 0 ? getState(effectiveStateId, sessionStatuses) : undefined
   const hasState = !!resolvedState
 
-  // Show the stacking container when there are labels (state badge is now rendered standalone on the left)
+  // 有标签时才需要堆叠容器（状态徽章单独放在左侧，不参与堆叠）
   const hasStackContent = hasLabels
 
-  // Dynamic stacking with equal visible strips: ResizeObserver computes per-badge
-  // margins directly on children. Wider badges get more negative margins so each
-  // shows the same visible strip when stacked. No React re-renders needed.
+  // 动态堆叠：ResizeObserver 直接计算每个子徽章的 marginLeft。
+  // 越宽的徽章负边距越大，保证堆叠后露出的可见条宽度一致；不需要 React re-render。
   const stackRef = useDynamicStack({ gap: 8, minVisible: 20, reservedStart: 0 })
 
-  // Only render if badges or tasks are active
+  // 没有任何徽章或任务时不渲染
   if (!permissionMode && tasks.length === 0 && !hasState && !hasStackContent) {
     return null
   }
@@ -166,9 +171,9 @@ export function ActiveOptionBadges({
       )}
 
     <div className={cn("flex items-start gap-2 mb-2 px-px pt-px pb-0.5", className)}>
-      {/* Left side: mode → state → labels stack */}
+      {/* 左侧：权限模式 → 状态 → 标签堆叠 */}
       <div className="flex items-start gap-2 min-w-0 flex-1">
-        {/* Permission Mode Badge */}
+        {/* 权限模式徽章 */}
         {permissionMode && (
           <div className="shrink-0">
             <PermissionModeDropdown
@@ -179,7 +184,7 @@ export function ActiveOptionBadges({
           </div>
         )}
 
-        {/* State Badge — standalone on the left, after Mode */}
+        {/* 状态徽章——单独放在左侧，紧跟模式徽章 */}
         {hasState && resolvedState && (
           <div className="shrink-0">
             <StateBadge
@@ -191,16 +196,15 @@ export function ActiveOptionBadges({
           </div>
         )}
 
-        {/* Stacking container for label badges (left side).
-         * useDynamicStack sets per-child marginLeft directly via ResizeObserver.
-         * overflow: clip prevents scroll container while py/-my gives shadow room. */}
+        {/* 标签徽章堆叠容器（左侧）。
+         * useDynamicStack 通过 ResizeObserver 直接设置每个子元素的 marginLeft。
+         * overflow: clip 防止滚动，同时 py/-my 给阴影留出绘制空间。 */}
         {hasStackContent && (
           <div
             className="flex-1 min-w-0 max-w-full py-0.5 -my-0.5"
             style={{
-              // shadow-minimal replicated as drop-shadow (traces masked alpha, no clipping).
-              // Ring uses higher blur+opacity for visible border feel (hard 1px ring can't be replicated exactly).
-              // Blur shadows use reduced blur+opacity to stay tight (accounting for no negative spread in drop-shadow).
+              // 用 drop-shadow 模拟 shadow-minimal（描边透明 alpha，不会被裁剪）。
+              // 光环用较大 blur+opacity 模拟可见边框；模糊阴影用较小 blur+opacity 保持紧凑。
               filter: 'drop-shadow(0px 0px 0.5px rgba(var(--foreground-rgb), 0.3)) drop-shadow(0px 1px 0.1px rgba(0,0,0,0.04)) drop-shadow(0px 3px 0.2px rgba(0,0,0,0.03))',
             }}
           >
@@ -209,7 +213,7 @@ export function ActiveOptionBadges({
               className="flex items-center min-w-0 py-1 -my-1"
               style={{ overflow: 'clip' }}
             >
-              {/* Label badges */}
+              {/* 标签徽章列表 */}
               {resolvedLabels.map(({ config, rawValue, index }) => (
                 <LabelBadge
                   key={`${config.id}-${index}`}
@@ -219,7 +223,7 @@ export function ActiveOptionBadges({
                   onAutoOpenConsumed={onAutoOpenConsumed}
                   sessionId={sessionId}
                   onValueChange={(newValue) => {
-                    // Rebuild the sessionLabels array with the updated entry
+                    // 用新值重建对应下标的标签条目
                     const updated = [...sessionLabels]
                     updated[index] = formatLabelEntry(config.id, newValue)
                     onLabelsChange?.(updated)
@@ -239,7 +243,7 @@ export function ActiveOptionBadges({
 
       </div>
 
-      {/* Right side: Files popover button */}
+      {/* 右侧：会话信息入口 */}
       <div className="shrink-0">
         <FilesPopoverButton sessionId={sessionId} sessionFolderPath={sessionFolderPath} />
       </div>
@@ -249,14 +253,14 @@ export function ActiveOptionBadges({
 }
 
 // ============================================================================
-// Label Badge Component
+// 标签徽章组件
 // ============================================================================
 
 /**
- * Renders a single label badge with LabelValuePopover for editing/removal.
- * No box-shadow on the badge itself — all shadows come from the parent
- * wrapper's drop-shadow filter (traces masked alpha without clipping).
- * Shows: [color circle] [name] [· value in mono] [chevron]
+ * LabelBadge - 单个标签徽章，带 LabelValuePopover 用于编辑/删除。
+ * 徽章本身不设置 box-shadow，所有阴影来自父容器的 drop-shadow 滤镜，
+ * 这样可以沿着遮罩后的 alpha 描边，不会被裁剪。
+ * 展示形式：[颜色圆点] [名称] [· 等宽值] [下拉箭头]
  */
 function LabelBadge({
   label,
@@ -269,7 +273,7 @@ function LabelBadge({
 }: {
   label: LabelConfig
   value?: string
-  /** When true, auto-open the value popover on mount (for newly added valued labels) */
+  /** 为 true 时挂载后自动打开值编辑浮层（用于刚新增的带值标签） */
   autoOpen?: boolean
   onAutoOpenConsumed?: () => void
   onValueChange?: (newValue: string | undefined) => void
@@ -279,8 +283,7 @@ function LabelBadge({
   const { isDark } = useTheme()
   const [open, setOpen] = React.useState(false)
 
-  // Auto-open the value popover when this label was just added via # menu
-  // and has a valueType. Opens exactly once, then clears the signal.
+  // 当标签刚通过 # 菜单新增且带 valueType 时，自动打开值编辑浮层；只触发一次，随后清除信号。
   React.useEffect(() => {
     if (autoOpen && label.valueType) {
       setOpen(true)
@@ -288,7 +291,7 @@ function LabelBadge({
     }
   }, [autoOpen, label.valueType, onAutoOpenConsumed])
 
-  // Resolve label color for tinting background and text via CSS color-mix
+  // 解析标签颜色，用于通过 CSS color-mix 给背景和文字着色
   const resolvedColor = label.color
     ? resolveEntityColor(label.color, isDark)
     : 'var(--foreground)'
@@ -323,13 +326,12 @@ function LabelBadge({
 }
 
 // ============================================================================
-// State Badge Component
+// 状态徽章组件
 // ============================================================================
 
 /**
- * Renders the current workflow state as a badge in the dynamic stacking container.
- * Click opens a SessionStatusMenu popover for changing the state.
- * Styled consistently with label badges (h-[30px], rounded-[8px], color-mix tinting).
+ * StateBadge - 把当前工作流状态渲染成徽章。
+ * 点击弹出 SessionStatusMenu 修改状态；样式与标签徽章保持一致。
  */
 function StateBadge({
   state,
@@ -350,10 +352,11 @@ function StateBadge({
     onSessionStatusChange?.(stateId)
   }, [onSessionStatusChange])
 
-  // Use the state's resolved color for tinting (same color-mix pattern as labels)
+  // 使用状态解析后的颜色着色（和标签徽章使用同一套 color-mix 模式）
   const badgeColor = state.resolvedColor || 'var(--foreground)'
   const applyColor = state.iconColorable
 
+  // 默认状态 ID 走 i18n 翻译；自定义状态直接显示 label
   const DEFAULT_STATUS_IDS = new Set(['backlog', 'todo', 'needs-review', 'done', 'cancelled'])
   const stateLabel = DEFAULT_STATUS_IDS.has(state.id) ? t(`status.${state.id}`, state.label) : state.label
 
@@ -383,6 +386,7 @@ function StateBadge({
         align="end"
         sideOffset={4}
         onCloseAutoFocus={(e) => {
+          // 关闭浮层后聚焦输入框，但阻止 Radix 默认的自动聚焦行为
           e.preventDefault()
           window.dispatchEvent(new CustomEvent('craft:focus-input', {
             detail: { sessionId }
@@ -437,10 +441,10 @@ interface PermissionModeDropdownProps {
 function PermissionModeDropdown({ permissionMode, onPermissionModeChange, sessionId }: PermissionModeDropdownProps) {
   const { t } = useTranslation()
   const [open, setOpen] = React.useState(false)
-  // Optimistic local state - updates immediately, syncs with prop
+  // 乐观本地状态：UI 立即更新，等后端确认后再与 prop 同步
   const [optimisticMode, setOptimisticMode] = React.useState(permissionMode)
 
-  // Sync optimistic state when prop changes (confirmation from backend)
+  // 当 prop 变化（后端确认）时同步回乐观状态
   React.useEffect(() => {
     setOptimisticMode(permissionMode)
   }, [permissionMode])
@@ -449,7 +453,7 @@ function PermissionModeDropdown({ permissionMode, onPermissionModeChange, sessio
     return [optimisticMode as SlashCommandId]
   }, [optimisticMode])
 
-  // Handle command selection from dropdown
+  // 下拉菜单里选择新模式
   const handleSelect = React.useCallback((commandId: SlashCommandId) => {
     if (commandId === 'safe' || commandId === 'ask' || commandId === 'allow-all') {
       setOptimisticMode(commandId)
@@ -458,13 +462,13 @@ function PermissionModeDropdown({ permissionMode, onPermissionModeChange, sessio
     setOpen(false)
   }, [onPermissionModeChange])
 
-  // Get config for current mode (use optimistic state for instant UI update)
+  // 用乐观状态取当前模式配置，实现即时 UI 反馈
   const config = PERMISSION_MODE_CONFIG[optimisticMode]
 
-  // Mode-specific styling using CSS variables (theme-aware)
-  // - safe (Explore): foreground at 60% opacity - subtle, read-only feel
-  // - ask (Ask to Edit): info color - amber, prompts for edits
-  // - allow-all (Auto): accent color - purple, full autonomy
+  // 各模式的主题感知样式
+  // - safe（Explore）：前景色 60% 透明度，低调只读感
+  // - ask（Ask to Edit）：info 色，提示需要确认
+  // - allow-all（Auto）：accent 色，完全自主
   const modeStyles: Record<PermissionMode, { className: string; shadowVar: string }> = {
     'safe': {
       className: 'bg-foreground/5 text-foreground/60',
@@ -505,7 +509,7 @@ function PermissionModeDropdown({ permissionMode, onPermissionModeChange, sessio
         sideOffset={4}
         onCloseAutoFocus={(e) => {
           e.preventDefault()
-          // Don't auto-focus the text input on touch devices — it pulls up the virtual keyboard
+          // 触摸设备上不要自动聚焦输入框，否则会弹出虚拟键盘
           const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0
           if (!isTouchDevice) {
             window.dispatchEvent(new CustomEvent('craft:focus-input', {

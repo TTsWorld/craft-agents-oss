@@ -1,8 +1,14 @@
+/**
+ * Table — 表格组件
+ *
+ * 对原生 table 元素的轻量封装，默认加一层 overflow-x-auto 容器。
+ * 吸顶表头时需要传 noWrapper=true，由父组件自己控制滚动容器。
+ */
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 
 interface TableProps extends React.ComponentProps<'table'> {
-  /** Skip the wrapper div with overflow-x-auto (required for sticky headers) */
+  /** 是否跳过外层 overflow-x-auto 容器（吸顶表头时需要） */
   noWrapper?: boolean
 }
 
@@ -68,7 +74,7 @@ function TableRow({ className, ...props }: React.ComponentProps<'tr'>) {
 }
 
 function TableHead({ className, ...props }: React.ComponentProps<'th'>) {
-  // Use bg-card for sticky headers - it's always opaque unlike bg-background which may have transparency in scenic mode
+  // 吸顶表头用 bg-card：它总是实心的，不像 bg-background 在 scenic 模式下可能透明
   return (
     <th
       className={cn(

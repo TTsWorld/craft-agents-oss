@@ -1,3 +1,9 @@
+/**
+ * SessionListMobilePreview — React 组件
+ * SessionListMobilePreview：在手机框架内预览会话列表（SessionList）的 playground 组件。
+ * 
+ * 所属目录：mobile-webui
+ */
 import * as React from 'react'
 import { SessionList, type ChatGroupingMode } from '@/components/app-shell/SessionList'
 import { MobileWebUIFrame, type MobileDevice } from './MobileWebUIFrame'
@@ -9,6 +15,7 @@ import {
   MOBILE_WORKSPACE_ID,
 } from './mock-mobile-data'
 
+// 通用 logger 工厂，返回接受任意参数的回调函数。
 const log = (label: string) => (...args: unknown[]) => {
   console.log(`[Mobile SessionList] ${label}`, args)
 }
@@ -30,6 +37,7 @@ interface SessionListMobilePreviewProps {
  * Renders the production SessionList in compact mode with a curated set of
  * mock sessions. Exercises the new `groupByUnread` path alongside the
  * existing 'date' / 'status' modes.
+ * 在紧凑模式下渲染生产环境的 SessionList，测试按日期、状态、未读分组的展示效果。
  */
 export function SessionListMobilePreview({
   device = 'iphone-15',
@@ -39,7 +47,9 @@ export function SessionListMobilePreview({
   searchQuery = '',
   empty = false,
 }: SessionListMobilePreviewProps) {
+  // empty 为 true 时传空数组，测试列表空状态。
   const items = empty ? [] : MOCK_SESSIONS
+  // 搜索词是内部受控状态，但初始值和外部 prop 保持同步。
   const [query, setQuery] = React.useState(searchQuery)
 
   React.useEffect(() => setQuery(searchQuery), [searchQuery])

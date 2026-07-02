@@ -1,32 +1,30 @@
+/**
+ * 水平拖拽调整条组件（HorizontalResizeHandle）。
+ * 用于上下分割面板，可上下拖动改变面板高度。
+ * 特性：
+ * - 12px 触摸热区（中心 ±6px），方便抓取
+ * - 始终可见的 1px 分隔线
+ * - 悬停时渐变光效跟随光标（150ms 淡入淡出）
+ * - 垂直分割光标 cursor-row-resize
+ */
 import * as React from "react"
 import { cn } from "@/lib/utils"
 import { useHorizontalResizeGradient } from "@/hooks/useHorizontalResizeGradient"
 
 interface HorizontalResizeHandleProps {
-  /** Called during drag with the delta Y (positive = moving down) */
+  /** 拖拽过程中回调，deltaY 为正表示向下移动。 */
   onResize: (deltaY: number) => void
-  /** Called when drag ends */
+  /** 拖拽结束回调。 */
   onResizeEnd?: () => void
   className?: string
 }
 
-/**
- * HorizontalResizeHandle - A horizontal resize handle with gradient indicator
- *
- * Used for splitting panels vertically (top/bottom). The handle is a horizontal
- * bar that can be dragged up/down to resize the panels.
- *
- * Features:
- * - 12px touch area (±6px from center) for easy grabbing
- * - 1px static separator line (always visible)
- * - Gradient overlay that follows cursor on hover (fades in/out over 150ms)
- * - cursor-row-resize for vertical splitting
- */
+/** 水平调整条组件。 */
 export function HorizontalResizeHandle({ onResize, onResizeEnd, className }: HorizontalResizeHandleProps) {
   const { ref, handlers, gradientStyle, isDragging } = useHorizontalResizeGradient()
   const lastYRef = React.useRef<number | null>(null)
 
-  // Handle drag movement
+  // 处理拖拽移动
   React.useEffect(() => {
     if (!isDragging) {
       lastYRef.current = null
@@ -55,7 +53,7 @@ export function HorizontalResizeHandle({ onResize, onResizeEnd, className }: Hor
     }
   }, [isDragging, onResize, onResizeEnd])
 
-  // Initialize lastY on mouse down
+  // 鼠标按下时记录初始 Y 坐标
   const handleMouseDown = (e: React.MouseEvent) => {
     lastYRef.current = e.clientY
     handlers.onMouseDown()
@@ -64,12 +62,12 @@ export function HorizontalResizeHandle({ onResize, onResizeEnd, className }: Hor
   return (
     <div
       className={cn(
-        // 1px visual height, touch area extends via absolute positioning
+        // 视觉高度 1px，热区通过绝对定位向外扩展
         "relative flex h-px w-full items-center justify-center shrink-0",
         className
       )}
     >
-      {/* Touch area container - extends 6px each side for 12px total hit area */}
+      {/* 触摸热区容器：向上下各扩展 6px，总热区 12px */}
       <div
         ref={ref}
         onMouseDown={handleMouseDown}
@@ -77,10 +75,10 @@ export function HorizontalResizeHandle({ onResize, onResizeEnd, className }: Hor
         onMouseLeave={handlers.onMouseLeave}
         className="absolute inset-x-0 -top-1.5 -bottom-1.5 flex items-center cursor-row-resize"
       >
-        {/* Static 1px separator - always visible as panel divider */}
+        {/* 静态 1px 分隔线，始终作为面板分隔显示 */}
         <div className="w-full h-px bg-border" />
 
-        {/* Gradient overlay - fades in on hover, positioned over the separator */}
+        {/* 渐变叠加层：悬停时淡入，覆盖在分隔线上方 */}
         <div
           className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-0.5"
           style={gradientStyle}

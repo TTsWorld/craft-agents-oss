@@ -1,9 +1,9 @@
 /**
  * SkillInfoPage
  *
- * Displays comprehensive skill details including metadata,
- * permission modes, and instructions.
- * Uses the Info_ component system for consistent styling with SourceInfoPage.
+ * Skill 详情页：展示某个 skill 的元数据、权限模式与使用说明。
+ * Skill 是给 Agent 的“额外技能包”，本质上是一段带说明的 prompt + 可选工具调用规则。
+ * 页面复用 Info_ 组件体系，与 SourceInfoPage 保持视觉一致。
  */
 
 import * as React from 'react'
@@ -37,9 +37,10 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const activeWorkspace = useActiveWorkspace()
+  // remoteServer 为 true 表示当前 workspace 是远程服务器，无法在本地文件管理器中打开路径
   const canRevealLocally = !activeWorkspace?.remoteServer
 
-  // Load skill data
+  // 加载 skill 数据，并监听 skill 变更事件
   useEffect(() => {
     let isMounted = true
     setLoading(true)
@@ -51,7 +52,7 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
 
         if (!isMounted) return
 
-        // Find the skill by slug
+        // 根据 slug 找到对应的 skill
         const found = skills.find((s) => s.slug === skillSlug)
         if (found) {
           setSkill(found)
@@ -68,7 +69,7 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
 
     loadSkill()
 
-    // Subscribe to skill changes
+    // 订阅 skill 变更：当外部修改 SKILL.md 或增删 skill 时刷新本页
     const unsubscribe = window.electronAPI.onSkillsChanged?.((changedWorkspaceId, skills) => {
       if (changedWorkspaceId !== workspaceId) return
       const updated = skills.find((s) => s.slug === skillSlug)
@@ -83,7 +84,7 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
     }
   }, [workspaceId, skillSlug, workingDirectory])
 
-  // Handle open in finder
+  // 在本地文件管理器中打开 skill 所在目录
   const handleOpenInFinder = useCallback(async () => {
     if (!skill || !canRevealLocally) return
     try {
@@ -96,7 +97,7 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
     }
   }, [canRevealLocally, skill, t])
 
-  // Handle delete
+  // 删除 skill（仅允许删除 workspace 级别的 skill）
   const handleDelete = useCallback(async () => {
     if (!skill) return
 
@@ -112,25 +113,25 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
     }
   }, [skill, workspaceId, skillSlug])
 
-  // Handle opening in new window
+  // 在新窗口打开 skill 详情（通过自定义协议 deep link）
   const handleOpenInNewWindow = useCallback(() => {
     window.electronAPI.openUrl(`craftagents://skills/skill/${skillSlug}?window=focused`)
   }, [skillSlug])
 
-  // Get skill name for header
+  // 标题栏使用 skill 名称，没有则回退到 slug
   const skillName = skill?.metadata.name || skillSlug
   const canDeleteSkill = skill?.source === 'workspace'
 
-  // Format path to show just the skill-relative portion (skills/{slug}/)
+  // 截断路径，只保留 skills/{slug}/... 这一段，方便阅读
   const formatPath = (path: string) => {
     const skillsIndex = path.indexOf('/skills/')
     if (skillsIndex !== -1) {
-      return path.slice(skillsIndex + 1) // Remove leading slash, keep "skills/{slug}/..."
+      return path.slice(skillsIndex + 1) // 去掉前导斜杠，保留 "skills/{slug}/..."
     }
     return path
   }
 
-  // Open the skill folder in Finder
+  // 点击路径时在本地文件管理器中打开
   const handleLocationClick = async () => {
     if (!skill || !canRevealLocally) return
     try {
@@ -167,18 +168,18 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
 
       {skill && (
         <Info_Page.Content>
-          {/* Hero: Avatar, title, and description */}
+          {/* 顶部：头像、名称、一句话描述 */}
           <Info_Page.Hero
             avatar={<SkillAvatar skill={skill} fluid workspaceId={workspaceId} />}
             title={skill.metadata.name}
             tagline={skill.metadata.description}
           />
 
-          {/* Metadata */}
+          {/* 元数据表格 */}
           <Info_Section
             title={t('skillInfo.metadata')}
             actions={
-              // EditPopover for AI-assisted metadata editing (name, description in frontmatter)
+              // EditPopover：AI 辅助编辑 SKILL.md 中的 frontmatter（名称、描述等元数据）
               <EditPopover
                 trigger={<EditButton />}
                 {...getEditConfig('skill-metadata', skill.path)}
@@ -216,7 +217,7 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
             </Info_Table>
           </Info_Section>
 
-          {/* Permission Modes */}
+          {/* 权限模式说明：仅当 skill 声明了 alwaysAllow 时才展示 */}
           {skill.metadata.alwaysAllow && skill.metadata.alwaysAllow.length > 0 && (
             <Info_Section title={t('skillInfo.permissionModes')}>
               <div className="space-y-2 px-4 py-3">
@@ -254,11 +255,11 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
             </Info_Section>
           )}
 
-          {/* Instructions */}
+          {/* 使用说明（SKILL.md 正文） */}
           <Info_Section
             title={t('skillInfo.instructions')}
             actions={
-              // EditPopover for AI-assisted editing with "Edit File" as secondary action
+              // EditPopover：AI 辅助编辑说明正文，同时提供“直接编辑文件”入口
               <EditPopover
                 trigger={<EditButton />}
                 {...getEditConfig('skill-instructions', skill.path)}

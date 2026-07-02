@@ -2,34 +2,34 @@ import { useRef, useEffect, useCallback } from "react"
 import { useFocusContext, type FocusZoneId, type FocusIntent, type FocusZoneOptions } from "@/context/FocusContext"
 
 interface UseFocusZoneOptions {
-  /** Unique zone identifier */
+  /** 焦点区域唯一标识 */
   zoneId: FocusZoneId
-  /** Called when zone gains focus */
+  /** 区域获得焦点时回调 */
   onFocus?: () => void
-  /** Called when zone loses focus */
+  /** 区域失去焦点时回调 */
   onBlur?: () => void
-  /** Custom function to focus first element in zone */
+  /** 自定义聚焦区域内第一个元素的函数 */
   focusFirst?: () => void
-  /** Whether this zone should be registered. Useful when multiple instances share a logical zone. */
+  /** 是否注册该区域。多个实例共享同一逻辑区域时可禁用 */
   enabled?: boolean
 }
 
 interface UseFocusZoneReturn {
-  /** Ref to attach to zone container */
+  /** 绑定到区域容器的 ref */
   zoneRef: React.RefObject<HTMLDivElement>
-  /** Whether this zone currently has focus */
+  /** 当前区域是否拥有焦点 */
   isFocused: boolean
-  /** Whether DOM focus should move to this zone (true only for explicit keyboard navigation) */
+  /** 是否应把 DOM 焦点移入该区域（仅在显式键盘导航时为 true） */
   shouldMoveDOMFocus: boolean
-  /** The intent behind the current focus (keyboard, click, programmatic) - null if not this zone */
+  /** 当前焦点的意图（键盘、点击、程序化），若焦点不在本区域则为 null */
   intent: FocusIntent | null
-  /** Programmatically focus this zone */
+  /** 程序化聚焦该区域 */
   focus: (options?: FocusZoneOptions) => void
 }
 
 /**
- * Hook for registering a component as a focus zone.
- * Zones can be navigated between using Tab/Shift+Tab or Cmd+1/2/3.
+ * 注册一个组件为焦点区域（focus zone）。
+ * 可用 Tab/Shift+Tab 或 Cmd+1/2/3 在区域之间导航。
  */
 export function useFocusZone({
   zoneId,
@@ -42,15 +42,15 @@ export function useFocusZone({
   const { registerZone, unregisterZone, focusZone, isZoneFocused, focusState } = useFocusContext()
 
   const isFocused = enabled && isZoneFocused(zoneId)
-  // shouldMoveDOMFocus is true only when this zone is focused AND the intent requires DOM focus movement
+  // 只有当本区域处于焦点且意图要求移动 DOM 焦点时才为 true
   const shouldMoveDOMFocus = enabled && focusState.zone === zoneId && focusState.shouldMoveDOMFocus
-  // Intent is only relevant if this zone is focused
+  // 意图只在焦点位于本区域时有意义
   const intent = focusState.zone === zoneId ? focusState.intent : null
 
-  // Track previous focus state for callbacks
+  // 记录上一次焦点状态，用于触发焦点变化回调
   const wasFocusedRef = useRef(isFocused)
 
-  // Register zone on mount + stamp container with data attribute for DOM-based zone detection
+  // mount 时注册区域，并在容器上标记 data 属性以便基于 DOM 检测区域
   useEffect(() => {
     if (!enabled) {
       unregisterZone(zoneId)
@@ -72,7 +72,7 @@ export function useFocusZone({
     }
   }, [zoneId, registerZone, unregisterZone, focusFirst, enabled])
 
-  // Handle focus/blur callbacks
+  // 处理焦点获得/失去回调
   useEffect(() => {
     if (isFocused && !wasFocusedRef.current) {
       onFocus?.()

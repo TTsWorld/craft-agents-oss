@@ -1,8 +1,8 @@
 /**
- * Event Processor Hook
+ * 事件处理器 Hook
  *
- * Provides the event processor for use in App.tsx.
- * Manages streaming state per session and returns processed events.
+ * 给 App.tsx 提供事件处理能力。
+ * 管理每个会话的流式状态，并返回处理后的会话与副作用。
  */
 
 import { useCallback, useRef } from 'react'
@@ -13,13 +13,13 @@ import type { SessionState, AgentEvent, Effect, StreamingState, ErrorEvent, Type
 import { createEmptySession } from './helpers'
 
 /**
- * Report agent error/typed_error events to Sentry as exceptions (not messages).
- * Using captureException gives proper stack traces and better error grouping in Sentry.
- * Called as a side effect after the pure processEvent function returns.
- * Keeps the event processor handlers pure while capturing every agent error shown in chat.
+ * 把 agent 的 error/typed_error 事件上报到 Sentry，使用 captureException 而不是普通消息。
+ * captureException 能获得更完整的堆栈和更好的错误聚合。
+ * 该函数作为 processEvent 之后的副作用调用，保持事件处理器本身仍是纯函数。
  */
 function captureAgentError(event: AgentEvent): void {
   if (event.type === 'error') {
+    // as 是 TS 的类型断言：告诉编译器“把 event 当成 ErrorEvent 用”，类似 Go 的类型断言 x.(T)
     const errorEvent = event as ErrorEvent
     Sentry.captureException(new Error(errorEvent.error), {
       tags: { errorSource: 'agent' },
@@ -35,22 +35,24 @@ function captureAgentError(event: AgentEvent): void {
       },
       extra: {
         sessionId: event.sessionId,
-        // Include error metadata for debugging but omit details/originalError
-        // which may contain sensitive user content or file paths
+        // 上报调试信息，但排除 details/originalError，避免泄露用户敏感内容或文件路径
         canRetry: typedEvent.error.canRetry,
       },
     })
   }
 }
 
+/**
+ * useEventProcessor 的返回类型
+ */
 interface UseEventProcessorResult {
   /**
-   * Process an agent event and return the updated session + any side effects
+   * 处理一个 Agent 事件，返回更新后的会话和副作用
    *
-   * @param event - The agent event to process
-   * @param currentSession - Current session state (or null if not found)
-   * @param workspaceId - Workspace ID for creating new sessions
-   * @returns Updated session and any side effects to execute
+   * @param event - 要处理的事件
+   * @param currentSession - 当前会话状态（找不到时为 null）
+   * @param workspaceId - 新建会话时用的工作区 ID
+   * @returns 更新后的会话和副作用数组
    */
   processAgentEvent: (
     event: AgentEvent,
@@ -59,24 +61,28 @@ interface UseEventProcessorResult {
   ) => { session: Session; effects: Effect[] }
 
   /**
-   * Clear streaming state for a session (e.g., on error or complete)
+   * 清空某个会话的流式状态（出错或完成时调用）
    */
   clearStreamingState: (sessionId: string) => void
 
   /**
-   * Get current streaming state for a session (for debugging/testing)
+   * 获取某个会话当前的流式状态（调试用）
    */
   getStreamingState: (sessionId: string) => StreamingState | null
 }
 
 /**
- * Hook that provides the event processor
+ * 提供事件处理器能力的 React Hook
  *
- * Manages streaming state per session (replaces streamingTextRef).
- * All event processing goes through pure functions.
+ * 用 useRef 管理每个会话的流式状态（替代旧的 streamingTextRef）。
+ * 所有事件处理都走纯函数 processEvent。
+ *
+ * 关于 React Hook：
+ * - useRef 返回一个可变的容器，.current 可以读写且不会触发重渲染
+ * - useCallback 缓存函数引用，避免子组件不必要的重渲染
  */
 export function useEventProcessor(): UseEventProcessorResult {
-  // Streaming state per session (not in React state - just a ref for accumulation)
+  // 按 sessionId 保存流式状态；不用 React state，因为这里只是累积数据，不需要触发 UI 重渲染
   const streamingStates = useRef<Map<string, StreamingState>>(new Map())
 
   const processAgentEvent = useCallback((
@@ -84,24 +90,24 @@ export function useEventProcessor(): UseEventProcessorResult {
     currentSession: Session | null,
     workspaceId: string
   ): { session: Session; effects: Effect[] } => {
-    // Create empty session if needed
+    // ?? 是空值合并运算符：仅当左侧为 null/undefined 时取右侧，类似 Go 的 if x == nil { x = default }
     const session = currentSession ?? createEmptySession(event.sessionId, workspaceId)
 
-    // Build current state
+    // 组装当前状态：Session = 持久化会话；streaming = 当前正在累积的流式内容
     const currentState: SessionState = {
       session,
       streaming: streamingStates.current.get(event.sessionId) ?? null,
     }
 
-    // Process through pure function
+    // 调用纯函数处理事件
     const result = processEvent(currentState, event)
 
-    // Side effect: capture error events to Sentry (outside the pure processor)
+    // 副作用：如果是错误事件，上报到 Sentry（放在纯函数外部，不破坏 processEvent 的纯度）
     if (event.type === 'error' || event.type === 'typed_error') {
       captureAgentError(event)
     }
 
-    // Update streaming state ref
+    // 根据处理结果更新流式状态 ref
     if (result.state.streaming) {
       streamingStates.current.set(event.sessionId, result.state.streaming)
     } else {

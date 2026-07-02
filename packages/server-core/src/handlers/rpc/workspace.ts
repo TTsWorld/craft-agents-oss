@@ -8,6 +8,12 @@ import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { isValidWorkspaceRootPath } from '../../utils/path-validation'
 
+// 本文件属于 Workspace RPC 模块，负责：workspace 的 CRUD、窗口与 workspace 绑定、图片读写、主题、视图、工具图标。
+// 与 server.ts 不同：workspace.ts 的 handler 通常依赖当前 client/window 的 workspace context，是“用户视角”接口。
+// Agent 概念：Workspace 是 Agent 工作的根上下文，包含 sources、skills、automations、sessions 等配置与数据。
+// TS 提示：可选链 `workspace?.remoteServer` 类似 Golang 的 if ws != nil && ws.RemoteServer != nil。
+
+// 本 handler 负责注册的 workspace 核心 channel 列表
 export const CORE_HANDLED_CHANNELS = [
   RPC_CHANNELS.workspaces.GET,
   RPC_CHANNELS.workspaces.CREATE,
@@ -34,16 +40,17 @@ export const CORE_HANDLED_CHANNELS = [
   RPC_CHANNELS.logo.GET_URL,
 ] as const
 
+// registerWorkspaceCoreHandlers：注册 workspace 核心 RPC 路由。
 export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDeps): void {
   const { sessionManager } = deps
   const windowManager = deps.windowManager
 
-  // Get workspaces (LOCAL_ONLY — includes rootPath for local Electron renderer)
+  // 获取所有 workspace（LOCAL_ONLY — 包含 rootPath，供本地 Electron renderer 使用）
   server.handle(RPC_CHANNELS.workspaces.GET, async () => {
     return sessionManager.getWorkspaces()
   })
 
-  // Create a new workspace at a folder path (Obsidian-style: folder IS the workspace)
+  // 在指定文件夹创建 workspace（Obsidian 风格：文件夹即 workspace）
   server.handle(RPC_CHANNELS.workspaces.CREATE, async (_ctx, folderPath: string, name: string, remoteServer?: { url: string; token: string; remoteWorkspaceId: string }) => {
     const rootPath = folderPath.trim()
     const validation = isValidWorkspaceRootPath(rootPath)
@@ -52,13 +59,12 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     }
 
     const workspace = addWorkspace({ name, rootPath, ...(remoteServer && { remoteServer }) })
-    // Make it active
     setActiveWorkspace(workspace.id)
     deps.platform.logger.info(`Created workspace "${name}" at ${rootPath}${remoteServer ? ` (remote: ${remoteServer.url})` : ''}`)
     return workspace
   })
 
-  // Check if a workspace slug already exists (for validation before creation)
+  // 检查 workspace slug 是否已存在（创建前校验用）
   server.handle(RPC_CHANNELS.workspaces.CHECK_SLUG, async (_ctx, slug: string) => {
     const defaultWorkspacesDir = join(homedir(), '.craft-agent', 'workspaces')
     const workspacePath = join(defaultWorkspacesDir, slug)
@@ -66,17 +72,16 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     return { exists, path: workspacePath }
   })
 
-  // Update remote server config for an existing workspace (reconnect flow)
+  // 更新已有 workspace 的远程服务器配置（重连流程）
   server.handle(RPC_CHANNELS.workspaces.UPDATE_REMOTE, async (_ctx, workspaceId: string, remoteServer: { url: string; token: string; remoteWorkspaceId: string }) => {
     updateWorkspaceRemoteServer(workspaceId, remoteServer)
     deps.platform.logger.info(`Updated remote server for workspace ${workspaceId}: ${remoteServer.url}`)
     return { success: true }
   })
 
-  // Get workspace ID for the calling window
+  // 获取当前窗口对应的 workspace ID，并为该 workspace 设置 ConfigWatcher（labels/statuses/sources/themes 实时刷新）
   server.handle(RPC_CHANNELS.window.GET_WORKSPACE, (ctx) => {
     const workspaceId = ctx.workspaceId ?? windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-    // Set up ConfigWatcher for live updates (labels, statuses, sources, themes)
     if (workspaceId) {
       const workspace = getWorkspaceByNameOrId(workspaceId)
       if (workspace) {
@@ -86,29 +91,28 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     return workspaceId
   })
 
-  // Get mode for the calling window (always 'main' now)
+  // 获取当前窗口模式（当前恒为 'main'）
   server.handle(RPC_CHANNELS.window.GET_MODE, () => {
     return 'main'
   })
 
-  // Switch workspace in current window (in-window switching)
+  // 在当前窗口切换 workspace
   server.handle(RPC_CHANNELS.window.SWITCH_WORKSPACE, async (ctx, workspaceId: string) => {
     const end = perf.start('ipc.switchWorkspace', { workspaceId })
 
-    // Keep WS push routing in sync (works for both GUI and headless)
+    // 同步 WebSocket 推送路由（GUI 和 headless 都适用）
     server.updateClientWorkspace?.(ctx.clientId, workspaceId)
 
     if (windowManager) {
       const wcId = ctx.webContentsId!
 
-      // Get the old workspace ID before updating
+      // 更新前先拿到旧 workspace ID
       const oldWorkspaceId = windowManager.getWorkspaceForWindow(wcId)
 
-      // Update the window's workspace mapping
+      // 更新窗口-workspace 映射
       const updated = windowManager.updateWindowWorkspace(wcId, workspaceId)
 
-      // If update failed, the window may have been re-created (e.g., after refresh)
-      // Try to register it
+      // 更新失败说明窗口可能被重建（如刷新后），尝试重新注册
       if (!updated) {
         const win = windowManager.getWindowByWebContentsId(wcId)
         if (win) {
@@ -117,8 +121,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
         }
       }
 
-      // Clear activeViewingSession for old workspace if no other windows are viewing it
-      // This ensures read/unread state is correct after workspace switch
+      // 若旧 workspace 没有其他窗口在查看，清除 activeViewingSession，保证已读/未读状态正确
       if (oldWorkspaceId && oldWorkspaceId !== workspaceId) {
         const otherWindows = windowManager.getAllWindowsForWorkspace(oldWorkspaceId)
         if (otherWindows.length === 0) {
@@ -127,15 +130,14 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
       }
     }
 
-    // Set up ConfigWatcher for the new workspace
+    // 为新 workspace 设置 ConfigWatcher
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (workspace) {
       sessionManager.setupConfigWatcher(workspace.rootPath, workspaceId)
     }
     end()
 
-    // Return connection details so the preload RoutedClient can decide
-    // whether to connect directly to a remote server for this workspace.
+    // 返回连接信息，供 preload 的 RoutedClient 判断是否直连远程 server
     return {
       workspaceId,
       remoteServer: workspace?.remoteServer ?? null,
@@ -143,10 +145,10 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
   })
 
   // ============================================================
-  // Workspace Image Read/Write
+  // Workspace 图片读写（workspace 内图片读写）
   // ============================================================
 
-  // Generic workspace image loading (for source icons, status icons, etc.)
+  // 通用 workspace 图片加载（source icon、status icon 等）
   server.handle(RPC_CHANNELS.workspace.READ_IMAGE, async (_ctx, workspaceId: string, relativePath: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error('Workspace not found')
@@ -154,9 +156,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     const { readFileSync, existsSync } = await import('fs')
     const { join, normalize } = await import('path')
 
-    // Security: validate path
-    // - Must not contain .. (path traversal)
-    // - Must be a valid image extension
+    // 安全校验：禁止路径穿越；只允许图片扩展名
     const ALLOWED_EXTENSIONS = ['.svg', '.png', '.jpg', '.jpeg', '.webp', '.ico', '.gif']
 
     if (relativePath.includes('..')) {
@@ -168,27 +168,26 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
       throw new Error(`Invalid file type: ${ext}. Allowed: ${ALLOWED_EXTENSIONS.join(', ')}`)
     }
 
-    // Resolve path relative to workspace root
+    // 解析为 workspace 根目录下的绝对路径
     const absolutePath = normalize(join(workspace.rootPath, relativePath))
 
-    // Double-check the resolved path is still within workspace
+    // 双重校验：解析后路径仍必须在 workspace 内
     if (!absolutePath.startsWith(workspace.rootPath)) {
       throw new Error('Invalid path: outside workspace directory')
     }
 
     if (!existsSync(absolutePath)) {
-      return null  // Missing optional files - silent fallback to default icons
+      return null  // 可选文件缺失时静默返回默认图标
     }
 
-    // Read file as buffer
     const buffer = readFileSync(absolutePath)
 
-    // If SVG, return as UTF-8 string (caller will use as innerHTML)
+    // SVG 作为 UTF-8 字符串返回（caller 用作 innerHTML）
     if (ext === '.svg') {
       return buffer.toString('utf-8')
     }
 
-    // For binary images, return as data URL
+    // 二进制图片返回 data URL
     const mimeTypes: Record<string, string> = {
       '.png': 'image/png',
       '.jpg': 'image/jpeg',
@@ -201,8 +200,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     return `data:${mimeType};base64,${buffer.toString('base64')}`
   })
 
-  // Generic workspace image writing (for workspace icon, etc.)
-  // Resizes images to max 256x256 to keep file sizes small
+  // 通用 workspace 图片写入（workspace icon 等）；光栅图会压缩到 256x256 以内
   server.handle(RPC_CHANNELS.workspace.WRITE_IMAGE, async (_ctx, workspaceId: string, relativePath: string, base64: string, mimeType: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error('Workspace not found')
@@ -210,7 +208,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     const { writeFileSync, existsSync, unlinkSync, readdirSync } = await import('fs')
     const { join, normalize, basename } = await import('path')
 
-    // Security: validate path
+    // 安全校验
     const ALLOWED_EXTENSIONS = ['.svg', '.png', '.jpg', '.jpeg', '.webp', '.gif']
 
     if (relativePath.includes('..')) {
@@ -222,15 +220,13 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
       throw new Error(`Invalid file type: ${ext}. Allowed: ${ALLOWED_EXTENSIONS.join(', ')}`)
     }
 
-    // Resolve path relative to workspace root
     const absolutePath = normalize(join(workspace.rootPath, relativePath))
 
-    // Double-check the resolved path is still within workspace
     if (!absolutePath.startsWith(workspace.rootPath)) {
       throw new Error('Invalid path: outside workspace directory')
     }
 
-    // If this is an icon file (icon.*), delete any existing icon files with different extensions
+    // 若写入 icon.*，先删除其他扩展名的旧 icon 文件
     const fileName = basename(relativePath)
     if (fileName.startsWith('icon.')) {
       const files = readdirSync(workspace.rootPath)
@@ -240,27 +236,25 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
           try {
             unlinkSync(oldPath)
           } catch {
-            // Ignore errors deleting old icon
+            // 忽略删除旧图标错误
           }
         }
       }
     }
 
-    // Decode base64 to buffer
     const buffer = Buffer.from(base64, 'base64')
 
-    // For SVGs, just write directly (no resizing needed)
+    // SVG 直接写入
     if (mimeType === 'image/svg+xml' || ext === '.svg') {
       writeFileSync(absolutePath, buffer)
       return
     }
 
-    // For raster images, resize to max 256x256
+    // 光栅图超过 256px 则压缩为 PNG
     const metadata = await deps.platform.imageProcessor.getMetadata(buffer)
     const width = metadata?.width ?? 0
     const height = metadata?.height ?? 0
 
-    // Only resize if larger than 256px
     if (width > 256 || height > 256) {
       const resized = await deps.platform.imageProcessor.process(buffer, {
         resize: { width: 256, height: 256 },
@@ -268,47 +262,50 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
       })
       writeFileSync(absolutePath, resized)
     } else {
-      // Small enough, write as-is
       writeFileSync(absolutePath, buffer)
     }
   })
 
   // ============================================================
-  // Theme (app-level only)
+  // 主题（仅应用级）
   // ============================================================
 
+  // 获取应用级主题
   server.handle(RPC_CHANNELS.theme.GET_APP, async () => {
     const { loadAppTheme } = await import('@craft-agent/shared/config/storage')
     return loadAppTheme()
   })
 
-  // Preset themes (app-level)
+  // 获取预设主题列表
   server.handle(RPC_CHANNELS.theme.GET_PRESETS, async () => {
     const { loadPresetThemes } = await import('@craft-agent/shared/config/storage')
     return loadPresetThemes()
   })
 
+  // 加载某个预设主题
   server.handle(RPC_CHANNELS.theme.LOAD_PRESET, async (_ctx, themeId: string) => {
     const { loadPresetTheme } = await import('@craft-agent/shared/config/storage')
     return loadPresetTheme(themeId)
   })
 
+  // 获取当前颜色主题
   server.handle(RPC_CHANNELS.theme.GET_COLOR_THEME, async () => {
     const { getColorTheme } = await import('@craft-agent/shared/config/storage')
     return getColorTheme()
   })
 
+  // 设置当前颜色主题
   server.handle(RPC_CHANNELS.theme.SET_COLOR_THEME, async (_ctx, themeId: string) => {
     const { setColorTheme } = await import('@craft-agent/shared/config/storage')
     setColorTheme(themeId)
   })
 
-  // Broadcast theme preferences to all other windows (for cross-window sync)
+  // 广播主题偏好变更到所有其他窗口（跨窗口同步）
   server.handle(RPC_CHANNELS.theme.BROADCAST_PREFERENCES, async (ctx, preferences: { mode: string; colorTheme: string; font: string }) => {
     pushTyped(server, RPC_CHANNELS.theme.PREFERENCES_CHANGED, { to: 'all' }, preferences)
   })
 
-  // Workspace-level theme overrides
+  // workspace 级主题覆盖
   server.handle(RPC_CHANNELS.theme.GET_WORKSPACE_COLOR_THEME, async (_ctx, workspaceId: string) => {
     const { getWorkspaces } = await import('@craft-agent/shared/config/storage')
     const { getWorkspaceColorTheme } = await import('@craft-agent/shared/workspaces/storage')
@@ -318,6 +315,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     return getWorkspaceColorTheme(workspace.rootPath) ?? null
   })
 
+  // 设置 workspace 级主题覆盖
   server.handle(RPC_CHANNELS.theme.SET_WORKSPACE_COLOR_THEME, async (_ctx, workspaceId: string, themeId: string | null) => {
     const { getWorkspaces } = await import('@craft-agent/shared/config/storage')
     const { setWorkspaceColorTheme } = await import('@craft-agent/shared/workspaces/storage')
@@ -327,6 +325,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     setWorkspaceColorTheme(workspace.rootPath, themeId ?? undefined)
   })
 
+  // 获取所有 workspace 的主题设置
   server.handle(RPC_CHANNELS.theme.GET_ALL_WORKSPACE_THEMES, async () => {
     const { getWorkspaces } = await import('@craft-agent/shared/config/storage')
     const { getWorkspaceColorTheme } = await import('@craft-agent/shared/workspaces/storage')
@@ -338,16 +337,16 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     return themes
   })
 
-  // Broadcast workspace theme change to all other windows (for cross-window sync)
+  // 广播 workspace 主题变更（跨窗口同步）
   server.handle(RPC_CHANNELS.theme.BROADCAST_WORKSPACE_THEME, async (ctx, workspaceId: string, themeId: string | null) => {
     pushTyped(server, RPC_CHANNELS.theme.WORKSPACE_THEME_CHANGED, { to: 'all' }, { workspaceId, themeId })
   })
 
   // ============================================================
-  // Views
+  // 视图（会话视图配置）
   // ============================================================
 
-  // List views for a workspace (dynamic expression-based filters stored in views.json)
+  // 列出 workspace 的视图（views.json 中存储的动态表达式过滤条件）
   server.handle(RPC_CHANNELS.views.LIST, async (_ctx, workspaceId: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error('Workspace not found')
@@ -356,23 +355,23 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     return listViews(workspace.rootPath)
   })
 
-  // Save views (replaces full array)
+  // 保存视图（完整替换）
   server.handle(RPC_CHANNELS.views.SAVE, async (_ctx, workspaceId: string, views: import('@craft-agent/shared/views').ViewConfig[]) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error('Workspace not found')
 
     const { saveViews } = await import('@craft-agent/shared/views/storage')
     saveViews(workspace.rootPath, views)
-    // Broadcast labels changed since views are used alongside labels in sidebar
+    // 视图和 label 一起在侧边栏展示，保存视图后广播 label 变更让 UI 刷新
     pushTyped(server, RPC_CHANNELS.labels.CHANGED, { to: 'workspace', workspaceId }, workspaceId)
   })
 
   // ============================================================
-  // Tool Icons and Logo
+  // 工具图标与 Logo
   // ============================================================
 
-  // Tool icon mappings — loads tool-icons.json and resolves each entry's icon to a data URL
-  // for display in the Appearance settings page
+  // 工具图标映射：加载 tool-icons.json，把每个工具图标解析为 data URL，
+  // 供 Appearance 设置页展示。
   server.handle(RPC_CHANNELS.toolIcons.GET_MAPPINGS, async () => {
     const { getToolIconsDir } = await import('@craft-agent/shared/config/storage')
     const { loadToolIconConfig } = await import('@craft-agent/shared/utils/cli-icon-resolver')
@@ -398,7 +397,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
       .filter(Boolean)
   })
 
-  // Logo URL resolution (uses Node.js filesystem cache for provider domains)
+  // Logo URL 解析（按服务域名缓存）
   server.handle(RPC_CHANNELS.logo.GET_URL, async (_ctx, serviceUrl: string, provider?: string) => {
     const { getLogoUrl } = await import('@craft-agent/shared/utils/logo')
     const result = getLogoUrl(serviceUrl, provider)

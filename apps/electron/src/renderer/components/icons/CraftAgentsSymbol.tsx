@@ -1,10 +1,12 @@
+/** CraftAgentsSymbol 的 props */
 interface CraftAgentsSymbolProps {
   className?: string
 }
 
 /**
- * Craft Agents "E" symbol - the small pixel art icon
- * Uses accent color from theme (currentColor from className)
+ * Craft Agents 的“E”形像素小图标（品牌符号）。
+ *
+ * 同样使用 `currentColor`，由外层 className 控制颜色。
  */
 export function CraftAgentsSymbol({ className }: CraftAgentsSymbolProps) {
   return (

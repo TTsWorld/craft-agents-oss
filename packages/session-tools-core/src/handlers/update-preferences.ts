@@ -1,17 +1,18 @@
 /**
- * Update User Preferences Handler
+ * Update User Preferences Handler（更新用户偏好处理器）
  *
- * Updates stored user preferences (name, timezone, location, notes).
- * Uses an injected updatePreferences callback to avoid depending on @craft-agent/shared.
+ * 更新已存储的用户偏好（姓名、时区、位置、备注等）。
+ * 通过注入的 updatePreferences 回调实现，避免直接依赖 @craft-agent/shared。
  *
- * Note: UI language is NOT user-editable here — it mirrors Appearance → Language
- * and is maintained internally by the main-process i18n IPC handler.
+ * 注意：UI 语言不在此处由用户编辑，它跟随 Appearance → Language，
+ * 由主进程的 i18n IPC handler 内部维护。
  */
 
 import type { SessionToolContext } from '../context.ts';
 import type { ToolResult } from '../types.ts';
 import { successResponse, errorResponse } from '../response.ts';
 
+// update_user_preferences 参数：所有字段都是可选的
 export interface UpdatePreferencesArgs {
   name?: string;
   timezone?: string;
@@ -23,10 +24,9 @@ export interface UpdatePreferencesArgs {
 }
 
 /**
- * Handle the update_user_preferences tool call.
+ * 处理 update_user_preferences tool 调用。
  *
- * Validates and merges preference updates, then delegates to the
- * context-provided updatePreferences callback for actual persistence.
+ * 校验并合并用户传入的字段，再调用上下文的 updatePreferences 回调完成持久化。
  */
 export async function handleUpdatePreferences(
   ctx: SessionToolContext,
@@ -46,7 +46,7 @@ export async function handleUpdatePreferences(
       updates.timezone = args.timezone;
     }
 
-    // Handle location fields
+    // 位置字段合并成一个 location 对象
     if (args.city || args.region || args.country) {
       const location: Record<string, string> = {};
       if (args.city && typeof args.city === 'string') {
@@ -61,17 +61,17 @@ export async function handleUpdatePreferences(
       updates.location = location;
     }
 
-    // Handle notes (replace)
+    // notes 直接覆盖原值
     if (args.notes && typeof args.notes === 'string') {
       updates.notes = args.notes;
     }
 
-    // Handle co-author preference (explicit boolean)
+    // includeCoAuthoredBy 必须是显式 boolean
     if (typeof args.includeCoAuthoredBy === 'boolean') {
       updates.includeCoAuthoredBy = args.includeCoAuthoredBy;
     }
 
-    // Check if anything was actually updated
+    // 统计实际更新了哪些字段，用于返回提示
     const fields = Object.keys(updates).filter(k => k !== 'location');
     if (updates.location) {
       fields.push(...Object.keys(updates.location as Record<string, string>).map(k => `location.${k}`));

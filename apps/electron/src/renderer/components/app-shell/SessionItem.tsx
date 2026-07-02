@@ -1,3 +1,9 @@
+/**
+ * SessionItem - 会话列表中的单个会话条目。
+ *
+ * 负责展示：状态图标、标题、副标题、时间、未读/处理中标记、标签徽章、
+ * 消息绑定平台徽章，以及右键/紧凑菜单。
+ */
 import { formatDistanceToNowStrict } from "date-fns"
 import type { Locale } from "date-fns"
 import { Flag, ShieldAlert } from "lucide-react"
@@ -34,6 +40,7 @@ const PLATFORM_PILL: Record<'telegram' | 'whatsapp', { label: string; colorClass
   },
 }
 
+/** SessionItemProps：组件 props 类型定义 */
 export interface SessionItemProps {
   item: SessionMeta
   index: number
@@ -46,6 +53,7 @@ export interface SessionItemProps {
   onRangeSelect?: () => void
 }
 
+/** SessionItem - 列表中的单个会话行 */
 export function SessionItem({
   item,
   itemProps,
@@ -62,7 +70,7 @@ export function SessionItem({
   const { hotkey: nextHotkey } = useActionLabel('chat.nextSearchMatch')
   const { hotkey: prevHotkey } = useActionLabel('chat.prevSearchMatch')
   const title = getSessionTitle(item)
-  // For the active session, prefer logical match count over ripgrep count
+  // 对当前活动会话，优先使用逻辑匹配计数，而不是 ripgrep 计数
   const activeMatch = ctx.activeChatMatchInfo
   const isActiveSession = isSelected && activeMatch?.sessionId === item.id
   const ripgrepMatchCount = ctx.contentSearchResults.get(item.id)?.matchCount
@@ -91,22 +99,24 @@ export function SessionItem({
   const handleClick = (e: React.MouseEvent) => {
     ctx.onFocusZone()
     if (e.button === 2) {
+      // 右键：如果处于多选模式且当前项未选中，则加入多选
       if (ctx.isMultiSelectActive && !isInMultiSelect && onToggleSelect) onToggleSelect()
       return
     }
     if ((e.metaKey || e.ctrlKey) && e.shiftKey) {
-      // Cmd+Shift+Click: open session in a new panel
+      // Cmd/Ctrl+Shift+点击：在新面板中打开该会话
       e.preventDefault()
       navigate(routes.view.allSessions(item.id), { newPanel: true })
       return
     }
     if ((e.metaKey || e.ctrlKey) && onToggleSelect) {
-      // Cmd+Click: always toggle multi-select (standard OS behavior)
+      // Cmd/Ctrl+点击：切换多选（符合操作系统标准行为）
       e.preventDefault()
       onToggleSelect()
       return
     }
     if (e.shiftKey && onRangeSelect) {
+      // Shift+点击：范围选择
       e.preventDefault()
       onRangeSelect()
       return

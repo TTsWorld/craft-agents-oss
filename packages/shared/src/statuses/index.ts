@@ -1,20 +1,21 @@
 /**
- * Statuses Module
+ * statuses 模块入口
  *
- * Configurable session statuses for workspaces.
+ * 为 workspace 提供可配置的任务状态（session status）。
+ * 本文件只做统一导出，把子模块的公开 API 集中到一处。
  */
 
-// Types
+// 类型定义
 export * from './types.ts';
 
-// Storage operations
+// 存储层操作
 export * from './storage.ts';
 
-// CRUD operations
+// CRUD 操作
 export * from './crud.ts';
 
-// Validation
+// 校验逻辑
 export * from './validation.ts';
 
-// Default icons
+// 默认图标
 export * from './default-icons.ts';

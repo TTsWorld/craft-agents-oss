@@ -1,13 +1,33 @@
 /**
- * Model Refresh Service
+ * 模型刷新服务（Model Refresh Service）
  *
- * Centralized service for fetching and refreshing model lists across all providers.
- * Replaces the scattered fetchAndStore*Models() functions and startCodexModelRefresh().
+ * 文件职责：
+ *   - 集中管理所有 Provider 的模型列表拉取与定时刷新。
+ *   - 替代原先散落在各处的 fetchAndStore*Models() 与 startCodexModelRefresh()。
  *
- * Fallback chain (same for every provider):
- * 1. Provider runtime discovery via backend driver dispatch
- * 2. Persisted connection.models — previously fetched, survives offline/restart
- * 3. MODEL_REGISTRY — hardcoded offline seed data, last resort
+ * 核心机制：
+ *   1. 三级回退链（每个 Provider 通用）：
+ *      - Layer 1: Provider 运行时发现（后端 driver 分派，可能调用 Anthropic API、
+ *        AWS Bedrock CLI、Codex CLI 等）。
+ *      - Layer 2: 持久化的 connection.models —— 之前成功拉取过，离线或重启后仍然可用。
+ *      - Layer 3: MODEL_REGISTRY —— 硬编码的离线种子数据，最后一道兜底。
+ *
+ *   2. credential 刷新：
+ *      - 本服务不直接持有密钥，而是通过构造时注入的 CredentialResolver 获取。
+ *      - resolver 内部会处理 OAuth access token 刷新、AWS credential 轮转等。
+ *      - 若 resolver 抛出异常，Layer 1 失败，进入 Layer 2/3 回退。
+ *
+ *   3. 并发去重：
+ *      - 同一 slug 的 refreshConnection 若已在进行，新调用复用同一个 Promise，
+ *        避免重复网络请求。这与 Golang 中用 sync.Once 或 singleflight 做请求合并
+ *        的思想类似（这里是 Promise 级别的合并）。
+ *
+ * TS 特性小记：
+ *   - `ReturnType<typeof setInterval>` 是类型系统从函数推断出的类型，等价于
+ *     NodeJS.Timeout | number；用 ReturnType 可以少记一个具体类型名。
+ *   - `private timers = new Map<...>()` 是类字段简写，同时声明字段并初始化。
+ *   - 构造参数 `private fetchers: ModelFetcherMap` 是 TS 的“参数属性”语法，
+ *     自动在类上创建同名私有字段并赋值，类似 Golang 结构体 embedding 的简化写法。
  */
 
 import type { ModelFetcherMap, ModelFetcherCredentials, FetchableProvider } from '@craft-agent/shared/config'
@@ -22,21 +42,26 @@ import {
 import { MODEL_FETCHERS } from './registry'
 import { handlerLog } from './runtime'
 
-/** Copilot models are server-managed — refresh every 10 minutes to pick up policy changes. */
+/** Copilot 模型由 GitHub 服务端策略管理，每 10 分钟刷新一次以感知策略变化 */
 const COPILOT_REFRESH_INTERVAL_MS = 10 * 60 * 1000
 
 // ============================================================
-// Types
+// 类型
 // ============================================================
 
+/** credential 解析器：根据连接 slug 异步获取（可能已刷新过的）凭证 */
 type CredentialResolver = (slug: string) => Promise<ModelFetcherCredentials>
 
 // ============================================================
 // ModelRefreshService
 // ============================================================
 
+/** 模型刷新服务：负责单连接刷新、批量启动/停止定时器、回退链策略 */
 class ModelRefreshService {
+  /** slug → setInterval 定时器句柄 */
   private timers = new Map<string, ReturnType<typeof setInterval>>()
+
+  /** slug → 正在执行的 refresh Promise，用于并发去重 */
   private inFlight = new Map<string, Promise<void>>()
 
   constructor(
@@ -45,9 +70,10 @@ class ModelRefreshService {
   ) {}
 
   /**
-   * Fetch models for a connection through the fallback chain.
-   * Deduplicates concurrent calls for the same slug — if a refresh is already
-   * in progress, callers share the same promise instead of racing.
+   * 刷新指定连接的模型列表，带三级回退链。
+   * 对同一 slug 的并发调用会复用同一个 Promise，避免重复请求。
+   *
+   * @param slug - LLM 连接的唯一标识
    */
   async refreshConnection(slug: string): Promise<void> {
     const existing = this.inFlight.get(slug)
@@ -61,10 +87,10 @@ class ModelRefreshService {
   }
 
   /**
-   * Internal: actual refresh logic with fallback chain.
-   * Skips compat providers (not in fetcher map).
-   * Preserves user's defaultModel if still valid.
-   * Updates connection.models in storage on success.
+   * 内部：真正的刷新逻辑 + 回退链。
+   * - 跳过 compat provider（用户手动配置模型，不参与自动发现）。
+   * - 成功时调用 updateLlmConnection 写入持久化存储。
+   * - 保留用户当前 defaultModel 若其仍在新的模型列表中。
    */
   private async _doRefresh(slug: string): Promise<void> {
     const connection = getLlmConnection(slug)
@@ -73,7 +99,7 @@ class ModelRefreshService {
       return
     }
 
-    // Skip compat providers — users configure models manually
+    // compat provider（如 openai-compatible）由用户手动维护模型列表，不参与自动拉取
     if (isCompatProvider(connection.providerType)) {
       return
     }
@@ -88,7 +114,7 @@ class ModelRefreshService {
     let newModels: ModelDefinition[] | null = null
     let serverDefault: string | undefined
 
-    // Layer 1: Provider API/SDK
+    // Layer 1: Provider API / SDK（实时拉取）
     try {
       const credentials = await this.getCredentials(slug)
       handlerLog.info(`Model refresh [${slug}]: fetching (provider=${connection.providerType}, piAuth=${connection.piAuthProvider}, hasOAuthRefresh=${!!credentials.oauthRefreshToken}, hasOAuthAccess=${!!credentials.oauthAccessToken})`)
@@ -101,13 +127,13 @@ class ModelRefreshService {
       handlerLog.warn(`Model refresh [${slug}]: provider fetch failed: ${msg}`)
     }
 
-    // Layer 2: Persisted connection.models (keep what we have)
+    // Layer 2: 持久化缓存（如果实时拉取失败，保留旧列表，不覆盖）
     if (!newModels && connection.models && connection.models.length > 0) {
       handlerLog.warn(`Model refresh [${slug}]: keeping ${connection.models.length} stale persisted models (live fetch failed)`)
       return // Nothing to update
     }
 
-    // Layer 3: MODEL_REGISTRY hardcoded fallback
+    // Layer 3: MODEL_REGISTRY 硬编码兜底
     if (!newModels) {
       const registryModels = getModelsForProviderType(providerType, connection.piAuthProvider)
       if (registryModels.length > 0) {
@@ -121,11 +147,8 @@ class ModelRefreshService {
       return
     }
 
-    // For Pi connections with explicit user-owned 3-tier selection,
-    // never overwrite model lists from background refresh.
-    // Exception: Copilot connections are always server-managed — GitHub's
-    // model policy controls which models are enabled, so we must always
-    // accept the live API result.
+    // 对于 Pi 连接：如果用户显式使用 userDefined3Tier 模式，不覆盖其模型列表。
+    // 例外：Copilot 连接始终由服务端管理，必须接受实时 API 结果。
     const isCopilot = connection.providerType === 'pi' && connection.piAuthProvider === 'github-copilot'
     if (connection.providerType === 'pi' && connection.modelSelectionMode === 'userDefined3Tier' && !isCopilot) {
       const modelCount = connection.models?.length ?? 0
@@ -136,7 +159,7 @@ class ModelRefreshService {
       return
     }
 
-    // Preserve user's defaultModel if still valid
+    // 保留用户当前默认模型，如果它仍然有效；否则回退到服务端默认或新列表第一个
     const currentDefault = connection.defaultModel
     const stillValid = currentDefault && newModels.some(m => m.id === currentDefault)
     const newDefault = stillValid
@@ -150,9 +173,9 @@ class ModelRefreshService {
   }
 
   /**
-   * Start periodic refresh timers for all existing connections.
-   * Also runs an immediate non-blocking fetch for each.
-   * Call on app startup after IPC handlers are registered.
+   * 启动所有已存在连接的定时刷新。
+   * 对每个连接会立即发起一次非阻塞刷新，然后按 provider 规则建立定时器。
+   * 应在 IPC handlers 注册完成后、应用启动时调用。
    */
   startAll(): void {
     const connections = getLlmConnections()
@@ -164,14 +187,12 @@ class ModelRefreshService {
       const fetcher = this.fetchers[providerType]
       if (!fetcher) continue
 
-      // Immediate non-blocking fetch
+      // 立即非阻塞刷新一次；用 .catch 避免 unhandled rejection
       this.refreshConnection(conn.slug).catch(err => {
         handlerLog.warn(`Initial model refresh failed for ${conn.slug}: ${err instanceof Error ? err.message : err}`)
       })
 
-      // Set up periodic refresh: Copilot connections get their own interval
-      // (models are server-managed by GitHub policy), other providers use
-      // the fetcher's generic interval (0 = no periodic refresh for static SDK models).
+      // 建立周期性刷新：Copilot 用独立短间隔；其余使用 fetcher.refreshIntervalMs（0 表示不刷新）
       const isCopilot = conn.providerType === 'pi' && conn.piAuthProvider === 'github-copilot'
       if (isCopilot) {
         this.startTimer(conn.slug, COPILOT_REFRESH_INTERVAL_MS)
@@ -182,7 +203,7 @@ class ModelRefreshService {
   }
 
   /**
-   * Stop all refresh timers. Call on app quit.
+   * 停止所有定时刷新。应用退出时调用。
    */
   stopAll(): void {
     for (const [slug, timer] of this.timers) {
@@ -193,14 +214,13 @@ class ModelRefreshService {
   }
 
   /**
-   * Trigger an immediate refresh for a specific connection.
-   * Also starts a periodic timer if the fetcher supports it.
-   * Called when: connection created, auth completed, user clicks refresh.
+   * 立即触发一次指定连接的刷新，并在需要时启动/恢复定时器。
+   * 典型调用时机：新建连接、授权完成、用户点击刷新按钮。
    */
   async refreshNow(slug: string): Promise<void> {
     await this.refreshConnection(slug)
 
-    // Ensure periodic timer is running
+    // 确保周期性定时器在运行
     const connection = getLlmConnection(slug)
     if (!connection || isCompatProvider(connection.providerType)) return
 
@@ -215,7 +235,7 @@ class ModelRefreshService {
   }
 
   /**
-   * Stop timer for a specific connection (e.g., when deleted).
+   * 停止指定连接的定时器。连接被删除时调用。
    */
   stopConnection(slug: string): void {
     const timer = this.timers.get(slug)
@@ -225,8 +245,8 @@ class ModelRefreshService {
     }
   }
 
+  /** 启动定时器；若该 slug 已有定时器则忽略，防止重复 */
   private startTimer(slug: string, intervalMs: number): void {
-    // Don't create duplicate timers
     if (this.timers.has(slug)) return
 
     const timer = setInterval(async () => {
@@ -242,14 +262,15 @@ class ModelRefreshService {
 }
 
 // ============================================================
-// Singleton Instance
+// 单例
 // ============================================================
 
+/** 模块级单例引用 */
 let _service: ModelRefreshService | null = null
 
 /**
- * Get the ModelRefreshService singleton.
- * Must be initialized with initModelRefreshService() before use.
+ * 获取 ModelRefreshService 单例。
+ * 使用前必须先调用 initModelRefreshService()，否则抛错。
  */
 export function getModelRefreshService(): ModelRefreshService {
   if (!_service) {
@@ -259,8 +280,8 @@ export function getModelRefreshService(): ModelRefreshService {
 }
 
 /**
- * Initialize the ModelRefreshService with a credential resolver.
- * Called once during app startup.
+ * 初始化 ModelRefreshService。
+ * @param getCredentials - credential 解析器，负责在刷新前获取最新凭证
  */
 export function initModelRefreshService(getCredentials: CredentialResolver): ModelRefreshService {
   _service = new ModelRefreshService(MODEL_FETCHERS, getCredentials)

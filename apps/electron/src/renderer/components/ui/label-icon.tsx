@@ -1,8 +1,9 @@
 /**
- * LabelIcon - Renders a colored circle representing a label.
+ * LabelIcon —— 标签图标组件
  *
- * Labels are color-only (no icons/emoji). The circle size scales
- * with the icon size variant for consistent inline display.
+ * Label 是给 Session 打标签用的元数据（类似 GitHub 的 label）。
+ * 这个组件用实心圆点展示标签颜色；有子标签时会在圆心显示一个小点。
+ * 同时提供 LabelValueTypeIcon，用于提示带值类型的标签（number/date/string/link）尚未输入值。
  */
 
 import type { IconSize } from '@craft-agent/shared/icons'
@@ -14,21 +15,21 @@ import { Hash, CalendarDays, Type, Link } from 'lucide-react'
 import type { LabelConfig } from '@craft-agent/shared/labels'
 
 interface LabelIconProps {
-  /** Label configuration (matches LabelConfig from @craft-agent/shared/labels) */
+  /** Label 配置（对应 @craft-agent/shared/labels 的 LabelConfig） */
   label: {
     id: string
-    /** EntityColor: system color string or custom color object */
+    /** EntityColor：系统颜色字符串或自定义颜色对象 */
     color?: EntityColor
   }
-  /** Size variant (default: 'sm' - labels are typically small inline elements) */
+  /** 尺寸变体（默认 'sm'，Label 通常作为行内小元素） */
   size?: IconSize
-  /** When true, renders an inner circle (radio-button style) to indicate nested children */
+  /** 为 true 时圆心加小点，表示该标签还有嵌套子标签 */
   hasChildren?: boolean
-  /** Additional className */
+  /** 额外的 className */
   className?: string
 }
 
-/** Circle diameter in pixels for each icon size */
+/** 各图标尺寸对应的圆点直径（像素） */
 const CIRCLE_SIZES: Record<IconSize, number> = {
   xs: 4,
   sm: 6,
@@ -37,20 +38,21 @@ const CIRCLE_SIZES: Record<IconSize, number> = {
   xl: 12,
 }
 
+/** Label 图标：渲染一个带颜色的圆点 */
 export function LabelIcon({ label, size = 'sm', hasChildren, className }: LabelIconProps) {
   const { isDark } = useTheme()
 
-  // Resolve the label's color for inline styling
+  // 解析 Label 颜色，用于内联样式
   const resolvedColor = label.color
     ? resolveEntityColor(label.color, isDark)
     : undefined
 
-  // All labels use the same diameter for consistent spacing
+  // 所有 Label 使用相同直径，保证行内间距一致
   const diameter = CIRCLE_SIZES[size]
-  const padding = 1 // Internal padding around the circle
+  const padding = 1 // 圆点内边距
   const center = diameter / 2
   const outerRadius = center - padding
-  const dotRadius = 1 // 2px diameter inner dot
+  const dotRadius = 1 // 内点直径 2px
 
   const fillColor = resolvedColor || 'currentColor'
 
@@ -63,8 +65,8 @@ export function LabelIcon({ label, size = 'sm', hasChildren, className }: LabelI
       style={{ opacity: resolvedColor ? 1 : 0.4 }}
     >
       <circle cx={center} cy={center} r={outerRadius} fill={fillColor} />
-      {/* Inner dot signals this label has nested children (radio-button style).
-          Color is 85% background + 15% label color via color-mix. */}
+      {/* 内点表示该 Label 有嵌套子标签（类似单选按钮）。
+          颜色用 color-mix 混合 85% 背景色和 15% Label 色。 */}
       {hasChildren && (
         <circle
           cx={center}
@@ -80,16 +82,16 @@ export function LabelIcon({ label, size = 'sm', hasChildren, className }: LabelI
 }
 
 /**
- * LabelValueTypeIcon - Renders a placeholder icon for typed labels with no value set.
+ * LabelValueTypeIcon —— 为带值类型的 Label 显示占位图标。
  *
- * Maps valueType to a Lucide icon:
+ * 把 valueType 映射到 Lucide 图标：
  *   - number → Hash
  *   - date   → CalendarDays
  *   - string → Type
  *   - link   → Link
  *
- * Returns null if the label has no valueType (boolean/presence-only labels).
- * Used in label badge rows and ActiveOptionBadges to indicate a typed label awaiting a value.
+ * 没有 valueType 时返回 null（纯布尔/存在型标签）。
+ * 用于 Label 徽章行和 ActiveOptionBadges，提示该标签等待输入值。
  */
 const VALUE_TYPE_ICONS = {
   number: Hash,
@@ -99,14 +101,15 @@ const VALUE_TYPE_ICONS = {
 } as const
 
 interface LabelValueTypeIconProps {
-  /** The label's valueType ('number' | 'date' | 'string' | undefined) */
+  /** Label 的 valueType（'number' | 'date' | 'string' | undefined） */
   valueType: LabelConfig['valueType']
-  /** Icon size in pixels (default: 11) */
+  /** 图标尺寸（像素，默认 11） */
   size?: number
-  /** Additional className */
+  /** 额外的 className */
   className?: string
 }
 
+/** Label 值类型占位图标 */
 export function LabelValueTypeIcon({ valueType, size = 11, className }: LabelValueTypeIconProps) {
   if (!valueType) return null
 

@@ -1,17 +1,17 @@
 /**
- * SessionFilesSection - Displays files in the session directory as a tree view
+ * SessionFilesSection - 以树形结构展示当前 session 工作目录中的文件
  *
- * Features:
- * - Recursive tree view with expandable folders (matches sidebar styling)
- * - File watcher for auto-refresh when files change
- * - Click to preview in-app, double-click to open
- * - Right-click context menu with "Open" / "Show in {file manager}" actions
- * - Persisted expanded folder state per session
+ * 主要功能：
+ * - 递归树形视图，文件夹可展开/收起（样式与左侧边栏保持一致）
+ * - 文件变化时通过文件监听器自动刷新
+ * - 单击在应用内预览，双击打开
+ * - 右键上下文菜单，支持“打开”/“在文件管理器中显示”
+ * - 每个 session 的展开状态会持久化到本地存储
  *
- * Styling matches LeftSidebar patterns:
- * - Chevron hidden by default, shown on hover
- * - Vertical connector lines for nested items
- * - 14x14px icons, 8px gaps, 6px radius
+ * 样式与 LeftSidebar 对齐：
+ * - Chevron 默认隐藏，悬停时显示
+ * - 嵌套项使用竖向连接线
+ * - 图标 14x14px，间距 8px，圆角 6px
  */
 
 import * as React from 'react'
@@ -33,8 +33,8 @@ import { getFileManagerName } from '@/lib/platform'
 import { restoreSessionFileWatch } from './session-files-watch'
 
 /**
- * Stagger animation variants for child items - matches LeftSidebar pattern
- * Creates a pleasing "cascade" effect when expanding folders
+ * 子项的交错动画变体（variants），与 LeftSidebar 保持一致
+ * 展开文件夹时产生“级联”出现的效果
  */
 const containerVariants: Variants = {
   hidden: { opacity: 0 },
@@ -71,14 +71,14 @@ const itemVariants: Variants = {
 export interface SessionFilesSectionProps {
   sessionId?: string
   className?: string
-  /** Absolute session folder path for header actions (e.g. View in Finder) */
+  /** session 文件夹的绝对路径，用于顶部“在文件管理器中查看”等操作 */
   sessionFolderPath?: string
-  /** Hide section header when embedded inside compact containers (e.g. popovers) */
+  /** 在紧凑容器（例如 popover）中嵌入时，隐藏区块标题 */
   hideHeader?: boolean
 }
 
 /**
- * Format file size in human-readable format
+ * 将字节数格式化为人类可读的大小
  */
 function formatFileSize(bytes?: number): string {
   if (bytes === undefined) return ''
@@ -87,7 +87,7 @@ function formatFileSize(bytes?: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-/** Collect all directory paths recursively so the tree can start fully expanded. */
+/** 递归收集所有目录路径，用于默认“全部展开”的树形状态。 */
 function collectDirectoryPaths(entries: SessionFile[]): string[] {
   const directories: string[] = []
   const visit = (items: SessionFile[]) => {
@@ -105,7 +105,7 @@ function collectDirectoryPaths(entries: SessionFile[]): string[] {
 }
 
 /**
- * Get icon for file based on name/type (14x14px matching sidebar)
+ * 根据文件名/类型返回对应的图标（14x14px，与左侧边栏保持一致）
  */
 function getFileIcon(file: SessionFile, isExpanded?: boolean) {
   const iconClass = "h-3.5 w-3.5 text-muted-foreground"
@@ -134,8 +134,8 @@ function getFileIcon(file: SessionFile, isExpanded?: boolean) {
 }
 
 /**
- * Extensions that have thumbnail previews via the thumbnail:// protocol.
- * Matches the ALL_PREVIEWABLE set in thumbnail-protocol.ts.
+ * 可通过自定义 thumbnail:// 协议生成缩略图预览的文件扩展名集合。
+ * 与 thumbnail-protocol.ts 中的 ALL_PREVIEWABLE 保持一致。
  */
 const PREVIEWABLE_EXTENSIONS = new Set([
   'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tiff', 'tif', 'ico', 'heic', 'heif',
@@ -143,40 +143,38 @@ const PREVIEWABLE_EXTENSIONS = new Set([
 ])
 
 /**
- * Extensions that get lightweight image previews in web mode.
- * Excludes pdf/psd/ai/svg — not rendered as <img> thumbnails here.
+ * 在 Web 模式下以 <img> 形式轻量预览的图片扩展名集合。
+ * 不包含 pdf/psd/ai/svg，这些文件不会在此渲染为 img 缩略图。
  */
 const WEB_PREVIEWABLE_EXTENSIONS = new Set([
   'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico',
 ])
 
-/** True when running in web UI (browser) rather than Electron. */
+/** 当前是否运行在 Web UI（浏览器）而非 Electron 环境。 */
 const isWebMode = window.electronAPI.getRuntimeEnvironment() === 'web'
 
 /**
- * Constructs a thumbnail:// protocol URL for a given file path.
- * The path is URI-encoded so it can be embedded safely in a URL.
- * Works cross-platform (macOS paths start with /, Windows with C:\).
+ * 为指定文件路径构建 thumbnail:// 协议 URL。
+ * 路径会经过 URI 编码，确保安全嵌入 URL；跨平台兼容（macOS 以 / 开头，Windows 以 C:\ 开头）。
  */
 function getThumbnailUrl(filePath: string): string {
   return `thumbnail://thumb/${encodeURIComponent(filePath)}`
 }
 
 /**
- * FileThumbnail — Renders an image thumbnail with cross-fade from icon fallback.
+ * FileThumbnail - 渲染文件缩略图，并从默认图标交叉淡入。
  *
- * In Electron: loads via the custom thumbnail:// protocol (efficient 64x64 resize).
- * In Web mode: loads via readFilePreviewDataUrl RPC (server-side resized preview).
+ * 在 Electron 中：通过自定义 thumbnail:// 协议加载（主进程会缩放为 64x64）。
+ * 在 Web 模式下：通过 readFilePreviewDataUrl RPC 获取服务端缩放后的 base64 预览图。
  *
- * Shows the Lucide icon immediately, then cross-fades to the thumbnail on load.
- * If loading fails, the icon stays visible — no layout shift, no error state.
+ * 先显示 Lucide 图标，缩略图加载成功后交叉淡入；加载失败则保持图标可见，避免布局跳动。
  */
 const FileThumbnail = memo(function FileThumbnail({ file }: { file: SessionFile }) {
   const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
   const [dataUrl, setDataUrl] = useState<string | null>(null)
 
-  // Reset state when file changes (e.g. watcher triggered re-render)
+  // 当文件变化时（例如文件监听器触发重新渲染）重置缩略图状态
   useEffect(() => {
     setLoaded(false)
     setFailed(false)
@@ -187,7 +185,7 @@ const FileThumbnail = memo(function FileThumbnail({ file }: { file: SessionFile 
   const previewableSet = isWebMode ? WEB_PREVIEWABLE_EXTENSIONS : PREVIEWABLE_EXTENSIONS
   const canPreview = previewableSet.has(ext)
 
-  // Web mode: load a small preview via RPC as a base64 data URL
+  // Web 模式：通过 RPC 加载一个小尺寸的 base64 预览图
   useEffect(() => {
     if (!isWebMode || !canPreview || failed) return
     let cancelled = false
@@ -199,7 +197,7 @@ const FileThumbnail = memo(function FileThumbnail({ file }: { file: SessionFile 
     return () => { cancelled = true }
   }, [file.path, canPreview, failed])
 
-  // Fall back to regular icon if not previewable or thumbnail failed
+  // 如果文件不可预览或缩略图加载失败，就回到普通图标
   if (!canPreview || failed) {
     return getFileIcon(file)
   }
@@ -208,7 +206,7 @@ const FileThumbnail = memo(function FileThumbnail({ file }: { file: SessionFile 
 
   return (
     <>
-      {/* Fallback icon — visible initially, fades out when thumbnail loads */}
+      {/* 兜底图标：初始可见，缩略图加载完成后淡出 */}
       <span
         className={cn(
           'absolute inset-0 flex items-center justify-center transition-opacity duration-200',
@@ -217,7 +215,7 @@ const FileThumbnail = memo(function FileThumbnail({ file }: { file: SessionFile 
       >
         {getFileIcon(file)}
       </span>
-      {/* Thumbnail — fades in on successful load */}
+      {/* 缩略图：加载成功后淡入 */}
       {imgSrc && (
         <img
           src={imgSrc}
@@ -243,16 +241,16 @@ interface FileTreeItemProps {
   onFileClick: (file: SessionFile) => void
   onFileDoubleClick: (file: SessionFile) => void
   onRevealInFileManager: (path: string) => void
-  /** Whether this item is inside an expanded folder (for stagger animation) */
+  /** 当前项是否位于已展开文件夹内部（用于交错动画） */
   isNested?: boolean
 }
 
 /**
- * Recursive file tree item component
- * Matches LeftSidebar styling patterns exactly:
- * - Vertical line on container level (not per-item)
- * - Framer-motion staggered animation for expand/collapse
- * - Chevron shown on hover, icon hidden
+ * 递归文件树项组件
+ * 样式与 LeftSidebar 严格保持一致：
+ * - 容器级竖向连接线（非每项一条）
+ * - 使用 framer-motion 实现展开/收起的交错动画
+ * - Chevron 悬停显示，默认图标隐藏
  */
 function FileTreeItem({
   file,
@@ -281,7 +279,7 @@ function FileTreeItem({
     onFileDoubleClick(file)
   }
 
-  // Handle chevron click separately to toggle expand
+  // 单独处理 Chevron 点击，避免触发整个项的单击/双击
   const handleChevronClick = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (hasChildren) {
@@ -289,31 +287,31 @@ function FileTreeItem({
     }
   }
 
-  // The button element for the file/folder item
+  // 单个文件/文件夹的按钮元素
   const buttonElement = (
     <button
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
       className={cn(
-        // Base styles matching LeftSidebar exactly
-        // min-w-0 and overflow-hidden required for truncation to work in grid context
+        // 基础样式，与 LeftSidebar 完全一致
+        // min-w-0 和 overflow-hidden 是在 grid 布局中实现文本截断所必需的
         "group flex w-full min-w-0 overflow-hidden items-center gap-2 rounded-[6px] py-[5px] text-[13px] select-none outline-none text-left",
         "focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
         "hover:bg-sidebar-hover transition-colors",
-        // Same padding for all items - nested indentation handled by container
+        // 所有项使用相同内边距，嵌套缩进由外层容器处理
         "px-2"
       )}
       title={`${file.path}\n${file.type === 'file' ? formatFileSize(file.size) : 'Directory'}\n\nClick to ${hasChildren ? 'expand' : 'reveal'}, double-click to open`}
     >
-      {/* Icon container with hover-revealed chevron for expandable items */}
+      {/* 图标容器：可展开项在悬停时显示 Chevron */}
       <span className="relative h-3.5 w-3.5 shrink-0 flex items-center justify-center">
         {hasChildren ? (
           <>
-            {/* Main icon - hidden on hover */}
+            {/* 主图标：悬停时隐藏 */}
             <span className="absolute inset-0 flex items-center justify-center group-hover:opacity-0 transition-opacity duration-150">
               {getFileIcon(file, isExpanded)}
             </span>
-            {/* Toggle chevron - shown on hover */}
+            {/* 切换 Chevron：悬停时显示 */}
             <span
               className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150 cursor-pointer"
               onClick={handleChevronClick}
@@ -327,20 +325,19 @@ function FileTreeItem({
             </span>
           </>
         ) : (
-          /* Non-directory files: show thumbnail preview for previewable types,
-             with cross-fade from icon. Falls back to icon for unsupported types. */
+          /* 非目录文件：对可预览类型显示缩略图，并从图标交叉淡入；不支持预览的类型回退到图标。 */
           <FileThumbnail file={file} />
         )}
       </span>
 
-      {/* File/folder name - min-w-0 required for truncate to work in flex container */}
+      {/* 文件/文件夹名称：min-w-0 是在 flex 容器中实现 truncate 的关键 */}
       <span className="flex-1 min-w-0 truncate">{file.name}</span>
     </button>
   )
 
   const fileManagerName = getFileManagerName()
 
-  // Inner content: button and expandable children (wrapped in group/section like LeftSidebar)
+  // 内部内容：按钮 + 可展开的子项（外层结构与 LeftSidebar 的 group/section 类似）
   const innerContent = (
     <div className="group/section min-w-0">
       <ContextMenu>
@@ -348,14 +345,14 @@ function FileTreeItem({
           {buttonElement}
         </ContextMenuTrigger>
         <StyledContextMenuContent>
-          {/* Open — files only (folders just show "Show in file manager") */}
+          {/* 打开：仅对文件显示（文件夹只显示“在文件管理器中显示”） */}
           {file.type !== 'directory' && (
             <StyledContextMenuItem onSelect={() => onFileClick(file)}>
               <ExternalLink className="h-3.5 w-3.5" />
               {t("chat.openFile")}
             </StyledContextMenuItem>
           )}
-          {/* Show in file manager */}
+          {/* 在文件管理器中显示 */}
           <StyledContextMenuItem
             onSelect={() => onRevealInFileManager(file.path)}
           >
@@ -364,7 +361,7 @@ function FileTreeItem({
           </StyledContextMenuItem>
         </StyledContextMenuContent>
       </ContextMenu>
-      {/* Expandable children with framer-motion animation - matches LeftSidebar exactly */}
+      {/* 可展开子项：使用 framer-motion 动画，与 LeftSidebar 完全一致 */}
       {hasChildren && (
         <AnimatePresence initial={false}>
           {isExpanded && (
@@ -375,7 +372,7 @@ function FileTreeItem({
               transition={{ duration: 0.2, ease: 'easeInOut' }}
               className="overflow-hidden"
             >
-              {/* Wrapper div matches LeftSidebar recursive structure - min-w-0 allows shrinking */}
+              {/* 包装 div 与 LeftSidebar 的递归结构一致；min-w-0 允许子树在窄空间中收缩 */}
               <div className="flex flex-col select-none min-w-0">
                 <motion.nav
                   className="grid gap-0.5 pl-5 pr-0 relative"
@@ -384,7 +381,7 @@ function FileTreeItem({
                   animate="visible"
                   exit="exit"
                 >
-                  {/* Vertical line at container level - matches LeftSidebar pattern */}
+                  {/* 容器级竖向连接线，与 LeftSidebar 样式一致 */}
                   <div
                     className="absolute left-[13px] top-1 bottom-1 w-px bg-foreground/10"
                     aria-hidden="true"
@@ -412,13 +409,13 @@ function FileTreeItem({
     </div>
   )
 
-  // For nested items, the parent already wraps in motion.div for stagger
-  // Root items use Fragment to avoid extra wrapper (matches LeftSidebar exactly)
+  // 嵌套项已由父级的 motion.div 包裹以参与交错动画；
+  // 根级项使用 Fragment，避免额外包装层（与 LeftSidebar 完全一致）。
   return <>{innerContent}</>
 }
 
 /**
- * Section displaying session files as a tree
+ * 以树形结构展示 session 文件的区块组件
  */
 export function SessionFilesSection({ sessionId, className, sessionFolderPath, hideHeader = false }: SessionFilesSectionProps) {
   const { t } = useTranslation()
@@ -428,8 +425,8 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
   const [hasSavedExpandedState, setHasSavedExpandedState] = useState(false)
   const mountedRef = useRef(true)
 
-  // Load expanded paths from storage when session changes.
-  // If no value exists yet, we default to "expand all" after files load.
+  // session 切换时从本地存储读取已保存的展开路径。
+  // 如果没有保存过，则默认在文件加载后“全部展开”。
   useEffect(() => {
     if (sessionId) {
       const raw = storage.getRaw(storage.KEYS.sessionFilesExpandedFolders, sessionId)
@@ -447,14 +444,14 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
     }
   }, [sessionId])
 
-  // Save expanded paths to storage when they change
+  // 展开路径变化时持久化到本地存储
   const saveExpandedPaths = useCallback((paths: Set<string>) => {
     if (sessionId) {
       storage.set(storage.KEYS.sessionFilesExpandedFolders, Array.from(paths), sessionId)
     }
   }, [sessionId])
 
-  // Load files
+  // 加载文件列表
   const loadFiles = useCallback(async () => {
     if (!sessionId) {
       setFiles([])
@@ -467,7 +464,7 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
       if (mountedRef.current) {
         setFiles(sessionFiles)
 
-        // Default behavior: expand the entire folder tree when there's no saved state yet.
+        // 默认行为：当没有已保存状态时，自动展开整个文件夹树。
         if (!hasSavedExpandedState) {
           const allDirectoryPaths = new Set(collectDirectoryPaths(sessionFiles))
           if (allDirectoryPaths.size > 0) {
@@ -489,16 +486,16 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
     }
   }, [sessionId, hasSavedExpandedState, saveExpandedPaths])
 
-  // Initial load and file watcher setup
+  // 初始加载并设置文件监听器
   useEffect(() => {
     mountedRef.current = true
     loadFiles()
 
     if (sessionId) {
-      // Start watching for file changes
+      // 开始监听该 session 目录的文件变化
       void window.electronAPI.watchSessionFiles(sessionId)
 
-      // Listen for file change events
+      // 监听文件变化事件
       const unsubscribe = window.electronAPI.onSessionFilesChanged((changedSessionId) => {
         if (changedSessionId === sessionId && mountedRef.current) {
           void loadFiles()
@@ -523,37 +520,37 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
     }
   }, [sessionId, loadFiles])
 
-  // Use the link interceptor (via context) so file clicks show in-app previews
-  // instead of always opening in the file manager / default app.
+  // 通过 AppShellContext 提供的链接拦截器，让文件单击优先在应用内预览，
+  // 而不是直接打开系统文件管理器/默认应用。
   const { onOpenFile } = useAppShellContext()
   const fileManagerName = getFileManagerName()
 
-  // Reveal a file/folder in the system file manager
+  // 在系统文件管理器中定位文件/文件夹
   const handleRevealInFileManager = useCallback((path: string) => {
     window.electronAPI.showInFolder(path)
   }, [])
 
-  // Handle file click — preview in-app if possible, open directory in file manager
+  // 处理文件单击：优先在应用内预览；目录则直接打开
   const handleFileClick = useCallback((file: SessionFile) => {
     if (file.type === 'directory') {
-      // eslint-disable-next-line craft-links/no-direct-file-open -- directories can't be previewed in-app
+      // eslint-disable-next-line craft-links/no-direct-file-open -- 目录无法在应用内预览，只能直接打开
       window.electronAPI.openFile(file.path)
     } else {
       onOpenFile(file.path)
     }
   }, [onOpenFile])
 
-  // Handle double-click — same as single click (interceptor decides preview vs external)
+  // 处理文件双击：行为与单击一致（由拦截器决定是预览还是外部打开）
   const handleFileDoubleClick = useCallback((file: SessionFile) => {
     if (file.type === 'directory') {
-      // eslint-disable-next-line craft-links/no-direct-file-open -- directories can't be previewed in-app
+      // eslint-disable-next-line craft-links/no-direct-file-open -- 目录无法在应用内预览，只能直接打开
       window.electronAPI.openFile(file.path)
     } else {
       onOpenFile(file.path)
     }
   }, [onOpenFile])
 
-  // Toggle folder expanded state
+  // 切换文件夹展开状态
   const handleToggleExpand = useCallback((path: string) => {
     setExpandedPaths((prev) => {
       const next = new Set(prev)
@@ -573,7 +570,7 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
 
   return (
     <div className={cn('flex flex-col h-full min-h-0', className)}>
-      {/* Header - matches sidebar styling with select-none, extra top padding for visual balance */}
+      {/* 标题栏：与侧边栏样式一致，顶部额外内边距用于视觉平衡 */}
       {!hideHeader && (
         <div className="flex items-center justify-between px-4 pt-4 pb-2 shrink-0 select-none">
           <span className="text-xs font-medium text-muted-foreground">{t("chat.sessionFiles")}</span>
@@ -589,8 +586,7 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
         </div>
       )}
 
-      {/* File tree - px-2 is on nav to match LeftSidebar exactly (constrains grid width) */}
-      {/* overflow-x-hidden prevents horizontal scroll, forcing truncation */}
+      {/* 文件树：nav 使用 px-2 与 LeftSidebar 一致（限制 grid 宽度）；overflow-x-hidden 防止横向滚动，强制文本截断 */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-2 min-h-0">
         {files.length === 0 ? (
           <div className="px-4 text-muted-foreground select-none">
@@ -599,7 +595,7 @@ export function SessionFilesSection({ sessionId, className, sessionFolderPath, h
             </p>
           </div>
         ) : (
-          /* Root nav has px-2 to match LeftSidebar exactly - this constrains grid width */
+          /* 根级 nav 使用 px-2 与 LeftSidebar 一致——这会限制 grid 宽度 */
           <nav className="grid gap-0.5 px-2">
             {files.map((file) => (
               <FileTreeItem

@@ -1,18 +1,18 @@
 /**
- * SidebarMenu - Shared menu content for sidebar navigation items
+ * SidebarMenu - 侧边栏导航项的共享菜单内容。
  *
- * Used by:
- * - LeftSidebar (context menu via right-click on nav items)
- * - AppShell (context menu for New Chat button)
+ * 用于：
+ * - LeftSidebar（导航项右键上下文菜单）
+ * - AppShell（新建聊天按钮的上下文菜单）
  *
- * Uses MenuComponents context to render with either DropdownMenu or ContextMenu
- * primitives, allowing the same component to work in both scenarios.
+ * 通过 MenuComponents 上下文渲染，兼容 DropdownMenu 和 ContextMenu。
  *
- * Provides actions based on the sidebar item type:
- * - "Configure Statuses" (for allSessions/status/flagged items) - triggers EditPopover callback
- * - "Add Source" (for sources) - triggers EditPopover callback
- * - "Add Skill" (for skills) - triggers EditPopover callback
- * - "Open in New Window" (for newSession only) - uses deep link
+ * 根据侧边栏项类型提供不同操作：
+ * - “配置状态”（allSessions/status/flagged）
+ * - “添加来源”（sources）
+ * - “添加技能”（skills）
+ * - “添加自动化”（automations）
+ * - “在新窗口打开”（仅 newSession）
  */
 
 import * as React from 'react'
@@ -28,46 +28,48 @@ import {
 import { useMenuComponents } from '@/components/ui/menu-context'
 import { getDocUrl, type DocFeature } from '@craft-agent/shared/docs/doc-links'
 
+/** SidebarMenuType：侧边栏菜单类型 */
 export type SidebarMenuType = 'allSessions' | 'flagged' | 'status' | 'sources' | 'skills' | 'automations' | 'projects' | 'labels' | 'views' | 'newSession'
 
+/** SidebarMenuProps：组件 props 类型定义 */
 export interface SidebarMenuProps {
-  /** Type of sidebar item (determines available menu items) */
+  /** 侧边栏项类型，决定显示哪些菜单项 */
   type: SidebarMenuType
-  /** Status ID for status items (e.g., 'todo', 'done') - not currently used but kept for future */
+  /** 状态项的状态 ID（例如 'todo'、'done'），目前未使用但保留 */
   statusId?: string
-  /** Label ID — when set, this is an individual label item (enables Delete Label) */
+  /** 标签 ID；设置时表示这是单个标签项，可启用“删除标签” */
   labelId?: string
-  /** Handler for "Configure Statuses" action - only for allSessions/status/flagged types */
+  /** “配置状态”回调，仅用于 allSessions/status/flagged 类型 */
   onConfigureStatuses?: () => void
-  /** Handler for "Mark All Read" action - only for allSessions type */
+  /** “全部标为已读”回调，仅用于 allSessions 类型 */
   onMarkAllRead?: () => void
-  /** Handler for "Configure Labels" action - receives labelId when triggered from a specific label */
+  /** “配置标签”回调；从具体标签触发时会传入 labelId */
   onConfigureLabels?: (labelId?: string) => void
-  /** Handler for "Add New Label" action - creates a label (parentId = labelId if set) */
+  /** “新增标签”回调；parentId 为 labelId（如果有） */
   onAddLabel?: (parentId?: string) => void
-  /** Handler for "Delete Label" action - deletes the label identified by labelId */
+  /** “删除标签”回调 */
   onDeleteLabel?: (labelId: string) => void
-  /** Handler for "Add Source" action - only for sources type */
+  /** “添加来源”回调，仅用于 sources 类型 */
   onAddSource?: () => void
-  /** Handler for "Add Skill" action - only for skills type */
+  /** “添加技能”回调，仅用于 skills 类型 */
   onAddSkill?: () => void
-  /** Handler for "Add Automation" action - only for automations type */
+  /** “添加自动化”回调，仅用于 automations 类型 */
   onAddAutomation?: () => void
-  /** Handler for "Add Project" action - only for projects type */
+  /** “添加项目”回调，仅用于 projects 类型 */
   onAddProject?: () => void
-  /** Source type filter for "Learn More" link - determines which docs page to open */
+  /** 来源类型过滤，决定“了解更多”打开哪个文档页 */
   sourceType?: 'api' | 'mcp' | 'local'
-  /** Handler for "Edit Views" action - for views type */
+  /** “编辑视图”回调，用于 views 类型 */
   onConfigureViews?: () => void
-  /** View ID — when set, this is an individual view (enables Delete) */
+  /** 视图 ID；设置时表示单个视图，可启用删除 */
   viewId?: string
-  /** Handler for "Delete View" action */
+  /** “删除视图”回调 */
   onDeleteView?: (id: string) => void
 }
 
 /**
- * SidebarMenu - Renders the menu items for sidebar navigation actions
- * This is the content only, not wrapped in a DropdownMenu or ContextMenu
+ * SidebarMenu - 渲染侧边栏导航操作菜单项。
+ * 只返回菜单内容，不包裹 DropdownMenu 或 ContextMenu。
  */
 export function SidebarMenu({
   type,
@@ -89,10 +91,10 @@ export function SidebarMenu({
 }: SidebarMenuProps) {
   const { t } = useTranslation()
 
-  // Get menu components from context (works with both DropdownMenu and ContextMenu)
+  // 从上下文获取菜单组件（兼容 DropdownMenu 和 ContextMenu）
   const { MenuItem, Separator } = useMenuComponents()
 
-  // New Session: only shows "Open in New Window"
+  // New Session：只显示“在新窗口打开”
   if (type === 'newSession') {
     return (
       <MenuItem onClick={() => window.electronAPI.openUrl('craftagents://action/new-session?window=focused')}>
@@ -102,7 +104,7 @@ export function SidebarMenu({
     )
   }
 
-  // All Sessions / Status / Flagged: show "Configure Statuses" (+ "Mark All Read" for allSessions)
+  // All Sessions / Status / Flagged：显示“配置状态”（allSessions 额外显示“全部标为已读”）
   if ((type === 'allSessions' || type === 'status' || type === 'flagged') && onConfigureStatuses) {
     return (
       <>
@@ -123,9 +125,9 @@ export function SidebarMenu({
     )
   }
 
-  // Labels: show context-appropriate actions
-  // - Header ("Labels" parent): Configure Labels + Add New Label
-  // - Individual label items: Add New Label (as child) + Delete Label
+  // Labels：根据上下文显示不同操作
+  // - 标题（Labels 父级）：配置标签 + 新增标签
+  // - 单个标签项：新增子标签 + 删除标签
   if (type === 'labels') {
     return (
       <>
@@ -154,7 +156,7 @@ export function SidebarMenu({
     )
   }
 
-  // Views: show "Edit Views" and optionally "Delete View"
+  // Views：显示“编辑视图”和可选的“删除视图”
   if (type === 'views') {
     return (
       <>
@@ -177,14 +179,14 @@ export function SidebarMenu({
     )
   }
 
-  // Sources: show "Add Source" and "Learn More"
+  // Sources：显示“添加来源”和“了解更多”
   if (type === 'sources') {
-    // Determine which docs page to open based on source type filter
+    // 根据来源类型过滤决定打开哪个文档页
     const docFeature: DocFeature = sourceType
       ? `sources-${sourceType}` as DocFeature
       : 'sources'
 
-    // Display label varies by source type
+    // 根据来源类型变化显示标签
     const learnMoreLabel = sourceType === 'api'
       ? t('sidebarMenu.learnMoreApis')
       : sourceType === 'mcp'
@@ -210,7 +212,7 @@ export function SidebarMenu({
     )
   }
 
-  // Skills: show "Add Skill"
+  // Skills：显示“添加技能”
   if (type === 'skills' && onAddSkill) {
     return (
       <MenuItem onClick={onAddSkill}>
@@ -220,7 +222,7 @@ export function SidebarMenu({
     )
   }
 
-  // Projects: show "Add Project"
+  // Projects：显示“添加项目”
   if (type === 'projects') {
     return (
       <>
@@ -234,7 +236,7 @@ export function SidebarMenu({
     )
   }
 
-  // Automations: show "Add Automation" and "Learn More"
+  // Automations：显示“添加自动化”和“了解更多”
   if (type === 'automations') {
     return (
       <>
@@ -253,6 +255,6 @@ export function SidebarMenu({
     )
   }
 
-  // Fallback: return null if no handler provided (shouldn't happen)
+  // 兜底：没有匹配到任何处理函数时返回 null（正常不应发生）
   return null
 }

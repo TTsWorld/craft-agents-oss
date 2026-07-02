@@ -1,3 +1,9 @@
+/**
+ * Label —— 表单标签组件
+ *
+ * 基于 Radix UI Label 封装，用于给输入控件添加可访问性标签。
+ * 支持 disabled 状态自动变灰，并通过 cn 工具合并项目设计系统的样式类。
+ */
 import * as React from "react"
 import * as LabelPrimitive from "@radix-ui/react-label"
 

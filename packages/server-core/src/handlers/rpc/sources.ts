@@ -6,6 +6,12 @@ import { getCredentialManager } from '@craft-agent/shared/credentials'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 
+// 本文件属于 Sources RPC 模块，负责：Source（外部工具/服务来源）的 CRUD、OAuth、凭证保存、权限与 MCP 工具发现。
+// Agent 概念：Source 是 Agent 可调用的外部能力来源，常见类型是 MCP server；
+// MCP（Model Context Protocol）把外部工具以标准协议暴露给 LLM，类似 OpenAI function calling 的本地扩展。
+// TS 提示：Partial<T> 表示 T 的可选版本，类似 Golang 里 struct 指针字段全部可空。
+
+// 本 handler 负责注册的 source channel 列表
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sources.GET,
   RPC_CHANNELS.sources.CREATE,
@@ -18,10 +24,11 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sources.GET_MCP_TOOLS,
 ] as const
 
+// registerSourcesHandlers：注册 source 相关 RPC 路由。
 export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): void {
   const log = deps.platform.logger
 
-  // Get all sources for a workspace
+  // 获取 workspace 下所有 source 配置
   server.handle(RPC_CHANNELS.sources.GET, async (_ctx, workspaceId: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) {
@@ -31,7 +38,7 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
     return loadWorkspaceSources(workspace.rootPath)
   })
 
-  // Create a new source
+  // 创建新 source
   server.handle(RPC_CHANNELS.sources.CREATE, async (_ctx, workspaceId: string, config: Partial<import('@craft-agent/shared/sources').CreateSourceInput>) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`)
@@ -47,14 +54,13 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
     })
   })
 
-  // Delete a source
+  // 删除 source，同时清理 workspace 默认启用 source 列表中的失效 slug
   server.handle(RPC_CHANNELS.sources.DELETE, async (_ctx, workspaceId: string, sourceSlug: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`)
     const { deleteSource } = await import('@craft-agent/shared/sources')
     deleteSource(workspace.rootPath, sourceSlug)
 
-    // Clean up stale slug from workspace default sources
     const { loadWorkspaceConfig, saveWorkspaceConfig } = await import('@craft-agent/shared/workspaces')
     const config = loadWorkspaceConfig(workspace.rootPath)
     if (config?.defaults?.enabledSourceSlugs?.includes(sourceSlug)) {
@@ -63,8 +69,7 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
     }
   })
 
-  // Start OAuth flow for a source (DEPRECATED — use oauth:start + performOAuth client-side)
-  // Kept for backward compatibility with old IPC preload; WS clients use performOAuth().
+  // 旧版 source OAuth 入口，已弃用；客户端应使用 oauth:start + performOAuth 新流程。
   server.handle(RPC_CHANNELS.sources.START_OAUTH, async () => {
     return {
       success: false,
@@ -72,7 +77,8 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
     }
   })
 
-  // Save credentials for a source (bearer token or API key)
+  // 为 source 保存凭证（Bearer token 或 API key）。
+  // SourceCredentialManager 负责根据 source 类型决定 credential 的存储方式。
   server.handle(RPC_CHANNELS.sources.SAVE_CREDENTIALS, async (_ctx, workspaceId: string, sourceSlug: string, credential: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`)
@@ -83,14 +89,13 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
       throw new Error(`Source not found: ${sourceSlug}`)
     }
 
-    // SourceCredentialManager handles credential type resolution
     const credManager = getSourceCredentialManager()
     await credManager.save(source, { value: credential })
 
     log.info(`Saved credentials for source: ${sourceSlug}`)
   })
 
-  // Get permissions config for a source (raw format for UI display)
+  // 读取某个 source 的权限配置（原始 JSON，用于 UI 展示）
   server.handle(RPC_CHANNELS.sources.GET_PERMISSIONS, async (_ctx, workspaceId: string, sourceSlug: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) return null
@@ -110,7 +115,7 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
     }
   })
 
-  // Get permissions config for a workspace (raw format for UI display)
+  // 读取 workspace 级权限配置
   server.handle(RPC_CHANNELS.workspace.GET_PERMISSIONS, async (_ctx, workspaceId: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) return null
@@ -130,7 +135,7 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
     }
   })
 
-  // Get default permissions from ~/.craft-agent/permissions/default.json
+  // 读取应用默认权限配置（~/.craft-agent/permissions/default.json）
   server.handle(RPC_CHANNELS.permissions.GET_DEFAULTS, async () => {
     const { existsSync, readFileSync } = await import('fs')
     const { getAppPermissionsDir } = await import('@craft-agent/shared/agent')
@@ -148,7 +153,7 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
     }
   })
 
-  // Get MCP tools for a source with permission status
+  // 获取某个 MCP source 的工具列表，并标注每个工具在当前权限配置下是否允许使用。
   server.handle(RPC_CHANNELS.sources.GET_MCP_TOOLS, async (_ctx, workspaceId: string, sourceSlug: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) return { success: false, error: 'Workspace not found' }
@@ -173,6 +178,7 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
       const { CraftMcpClient } = await import('@craft-agent/shared/mcp')
       let client: InstanceType<typeof CraftMcpClient>
 
+      // stdio  transport：启动本地子进程与 MCP server 通信
       if (source.config.mcp.transport === 'stdio') {
         if (!source.config.mcp.command) {
           return { success: false, error: 'Stdio MCP source is missing required "command" field' }
@@ -185,6 +191,7 @@ export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): v
           env: source.config.mcp.env,
         })
       } else {
+        // HTTP/SSE transport：通过网络连接 MCP server
         if (!source.config.mcp.url) {
           return { success: false, error: 'MCP source URL is required for HTTP/SSE transport' }
         }

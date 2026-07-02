@@ -1,12 +1,12 @@
 /**
  * Update Checker Hook
  *
- * Manages auto-update state for the Electron app.
- * - Listens for update availability broadcasts from main process
- * - Tracks download progress
- * - Provides methods to check for updates and install
- * - Shows toast notification when update is ready
- * - Persistent dismissal across app restarts (per version)
+ * 管理 Electron 应用的自动更新状态。
+ * - 监听主进程广播的更新可用事件
+ * - 跟踪下载进度
+ * - 提供手动检查更新与安装方法
+ * - 更新就绪时显示 toast 通知
+ * - 支持按版本持久化忽略（跨应用重启）
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
@@ -15,34 +15,34 @@ import { toast } from 'sonner'
 import type { UpdateInfo } from '../../shared/types'
 
 interface UseUpdateCheckerResult {
-  /** Current update info */
+  /** 当前更新信息 */
   updateInfo: UpdateInfo | null
-  /** Whether an update is available */
+  /** 是否有可用更新 */
   updateAvailable: boolean
-  /** Whether update is currently downloading */
+  /** 是否正在下载更新 */
   isDownloading: boolean
-  /** Whether update is ready to install */
+  /** 更新是否已准备好安装 */
   isReadyToInstall: boolean
-  /** Download progress (0-100) */
+  /** 下载进度 0-100 */
   downloadProgress: number
-  /** Check for updates manually */
+  /** 手动检查更新 */
   checkForUpdates: () => Promise<void>
-  /** Install the downloaded update and restart */
+  /** 安装已下载的更新并重启 */
   installUpdate: () => Promise<void>
 }
 
-// Toast ID for update notification (allows dismiss/update)
+// 更新通知的 toast ID，便于取消或更新同一条 toast
 const UPDATE_TOAST_ID = 'update-available'
 
 export function useUpdateChecker(): UseUpdateCheckerResult {
   const { t } = useTranslation()
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
-  // Track if we've shown the toast for this version to avoid duplicates
+  // 记录当前会话是否已为该版本展示过 toast，避免重复
   const shownToastVersionRef = useRef<string | null>(null)
 
-  // Show toast notification when update is ready
+  // 更新就绪时显示 toast
   const showUpdateToast = useCallback((version: string, onInstall: () => void) => {
-    // Don't show if already shown for this version in this session
+    // 同一会话中已展示过则跳过
     if (shownToastVersionRef.current === version) {
       return
     }
@@ -51,22 +51,22 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
     toast.info(t('toast.updateReady', { version }), {
       id: UPDATE_TOAST_ID,
       description: t('toast.restartToApply'),
-      duration: 10000, // 10 seconds, then auto-dismiss
+      duration: 10000, // 10 秒后自动消失
       action: {
         label: t('toast.restart'),
         onClick: onInstall,
       },
       onDismiss: () => {
-        // Persist dismissal so we don't show again after app restart
+        // 持久化忽略该版本，避免应用重启后再次弹出
         window.electronAPI.dismissUpdate(version)
       },
     })
   }, [t])
 
-  // Install the update
+  // 安装更新
   const installUpdate = useCallback(async () => {
     try {
-      // Dismiss the update toast first
+      // 先关闭更新 toast
       toast.dismiss(UPDATE_TOAST_ID)
       toast.info(t('toast.installingUpdate'), {
         description: t('toast.appWillRestart'),
@@ -81,35 +81,35 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
     }
   }, [])
 
-  // Load initial state and check if update ready
+  // 加载初始状态并监听更新事件
   useEffect(() => {
     const checkAndNotify = async (info: UpdateInfo) => {
       if (!info.available || !info.latestVersion) return
       if (info.downloadState !== 'ready') return
 
-      // Check if this version was dismissed
+      // 检查该版本是否被用户忽略过
       const dismissedVersion = await window.electronAPI.getDismissedUpdateVersion()
       if (dismissedVersion === info.latestVersion) {
         return
       }
 
-      // Show toast for ready update
+      // 展示就绪提示
       showUpdateToast(info.latestVersion, installUpdate)
     }
 
-    // Get initial update info
+    // 获取初始更新信息
     window.electronAPI.getUpdateInfo().then((info) => {
       setUpdateInfo(info)
       checkAndNotify(info)
     })
 
-    // Subscribe to update availability changes
+    // 订阅更新可用变化
     const cleanupAvailable = window.electronAPI.onUpdateAvailable((info) => {
       setUpdateInfo(info)
       checkAndNotify(info)
     })
 
-    // Subscribe to download progress updates
+    // 订阅下载进度
     const cleanupProgress = window.electronAPI.onUpdateDownloadProgress((progress) => {
       setUpdateInfo((prev) => prev ? { ...prev, downloadProgress: progress } : prev)
     })
@@ -120,7 +120,7 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
     }
   }, [showUpdateToast, installUpdate])
 
-  // Check for updates manually
+  // 手动检查更新
   const checkForUpdates = useCallback(async () => {
     try {
       const info = await window.electronAPI.checkForUpdates()
@@ -132,8 +132,8 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
           duration: 3000,
         })
       } else if (info.downloadState === 'ready' && info.latestVersion) {
-        // If already ready, show toast (clear any previous dismissal since user explicitly checked)
-        shownToastVersionRef.current = null // Reset so toast can show again
+        // 已下载完成：清除之前的忽略记录，允许再次提示
+        shownToastVersionRef.current = null
         showUpdateToast(info.latestVersion, installUpdate)
       }
     } catch (error) {

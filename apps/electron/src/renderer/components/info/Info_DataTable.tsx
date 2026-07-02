@@ -1,8 +1,8 @@
 /**
  * Info_DataTable
  *
- * Enhanced data table for Info pages with built-in search, sort, and filter UI.
- * Wraps shadcn DataTable with Info-page styling and toolbar controls.
+ * 为信息页增强的数据表格组件，内置搜索框、排序、过滤工具栏。
+ * 底层封装了 shadcn 的 DataTable，并应用 Info 页面的统一样式。
  */
 
 import * as React from 'react'
@@ -14,39 +14,38 @@ import { Spinner } from '@craft-agent/ui'
 import { cn } from '@/lib/utils'
 
 export interface Info_DataTableProps<TData, TValue> {
-  /** TanStack Table column definitions */
+  /** TanStack Table 列定义 */
   columns: ColumnDef<TData, TValue>[]
-  /** Table data */
+  /** 表格数据 */
   data: TData[]
-  /** Show search input in toolbar */
+  /** 是否在工具栏显示搜索框：true 使用默认占位符，或传入配置 */
   searchable?: boolean | {
-    /** Placeholder text */
+    /** 搜索框占位文本 */
     placeholder?: string
-    /** Column ID to search (defaults to global search) */
+    /** 要搜索的列 ID；不传则使用全局搜索 */
     column?: string
   }
-  /** Max height with scroll (similar to Info_Markdown) */
+  /** 最大高度，超出后纵向滚动（与 Info_Markdown 类似） */
   maxHeight?: number
-  /** Show loading state */
+  /** 是否显示加载中状态 */
   loading?: boolean
-  /** Show error message */
+  /** 错误提示文本 */
   error?: string
-  /** Empty state content */
+  /** 空状态内容 */
   emptyContent?: React.ReactNode
   /**
-   * Floating action rendered OVER the table header (e.g., fullscreen button).
-   * Uses absolute positioning inside scroll container - appears on hover via group-hover.
-   * Parent should have 'group' class for hover detection.
+   * 悬浮操作按钮，渲染在表头右上方（例如全屏按钮）。
+   * 外层容器使用 group 类时，可通过 group-hover 在 hover 时显示。
    */
   floatingAction?: React.ReactNode
-  /** Enable tree/hierarchical rows (passed through to DataTable) */
+  /** 启用树形 / 层级行（透传给 DataTable） */
   getSubRows?: (row: TData) => TData[] | undefined
-  /** Additional class names */
+  /** 额外的 className */
   className?: string
 }
 
 /**
- * Info_DataTable - Enhanced data table for Info pages
+ * Info_DataTable - 信息页增强数据表格
  *
  * @example
  * ```tsx
@@ -55,7 +54,7 @@ export interface Info_DataTableProps<TData, TValue> {
  *     accessorKey: 'name',
  *     header: ({ column }) => <SortableHeader column={column} title="Name" />,
  *   },
- *   // ...
+ *   // 省略其他列
  * ]
  *
  * <Info_DataTable
@@ -81,7 +80,7 @@ export function Info_DataTable<TData, TValue>({
   const { t } = useTranslation()
   const [searchValue, setSearchValue] = React.useState('')
 
-  // Parse searchable prop
+  // 把 searchable 属性统一解析为 searchConfig（null 表示不显示搜索框）
   const searchConfig = React.useMemo(() => {
     if (!searchable) return null
     if (searchable === true) {
@@ -93,7 +92,7 @@ export function Info_DataTable<TData, TValue>({
     }
   }, [searchable, t])
 
-  // Loading state
+  // 加载中状态：居中显示 spinner
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -102,7 +101,7 @@ export function Info_DataTable<TData, TValue>({
     )
   }
 
-  // Error state
+  // 错误状态：显示错误提示，对「source 需要认证」做特殊文案处理
   if (error) {
     return (
       <div className="px-4 py-6 text-sm text-muted-foreground">
@@ -118,26 +117,23 @@ export function Info_DataTable<TData, TValue>({
   return (
     <div
       className={cn(
-        // overflow-x-hidden on outer container so the sticky floating action
-        // doesn't scroll horizontally with table content. The inner wrapper
-        // handles horizontal overflow independently.
+        // 外层容器隐藏横向溢出，避免 sticky 的悬浮按钮随表格内容一起横向滚动；
+        // 真正的横向滚动交给内层 wrapper 独立处理。
         maxHeight && 'overflow-y-auto overflow-x-hidden',
         className
       )}
       style={maxHeight ? { maxHeight } : undefined}
     >
-      {/* Floating action - sticky positioned to stay at top-right while scrolling.
-          Uses sticky + float instead of absolute because parent SettingsCard has
-          overflow-hidden which clips absolute elements. Sticky respects overflow containers.
-          Height 0 ensures it doesn't add vertical space to the layout. */}
+      {/* 悬浮按钮：sticky + float 定位，使其在滚动时停留在右上角。
+          不用 absolute 是因为父级 SettingsCard 有 overflow-hidden，会裁剪 absolute 元素；
+          sticky 能兼容 overflow 容器。高度 0 避免额外占据布局空间。 */}
       {floatingAction && (
         <div className="sticky top-2.5 float-right mr-1.5 z-20 h-0">
           {floatingAction}
         </div>
       )}
 
-      {/* Inner wrapper handles horizontal overflow independently so the table
-          can scroll horizontally without dragging the floating action along. */}
+      {/* 内层 wrapper 独立处理横向溢出，表格横向滚动时不会拖动悬浮按钮。 */}
       <div className="overflow-x-auto">
         <DataTable
           columns={columns}
@@ -155,6 +151,6 @@ export function Info_DataTable<TData, TValue>({
   )
 }
 
-// Re-export SortableHeader for convenience
+// 为方便调用者，从这里直接导出 SortableHeader 和 ColumnDef 类型
 export { SortableHeader } from '@/components/ui/data-table'
 export type { ColumnDef } from '@tanstack/react-table'

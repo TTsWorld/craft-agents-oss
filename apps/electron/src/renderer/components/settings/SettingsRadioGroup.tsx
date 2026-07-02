@@ -1,8 +1,8 @@
 /**
  * SettingsRadioGroup & SettingsRadioCard
  *
- * Full-width radio card selection pattern (Amie-style).
- * Each option is a separate card with radio indicator on the left.
+ * 全宽卡片式单选组件（Amie 风格）。
+ * 每个选项都是一张独立卡片，左侧有单选指示器。
  */
 
 import * as React from 'react'
@@ -11,14 +11,17 @@ import { cn } from '@/lib/utils'
 import { settingsUI } from './SettingsUIConstants'
 
 // ============================================
-// Context
+// Context：在 RadioGroup 和 RadioCard 之间共享状态
 // ============================================
 
 interface RadioGroupContextValue {
+  /** 当前选中的值 */
   value: string
+  /** 选中变化时的回调 */
   onValueChange: (value: string) => void
 }
 
+// React Context：类似 Go 里把依赖往下传，但这里是跨组件共享状态
 const RadioGroupContext = React.createContext<RadioGroupContextValue | null>(null)
 
 function useRadioGroupContext() {
@@ -30,18 +33,18 @@ function useRadioGroupContext() {
 // ============================================
 
 export interface SettingsRadioGroupProps<T extends string = string> {
-  /** Currently selected value */
+  /** 当前选中的值 */
   value: T
-  /** Change handler */
+  /** 选中变化时的回调 */
   onValueChange: (value: T) => void
-  /** Radio cards */
+  /** 单选卡片子元素 */
   children: React.ReactNode
-  /** Additional className */
+  /** 额外 className */
   className?: string
 }
 
 /**
- * SettingsRadioGroup - Container for radio card options
+ * SettingsRadioGroup - 单选卡片组的容器
  *
  * @example
  * <SettingsRadioGroup value={model} onValueChange={setModel}>
@@ -87,32 +90,32 @@ export function SettingsRadioGroup<T extends string = string>({
 // ============================================
 
 export interface SettingsRadioCardProps {
-  /** Value for this option */
+  /** 选项值 */
   value: string
-  /** Option label */
+  /** 选项标签 */
   label: string
-  /** Optional description below label */
+  /** 选项描述 */
   description?: string
-  /** Optional icon on the right */
+  /** 右侧图标 */
   icon?: React.ReactNode
-  /** Optional badge (e.g., "Active", "Beta") */
+  /** 选项徽章（例如 "Active"、"Beta"） */
   badge?: React.ReactNode
-  /** Disabled state */
+  /** 是否禁用 */
   disabled?: boolean
-  /** Content to show when this option is selected */
+  /** 选中时展开的额外内容 */
   expandedContent?: React.ReactNode
-  /** Additional className */
+  /** 额外 className */
   className?: string
-  /** Standalone mode: whether this option is selected (use instead of RadioGroup) */
+  /** 独立模式：是否被选中（不依赖 RadioGroup） */
   selected?: boolean
-  /** Standalone mode: click handler (use instead of RadioGroup) */
+  /** 独立模式：点击回调 */
   onClick?: () => void
-  /** When true, disables card styling (use when inside a SettingsCard) */
+  /** 为 true 时禁用卡片背景（用于放在 SettingsCard 内部） */
   inCard?: boolean
 }
 
 /**
- * SettingsRadioCard - Full-width radio option card
+ * SettingsRadioCard - 全宽单选卡片
  *
  * @example
  * <SettingsRadioCard
@@ -136,12 +139,12 @@ export function SettingsRadioCard({
   inCard,
 }: SettingsRadioCardProps) {
   const context = useRadioGroupContext()
-  // Support both context-based and standalone usage
+  // 同时支持在 RadioGroup 内使用，或独立使用
   const isSelected = context ? context.value === value : (selected ?? false)
   const handleClick = context ? () => context.onValueChange(value) : onClick
   const id = React.useId()
 
-  // Apply card styling only in standalone mode and not inside a SettingsCard
+  // 只有在独立模式且不在 SettingsCard 内部时，才需要自带卡片样式
   const needsCardStyling = !context && !inCard
 
   return (
@@ -166,7 +169,7 @@ export function SettingsRadioCard({
           !disabled && 'cursor-pointer'
         )}
       >
-        {/* Radio circle */}
+        {/* 单选圆圈 */}
         <div
           className={cn(
             'w-4 h-4 rounded-full border-[1.5px] mt-[3px] shrink-0',
@@ -181,7 +184,7 @@ export function SettingsRadioCard({
           )}
         </div>
 
-        {/* Content */}
+        {/* 内容区 */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className={settingsUI.label}>{label}</span>
@@ -194,11 +197,11 @@ export function SettingsRadioCard({
           )}
         </div>
 
-        {/* Right icon */}
+        {/* 右侧图标 */}
         {icon && <div className="shrink-0 ml-2">{icon}</div>}
       </button>
 
-      {/* Expanded content */}
+      {/* 展开内容：选中时以动画高度展开 */}
       <AnimatePresence initial={false}>
         {isSelected && expandedContent && (
           <motion.div
@@ -219,26 +222,26 @@ export function SettingsRadioCard({
 }
 
 // ============================================
-// SettingsRadioOption (Simpler inline variant)
+// SettingsRadioOption（更轻量的行内单选）
 // ============================================
 
 export interface SettingsRadioOptionProps {
-  /** Value for this option */
+  /** 选项值 */
   value: string
-  /** Option label */
+  /** 选项标签 */
   label: string
-  /** Optional description (inline, after separator) */
+  /** 行内描述（用 "·" 分隔） */
   description?: string
-  /** Disabled state */
+  /** 是否禁用 */
   disabled?: boolean
-  /** Additional className */
+  /** 额外 className */
   className?: string
 }
 
 /**
- * SettingsRadioOption - Simple inline radio option (no card background)
+ * SettingsRadioOption - 简单行内单选项（无独立卡片背景）
  *
- * Use inside a SettingsCard for grouped options without individual backgrounds.
+ * 放在 SettingsCard 内使用，可在分组中展示多个选项而不带各自的背景。
  */
 export function SettingsRadioOption({
   value,
@@ -271,7 +274,7 @@ export function SettingsRadioOption({
         className
       )}
     >
-      {/* Radio circle */}
+      {/* 单选圆圈 */}
       <div
         className={cn(
           'w-4 h-4 rounded-full border-[1.5px] shrink-0',
@@ -286,7 +289,7 @@ export function SettingsRadioOption({
         )}
       </div>
 
-      {/* Label */}
+      {/* 标签区 */}
       <div className="flex-1 min-w-0 flex items-center">
         <span className="text-sm">{label}</span>
         {description && (

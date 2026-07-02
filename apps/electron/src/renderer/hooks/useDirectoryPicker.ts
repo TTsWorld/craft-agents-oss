@@ -7,20 +7,27 @@ import { toast } from 'sonner'
 type ServerBrowserMode = 'browse' | 'manual'
 
 interface DirectoryPickerResult {
-  /** Open the picker (native dialog in local mode, ServerDirectoryBrowser in remote mode). */
+  /** 打开目录选择器（本地模式用原生对话框，远程模式用 ServerDirectoryBrowser） */
   pickDirectory: () => void
-  /** Whether the ServerDirectoryBrowser modal should be rendered. */
+  /** 是否应渲染 ServerDirectoryBrowser 弹窗 */
   showServerBrowser: boolean
-  /** Which mode the ServerDirectoryBrowser should use. */
+  /** ServerDirectoryBrowser 的工作模式 */
   serverBrowserMode: ServerBrowserMode
-  /** Close the server browser without selecting. */
+  /** 取消服务器端目录浏览，不选择路径 */
   cancelServerBrowser: () => void
-  /** Called when a path is selected from the server browser. */
+  /** 从服务器端目录浏览器确认选择某路径 */
   confirmServerBrowser: (path: string) => void
-  /** Whether we're in remote mode (informational). */
+  /** 当前是否处于远程模式（仅作信息展示） */
   isRemote: boolean
 }
 
+/**
+ * 目录选择器 hook。
+ *
+ * 根据当前连接模式自动选择：
+ * - 本地模式：调用 Electron 原生 openFolderDialog
+ * - 远程模式：弹出 ServerDirectoryBrowser，支持浏览或手动输入路径
+ */
 export function useDirectoryPicker(
   onSelect: (path: string) => void
 ): DirectoryPickerResult {
@@ -36,12 +43,12 @@ export function useDirectoryPicker(
 
   const pickDirectory = useCallback(async () => {
     if (isRemote) {
-      // Remote mode — open ServerDirectoryBrowser (browse or manual depending on server support)
+      // 远程模式：打开服务器端目录浏览器（根据服务器能力决定浏览或手动）
       setShowServerBrowser(true)
       return
     }
 
-    // Local mode — native OS dialog
+    // 本地模式：调用操作系统原生对话框
     try {
       const path = await window.electronAPI.openFolderDialog()
       if (path) onSelect(path)

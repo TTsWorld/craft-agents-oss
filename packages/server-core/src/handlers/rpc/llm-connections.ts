@@ -15,9 +15,16 @@ import type { HandlerDeps } from '../handler-deps'
 import { randomUUID } from 'node:crypto'
 import { CLIENT_OPEN_EXTERNAL } from '@craft-agent/server-core/transport'
 
-// Local OAuth state
+// 本文件属于 LLM Connections RPC 模块，负责：大模型连接（LLM connection）的增删改查、
+// 默认连接设置、连接测试、模型刷新，以及 ChatGPT/GitHub Copilot 的 OAuth 流程。
+// Agent 概念：LLM connection 是 Agent 调用大模型 API 所需的配置（provider、baseUrl、model、凭证等），
+// 一个 workspace 可拥有多个 connection，并指定全局或 workspace 级默认连接。
+// TS 提示：`type` 导入与值导入混用时，建议把 type 明确标出；这里 LlmConnectionSetup 是 protocol 包的类型。
+
+// 本地 Copilot OAuth 流程的中断控制器
 let copilotOAuthAbort: AbortController | null = null
 
+// 本 handler 负责注册的 LLM connection 与 OAuth channel 列表
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.llmConnections.LIST,
   RPC_CHANNELS.llmConnections.LIST_WITH_STATUS,
@@ -45,26 +52,31 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.pi.GET_PROVIDER_MODELS,
 ] as const
 
+// registerLlmConnectionsHandlers：注册 LLM 连接与相关 OAuth 的 RPC 路由。
 export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerDeps): void {
   const { sessionManager } = deps
 
-  // Unified handler for LLM connection setup
+  // ============================================================
+  // 统一的 LLM connection 设置
+  // ============================================================
+
+  // SETUP_LLM_CONNECTION：统一的新建/更新 LLM connection 入口。
+  // 处理内置 provider、自定义 endpoint、Pi provider、Bedrock、OAuth identity 等分支。
   server.handle(RPC_CHANNELS.settings.SETUP_LLM_CONNECTION, async (_ctx, setup: LlmConnectionSetup): Promise<{ success: boolean; error?: string }> => {
     try {
       const manager = getCredentialManager()
 
-      // Ensure connection exists in config
+      // 确保 config 中存在该 connection；不存在则创建内置连接
       let connection = getLlmConnection(setup.slug)
       let isNewConnection = false
       if (!connection) {
-        // Reauth guard: if updateOnly is set, the connection must already exist.
-        // Clean up any orphaned credentials from a preceding OAuth flow.
+        // updateOnly  guard：仅允许更新已存在的连接，并清理可能残留的 OAuth 凭证
         if (setup.updateOnly) {
           await manager.deleteLlmCredentials(setup.slug).catch(() => {})
           deps.platform.logger?.warn(`[SETUP_LLM_CONNECTION] updateOnly rejected for missing slug: ${setup.slug}`)
           return { success: false, error: 'Connection not found. Cannot re-authenticate a non-existent connection.' }
         }
-        // Create connection with appropriate defaults based on slug
+        // 根据 slug 创建合适的内置连接默认配置
         connection = createBuiltInConnection(setup.slug, setup.baseUrl)
         isNewConnection = true
       }
@@ -74,7 +86,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       if (setup.baseUrl !== undefined) {
         updates.baseUrl = setup.baseUrl?.trim() || undefined
 
-        // Only mutate providerType for API key connections (not OAuth connections)
+        // 仅对 API key 连接切换 providerType；OAuth 连接保持原类型
         if (isAnthropicProvider(connection.providerType) && connection.authType !== 'oauth') {
           if (hasConfiguredBaseUrl) {
             updates.providerType = 'pi_compat'
@@ -87,10 +99,6 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
             updates.defaultModel = getDefaultModelForConnection('anthropic')
           }
         }
-
-        // Pi API key flow: store baseUrl on the connection (Pi SDK doesn't use it yet,
-        // but it's persisted for future backend support)
-
       }
 
       if (setup.defaultModel !== undefined) {
@@ -117,15 +125,12 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         if (branch.name !== undefined) updates.name = branch.name
         if (branch.piAuthProvider !== undefined) updates.piAuthProvider = branch.piAuthProvider
 
-        // Brand-name override on first setup only (user-renamed connections aren't clobbered on re-save).
+        // 仅在首次设置时覆盖品牌名称；用户已重命名的连接不会被覆盖
         if (isNewConnection && !updates.name && setup.baseUrl?.toLowerCase().includes('manifest.build')) {
           updates.name = 'Manifest'
         }
       } else if (setup.baseUrl !== undefined) {
-        // Base URL was explicitly updated without custom protocol config.
-        // Treat this as non-custom mode and clear stale custom endpoint metadata.
-        // Only downgrade existing connections — new ones already have the correct
-        // providerType from createBuiltInConnection().
+        // 显式更新了 baseUrl 但未配置 custom protocol：清除旧的 custom endpoint 元数据
         updates.customEndpoint = undefined
         if (connection.providerType === 'pi_compat' && connection.authType !== 'oauth' && !isNewConnection) {
           updates.providerType = 'pi'
@@ -133,16 +138,14 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         }
       }
 
-      // Pi API key flow: set piAuthProvider from setup data (e.g. 'anthropic', 'google', 'openai').
-      // Skip when custom endpoint protocol is driving routing.
+      // Pi API key 流程：根据 setup 设置 piAuthProvider（如 anthropic/google/openai）
       if (setup.piAuthProvider && !isCustomEndpointCompat) {
         updates.piAuthProvider = setup.piAuthProvider
-        // Update connection name to show the actual provider (e.g. "Craft Agents Backend (Google AI Studio)")
         const providerName = piAuthProviderDisplayName(setup.piAuthProvider)
         if (providerName) {
           updates.name = `Craft Agents Backend (${providerName})`
         }
-        // Only set default models when using standard Pi provider AND user didn't pick explicit models
+        // 标准 Pi provider 且用户未显式选择模型时，使用 provider 默认模型
         if (!hasConfiguredBaseUrl && !setup.models?.length) {
           updates.models = getDefaultModelsForConnection('pi', setup.piAuthProvider)
           updates.defaultModel = getDefaultModelForConnection('pi', setup.piAuthProvider)
@@ -150,22 +153,14 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         }
       }
 
-      // Pi+Bedrock auth method override — set authType for IAM or environment auth.
-      // providerType stays 'pi' (Bedrock routes through Pi SDK).
+      // Pi+Bedrock 认证方式覆盖
       if (setup.bedrockAuthMethod) {
         updates.authType = setup.bedrockAuthMethod
       }
 
-      // Resolved Anthropic OAuth identity (issue #838). Threaded through SETUP so
-      // it persists on both the new-connection path (addLlmConnection) and the
-      // re-auth path (updateLlmConnection) via the shared pendingConnection/updates
-      // flow below. Fail-soft: only stamp when at least one identity block arrived.
+      // 持久化 Anthropic OAuth 身份（账号/组织）
       const oauthIdentity = setup.oauthIdentity
       if (oauthIdentity?.account || oauthIdentity?.organization) {
-        // Set only fields that are actually present, so `updates` never carries an
-        // explicit `undefined` (matches the guarded-assignment style used above and
-        // keeps the update intent clean). Missing sub-fields are simply not touched;
-        // on re-auth the storage allowlist then preserves any prior value.
         if (oauthIdentity.account?.uuid) updates.oauthAccountUuid = oauthIdentity.account.uuid
         if (oauthIdentity.account?.emailAddress) updates.oauthAccountEmail = oauthIdentity.account.emailAddress
         if (oauthIdentity.organization?.uuid) updates.oauthOrganizationUuid = oauthIdentity.organization.uuid
@@ -173,12 +168,10 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         updates.oauthProfileVerifiedAt = Date.now()
       }
 
+      // Pi provider 模型 ID 规范化：pi/ 前缀 + Bedrock 原生 ID 转换
       const effectiveProviderType = updates.providerType ?? connection.providerType
       if (effectiveProviderType === 'pi') {
         const isBedrockPi = (updates.piAuthProvider ?? connection.piAuthProvider) === 'amazon-bedrock'
-        // For Pi+Bedrock, normalize bare Anthropic IDs to Bedrock-native before adding pi/ prefix
-        // so that resolvePiModel() can find them in the amazon-bedrock registry.
-        // Use the configured AWS region to select the correct inference profile prefix (us/eu).
         const regionPrefix = isBedrockPi ? deriveBedrockRegionPrefix(setup.awsRegion) : undefined
         const toPiModelId = (id: string) => {
           const bare = id.startsWith('pi/') ? id.slice(3) : id
@@ -235,6 +228,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         return { success: false, error: 'Default model is required for compatible endpoints.' }
       }
 
+      // 新增或更新连接配置
       if (isNewConnection) {
         const added = addLlmConnection(pendingConnection)
         if (!added) {
@@ -251,7 +245,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         deps.platform.logger?.info(`Updated LLM connection settings: ${setup.slug}`)
       }
 
-      // Store credential if provided (skip masked placeholders from GET_API_KEY)
+      // 保存 credential（跳过带掩码的占位符）
       const isMasked = setup.credential?.includes('••')
       if (setup.credential && !isMasked) {
         const authType = pendingConnection.authType
@@ -264,7 +258,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         }
       }
 
-      // Pi+Bedrock IAM credentials — stored separately from API keys
+      // Pi+Bedrock IAM 凭证单独存储
       if (setup.iamCredentials) {
         await manager.setLlmIamCredentials(setup.slug, {
           ...setup.iamCredentials,
@@ -273,18 +267,13 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         deps.platform.logger?.info('Saved IAM credentials to LLM connection')
       }
 
-      // Set as default only if no default exists yet (first connection)
+      // 若尚无默认连接，把新连接设为默认
       if (!getDefaultLlmConnection()) {
         setDefaultLlmConnection(setup.slug)
         deps.platform.logger?.info(`Set default LLM connection: ${setup.slug}`)
       }
 
-      // Fetch available models before returning to the UI.
-      // Always refresh for auto-synced connections (e.g. Copilot, Bedrock) — the static
-      // catalog from setup is just a seed that needs replacing with live API data
-      // filtered by the user's policy. For user-defined connections, only refresh
-      // when no models were populated during setup.
-      // Awaited so the model selector shows real available models immediately.
+      // 在返回前刷新可用模型列表；自动同步连接必须刷新，用户定义连接仅在未填充模型时刷新。
       const pendingModels = Array.isArray(pendingConnection.models) ? pendingConnection.models : []
       const isAutoSynced = pendingConnection.modelSelectionMode === 'automaticallySyncedFromProvider'
       if (!pendingModels.length || isAutoSynced) {
@@ -295,12 +284,11 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         }
       }
 
-      // Reinitialize auth for the connection that was just created/updated,
-      // not the global default (which may be a different connection).
+      // 重新初始化该连接的认证状态（环境变量、摘要模型覆盖等）
       await sessionManager.reinitializeAuth(setup.slug)
       deps.platform.logger?.info('Reinitialized auth after LLM connection setup')
 
-      // Clear "Setup later" flag now that user has configured a provider
+      // 用户已配置 provider，清除“稍后再设置”标志
       setSetupDeferred(false)
 
       return { success: true }
@@ -311,8 +299,8 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     }
   })
 
-  // Unified connection test — uses the agent factory to spawn a real agent subprocess
-  // and validate credentials via runMiniCompletion(). Same code path as actual chat.
+  // TEST_LLM_CONNECTION_SETUP：统一的连接测试，实际 spawn Agent 子进程跑 mini completion，
+  // 走真实聊天代码路径验证凭证与连通性。
   server.handle(RPC_CHANNELS.settings.TEST_LLM_CONNECTION_SETUP, async (_ctx, params: import('@craft-agent/shared/protocol').TestLlmConnectionParams): Promise<import('@craft-agent/shared/protocol').TestLlmConnectionResult> => {
     const { provider, apiKey, baseUrl, model, piAuthProvider, customEndpoint } = params
     const trimmedKey = apiKey?.trim() ?? ''
@@ -362,24 +350,27 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   })
 
   // ============================================================
-  // Pi Provider Discovery (main process only — Pi SDK can't run in renderer)
+  // Pi provider 发现（主进程专属 — Pi SDK 无法在 renderer 运行）
   // ============================================================
 
+  // 获取 Pi API key 支持的 provider 列表
   server.handle(RPC_CHANNELS.pi.GET_API_KEY_PROVIDERS, async () => {
     const { getPiApiKeyProviders } = await import('@craft-agent/shared/config')
     return getPiApiKeyProviders()
   })
 
+  // 获取指定 Pi provider 的默认 baseUrl
   server.handle(RPC_CHANNELS.pi.GET_PROVIDER_BASE_URL, async (_ctx, provider: string) => {
     const { getPiProviderBaseUrl } = await import('@craft-agent/shared/config')
     return getPiProviderBaseUrl(provider)
   })
 
+  // 获取指定 Pi provider 的模型列表
   server.handle(RPC_CHANNELS.pi.GET_PROVIDER_MODELS, async (_ctx, provider: string) => {
     const { getModels } = await import('@earendil-works/pi-ai/compat')
     try {
       const models = getModels(provider as Parameters<typeof getModels>[0])
-      const sorted = [...models].sort((a, b) => b.cost.output - a.cost.output || b.cost.input - a.cost.input)
+      const sorted = [...models].sort((a, b) => b.cost.output - a.cost.output || b.cost.input - b.cost.input)
       return {
         models: sorted.map(m => ({
           id: m.id.startsWith('pi/') ? m.id : `pi/${m.id}`,
@@ -397,22 +388,21 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   })
 
   // ============================================================
-  // LLM Connections (provider configurations)
+  // LLM connection 列表（provider 配置）
   // ============================================================
 
-  // List all LLM connections (includes built-in and custom)
+  // 列出所有 LLM connection（内置 + 自定义）
   server.handle(RPC_CHANNELS.llmConnections.LIST, async (): Promise<LlmConnection[]> => {
     return getLlmConnections()
   })
 
-  // List all LLM connections with authentication status
+  // 列出所有 LLM connection 并附带认证状态
   server.handle(RPC_CHANNELS.llmConnections.LIST_WITH_STATUS, async (): Promise<LlmConnectionWithStatus[]> => {
     const connections = getLlmConnections()
     const credentialManager = getCredentialManager()
     const defaultSlug = getDefaultLlmConnection()
 
     return Promise.all(connections.map(async (conn): Promise<LlmConnectionWithStatus> => {
-      // Check if credentials exist for this connection
       const hasCredentials = await credentialManager.hasLlmCredentials(conn.slug, conn.authType)
       return {
         ...conn,
@@ -422,57 +412,47 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     }))
   })
 
-  // Get a specific LLM connection by slug
+  // 按 slug 获取单个 LLM connection
   server.handle(RPC_CHANNELS.llmConnections.GET, async (_ctx, slug: string): Promise<LlmConnection | null> => {
     return getLlmConnection(slug)
   })
 
-  // Get stored API key for an LLM connection (masked — for edit form display only)
+  // 获取 LLM connection 的 API key（脱敏后，仅用于编辑表单展示）
   server.handle(RPC_CHANNELS.llmConnections.GET_API_KEY, async (_ctx, slug: string): Promise<string | null> => {
     const manager = getCredentialManager()
     const key = await manager.getLlmApiKey(slug)
     if (!key) return null
-    // Show provider prefix (first 7 chars) + last 4 chars, mask the middle
     if (key.length > 15) {
       return key.slice(0, 7) + '••••••••' + key.slice(-4)
     }
     return '••••••••'
   })
 
-  // Save (create or update) an LLM connection
-  // If connection.slug exists and is found, updates it; otherwise creates new
+  // 保存 LLM connection（存在则更新，不存在则创建）
   server.handle(RPC_CHANNELS.llmConnections.SAVE, async (_ctx, connection: LlmConnection): Promise<{ success: boolean; error?: string }> => {
     try {
-      // Check if this is an update or create
       const existing = getLlmConnection(connection.slug)
       if (existing) {
-        // Update existing connection (can't change slug)
+        // 更新已有连接（slug 不可变）
         const { slug: _slug, ...updates } = connection
         const success = updateLlmConnection(connection.slug, updates)
         if (!success) {
           return { success: false, error: 'Failed to update connection' }
         }
       } else {
-        // Create new connection
         const success = addLlmConnection(connection)
         if (!success) {
           return { success: false, error: 'Connection with this slug already exists' }
         }
       }
       deps.platform.logger?.info(`LLM connection saved: ${connection.slug}`)
-      // Push runtime updates (e.g. supportsImages toggle) to live sessions on
-      // this connection. Detached so SAVE doesn't block on the per-session
-      // 15s `update_runtime_config` timeout when subprocesses are slow or
-      // wedged. SessionManager serializes the refresh with the next send via
-      // its per-session mutex, and the lazy `getOrCreateAgent` refresh remains
-      // the correctness backstop if the detached push fails.
+      // 异步推送运行时配置更新到该连接上的活跃 session
       sessionManager.refreshConnectionRuntime(connection.slug).catch(error => {
         deps.platform.logger?.warn(
           `Detached runtime push failed for ${connection.slug}: ${error instanceof Error ? error.message : error}`,
         )
       })
-      // Reinitialize auth if the saved connection is the current default
-      // (updates env vars and summarization model override)
+      // 若保存的是当前默认连接，重新初始化认证
       const defaultSlug = getDefaultLlmConnection()
       if (defaultSlug === connection.slug) {
         await sessionManager.reinitializeAuth()
@@ -484,19 +464,17 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     }
   })
 
-  // Delete an LLM connection (at least one connection must remain)
+  // 删除 LLM connection（至少保留一个）
   server.handle(RPC_CHANNELS.llmConnections.DELETE, async (_ctx, slug: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const connection = getLlmConnection(slug)
       if (!connection) {
         return { success: false, error: 'Connection not found' }
       }
-      // deleteLlmConnection handles the "at least one must remain" check
       const success = deleteLlmConnection(slug)
       if (success) {
-        // Stop any periodic model refresh timer for this connection
+        // 停止该连接的模型刷新定时器，并删除关联凭证
         getModelRefreshService().stopConnection(slug)
-        // Also delete associated credentials
         const credentialManager = getCredentialManager()
         await credentialManager.deleteLlmCredentials(slug)
         deps.platform.logger?.info(`LLM connection deleted: ${slug}`)
@@ -508,7 +486,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     }
   })
 
-  // Test an LLM connection (validate credentials and connectivity with actual API call)
+  // 测试 LLM connection：用真实 API 调用验证凭证与连通性
   server.handle(RPC_CHANNELS.llmConnections.TEST, async (_ctx, slug: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const result = await validateStoredBackendConnection({
@@ -538,13 +516,12 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     }
   })
 
-  // Set global default LLM connection
+  // 设置全局默认 LLM connection
   server.handle(RPC_CHANNELS.llmConnections.SET_DEFAULT, async (_ctx, slug: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const success = setDefaultLlmConnection(slug)
       if (success) {
         deps.platform.logger?.info(`Global default LLM connection set to: ${slug}`)
-        // Reinitialize auth so env vars and summarization model override match the new default
         await sessionManager.reinitializeAuth()
       }
       return { success, error: success ? undefined : 'Connection not found' }
@@ -554,12 +531,12 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     }
   })
 
-  // Set workspace default LLM connection
+  // 设置 workspace 级默认 LLM connection
   server.handle(RPC_CHANNELS.llmConnections.SET_WORKSPACE_DEFAULT, async (_ctx, workspaceId: string, slug: string | null): Promise<{ success: boolean; error?: string }> => {
     try {
       const workspace = getWorkspaceOrThrow(workspaceId)
 
-      // Validate connection exists if setting (not clearing)
+      // 设置非空 slug 时校验 connection 存在
       if (slug) {
         const connection = getLlmConnection(slug)
         if (!connection) {
@@ -573,7 +550,6 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         return { success: false, error: 'Failed to load workspace config' }
       }
 
-      // Update workspace defaults
       config.defaults = config.defaults || {}
       if (slug) {
         config.defaults.defaultLlmConnection = slug
@@ -590,7 +566,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     }
   })
 
-  // Refresh available models for a connection (dynamic model discovery)
+  // 刷新指定 connection 的可用模型列表（动态模型发现）
   server.handle(RPC_CHANNELS.llmConnections.REFRESH_MODELS, async (_ctx, slug: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const connection = getLlmConnection(slug)
@@ -608,11 +584,12 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   })
 
   // ============================================================
-  // ChatGPT OAuth (for Codex chatgptAuthTokens mode)
-  // Server-owned: prepare + exchange happen here, browser + callback on client.
+  // ChatGPT OAuth（用于 Codex chatgptAuthTokens 模式）
+  // 服务端负责准备 + 交换 token；浏览器打开与回调由客户端处理。
   // ============================================================
 
-  interface PendingChatGptFlow {
+  /** 进行中的 ChatGPT OAuth 流程状态。 */
+interface PendingChatGptFlow {
     flowId: string
     state: string
     codeVerifier: string
@@ -623,6 +600,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   const pendingChatGptFlows = new Map<string, PendingChatGptFlow>()
   const CHATGPT_FLOW_TTL_MS = 5 * 60 * 1000
 
+  // 清理过期的 ChatGPT OAuth flow
   function cleanupExpiredChatGptFlows() {
     const now = Date.now()
     for (const [state, flow] of pendingChatGptFlows) {
@@ -632,7 +610,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     }
   }
 
-  // chatgpt:startOAuth — prepare PKCE + auth URL, store flow, return to client
+  // chatgpt:startOAuth：准备 PKCE 与 auth URL，存储 flow，返回给客户端
   server.handle(RPC_CHANNELS.chatgpt.START_OAUTH, async (ctx, connectionSlug: string): Promise<{
     authUrl: string
     state: string
@@ -657,7 +635,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     return { authUrl: prepared.authUrl, state: prepared.state, flowId }
   })
 
-  // chatgpt:completeOAuth — exchange code for tokens and store credentials
+  // chatgpt:completeOAuth：用授权码换 token 并保存凭证
   server.handle(RPC_CHANNELS.chatgpt.COMPLETE_OAUTH, async (ctx, args: {
     flowId: string
     code: string
@@ -700,7 +678,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     }
   })
 
-  // Cancel ongoing ChatGPT OAuth flow
+  // 取消进行中的 ChatGPT OAuth flow
   server.handle(RPC_CHANNELS.chatgpt.CANCEL_OAUTH, async (ctx, args?: { state?: string }): Promise<{ success: boolean }> => {
     if (args?.state) {
       const flow = pendingChatGptFlows.get(args.state)
@@ -712,7 +690,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     return { success: true }
   })
 
-  // Get ChatGPT authentication status
+  // 获取 ChatGPT 认证状态
   server.handle(RPC_CHANNELS.chatgpt.GET_AUTH_STATUS, async (_ctx, connectionSlug: string): Promise<{
     authenticated: boolean
     expiresAt?: number
@@ -726,11 +704,11 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         return { authenticated: false }
       }
 
-      // Check if expired (with 5-minute buffer)
+      // 提前 5 分钟视为过期；有 refresh token 则可以刷新
       const isExpired = creds.expiresAt && Date.now() > creds.expiresAt - 5 * 60 * 1000
 
       return {
-        authenticated: !isExpired || !!creds.refreshToken, // Can refresh if has refresh token
+        authenticated: !isExpired || !!creds.refreshToken,
         expiresAt: creds.expiresAt,
         hasRefreshToken: !!creds.refreshToken,
       }
@@ -740,7 +718,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     }
   })
 
-  // Logout from ChatGPT (clear stored tokens)
+  // 登出 ChatGPT：清除 token
   server.handle(RPC_CHANNELS.chatgpt.LOGOUT, async (_ctx, connectionSlug: string): Promise<{ success: boolean }> => {
     try {
       const credentialManager = getCredentialManager()
@@ -757,7 +735,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   // GitHub Copilot OAuth
   // ============================================================
 
-  // Start GitHub Copilot OAuth flow (device flow via Pi SDK)
+  // 启动 GitHub Copilot OAuth device flow（通过 Pi SDK）
   server.handle(RPC_CHANNELS.copilot.START_OAUTH, async (ctx, connectionSlug: string): Promise<{
     success: boolean
     error?: string
@@ -766,15 +744,14 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       const { loginGitHubCopilot } = await import('@earendil-works/pi-ai/oauth')
       const credentialManager = getCredentialManager()
 
-      // Cancel any previous in-flight flow
+      // 取消之前未完成的 flow
       copilotOAuthAbort?.abort()
       copilotOAuthAbort = new AbortController()
 
       deps.platform.logger?.info(`Starting GitHub Copilot OAuth device flow for connection: ${connectionSlug}`)
 
-      // Use Pi SDK's login flow — this handles the device code flow AND
-      // the critical Copilot token exchange that determines the correct
-      // API endpoint for the user's subscription tier (individual/business/enterprise).
+      // Pi SDK 处理 device code flow 以及关键的 Copilot token 交换，
+      // 根据用户订阅等级（个人/商业/企业）确定正确的 API endpoint。
       const credentials = await loginGitHubCopilot({
         onDeviceCode: ({ userCode, verificationUri }) => {
           deps.platform.logger?.info(`[GitHub OAuth] Device code: ${userCode}`)
@@ -782,13 +759,13 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
             userCode,
             verificationUri,
           })
-          // Open GitHub device code page on the client's machine
+          // 在客户端机器上打开 GitHub 设备码页面
           server.invokeClient(ctx.clientId, CLIENT_OPEN_EXTERNAL, verificationUri).catch(err => {
             deps.platform.logger?.warn(`Failed to open browser for GitHub OAuth: ${err}`)
           })
         },
         onPrompt: async () => {
-          // Pi SDK asks for GitHub Enterprise domain — return empty for github.com
+          // github.com 不需要企业域名
           return ''
         },
         onProgress: (message) => {
@@ -799,10 +776,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
 
       copilotOAuthAbort = null
 
-      // Store the full OAuth credential:
-      // - accessToken = Copilot API token (contains proxy-ep for correct endpoint)
-      // - refreshToken = GitHub access token (used to refresh the Copilot token)
-      // - expiresAt = Copilot token expiry (short-lived, ~1 hour)
+      // accessToken = Copilot API token；refreshToken = GitHub access token；expiresAt = Copilot token 过期时间
       await credentialManager.setLlmOAuth(connectionSlug, {
         accessToken: credentials.access,
         refreshToken: credentials.refresh,
@@ -821,7 +795,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     }
   })
 
-  // Cancel ongoing GitHub OAuth flow
+  // 取消进行中的 GitHub OAuth flow
   server.handle(RPC_CHANNELS.copilot.CANCEL_OAUTH, async (): Promise<{ success: boolean }> => {
     if (copilotOAuthAbort) {
       copilotOAuthAbort.abort()
@@ -831,7 +805,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     return { success: true }
   })
 
-  // Get GitHub Copilot authentication status
+  // 获取 GitHub Copilot 认证状态
   server.handle(RPC_CHANNELS.copilot.GET_AUTH_STATUS, async (_ctx, connectionSlug: string): Promise<{
     authenticated: boolean
   }> => {
@@ -848,7 +822,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     }
   })
 
-  // Logout from Copilot (clear stored tokens)
+  // 登出 Copilot：清除 token
   server.handle(RPC_CHANNELS.copilot.LOGOUT, async (_ctx, connectionSlug: string): Promise<{ success: boolean }> => {
     try {
       const credentialManager = getCredentialManager()

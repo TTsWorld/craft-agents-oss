@@ -1,28 +1,28 @@
 /**
- * @deprecated This file is deprecated. Use mentions.ts instead.
- * The unified mentions module supports both skills and sources.
+ * @deprecated 本文件已弃用，请使用 mentions.ts。
+ * 统一的 mentions 模块同时支持 skill 与 source。
  *
- * Utilities for parsing @skill mentions from chat messages
+ * 从聊天消息中解析 @skill mention 的工具函数（旧版 API，保留作向后兼容）。
  */
 
 /**
- * Extract valid @skill mentions from message text
+ * 从消息文本中提取有效的 @skill mention。
  *
- * @param text - The message text to parse
- * @param availableSlugs - Valid skill slugs to match against
- * @returns Array of unique valid skill slugs mentioned in the text
+ * @param text - 要解析的消息文本
+ * @param availableSlugs - 有效 skill slug 列表，用于过滤
+ * @returns 文本中提到的唯一有效 skill slug 数组
  *
  * @example
  * parseSkillMentions('@bug-reporter help me fix this', ['bug-reporter', 'code-review'])
- * // Returns: ['bug-reporter']
+ * // 返回: ['bug-reporter']
  *
  * @example
  * parseSkillMentions('@foo @bar review this', ['bar'])
- * // Returns: ['bar'] (foo is not a valid slug)
+ * // 返回: ['bar']（foo 不是有效 slug）
  */
 export function parseSkillMentions(text: string, availableSlugs: string[]): string[] {
-  // Match @word patterns (allowing hyphens and underscores)
-  // Must be at start of string or after whitespace
+  // 匹配 @word 模式（允许连字符与下划线）
+  // 必须出现在字符串开头或空白符之后
   const mentionPattern = /(?:^|\s)@([\w-]+)/g
   const mentions = new Set<string>()
 
@@ -38,17 +38,17 @@ export function parseSkillMentions(text: string, availableSlugs: string[]): stri
 }
 
 /**
- * Remove @mentions from message text
+ * 从消息文本中移除 @mention。
  *
- * @param text - The message text with mentions
- * @returns Text with @mentions removed, preserving other content
+ * @param text - 带 mention 的消息文本
+ * @returns 移除 @mention 后的文本，保留其他内容
  *
  * @example
  * stripSkillMentions('@bug-reporter help me fix this')
- * // Returns: 'help me fix this'
+ * // 返回: 'help me fix this'
  */
 export function stripSkillMentions(text: string): string {
-  // Remove @word patterns (must be at start or after whitespace)
+  // 移除 @word 模式（必须位于开头或空白符后）
   return text
     .replace(/(?:^|\s)@[\w-]+/g, '')
     .replace(/\s+/g, ' ')

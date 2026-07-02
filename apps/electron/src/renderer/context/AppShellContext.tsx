@@ -1,9 +1,10 @@
 /**
- * AppShellContext
+ * AppShellContext（应用外壳上下文）
  *
- * Provides session and workspace data to tab panels without prop drilling.
- * This context is used by ChatTabPanel and other components that need
- * access to the current session, workspace, and callback functions.
+ * 向标签面板（tab panels）提供当前会话、工作空间以及各类回调函数，
+ * 避免从 AppShell 到 ChatTabPanel 等深层组件之间层层传递 props。
+ *
+ * ChatTabPanel 和其他需要当前会话/工作空间的组件都通过这里读取数据。
  */
 
 import * as React from 'react'
@@ -31,54 +32,57 @@ import { defaultSessionOptions } from '../hooks/useSessionOptions'
 import { sessionAtomFamily } from '../atoms/sessions'
 
 export interface AppShellContextType {
-  // Data
-  // NOTE: sessions is NOT included here - use sessionMetaMapAtom for listing
-  // and useSession(id) hook for individual sessions. This prevents closures
-  // from retaining the full messages array and causing memory leaks.
+  // 数据
+  // 注意：这里没有直接放 sessions 列表；列表用 sessionMetaMapAtom，单个会话用 useSession(id)。
+  // 这样可以避免闭包持有完整消息数组导致内存泄漏。
+  /** 当前用户可见的所有工作空间 */
   workspaces: Workspace[]
+  /** 当前激活的工作空间 ID；null 表示未选中任何工作空间 */
   activeWorkspaceId: string | null
-  /** Workspace slug for SDK skill qualification (derived from workspace path) */
+  /** 当前工作空间的 slug，用于 SDK skill 资格判断（从工作空间路径派生） */
   activeWorkspaceSlug: string | null
-  /** All LLM connections with authentication status */
+  /** 所有 LLM 连接及其认证状态 */
   llmConnections: LlmConnectionWithStatus[]
-  /** Default LLM connection slug for the current workspace */
+  /** 当前工作空间的默认 LLM 连接 slug */
   workspaceDefaultLlmConnection?: string
-  /** Refresh LLM connections from config */
+  /** 从配置重新刷新 LLM 连接 */
   refreshLlmConnections: () => Promise<void>
+  /** 各会话待处理的权限请求队列（sessionId -> 请求数组） */
   pendingPermissions: Map<string, PermissionRequest[]>
+  /** 各会话待处理的凭据请求队列（sessionId -> 请求数组） */
   pendingCredentials: Map<string, CredentialRequest[]>
-  /** Get draft input text for a session - reads from ref without triggering re-renders */
+  /** 读取某个会话的草稿输入文本；从 ref 读取，不会触发重渲染 */
   getDraft: (sessionId: string) => string
-  /** Get persisted attachment refs (path + name) for a session's draft - no file IO */
+  /** 读取某个会话草稿中持久化的附件引用（path + name），不执行文件 IO */
   getDraftAttachmentRefs: (sessionId: string) => import('@craft-agent/shared/config').DraftAttachmentRef[]
-  /** Hydrate persisted attachment refs into full FileAttachment objects (async, reads files) */
+  /** 把持久化的附件引用转换成完整的 FileAttachment 对象（异步，会读取文件） */
   hydrateDraftAttachments: (sessionId: string) => Promise<FileAttachment[]>
-  /** All enabled sources for this workspace - provided by AppShell component */
+  /** 当前工作空间所有已启用的 source（由 AppShell 组件提供） */
   enabledSources?: LoadedSource[]
-  /** All skills for this workspace - provided by AppShell component (for @mentions) */
+  /** 当前工作空间所有 skill（由 AppShell 组件提供，用于 @mention） */
   skills?: LoadedSkill[]
-  /** Working directory of the active session — needed for project-level skill resolution */
+  /** 当前会话的工作目录，用于项目级 skill 解析 */
   activeSessionWorkingDirectory?: string
-  /** All label configs (tree) for label menu and badge display */
+  /** 所有标签配置（树形），用于标签菜单和角标展示 */
   labels?: import('@craft-agent/shared/labels').LabelConfig[]
-  /** Callback when session labels change */
+  /** 会话标签变化时的回调 */
   onSessionLabelsChange?: (sessionId: string, labels: string[]) => void
   /**
-   * Open All Sessions scoped to a task: replaces the view's label filter (and project
-   * filter when given) with the task's scope — the same user-clearable header-chip
-   * filters — and selects the session. Used by kanban tile/subtask clicks + post-create.
+   * 打开限定到某个任务范围的 All Sessions：用该任务的范围（即用户可在头部 chip 上清除的
+   * 标签筛选，以及可选的项目筛选）替换视图当前的筛选条件，并选中该 session。
+   * 用于看板磁贴/子任务点击以及创建任务之后。
    */
   onJumpToTaskSessions?: (sessionId: string, scope: { labelId: string; projectId?: string }) => void
-  /** Enabled permission modes for Shift+Tab cycling */
+  /** 可通过 Shift+Tab 循环切换的权限模式 */
   enabledModes?: PermissionMode[]
-  /** Dynamic todo states from workspace config (provided by AppShell, defaults to empty) */
+  /** 工作空间配置中的动态会话状态（AppShell 提供，默认空数组） */
   sessionStatuses?: SessionStatusConfig[]
 
-  // Unified session options map
-  /** All session-scoped options in one map. Use useSessionOptionsFor() hook for easy access. */
+  // 统一的会话选项 Map
+  /** 所有会话级选项集中放在一个 Map 里；组件推荐用 useSessionOptionsFor() 访问 */
   sessionOptions: Map<string, SessionOptions>
 
-  // Session callbacks
+  // 会话相关回调
   onCreateSession: (workspaceId: string, options?: import('../../shared/types').CreateSessionOptions) => Promise<Session>
   onSendMessage: (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], badges?: import('@craft-agent/core').ContentBadge[]) => void
   onRenameSession: (sessionId: string, name: string) => void
@@ -88,12 +92,12 @@ export interface AppShellContextType {
   onUnarchiveSession: (sessionId: string) => void
   onMarkSessionRead: (sessionId: string) => void
   onMarkSessionUnread: (sessionId: string) => void
-  /** Track which session user is viewing (for unread state machine) */
+  /** 记录用户正在查看哪个会话（用于未读状态机） */
   onSetActiveViewingSession: (sessionId: string) => void
   onSessionStatusChange: (sessionId: string, state: SessionStatus) => void
   onDeleteSession: (sessionId: string, skipConfirmation?: boolean) => Promise<boolean>
 
-  // Permission handling
+  // 权限处理
   onRespondToPermission?: (
     sessionId: string,
     requestId: string,
@@ -102,80 +106,80 @@ export interface AppShellContextType {
     options?: import('../../shared/types').PermissionResponseOptions
   ) => void
 
-  // Credential handling
+  // 凭据处理
   onRespondToCredential?: (
     sessionId: string,
     requestId: string,
     response: CredentialResponse
   ) => void
 
-  // File/URL handlers - these can open in tabs or external apps
+  // 文件/URL 处理：可以在标签页或外部应用中打开
   onOpenFile: (path: string) => void
   onOpenUrl: (url: string) => void
 
-  // Workspace
+  // 工作空间
   onSelectWorkspace: (id: string, openInNewWindow?: boolean) => void | Promise<void>
   onRefreshWorkspaces?: () => void
 
-  // App actions
+  // 应用动作
   onOpenSettings: () => void
   onOpenKeyboardShortcuts: () => void
   onOpenStoredUserPreferences: () => void
   onReset: () => void
 
-  // Unified session options callback
+  // 统一的会话选项回调
   onSessionOptionsChange: (sessionId: string, updates: SessionOptionUpdates) => void
 
-  // Input draft callback
+  // 输入草稿回调
   onInputChange: (sessionId: string, value: string) => void
 
-  // Attachment draft callback — persists attachment refs per session
+  // 附件草稿回调：按会话持久化附件引用
   onAttachmentsChange: (sessionId: string, attachments: FileAttachment[]) => void
 
-  // Source selection callback (per-session) - provided by AppShell component
+  // Source 选择回调（按会话），由 AppShell 组件提供
   onSessionSourcesChange?: (sessionId: string, sourceSlugs: string[]) => void
 
-  // Open a new chat with optional agent, name, and pre-filled input
+  // 打开新聊天，可指定 agent、名称、预填充输入
   openNewChat?: (params?: NewChatActionParams) => Promise<void>
 
-  // Right sidebar button (for page headers)
+  // 右侧边栏按钮（用于页面头部）
   rightSidebarButton?: React.ReactNode
 
-  // Leading action button for panel header (e.g., back button in compact mode)
+  // 面板头部的左侧操作按钮（例如紧凑模式下的返回按钮）
   leadingAction?: React.ReactNode
 
-  /** Whether this panel is the focused panel (for multi-panel visual differentiation) */
+  /** 当前面板是否是聚焦面板（多面板时用于视觉区分） */
   isFocusedPanel?: boolean
 
-  /** Whether the shell is currently in compact/narrow mode */
+  /** 当前外壳是否处于紧凑/窄屏模式 */
   isCompactMode?: boolean
 
-  // Session list search state (for ChatDisplay highlighting)
-  /** Current search query from session list - used to highlight matches in ChatDisplay */
+  // 会话列表搜索状态（用于 ChatDisplay 高亮）
+  /** 来自会话列表的当前搜索词，用于 ChatDisplay 中高亮匹配 */
   sessionListSearchQuery?: string
-  /** Whether search mode is active (prevents focus stealing to chat input even with empty query) */
+  /** 是否处于搜索模式（即使搜索词为空也阻止焦点自动进入聊天输入框） */
   isSearchModeActive?: boolean
-  /** Callback to update session list search query */
+  /** 更新会话列表搜索词的回调 */
   setSessionListSearchQuery?: (query: string) => void
-  /** Ref to ChatDisplay for navigation between matches */
+  /** ChatDisplay 的 ref，用于在匹配项之间导航 */
   chatDisplayRef?: React.RefObject<ChatDisplayHandle>
-  /** Callback when ChatDisplay match info changes (for immediate UI updates) */
+  /** ChatDisplay 匹配信息变化时的回调（用于即时更新 UI） */
   onChatMatchInfoChange?: (info: { sessionId: string | null; count: number; index: number; isHighlighting: boolean }) => void
 
-  // Automation management
-  /** Test an automation by ID — executes its actions and returns results */
+  // 自动化管理
+  /** 按 ID 测试某个自动化：执行动作并返回结果 */
   onTestAutomation?: (automationId: string) => void
-  /** Toggle an automation's enabled state by ID */
+  /** 按 ID 切换自动化的启用状态 */
   onToggleAutomation?: (automationId: string) => void
-  /** Duplicate an automation by ID — clones config with " Copy" suffix */
+  /** 按 ID 复制某个自动化：克隆配置并加上 " Copy" 后缀 */
   onDuplicateAutomation?: (automationId: string) => void
-  /** Delete an automation by ID — removes from automations config */
+  /** 按 ID 删除某个自动化：从 automations 配置中移除 */
   onDeleteAutomation?: (automationId: string) => void
-  /** Map of automationId → last test result */
+  /** 自动化 ID 到最近测试结果的映射 */
   automationTestResults?: Record<string, import('../components/automations/types').TestResult>
-  /** Fetch execution history for an automation by ID */
+  /** 获取某个自动化的执行历史 */
   getAutomationHistory?: (automationId: string) => Promise<import('../components/automations/types').ExecutionEntry[]>
-  /** Replay (re-execute) webhook actions for a failed automation */
+  /** 重新执行失败自动化的 webhook 动作 */
   onReplayAutomation?: (automationId: string, event: string) => void
 }
 
@@ -191,7 +195,7 @@ export function AppShellProvider({
   return <AppShellContext.Provider value={value}>{children}</AppShellContext.Provider>
 }
 
-/** Returns context or null if outside provider (safe for optional consumers like playground) */
+/** 安全版 Hook：没在 Provider 内时返回 null，适用于 playground 等可选消费场景 */
 export function useOptionalAppShellContext(): AppShellContextType | null {
   return useContext(AppShellContext)
 }
@@ -205,17 +209,19 @@ export function useAppShellContext(): AppShellContextType {
 }
 
 /**
- * Get a specific session by ID using per-session atoms
- * This hook only re-renders when the specific session changes,
- * not when other sessions change (solves streaming isolation)
+ * 按会话 ID 获取单个会话
+ * 使用 sessionAtomFamily 实现“按会话隔离”：只有这个会话变化时才会重渲染，
+ * 解决流式输出时整个列表级联更新的问题。
+ *
+ * Jotai 的 atomFamily 类似一个工厂，每个 sessionId 对应一个独立的小状态单元。
  */
 export function useSession(sessionId: string): Session | null {
-  // Use per-session atom for isolated updates
+  // 用 per-session atom 实现独立更新
   return useAtomValue(sessionAtomFamily(sessionId))
 }
 
 /**
- * Get the active workspace
+ * 获取当前激活的工作空间
  */
 export function useActiveWorkspace(): Workspace | null {
   const { workspaces, activeWorkspaceId } = useAppShellContext()
@@ -224,7 +230,7 @@ export function useActiveWorkspace(): Workspace | null {
 }
 
 /**
- * Get pending permission for a session (first in queue)
+ * 获取某个会话队列中的第一个待处理权限请求
  */
 export function usePendingPermission(sessionId: string): PermissionRequest | undefined {
   const { pendingPermissions } = useAppShellContext()
@@ -232,7 +238,7 @@ export function usePendingPermission(sessionId: string): PermissionRequest | und
 }
 
 /**
- * Get pending credential request for a session (first in queue)
+ * 获取某个会话队列中的第一个待处理凭据请求
  */
 export function usePendingCredential(sessionId: string): CredentialRequest | undefined {
   const { pendingCredentials } = useAppShellContext()
@@ -240,10 +246,10 @@ export function usePendingCredential(sessionId: string): CredentialRequest | und
 }
 
 /**
- * Hook to get and update session options for a specific session.
- * This is the primary way components should access session options.
+ * 获取并更新某个会话的选项
+ * 这是组件访问 sessionOptions 的主要方式。
  *
- * Usage:
+ * 用法：
  *   const { options, setPermissionMode } = useSessionOptionsFor(sessionId)
  *   setPermissionMode('safe')
  */
@@ -256,8 +262,10 @@ export function useSessionOptionsFor(sessionId: string): {
 } {
   const { sessionOptions, onSessionOptionsChange } = useAppShellContext()
 
+  // 如果该会话还没有选项，使用默认值
   const options = sessionOptions.get(sessionId) ?? defaultSessionOptions
 
+  // 更新单个选项；泛型 K 保证 key 和 value 类型对应
   const setOption = useCallback(<K extends keyof SessionOptions>(
     key: K,
     value: SessionOptions[K]
@@ -265,14 +273,17 @@ export function useSessionOptionsFor(sessionId: string): {
     onSessionOptionsChange(sessionId, { [key]: value })
   }, [sessionId, onSessionOptionsChange])
 
+  // 批量更新多个选项
   const setOptions = useCallback((updates: SessionOptionUpdates) => {
     onSessionOptionsChange(sessionId, updates)
   }, [sessionId, onSessionOptionsChange])
 
+  // 专门设置权限模式
   const setPermissionMode = useCallback((mode: PermissionMode) => {
     setOption('permissionMode', mode)
   }, [setOption])
 
+  // 判断当前是否处于安全模式
   const isSafeModeActive = useCallback(() => {
     return options.permissionMode === 'safe'
   }, [options.permissionMode])

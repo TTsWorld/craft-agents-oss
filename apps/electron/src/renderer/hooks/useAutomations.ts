@@ -1,12 +1,12 @@
 /**
  * useAutomations
  *
- * Encapsulates all automations state management:
- * - Loading automations from automations.json
- * - Subscribing to live updates
- * - Test, toggle, duplicate, delete handlers
- * - Delete confirmation state
- * - Syncing automations to Jotai atom for cross-component access
+ * 封装自动化（automation）的状态管理：
+ * - 从 automations.json 加载自动化规则
+ * - 订阅实时更新
+ * - 测试、启用/禁用、复制、删除等处理函数
+ * - 删除确认状态
+ * - 把自动化同步到 Jotai atom，供跨组件访问
  */
 
 import { useState, useCallback, useEffect } from 'react'
@@ -18,7 +18,7 @@ import { parseAutomationsConfig, type AutomationListItem, type TestResult, type 
 
 async function loadAutomationsFromServer(workspaceId: string): Promise<AutomationListItem[]> {
   const json = await window.electronAPI.getAutomations(workspaceId)
-  if (!json) return [] // No automations configured yet
+  if (!json) return [] // 尚未配置自动化规则
   return parseAutomationsConfig(json)
 }
 
@@ -45,15 +45,14 @@ export function useAutomations(
   const [automationTestResults, setAutomationTestResults] = useState<Record<string, TestResult>>({})
   const [automationPendingDelete, setAutomationPendingDelete] = useState<string | null>(null)
 
-  // Sync automations to Jotai atom for cross-component access (MainContentPanel)
+  // 把自动化同步到 Jotai atom，供跨组件访问（如 MainContentPanel）
   const setAutomationsAtom = useSetAtom(automationsAtom)
   useEffect(() => {
     setAutomationsAtom(automations)
   }, [automations, setAutomationsAtom])
 
-  // Load automations from server and hydrate lastExecutedAt from history in one step.
-  // This avoids the race where a config reload wipes timestamps before the
-  // history effect can re-merge them.
+  // 从服务端加载自动化，并一步把 lastExecutedAt 从历史记录中回填。
+  // 这样避免了配置重载后时间戳被清空、而历史记录 effect 还没来得及合并的竞态。
   const loadAndHydrate = useCallback(async () => {
     if (!activeWorkspaceId) return
     try {
@@ -63,29 +62,29 @@ export function useAutomations(
         for (const item of items) {
           item.lastExecutedAt = map[item.id] ?? item.lastExecutedAt
         }
-      } catch { /* history unavailable — timestamps stay undefined */ }
+      } catch { /* 历史记录不可用 —— 时间戳保持 undefined */ }
       setAutomations(items)
     } catch {
       setAutomations([])
     }
   }, [activeWorkspaceId])
 
-  // Initial load
+  // 初始加载
   useEffect(() => {
     loadAndHydrate()
   }, [loadAndHydrate])
 
-  // Subscribe to live automations updates (when automations.json changes on disk)
+  // 订阅自动化实时更新（磁盘上 automations.json 变化时）
   useEffect(() => {
     if (!activeWorkspaceId) return
     const cleanup = window.electronAPI.onAutomationsChanged(() => { loadAndHydrate() })
     return () => { cleanup() }
   }, [activeWorkspaceId, loadAndHydrate])
 
-  // Shared lookup — avoids repeating automations.find() in every callback
+  // 共享查找函数 —— 避免每个回调都写 automations.find()
   const findAutomation = useCallback((id: string) => automations.find(h => h.id === id), [automations])
 
-  // Test automation — aggregate all action results
+  // 测试自动化 —— 汇总所有 action 的结果
   const handleTestAutomation = useCallback((automationId: string) => {
     const automation = findAutomation(automationId)
     if (!automation || !activeWorkspaceId) return
@@ -143,7 +142,7 @@ export function useAutomations(
       .catch(() => toast.error(t('toast.failedToDuplicateAutomation')))
   }, [findAutomation, activeWorkspaceId])
 
-  // Delete: show confirmation dialog
+  // 删除：先显示确认弹窗
   const handleDeleteAutomation = useCallback((automationId: string) => {
     setAutomationPendingDelete(automationId)
   }, [])
@@ -157,7 +156,7 @@ export function useAutomations(
     setAutomationPendingDelete(null)
   }, [pendingDeleteAutomation, activeWorkspaceId])
 
-  // Fetch execution history for a specific automation
+  // 获取某个自动化的执行历史
   const getAutomationHistory = useCallback(async (automationId: string): Promise<ExecutionEntry[]> => {
     if (!activeWorkspaceId) return []
     try {
@@ -190,7 +189,7 @@ export function useAutomations(
     }
   }, [activeWorkspaceId, findAutomation])
 
-  // Replay failed webhook actions for a specific automation
+  // 重放某个自动化的失败 webhook action
   const handleReplayAutomation = useCallback((automationId: string, event: string) => {
     if (!activeWorkspaceId) return
     window.electronAPI.replayAutomation(activeWorkspaceId, automationId, event)

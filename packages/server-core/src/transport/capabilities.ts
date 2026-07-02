@@ -1,31 +1,34 @@
 /**
- * Client capabilities — named actions a client can perform on behalf of the server.
+ * 客户端能力（Capabilities）定义。
  *
- * See docs/adr-transport-locality.md for the locality boundary definition.
+ * 服务器可以请求客户端执行一些本地操作（打开浏览器、显示对话框、选择文件等），
+ * 这些能力在 WebSocket 握手时由客户端声明，服务端按需调用。
+ *
+ * 类似 gRPC 里的客户端流式方法，但更简单：服务端通过 invokeClient 直接调用客户端 handler。
  */
 
 import type { BrowserCapabilityRequest } from './browser-capability'
 import type { RpcServer } from './types'
 
-/** Capability: open a URL in the client's default browser. */
+/** 在客户端默认浏览器打开 URL */
 export const CLIENT_OPEN_EXTERNAL = 'client:openExternal'
 
-/** Capability: open a file with the OS default application. */
+/** 用系统默认应用打开文件 */
 export const CLIENT_OPEN_PATH = 'client:openPath'
 
-/** Capability: reveal a file in Finder / Explorer. */
+/** 在 Finder / Explorer 中定位文件 */
 export const CLIENT_SHOW_IN_FOLDER = 'client:showItemInFolder'
 
-/** Capability: show a confirmation dialog (message box) on the client. */
+/** 在客户端显示确认对话框 */
 export const CLIENT_CONFIRM_DIALOG = 'client:confirmDialog'
 
-/** Capability: show a native file/folder picker on the client. */
+/** 在客户端显示原生文件选择器 */
 export const CLIENT_OPEN_FILE_DIALOG = 'client:openFileDialog'
 
-/** Capability: drive a local `BrowserPaneManager` instance for a remote agent. */
+/** 调用客户端的 BrowserPaneManager（远程浏览器能力） */
 export const CLIENT_BROWSER_INVOKE = 'client:browser:invoke'
 
-/** All capabilities a local Electron client advertises on handshake. */
+/** Electron 客户端在握手时声明的所有能力 */
 export const LOCAL_CLIENT_CAPABILITIES: readonly string[] = [
   CLIENT_OPEN_EXTERNAL,
   CLIENT_OPEN_PATH,
@@ -36,15 +39,11 @@ export const LOCAL_CLIENT_CAPABILITIES: readonly string[] = [
 ]
 
 // ---------------------------------------------------------------------------
-// Helper wrappers — thin error-handling around server.invokeClient()
+// 能力调用辅助函数（对 server.invokeClient 的薄封装 + 错误处理）
 // ---------------------------------------------------------------------------
 
 /**
- * Ask a specific client to open a URL in its default browser.
- *
- * Returns `{ opened: true }` on success.
- * Returns `{ opened: false, error, authUrl }` on failure — caller can
- * show authUrl to user for manual "copy link / open" action.
+ * 请求客户端用默认浏览器打开 URL。
  */
 export async function requestClientOpenExternal(
   server: RpcServer,
@@ -62,8 +61,7 @@ export async function requestClientOpenExternal(
 }
 
 /**
- * Ask the client to open a file with the OS default application.
- * Equivalent to Electron's `shell.openPath()`.
+ * 请求客户端用系统默认应用打开文件（等价于 Electron shell.openPath）。
  */
 export async function requestClientOpenPath(
   server: RpcServer,
@@ -80,8 +78,7 @@ export async function requestClientOpenPath(
 }
 
 /**
- * Ask the client to reveal a file in Finder / Explorer.
- * Equivalent to Electron's `shell.showItemInFolder()`.
+ * 请求客户端在 Finder / Explorer 中定位文件。
  */
 export async function requestClientShowInFolder(
   server: RpcServer,
@@ -91,7 +88,7 @@ export async function requestClientShowInFolder(
   await server.invokeClient(clientId, CLIENT_SHOW_IN_FOLDER, path)
 }
 
-/** Spec for a confirmation dialog (maps to Electron's MessageBoxOptions). */
+/** 确认对话框规格（映射到 Electron MessageBoxOptions） */
 export interface ConfirmDialogSpec {
   type?: 'none' | 'info' | 'warning' | 'error' | 'question'
   title: string
@@ -103,8 +100,7 @@ export interface ConfirmDialogSpec {
 }
 
 /**
- * Ask the client to show a confirmation dialog.
- * Returns the index of the clicked button.
+ * 请求客户端显示确认对话框，返回点击按钮的索引。
  */
 export async function requestClientConfirmDialog(
   server: RpcServer,
@@ -114,7 +110,7 @@ export async function requestClientConfirmDialog(
   return await server.invokeClient(clientId, CLIENT_CONFIRM_DIALOG, spec)
 }
 
-/** Spec for a file/folder picker dialog (maps to Electron's OpenDialogOptions). */
+/** 文件选择器对话框规格（映射到 Electron OpenDialogOptions） */
 export interface FileDialogSpec {
   title?: string
   defaultPath?: string
@@ -123,8 +119,7 @@ export interface FileDialogSpec {
 }
 
 /**
- * Ask the client to show a native file/folder picker.
- * Returns the selection result (canceled + filePaths).
+ * 请求客户端显示原生文件/文件夹选择器。
  */
 export async function requestClientOpenFileDialog(
   server: RpcServer,
@@ -135,10 +130,10 @@ export async function requestClientOpenFileDialog(
 }
 
 /**
- * Ask the client to invoke a `BrowserPaneManager` method.
+ * 请求客户端调用 BrowserPaneManager 方法。
  *
- * Errors propagate with `.code` preserved (see transport error-code preservation
- * in `client.ts` / `server.ts`). Callers can branch on `(err as any).code`.
+ * 泛型 T 表示远端 BrowserPaneManager 方法的返回类型；
+ * server.invokeClient 返回 Promise<any>，这里用 `as Promise<T>` 做类型断言。
  */
 export async function requestClientBrowserInvoke<T>(
   server: RpcServer,

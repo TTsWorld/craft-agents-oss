@@ -1,13 +1,24 @@
+/**
+ * collapsible — React 组件
+ * 
+ * 所属目录：ui
+ */
+/**
+ * Collapsible — 可折叠面板组件
+ *
+ * 基于 Radix UI Collapsible 封装，并提供 AnimatedCollapsibleContent
+ * 用 motion 动画实现高度 0 → auto 的展开效果（纯 CSS 做不到 height: auto 动画）。
+ */
 import * as CollapsiblePrimitive from "@radix-ui/react-collapsible"
 import { motion, AnimatePresence } from "motion/react"
 import * as React from "react"
 
-// Radix primitives (unchanged)
+// 直接复用 Radix 原组件
 const Collapsible = CollapsiblePrimitive.Root
 const CollapsibleTrigger = CollapsiblePrimitive.CollapsibleTrigger
 const CollapsibleContent = CollapsiblePrimitive.CollapsibleContent
 
-// Spring config - snappy, no bounce
+// 弹簧动画配置：干脆、无回弹
 const springTransition = {
   type: "spring" as const,
   stiffness: 1400,
@@ -15,16 +26,19 @@ const springTransition = {
 }
 
 interface AnimatedCollapsibleContentProps {
+  /** 是否展开 */
   isOpen: boolean
+  /** 子内容 */
   children: React.ReactNode
+  /** 容器额外 className */
   className?: string
 }
 
 /**
- * AnimatedCollapsibleContent - Motion-powered collapsible content
+ * AnimatedCollapsibleContent — 带动画的折叠内容
  *
- * Uses spring physics to animate height (0 → auto) and opacity.
- * Motion handles height: "auto" natively, which CSS cannot do.
+ * 用弹簧物理动画同时过渡高度和透明度。
+ * motion 可以直接处理 height: "auto"，这是 CSS 动画办不到的。
  */
 function AnimatedCollapsibleContent({
   isOpen,

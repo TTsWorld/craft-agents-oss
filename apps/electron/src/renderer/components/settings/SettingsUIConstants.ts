@@ -1,22 +1,22 @@
 /**
  * SettingsUIConstants
  *
- * Centralized style definitions for consistent settings UI appearance.
+ * 设置页统一的样式常量，集中管理标签、描述等常用 Tailwind 类名。
  */
 
 export const settingsUI = {
-  /** Label style for setting titles */
+  /** 设置项标题的样式 */
   label: 'text-sm font-medium',
 
-  /** Description style for setting subtitles */
+  /** 设置项副标题/说明的样式 */
   description: 'text-sm text-muted-foreground',
 
-  /** Smaller description for compact contexts (e.g., menu options) */
+  /** 紧凑场景下的说明样式（如下拉菜单选项里的小字） */
   descriptionSmall: 'text-xs text-muted-foreground',
 
-  /** Gap between label and description (applied to description as margin-top) */
+  /** 标签与描述之间的间距（作为描述的上外边距） */
   labelDescriptionGap: 'mt-0',
 
-  /** Gap for label group containers (applied as space-y) */
+  /** 标签组容器的垂直间距 */
   labelGroup: 'space-y-0',
 }

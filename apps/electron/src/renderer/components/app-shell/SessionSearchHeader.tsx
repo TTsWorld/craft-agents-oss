@@ -1,47 +1,48 @@
+/**
+ * SessionSearchHeader - 会话列表搜索 UI 的纯展示组件。
+ *
+ * 渲染内容：
+ * - 带静态搜索图标的搜索输入框
+ * - 当搜索词激活时显示“加载中…”或“{count} 个结果”的状态行
+ *
+ * 主应用（SessionList）和 playground 都会复用该组件。
+ */
+
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Search, X } from 'lucide-react'
 import { Spinner } from '@craft-agent/ui'
 
-/**
- * SessionSearchHeader - Presentational component for session list search UI.
- *
- * Renders:
- * - Search input with static search icon
- * - Status row showing "Loading…" or "{count} results" when query is active
- *
- * This component is shared between the main app (SessionList) and the playground.
- */
-
 export interface SessionSearchHeaderProps {
-  /** Current search query value */
+  /** 当前搜索词 */
   searchQuery: string
-  /** Called when search query changes */
+  /** 搜索词变化时的回调 */
   onSearchChange?: (query: string) => void
-  /** Called when search is closed (X button) */
+  /** 点击关闭（X）按钮时的回调 */
   onSearchClose?: () => void
-  /** Called on keydown in the search input */
+  /** 搜索输入框按键事件 */
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void
-  /** Called when input gains focus */
+  /** 输入框获得焦点时的回调 */
   onFocus?: () => void
-  /** Called when input loses focus */
+  /** 输入框失去焦点时的回调 */
   onBlur?: () => void
-  /** Whether content search is in progress */
+  /** 是否正在搜索内容 */
   isSearching?: boolean
-  /** Whether the search service is unavailable (e.g. ripgrep not found) */
+  /** 搜索服务是否不可用（例如未找到 ripgrep） */
   isUnavailable?: boolean
-  /** Number of results to display (when not searching) */
+  /** 结果数量（未搜索时显示） */
   resultCount?: number
-  /** Whether the result count exceeded the display limit (shows "100+" instead of exact count) */
+  /** 结果数是否超过显示上限；为 true 时显示 "100+" 而不是精确数字 */
   exceededLimit?: boolean
-  /** Ref for the input element (for focus management) */
+  /** 输入框 ref，用于焦点管理 */
   inputRef?: React.RefObject<HTMLInputElement>
-  /** Placeholder text */
+  /** 输入框占位文案 */
   placeholder?: string
-  /** Whether the input is read-only (for playground demos) */
+  /** 输入框是否只读（playground 演示用） */
   readOnly?: boolean
 }
 
+/** SessionSearchHeader - 会话列表搜索头部 */
 export function SessionSearchHeader({
   searchQuery,
   onSearchChange,
@@ -60,9 +61,9 @@ export function SessionSearchHeader({
   const { t } = useTranslation()
   return (
     <div className="shrink-0 px-2 pt-2 pb-1.5 border-b border-border/50">
-      {/* Search input */}
+      {/* 搜索输入框 */}
       <div className="relative rounded-[8px] shadow-minimal bg-muted/50 has-[:focus-visible]:bg-background">
-        {/* Search icon - always static, never changes to spinner */}
+        {/* 搜索图标保持静态，不会变成 spinner */}
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
         <input
           ref={inputRef}
@@ -87,7 +88,7 @@ export function SessionSearchHeader({
         )}
       </div>
 
-      {/* Search status row - shown when search mode is active (2+ characters) */}
+      {/* 搜索状态行：搜索词不少于 2 个字符时显示 */}
       {searchQuery.length >= 2 && (
         <div className="px-2 pt-2.5 flex items-center gap-1.5 text-xs text-muted-foreground">
           {isSearching ? (

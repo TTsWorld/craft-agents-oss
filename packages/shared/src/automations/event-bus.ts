@@ -1,15 +1,15 @@
 /**
- * WorkspaceEventBus - Typed Event Bus for Automations System
+ * WorkspaceEventBus - 自动化系统的类型安全事件总线
  *
- * Per-workspace event bus that enables loose coupling between:
- * - Event producers (ConfigWatcher, SchedulerService)
- * - Event consumers (CommandHandler, PromptHandler, EventLogHandler)
+ * 每个 workspace 拥有独立的事件总线实例，实现事件生产者与消费者解耦：
+ * - 生产者：ConfigWatcher、SchedulerService
+ * - 消费者：CommandHandler、PromptHandler、EventLogHandler
  *
- * Benefits over the current callback-based approach:
- * - No global state - each workspace has its own bus instance
- * - Type-safe events with payload validation
- * - Easy to add/remove handlers dynamically
- * - Testable in isolation
+ * 相比之前的全局回调方式：
+ * - 无全局状态，每个 workspace 独立
+ * - 类型安全，payload 有类型约束
+ * - handler 可动态增删
+ * - 可单独测试
  */
 
 import { createLogger } from '../utils/debug.ts';
@@ -18,10 +18,10 @@ import type { AppEvent, AgentEvent, AutomationEvent } from './types.ts';
 const log = createLogger('event-bus');
 
 // ============================================================================
-// Event Payload Types
+// 事件 Payload 类型
 // ============================================================================
 
-/** Base event payload with common fields */
+/** 所有事件 payload 的公共字段 */
 export interface BaseEventPayload {
   sessionId?: string;
   sessionName?: string;
@@ -30,53 +30,54 @@ export interface BaseEventPayload {
   labels?: string[];
 }
 
-/** Label events payload */
+/** Label 相关事件 payload */
 export interface LabelEventPayload extends BaseEventPayload {
   label: string;
 }
 
-/** Permission mode change payload */
+/** 权限模式变更 payload */
 export interface PermissionModeChangePayload extends BaseEventPayload {
   oldMode: string;
   newMode: string;
 }
 
-/** Flag change payload */
+/** 标记变更 payload */
 export interface FlagChangePayload extends BaseEventPayload {
   isFlagged: boolean;
 }
 
-/** Session status change payload */
+/** 会话状态变更 payload */
 export interface SessionStatusChangePayload extends BaseEventPayload {
   oldState: string;
   newState: string;
 }
 
-/** Scheduler tick payload */
+/** SchedulerTick payload */
 export interface SchedulerTickPayload extends BaseEventPayload {
   localTime: string;
   utcTime: string;
 }
 
-/** Label config change payload */
+/** Label 配置变更 payload */
 export interface LabelConfigChangePayload extends BaseEventPayload {
-  // No additional fields - just signals that config changed
+  // 无额外字段，仅作为配置变更信号
 }
 
-/** Generic event payload for agent events */
+/** Agent 事件的通用 payload */
 export interface GenericEventPayload extends BaseEventPayload {
   data: Record<string, unknown>;
 }
 
 // ============================================================================
-// Event Payload Map
+// 事件到 Payload 的映射
 // ============================================================================
 
 /**
- * Maps event types to their payload types for type safety.
+ * 把事件类型映射到对应的 payload 类型，保证类型安全。
+ * 类似 Go 里的 map[string]Payload，但 TS 在编译期就能检查类型。
  */
 export interface EventPayloadMap {
-  // App events
+  // App 事件
   LabelAdd: LabelEventPayload;
   LabelRemove: LabelEventPayload;
   LabelConfigChange: LabelConfigChangePayload;
@@ -85,7 +86,7 @@ export interface EventPayloadMap {
   SessionStatusChange: SessionStatusChangePayload;
   SchedulerTick: SchedulerTickPayload;
 
-  // Agent events (generic payload)
+  // Agent 事件统一使用通用 payload
   PreToolUse: GenericEventPayload;
   PostToolUse: GenericEventPayload;
   PostToolUseFailure: GenericEventPayload;
@@ -102,20 +103,27 @@ export interface EventPayloadMap {
 }
 
 // ============================================================================
-// Handler Types
+// Handler 类型
 // ============================================================================
 
+/**
+ * 处理特定事件的 handler 类型。
+ * T extends AutomationEvent 是泛型约束，表示 T 只能是 AutomationEvent 中的某个事件名。
+ */
 export type EventHandler<T extends AutomationEvent> = (
   payload: EventPayloadMap[T]
 ) => void | Promise<void>;
 
+/**
+ * 监听所有事件的 handler 类型。
+ */
 export type AnyEventHandler = (
   event: AutomationEvent,
   payload: BaseEventPayload
 ) => void | Promise<void>;
 
 // ============================================================================
-// Rate Limiting
+// 限流
 // ============================================================================
 
 interface RateWindow {
@@ -125,38 +133,38 @@ interface RateWindow {
 
 const DEFAULT_RATE_LIMIT = 10;
 const SCHEDULER_RATE_LIMIT = 60;
-const RATE_WINDOW_MS = 60_000; // 1 minute
+const RATE_WINDOW_MS = 60_000; // 1 分钟
 
 function getRateLimit(event: AutomationEvent): number {
   return event === 'SchedulerTick' ? SCHEDULER_RATE_LIMIT : DEFAULT_RATE_LIMIT;
 }
 
 // ============================================================================
-// EventBus Interface
+// EventBus 接口
 // ============================================================================
 
 export interface EventBus {
-  /** Emit an event to all registered handlers */
+  /** 触发一个事件，通知所有已注册 handler */
   emit<T extends AutomationEvent>(event: T, payload: EventPayloadMap[T]): Promise<void>;
 
-  /** Register a handler for a specific event type */
+  /** 为指定事件注册 handler */
   on<T extends AutomationEvent>(event: T, handler: EventHandler<T>): void;
 
-  /** Unregister a handler for a specific event type */
+  /** 为指定事件注销 handler */
   off<T extends AutomationEvent>(event: T, handler: EventHandler<T>): void;
 
-  /** Register a handler for all events (useful for logging) */
+  /** 注册一个监听所有事件的 handler（适合日志、监控） */
   onAny(handler: AnyEventHandler): void;
 
-  /** Unregister an all-events handler */
+  /** 注销监听所有事件的 handler */
   offAny(handler: AnyEventHandler): void;
 
-  /** Clean up all handlers */
+  /** 清理所有 handler */
   dispose(): void;
 }
 
 // ============================================================================
-// WorkspaceEventBus Implementation
+// WorkspaceEventBus 实现
 // ============================================================================
 
 export class WorkspaceEventBus implements EventBus {
@@ -172,8 +180,7 @@ export class WorkspaceEventBus implements EventBus {
   }
 
   /**
-   * Emit an event to all registered handlers.
-   * Handlers are called in parallel, errors are caught and logged.
+   * 触发事件，并行调用所有注册的 handler，错误会被捕获并记录。
    */
   async emit<T extends AutomationEvent>(event: T, payload: EventPayloadMap[T]): Promise<void> {
     if (this.disposed) {
@@ -181,7 +188,7 @@ export class WorkspaceEventBus implements EventBus {
       return;
     }
 
-    // Rate limiting: prevent runaway event loops (sync and async)
+    // 限流：防止同步/异步死循环导致事件风暴
     const now = Date.now();
     const rateWindow = this.rateCounts.get(event) ?? { count: 0, windowStart: now };
     if (now - rateWindow.windowStart >= RATE_WINDOW_MS) {
@@ -200,11 +207,11 @@ export class WorkspaceEventBus implements EventBus {
 
     log.debug(`[EventBus] Emitting: ${event}`);
 
-    // Collect all handlers to call
+    // 收集要调用的 handler
     const eventHandlers = this.handlers.get(event) ?? new Set();
     const anyHandlersCopy = new Set(this.anyHandlers);
 
-    // Execute event-specific handlers
+    // 调用事件专属 handler
     const eventPromises = Array.from(eventHandlers).map(async (handler) => {
       try {
         await handler(payload);
@@ -213,7 +220,7 @@ export class WorkspaceEventBus implements EventBus {
       }
     });
 
-    // Execute any-event handlers
+    // 调用全事件 handler
     const anyPromises = Array.from(anyHandlersCopy).map(async (handler) => {
       try {
         await handler(event, payload as BaseEventPayload);
@@ -222,14 +229,14 @@ export class WorkspaceEventBus implements EventBus {
       }
     });
 
-    // Wait for all handlers to complete
+    // 等待所有 handler 完成
     await Promise.all([...eventPromises, ...anyPromises]);
 
     log.debug(`[EventBus] Emitted: ${event} (${eventHandlers.size} handlers, ${anyHandlersCopy.size} any-handlers)`);
   }
 
   /**
-   * Register a handler for a specific event type.
+   * 为指定事件注册 handler。
    */
   on<T extends AutomationEvent>(event: T, handler: EventHandler<T>): void {
     if (this.disposed) {
@@ -245,7 +252,7 @@ export class WorkspaceEventBus implements EventBus {
   }
 
   /**
-   * Unregister a handler for a specific event type.
+   * 为指定事件注销 handler。
    */
   off<T extends AutomationEvent>(event: T, handler: EventHandler<T>): void {
     const eventHandlers = this.handlers.get(event);
@@ -256,8 +263,8 @@ export class WorkspaceEventBus implements EventBus {
   }
 
   /**
-   * Register a handler for all events.
-   * Useful for logging, metrics, or debugging.
+   * 注册一个监听所有事件的 handler。
+   * 适合日志、指标、调试。
    */
   onAny(handler: AnyEventHandler): void {
     if (this.disposed) {
@@ -270,7 +277,7 @@ export class WorkspaceEventBus implements EventBus {
   }
 
   /**
-   * Unregister an all-events handler.
+   * 注销监听所有事件的 handler。
    */
   offAny(handler: AnyEventHandler): void {
     this.anyHandlers.delete(handler);
@@ -278,7 +285,7 @@ export class WorkspaceEventBus implements EventBus {
   }
 
   /**
-   * Clean up all handlers and mark as disposed.
+   * 清理所有 handler 并标记为已 dispose。
    */
   dispose(): void {
     if (this.disposed) return;
@@ -291,21 +298,21 @@ export class WorkspaceEventBus implements EventBus {
   }
 
   /**
-   * Check if the bus has been disposed.
+   * 检查总线是否已 dispose。
    */
   isDisposed(): boolean {
     return this.disposed;
   }
 
   /**
-   * Get the workspace ID this bus belongs to.
+   * 获取总线所属的 workspace ID。
    */
   getWorkspaceId(): string {
     return this.workspaceId;
   }
 
   /**
-   * Get handler count for debugging.
+   * 获取 handler 数量，用于调试。
    */
   getHandlerCount(event?: AutomationEvent): number {
     if (event) {

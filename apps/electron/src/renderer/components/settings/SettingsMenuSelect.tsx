@@ -1,9 +1,9 @@
 /**
  * SettingsMenuSelect
  *
- * Menu-style dropdown select with support for option descriptions.
- * Uses Radix Popover for collision detection and accessibility.
- * Includes search/filter when options exceed threshold.
+ * 菜单式下拉选择组件，支持选项描述和搜索过滤。
+ * 基于 Radix Popover 实现，自带碰撞检测和可访问性。
+ * 选项数量超过阈值时会自动启用搜索。
  */
 
 import * as React from 'react'
@@ -14,43 +14,42 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { settingsUI } from './SettingsUIConstants'
 
 export interface SettingsMenuSelectOption {
-  /** Value for this option */
+  /** 选项值 */
   value: string
-  /** Display label */
+  /** 展示标签 */
   label: string
-  /** Optional description/subtitle */
+  /** 选项描述/副标题 */
   description?: string
 }
 
 export interface SettingsMenuSelectProps {
-  /** Currently selected value */
+  /** 当前选中的值 */
   value: string
-  /** Change handler */
+  /** 选中值变化时的回调 */
   onValueChange: (value: string) => void
-  /** Available options */
+  /** 可选列表 */
   options: SettingsMenuSelectOption[]
-  /** Placeholder when nothing selected */
+  /** 未选中时的占位提示 */
   placeholder?: string
-  /** Disabled state */
+  /** 是否禁用 */
   disabled?: boolean
-  /** Additional className for trigger */
+  /** 触发按钮的额外 className */
   className?: string
-  /** Width of the dropdown menu */
+  /** 下拉菜单宽度 */
   menuWidth?: number
-  /** Called when hovering over an option (for live preview). Pass null on leave. */
+  /** 鼠标悬停在某选项上时的回调（用于实时预览），离开传 null */
   onHover?: (value: string | null) => void
-  /** Enable search filter (auto-enabled when options > 8) */
+  /** 是否启用搜索（默认选项 > 8 时自动启用） */
   searchable?: boolean
-  /** Placeholder for search input */
+  /** 搜索框占位提示 */
   searchPlaceholder?: string
 }
 
 /**
- * SettingsMenuSelect - Menu-style dropdown with descriptions
+ * SettingsMenuSelect - 菜单式下拉选择器
  *
- * Uses Radix Popover for automatic collision detection and positioning.
- * Trigger styled like the model selector in FreeFormInput.
- * Includes search filter when options exceed 8 or searchable prop is true.
+ * 使用 Radix Popover 做定位和碰撞检测。
+ * 当选项超过 8 个或显式开启 searchable 时，会显示搜索框。
  */
 export function SettingsMenuSelect({
   value,
@@ -72,10 +71,10 @@ export function SettingsMenuSelect({
 
   const selectedOption = options.find((o) => o.value === value)
 
-  // Show search when explicitly enabled or when there are many options
+  // 显式启用搜索，或选项较多时自动启用
   const showSearch = searchable ?? options.length > 8
 
-  // Filter options based on search query
+  // 根据搜索词过滤选项
   const filteredOptions = React.useMemo(() => {
     if (!searchQuery.trim()) return options
     const query = searchQuery.toLowerCase()
@@ -91,18 +90,18 @@ export function SettingsMenuSelect({
     onValueChange(optionValue)
     setIsOpen(false)
     setSearchQuery('')
-    // Clear preview on selection since the actual value is now set
+    // 选中后清除预览状态，因为真实值已确定
     onHover?.(null)
   }
 
-  // Clear preview when popover closes (via click outside, escape, etc.)
+  // Popover 关闭时（点击外部、按 ESC 等）清除预览和搜索词
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open)
     if (!open) {
       onHover?.(null)
       setSearchQuery('')
     } else if (showSearch) {
-      // Focus search input when opening
+      // 打开时聚焦搜索框
       setTimeout(() => searchInputRef.current?.focus(), 0)
     }
   }
@@ -193,34 +192,34 @@ export function SettingsMenuSelect({
 }
 
 /**
- * SettingsMenuSelectRow - Inline row with label and menu select
+ * SettingsMenuSelectRow - 标签在左、菜单选择在右的横向布局
  */
 export interface SettingsMenuSelectRowProps {
-  /** Row label */
+  /** 行标签 */
   label: string
-  /** Optional description below label */
+  /** 标签下方的描述说明 */
   description?: string
-  /** Currently selected value */
+  /** 当前选中的值 */
   value: string
-  /** Change handler */
+  /** 选中值变化时的回调 */
   onValueChange: (value: string) => void
-  /** Available options */
+  /** 可选列表 */
   options: SettingsMenuSelectOption[]
-  /** Placeholder text */
+  /** 占位提示 */
   placeholder?: string
-  /** Disabled state */
+  /** 是否禁用 */
   disabled?: boolean
-  /** Additional className */
+  /** 额外 className */
   className?: string
-  /** Whether inside a card */
+  /** 是否在卡片内部 */
   inCard?: boolean
-  /** Width of the dropdown menu */
+  /** 下拉菜单宽度 */
   menuWidth?: number
-  /** Called when hovering over an option (for live preview). Pass null on leave. */
+  /** 悬停预览回调，离开传 null */
   onHover?: (value: string | null) => void
-  /** Enable search filter (auto-enabled when options > 8) */
+  /** 是否启用搜索 */
   searchable?: boolean
-  /** Placeholder for search input */
+  /** 搜索框占位提示 */
   searchPlaceholder?: string
 }
 

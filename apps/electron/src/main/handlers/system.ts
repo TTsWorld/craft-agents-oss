@@ -1,3 +1,9 @@
+/**
+ * system.ts —— 系统级 RPC handler。
+ *
+ * 处理与操作系统、Electron 壳、外部 URL/文件、主题、版本、Git Bash 等相关的请求。
+ * 分为 core（无窗口也可运行）和 gui（依赖 Electron GUI）两组。
+ */
 import { resolve } from 'path'
 import { join } from 'path'
 import { homedir } from 'os'
@@ -16,6 +22,7 @@ import {
   requestClientOpenFileDialog,
 } from '@craft-agent/server-core/transport'
 
+// server-core 层也能用的核心 channel
 export const CORE_HANDLED_CHANNELS = [
   RPC_CHANNELS.theme.GET_SYSTEM_PREFERENCE,
   RPC_CHANNELS.system.VERSIONS,
@@ -69,12 +76,12 @@ export const HANDLED_CHANNELS = [
 export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps): void {
   const windowManager = deps.windowManager
 
-  // Get system theme preference (dark = true, light = false)
+  // 获取系统主题偏好：深色返回 true，浅色返回 false
   server.handle(RPC_CHANNELS.theme.GET_SYSTEM_PREFERENCE, async () => {
     return deps.platform.systemDarkMode?.() ?? false
   })
 
-  // Get runtime versions (previously handled locally in preload via process.versions)
+  // 返回运行时的 Node / Chrome / Electron 版本号
   server.handle(RPC_CHANNELS.system.VERSIONS, async () => {
     return {
       node: process.versions.node,
@@ -83,17 +90,17 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
     }
   })
 
-  // Get user's home directory
+  // 返回用户 home 目录（类似 Go 的 os.UserHomeDir）
   server.handle(RPC_CHANNELS.system.HOME_DIR, async () => {
     return homedir()
   })
 
-  // Check if running in debug mode (from source)
+  // 是否处于调试模式（未打包就是从源码运行）
   server.handle(RPC_CHANNELS.system.IS_DEBUG_MODE, async () => {
     return !deps.platform.isPackaged
   })
 
-  // Release notes
+  // 获取合并后的发布说明
   server.handle(RPC_CHANNELS.releaseNotes.GET, async () => {
     const { getCombinedReleaseNotes } = require('@craft-agent/shared/release-notes') as typeof import('@craft-agent/shared/release-notes')
     return getCombinedReleaseNotes()
@@ -104,7 +111,7 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
     return getLatestReleaseVersion()
   })
 
-  // Get git branch for a directory (returns null if not a git repo or git unavailable)
+  // 获取某个目录的 Git 分支；不是 git 仓库或没有 git 时返回 null
   server.handle(RPC_CHANNELS.git.GET_BRANCH, async (_ctx, dirPath: string) => {
     try {
       const branch = execSync('git rev-parse --abbrev-ref HEAD', {
@@ -119,7 +126,7 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
     }
   })
 
-  // Git Bash detection and configuration (Windows only)
+  // 检测并配置 Git Bash 路径（仅 Windows）
   server.handle(RPC_CHANNELS.gitbash.CHECK, async () => {
     const platform = process.platform as 'win32' | 'darwin' | 'linux'
 
@@ -164,7 +171,7 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
         return { found: true, path: firstPath, platform }
       }
     } catch {
-      // where command failed
+      // where 命令执行失败（不用报错，继续兜底逻辑）
     }
 
     delete process.env.CLAUDE_CODE_GIT_BASH_PATH
@@ -197,12 +204,12 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
     return { success: true }
   })
 
-  // Debug logging from renderer -> main log file (fire-and-forget, no response)
+  // 接收来自渲染进程的调试日志，写入主进程日志（fire-and-forget，无返回值）
   server.handle(RPC_CHANNELS.debug.LOG, async (_ctx, ...args: unknown[]) => {
     deps.platform.logger.info('[renderer]', ...args)
   })
 
-  // Shell operations - open URL in external browser (or handle craftagents:// internally)
+  // 打开外部 URL：危险 URL 会被拦截；craftagents:// 内部走深链处理；其他用系统浏览器打开
   server.handle(RPC_CHANNELS.shell.OPEN_URL, async (ctx, url: string) => {
     deps.platform.logger.info('[OPEN_URL] Received request:', url)
     try {
@@ -211,7 +218,7 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
         throw new Error(formatBlockedUrlError(classification))
       }
 
-      // Handle craftagents:// URLs internally via deep link handler (GUI only)
+      // craftagents:// URL 在内部通过深链处理器处理（仅 GUI）
       if (classification.kind === 'internal-deeplink') {
         if (!windowManager) return
         deps.platform.logger.info('[OPEN_URL] Handling as deep link')
@@ -234,6 +241,7 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
     }
   })
 
+  // 用系统默认程序打开本地文件；先做路径展开和 workspace 安全校验
   server.handle(RPC_CHANNELS.shell.OPEN_FILE, async (ctx, path: string) => {
     try {
       const expanded = path.startsWith('~') ? path.replace(/^~/, homedir()) : path
@@ -249,6 +257,7 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
     }
   })
 
+  // 在文件管理器中显示文件位置（macOS Finder / Windows 资源管理器 / Linux 文件管理器）
   server.handle(RPC_CHANNELS.shell.SHOW_IN_FOLDER, async (ctx, path: string) => {
     try {
       const expanded = path.startsWith('~') ? path.replace(/^~/, homedir()) : path
@@ -264,11 +273,12 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
   })
 }
 
+// GUI 专用 handler：依赖窗口管理器、自动更新、通知等 Electron 功能
 export function registerSystemGuiHandlers(server: RpcServer, deps: HandlerDeps): void {
   const { sessionManager } = deps
   const windowManager = deps.windowManager
 
-  // Auto-update handlers
+  // 自动更新相关 handler
   server.handle(RPC_CHANNELS.update.CHECK, async () => {
     const { checkForUpdates } = await import('../auto-update')
     return checkForUpdates({ autoDownload: true })
@@ -294,7 +304,7 @@ export function registerSystemGuiHandlers(server: RpcServer, deps: HandlerDeps):
     return getDismissedUpdateVersion()
   })
 
-  // Menu actions from renderer (for unified Craft menu)
+  // 来自渲染进程的菜单动作（统一 Craft 菜单）
   server.handle(RPC_CHANNELS.menu.QUIT, async () => {
     deps.platform.quit?.()
   })
@@ -391,7 +401,7 @@ export function registerSystemGuiHandlers(server: RpcServer, deps: HandlerDeps):
     win?.webContents.selectAll()
   })
 
-  // Notifications
+  // 通知相关 handler
   server.handle(RPC_CHANNELS.notification.SHOW, async (_ctx, title: string, body: string, workspaceId: string, sessionId: string) => {
     const { showNotification } = await import('../notifications')
     showNotification(title, body, workspaceId, sessionId)
@@ -412,12 +422,12 @@ export function registerSystemGuiHandlers(server: RpcServer, deps: HandlerDeps):
     }
   })
 
-  // Badge and window focus
+  // 角标与窗口聚焦
   server.handle(RPC_CHANNELS.badge.REFRESH, async () => {
     try {
       await sessionManager.waitForInit()
     } catch {
-      // continue
+      // 等待初始化失败也不阻塞，继续刷新角标
     }
     sessionManager.refreshBadge()
   })

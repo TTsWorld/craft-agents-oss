@@ -1,7 +1,8 @@
 /**
  * ShortcutsPage
  *
- * Displays keyboard shortcuts reference from the centralized action registry.
+ * 快捷键参考页：从全局 action 注册表读取快捷键，并补充本页特有的快捷键说明。
+ * 类似 Go 里把命令行 flag / 快捷键集中维护在一个 registry，再统一展示。
  */
 
 import * as React from 'react'
@@ -24,7 +25,7 @@ interface ShortcutSection {
   shortcuts: ShortcutItem[]
 }
 
-// Component-specific shortcuts that aren't in the centralized registry
+// 不在全局注册表里的本页特有快捷键
 function useComponentSpecificSections(): ShortcutSection[] {
   const { t } = useTranslation()
   return [
@@ -62,6 +63,7 @@ function useComponentSpecificSections(): ShortcutSection[] {
   ]
 }
 
+// 按键标签组件：把单个键帽渲染成视觉标签
 function Kbd({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <kbd className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-[11px] font-medium font-sans bg-muted border border-border rounded ${className || ''}`}>
@@ -71,16 +73,16 @@ function Kbd({ children, className }: { children: React.ReactNode; className?: s
 }
 
 /**
- * Renders a shortcut row for an action from the registry
+ * 渲染注册表中某一个 action 的快捷键行
  */
 function ActionShortcutRow({ actionId }: { actionId: ActionId }) {
   const { label, hotkey } = useActionLabel(actionId)
 
   if (!hotkey) return null
 
-  // Split hotkey into individual keys for display
-  // Mac: symbols are concatenated (⌘⇧N) - need smart splitting
-  // Windows: separated by + (Ctrl+Shift+N) - split on +
+  // 把快捷键字符串拆成单个按键展示
+  // Mac：符号是连在一起的（如 ⌘⇧N），需要用正则拆分
+  // Windows：用 + 分隔（如 Ctrl+Shift+N）
   const keys = isMac
     ? hotkey.match(/[⌘⇧⌥←→]|Tab|Esc|./g) || []
     : hotkey.split('+')
@@ -109,7 +111,7 @@ export default function ShortcutsPage() {
       <ScrollArea className="flex-1">
         <div className="px-5 py-4">
           <div className="space-y-6">
-            {/* Registry-driven sections */}
+            {/* 来自注册表的分类快捷键 */}
             {Object.entries(actionsByCategory).map(([category, actions]) => (
               <div key={category}>
                 <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 pb-1.5 border-b border-border/50">
@@ -123,7 +125,7 @@ export default function ShortcutsPage() {
               </div>
             ))}
 
-            {/* Component-specific sections */}
+            {/* 本页特有的快捷键 */}
             {componentSpecificSections.map((section) => (
               <div key={section.title}>
                 <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 pb-1.5 border-b border-border/50">

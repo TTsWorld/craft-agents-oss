@@ -1,31 +1,40 @@
+/**
+ * MetadataBadge —— 元数据徽章组件
+ *
+ * 用于展示 Label、State 等小块元数据。左侧可带图标，中间是主标签，
+ * 可选显示分隔点和值文本；支持悬停/点击样式和下拉箭头。
+ */
+
 import * as React from 'react'
 import { ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
+/** MetadataBadge 的 props 类型 */
 export interface MetadataBadgeProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  /** Primary label text */
+  /** 主标签文本 */
   label: string
-  /** Optional secondary value text */
+  /** 可选的次级值文本 */
   value?: string
-  /** When set, the value text renders as a clickable link and calls this on click.
-   *  The handler stops propagation so the chip's surrounding popover/trigger doesn't toggle. */
+  /** 设置后，值文本会渲染成可点击链接并调用该回调。
+   *  处理器会阻止冒泡，避免触发外层 popover/trigger。 */
   onValueClick?: (e: React.MouseEvent) => void
-  /** Optional leading icon */
+  /** 可选的左侧图标 */
   icon?: React.ReactNode
-  /** Optional trailing hint icon when no value is set */
+  /** 未设置值时显示的右侧提示图标 */
   valueHintIcon?: React.ReactNode
-  /** Color tint source for chip background/text */
+  /** 徽章背景/文字的取色来源 */
   badgeColor?: string
-  /** Enable hover/click styling */
+  /** 是否启用悬停/点击样式 */
   interactive?: boolean
-  /** Active/open state styling */
+  /** 激活/打开状态样式 */
   isActive?: boolean
-  /** Show dropdown chevron on the right */
+  /** 是否在右侧显示下拉箭头 */
   showChevron?: boolean
-  /** Shadow style for the chip */
+  /** 徽章阴影样式 */
   shadow?: 'none' | 'minimal'
 }
 
+/** 元数据徽章 */
 export const MetadataBadge = React.forwardRef<HTMLButtonElement, MetadataBadgeProps>(
   function MetadataBadge(
     {

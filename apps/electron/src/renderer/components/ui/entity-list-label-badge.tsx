@@ -1,3 +1,10 @@
+/**
+ * EntityListLabelBadge — 实体列表中使用的 Label 徽章
+ *
+ * 比 LabelBadgeRow 更轻量，只负责渲染单个 Label 徽章并处理值编辑/移除。
+ * Session 的 labels 以编码字符串数组存储（如 "priority::3"），
+ * 这里用 parseLabelEntry / formatLabelEntry 做转换。
+ */
 import { useState } from "react"
 import { parseLabelEntry, formatLabelEntry, formatDisplayValue } from "@craft-agent/shared/labels"
 import { resolveEntityColor } from "@craft-agent/shared/colors"
@@ -9,12 +16,17 @@ import { LabelValueTypeIcon } from "./label-icon"
 import type { LabelConfig } from "@craft-agent/shared/labels"
 
 interface EntityListLabelBadgeProps {
+  /** Label 配置 */
   label: LabelConfig
+  /** 原始值字符串 */
   rawValue?: string
+  /** Session 上所有 label 编码条目 */
   sessionLabels: string[]
+  /** label 变化回调，接收更新后的 sessionLabels 数组 */
   onLabelsChange?: (updatedLabels: string[]) => void
 }
 
+/** 实体列表中的单个 Label 徽章 */
 export function EntityListLabelBadge({ label, rawValue, sessionLabels, onLabelsChange }: EntityListLabelBadgeProps) {
   const [open, setOpen] = useState(false)
   const { isDark } = useTheme()

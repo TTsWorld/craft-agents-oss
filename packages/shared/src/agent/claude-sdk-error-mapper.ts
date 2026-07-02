@@ -1,3 +1,15 @@
+/**
+ * 文件：Claude SDK 错误映射器
+ *
+ * 角色：把 SDK 抛出的 SDKAssistantMessageError（如 'invalid_request'、'rate_limit'、
+ * 'server_error'）映射成项目统一的 AgentError，方便 UI 展示标题、详情与恢复动作。
+ *
+ * 重点：
+ * - 通过 HTTP 状态码、errorType、错误文本关键字区分 provider 侧错误与网络错误。
+ * - 1M Context 错误、Context Window 溢出、附件被拒绝都有专门的处理分支与提示。
+ * - 会结合 capturedApiError（拦截器捕获的真实 API 错误）给出更准确的详情。
+ */
+
 import type { SDKAssistantMessageError } from '@anthropic-ai/claude-agent-sdk';
 import type { AgentError } from './errors.ts';
 import type { LastApiError } from '../interceptor-common.ts';

@@ -1,19 +1,19 @@
 #!/usr/bin/env bun
 /**
- * craft-cli — Terminal client for Craft Agent server.
+ * craft-cli —— Craft Agent 服务端的终端客户端。
  *
- * Connects over WebSocket (ws:// or wss://) to a running Craft Agent server
- * and provides commands for listing resources, managing sessions, sending
- * messages with real-time streaming, and validating server health.
+ * 通过 WebSocket（ws:// 或 wss://）连接到运行中的 Craft Agent 服务端，
+ * 提供资源列举、会话管理、消息发送与实时流式输出、服务端健康检查等命令。
  */
 
 import { resolve } from 'path'
 import { CliRpcClient } from './client.ts'
 
 // ---------------------------------------------------------------------------
-// Arg parsing
+// 命令行参数解析
 // ---------------------------------------------------------------------------
 
+/** CLI 参数结构体。对应命令行上能出现的所有选项和开关。 */
 export interface CliArgs {
   url: string
   token: string
@@ -24,7 +24,7 @@ export interface CliArgs {
   sendTimeout: number
   command: string
   rest: string[]
-  // run-specific flags
+  // run 命令专用参数
   sources: string[]
   mode: string
   outputFormat: string
@@ -33,22 +33,23 @@ export interface CliArgs {
   verbose: boolean
   serverEntry?: string
   workspaceDir?: string
-  // LLM configuration
+  // LLM 配置
   provider: string
   model: string
   apiKey: string
   baseUrl: string
 }
 
+/** 解析命令行参数，返回结构化的 CliArgs。 */
 export function parseArgs(argv: string[]): CliArgs {
-  const args = argv.slice(2) // skip bun + script path
+  const args = argv.slice(2) // 跳过 bun 路径和脚本路径
   let url = ''
   let token = ''
   let workspace: string | undefined
   let timeout = 10_000
   let json = false
   let tlsCa: string | undefined
-  let sendTimeout = 300_000 // 5 min
+  let sendTimeout = 300_000 // 默认 5 分钟
   const rest: string[] = []
   let command = ''
   const sources: string[] = []
@@ -145,7 +146,7 @@ export function parseArgs(argv: string[]): CliArgs {
     }
   }
 
-  // Env var fallbacks
+  // 环境变量兜底：命令行没传时读取对应环境变量
   if (!url) url = process.env.CRAFT_SERVER_URL ?? ''
   if (!token) token = process.env.CRAFT_SERVER_TOKEN ?? ''
   if (!tlsCa) tlsCa = process.env.CRAFT_TLS_CA
@@ -158,15 +159,19 @@ export function parseArgs(argv: string[]): CliArgs {
 }
 
 // ---------------------------------------------------------------------------
-// Auto workspace resolution
+// 自动解析 workspace
 // ---------------------------------------------------------------------------
 
+/**
+ * 解析用户显式指定的 workspace，或在服务端上自动选择第一个可用 workspace。
+ * workspace 类似 Go 里的“上下文命名空间”：session、source、label 等都挂在它下面。
+ */
 async function resolveWorkspace(
   client: CliRpcClient,
   explicit?: string,
 ): Promise<string | undefined> {
   if (explicit) {
-    // Bind client to the workspace so push events reach us
+    // 把客户端绑定到该 workspace，这样服务端推送的事件才能发到本连接
     await client.invoke('window:switchWorkspace', explicit).catch(() => {})
     return explicit
   }
@@ -178,15 +183,16 @@ async function resolveWorkspace(
       return id
     }
   } catch {
-    // Fall through — workspace may not be needed
+    // 继续向下走 —— 某些命令可能根本不需要 workspace
   }
   return undefined
 }
 
 // ---------------------------------------------------------------------------
-// Output helpers
+// 输出辅助函数
 // ---------------------------------------------------------------------------
 
+/** 统一输出：JSON 模式打印 JSON，否则字符串直接打印，其他类型也打印成 JSON。 */
 function out(data: unknown, jsonMode: boolean): void {
   if (jsonMode) {
     process.stdout.write(JSON.stringify(data, null, 2) + '\n')
@@ -197,12 +203,13 @@ function out(data: unknown, jsonMode: boolean): void {
   }
 }
 
+/** 错误输出。 */
 function err(msg: string): void {
   process.stderr.write(`Error: ${msg}\n`)
 }
 
 // ---------------------------------------------------------------------------
-// ANSI colors (disabled when NO_COLOR is set or stdout is not a TTY)
+// ANSI 颜色（NO_COLOR 或非 TTY 时自动关闭）
 // ---------------------------------------------------------------------------
 
 const _useColor = !process.env.NO_COLOR && process.stdout.isTTY !== false
@@ -217,15 +224,16 @@ const c = {
 }
 
 // ---------------------------------------------------------------------------
-// Spinner (TTY only — skipped when piped or NO_COLOR)
+// Spinner（仅在 TTY 且未设置 NO_COLOR 时显示）
 // ---------------------------------------------------------------------------
 
 const _spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
+/** 创建一个终端转圈动画，返回 stop() 函数。 */
 function createSpinner(text: string): { stop(): void } {
   let i = 0
   let stopped = false
-  // Render first frame immediately — setInterval alone misses fast steps
+  // 立即渲染第一帧，避免 setInterval 第一次触发前的空档
   process.stdout.write(`${text} ${c.dim(_spinnerFrames[i++ % _spinnerFrames.length])}`)
   const timer = setInterval(() => {
     process.stdout.write(`\r\x1b[2K${text} ${c.dim(_spinnerFrames[i++ % _spinnerFrames.length])}`)
@@ -241,9 +249,10 @@ function createSpinner(text: string): { stop(): void } {
 }
 
 // ---------------------------------------------------------------------------
-// Commands
+// 各命令的实现
 // ---------------------------------------------------------------------------
 
+/** ping：测量与服务端的握手延迟。 */
 async function cmdPing(client: CliRpcClient, args: CliArgs): Promise<void> {
   const start = performance.now()
   const clientId = await client.connect()
@@ -256,18 +265,21 @@ async function cmdPing(client: CliRpcClient, args: CliArgs): Promise<void> {
   )
 }
 
+/** health：检查服务端凭证存储健康状态。 */
 async function cmdHealth(client: CliRpcClient, args: CliArgs): Promise<void> {
   await client.connect()
   const result = await client.invoke('credentials:healthCheck')
   out(result, args.json)
 }
 
+/** versions：获取服务端运行时版本信息。 */
 async function cmdVersions(client: CliRpcClient, args: CliArgs): Promise<void> {
   await client.connect()
   const result = await client.invoke('system:versions')
   out(result, args.json)
 }
 
+/** workspaces：列出所有 workspace。 */
 async function cmdWorkspaces(client: CliRpcClient, args: CliArgs): Promise<void> {
   await client.connect()
   const result = (await client.invoke('workspaces:get')) as any[]
@@ -284,6 +296,7 @@ async function cmdWorkspaces(client: CliRpcClient, args: CliArgs): Promise<void>
   }
 }
 
+/** sessions：列出当前 workspace 下的所有会话。 */
 async function cmdSessions(client: CliRpcClient, args: CliArgs): Promise<void> {
   await client.connect()
   const workspaceId = await resolveWorkspace(client, args.workspace)
@@ -308,12 +321,14 @@ async function cmdSessions(client: CliRpcClient, args: CliArgs): Promise<void> {
   }
 }
 
+/** connections：列出已配置的 LLM 连接。 */
 async function cmdConnections(client: CliRpcClient, args: CliArgs): Promise<void> {
   await client.connect()
   const result = await client.invoke('LLM_Connection:list')
   out(result, args.json)
 }
 
+/** sources：列出当前 workspace 下已配置的数据源。 */
 async function cmdSources(client: CliRpcClient, args: CliArgs): Promise<void> {
   await client.connect()
   const workspaceId = await resolveWorkspace(client, args.workspace)
@@ -325,6 +340,7 @@ async function cmdSources(client: CliRpcClient, args: CliArgs): Promise<void> {
   out(result, args.json)
 }
 
+/** session create：创建一个新会话。 */
 async function cmdSessionCreate(client: CliRpcClient, args: CliArgs): Promise<void> {
   await client.connect()
   const workspaceId = await resolveWorkspace(client, args.workspace)
@@ -333,7 +349,7 @@ async function cmdSessionCreate(client: CliRpcClient, args: CliArgs): Promise<vo
     process.exit(1)
   }
 
-  // Parse sub-args: --name <n>
+  // 解析子参数：--name <n>
   let name: string | undefined
   for (let i = 0; i < args.rest.length; i++) {
     if (args.rest[i] === '--name') name = args.rest[++i]
@@ -347,6 +363,7 @@ async function cmdSessionCreate(client: CliRpcClient, args: CliArgs): Promise<vo
   out(result, args.json)
 }
 
+/** session messages：打印某个会话的历史消息。 */
 async function cmdSessionMessages(client: CliRpcClient, args: CliArgs): Promise<void> {
   const sessionId = args.rest[0]
   if (!sessionId) {
@@ -358,6 +375,7 @@ async function cmdSessionMessages(client: CliRpcClient, args: CliArgs): Promise<
   out(result, args.json)
 }
 
+/** session delete：删除指定会话。 */
 async function cmdSessionDelete(client: CliRpcClient, args: CliArgs): Promise<void> {
   const sessionId = args.rest[0]
   if (!sessionId) {
@@ -370,9 +388,8 @@ async function cmdSessionDelete(client: CliRpcClient, args: CliArgs): Promise<vo
 }
 
 /**
- * Read prompt text from positional args + stdin.
- * If there are positional words, they become the base message.
- * Reads stdin when: --stdin flag is present, or no message and stdin is piped (not a TTY).
+ * 读取 prompt 文本：从位置参数和 stdin 拼接。
+ * 如果有位置参数，它们作为基础消息；当出现 --stdin 标志，或没有位置参数且 stdin 不是 TTY 时，读取 stdin。
  */
 async function readPrompt(words: string[], restArgs?: string[]): Promise<string> {
   let message = words.join(' ')
@@ -396,8 +413,8 @@ async function readPrompt(words: string[], restArgs?: string[]): Promise<string>
 }
 
 /**
- * Subscribe to session events, send the message, stream output, wait for completion.
- * Returns the exit code (0 = success, 1 = error, 130 = interrupted).
+ * 订阅会话事件，发送消息，流式输出，等待完成。
+ * 返回退出码：0 成功，1 出错，130 被中断。
  */
 async function sendAndStream(
   client: CliRpcClient,
@@ -469,6 +486,7 @@ async function sendAndStream(
   return exitCode
 }
 
+/** send：向指定会话发送消息并流式输出 AI 回复。 */
 async function cmdSend(client: CliRpcClient, args: CliArgs): Promise<void> {
   const sessionId = args.rest[0]
   if (!sessionId) {
@@ -488,11 +506,13 @@ async function cmdSend(client: CliRpcClient, args: CliArgs): Promise<void> {
   process.exit(exitCode)
 }
 
+/** 本地启动的服务实例封装。 */
 interface LocalServer {
   client: CliRpcClient
   stop: () => Promise<void>
 }
 
+/** 本地启动 Craft Agent 服务端并构造一个已连接的 CliRpcClient。 */
 async function spawnLocalServer(args: CliArgs, opts?: { quiet?: boolean }): Promise<LocalServer> {
   const { spawnServer } = await import('./server-spawner.ts')
   process.stderr.write('Starting server...\n')
@@ -510,9 +530,10 @@ async function spawnLocalServer(args: CliArgs, opts?: { quiet?: boolean }): Prom
 }
 
 // ---------------------------------------------------------------------------
-// LLM connection helpers
+// LLM 连接辅助函数
 // ---------------------------------------------------------------------------
 
+/** 各 provider 对应的环境变量名。 */
 const PROVIDER_ENV_KEYS: Record<string, string> = {
   anthropic: 'ANTHROPIC_API_KEY',
   openai: 'OPENAI_API_KEY',
@@ -526,6 +547,7 @@ const PROVIDER_ENV_KEYS: Record<string, string> = {
   huggingface: 'HUGGINGFACE_API_KEY',
 }
 
+/** 各 provider 的显示名称。 */
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   anthropic: 'Anthropic',
   openai: 'OpenAI',
@@ -540,13 +562,15 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   'amazon-bedrock': 'Amazon Bedrock',
 }
 
+/** 获取 provider 的友好显示名。 */
 function getProviderDisplayName(provider: string): string {
   return PROVIDER_DISPLAY_NAMES[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1)
 }
 
+/** 解析 API key：优先显式传入，其次环境变量，最后抛出错误。 */
 export function resolveApiKey(provider: string, explicit: string): string {
   if (explicit) return explicit
-  if (provider === 'amazon-bedrock') return '' // IAM credentials, not API key
+  if (provider === 'amazon-bedrock') return '' // Bedrock 用 IAM 凭证，不走单条 API key
   const envKey = PROVIDER_ENV_KEYS[provider]
   if (envKey && process.env[envKey]) return process.env[envKey]!
   throw new Error(
@@ -554,10 +578,15 @@ export function resolveApiKey(provider: string, explicit: string): string {
   )
 }
 
+/** 判断是否需要为该 provider 新建 LLM 连接。 */
 export function shouldSetupLlmConnection(existingConnectionCount: number, args: Pick<CliArgs, 'provider' | 'baseUrl'>): boolean {
   return existingConnectionCount === 0 || !!args.baseUrl || args.provider !== 'anthropic'
 }
 
+/**
+ * 根据命令行参数/环境变量配置 LLM 连接。
+ * 支持普通 API key、自定义 baseUrl、Amazon Bedrock IAM 三种模式。
+ */
 async function setupLlmConnection(
   client: CliRpcClient,
   args: CliArgs,
@@ -571,9 +600,8 @@ async function setupLlmConnection(
   const setupPayload: Record<string, unknown> = { slug: connectionSlug, credential: key }
 
   if (baseUrl) {
-    // Custom endpoint — send the same payload shape as the desktop UI.
-    // The server handler (llm-connections.ts:102-110) detects customEndpoint + baseUrl
-    // and sets providerType='pi_compat', piAuthProvider, etc.
+    // 自定义 endpoint：payload 形状与桌面 UI 保持一致。
+    // 服务端 llm-connections.ts 通过 customEndpoint + baseUrl 识别并设置 providerType='pi_compat' 等。
     providerType = 'pi_compat'
     authType = 'api_key_with_endpoint'
     setupPayload.baseUrl = baseUrl
@@ -585,7 +613,7 @@ async function setupLlmConnection(
     providerType = 'anthropic'
     authType = 'api_key'
   } else if (provider === 'amazon-bedrock') {
-    // Bedrock uses IAM credentials, not a single API key
+    // Bedrock 使用 IAM 凭证而不是单一 API key
     const accessKeyId = process.env.AWS_ACCESS_KEY_ID
     const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY
     const region = process.env.AWS_REGION || 'us-east-1'
@@ -601,7 +629,7 @@ async function setupLlmConnection(
     setupPayload.bedrockAuthMethod = 'iam_credentials'
     setupPayload.iamCredentials = { accessKeyId, secretAccessKey, sessionToken }
     setupPayload.awsRegion = region
-    delete setupPayload.credential // IAM credentials go through iamCredentials field
+    delete setupPayload.credential // IAM 凭证通过 iamCredentials 字段传递，删掉普通 credential
   } else {
     providerType = 'pi'
     authType = 'api_key'
@@ -625,8 +653,9 @@ async function setupLlmConnection(
   return { connectionSlug }
 }
 
+/** run：本地启动服务，创建会话，发送消息并流式输出，最后清理退出。 */
 async function cmdRun(args: CliArgs): Promise<void> {
-  // Prompt = all positional args (no session ID needed, unlike send)
+  // prompt 是全部位置参数（不需要 session ID，这点和 send 不同）
   const message = await readPrompt(args.rest, args.rest)
   if (!message.trim()) {
     err('No prompt provided. Usage: run <message>')
@@ -638,6 +667,7 @@ async function cmdRun(args: CliArgs): Promise<void> {
   let client: CliRpcClient | undefined = server.client
   let sessionId: string | undefined
 
+  /** 清理函数：删除会话、断开客户端、停止服务端。 */
   const cleanup = async () => {
     if (sessionId && client?.isConnected && !args.noCleanup) {
       await client.invoke('sessions:delete', sessionId).catch(() => {})
@@ -646,7 +676,7 @@ async function cmdRun(args: CliArgs): Promise<void> {
     await server.stop()
   }
 
-  // Signal handling — cancel + clean up on SIGINT/SIGTERM
+  // 信号处理：收到 SIGINT/SIGTERM 时先取消再清理
   const onSignal = async () => {
     if (sessionId && client?.isConnected) {
       await client.invoke('sessions:cancel', sessionId).catch(() => {})
@@ -660,7 +690,7 @@ async function cmdRun(args: CliArgs): Promise<void> {
   try {
     await client.connect()
 
-    // Bootstrap workspace from directory if specified
+    // 如果指定了 --workspace-dir，先从目录创建/注册 workspace
     let bootstrappedWorkspaceId: string | undefined
     if (args.workspaceDir) {
       const absPath = resolve(args.workspaceDir)
@@ -669,9 +699,8 @@ async function cmdRun(args: CliArgs): Promise<void> {
       process.stderr.write(`Workspace registered: ${absPath}\n`)
     }
 
-    // Auto-setup LLM connection from flags / env vars.
-    // When --base-url is provided, always create the custom endpoint connection
-    // (even if other connections exist) so the session routes through it.
+    // 根据参数/环境变量自动配置 LLM 连接。
+    // 若传了 --base-url，即使已有其他连接也新建一条自定义 endpoint，确保会话走该连接。
     const connections = (await client.invoke('LLM_Connection:list')) as any[]
     let connectionSlug: string | undefined
     if (shouldSetupLlmConnection(connections?.length ?? 0, args)) {
@@ -713,12 +742,12 @@ async function cmdRun(args: CliArgs): Promise<void> {
   }
 }
 
+/** validate：执行多步骤服务端集成测试。 */
 async function cmdValidate(args: CliArgs): Promise<void> {
   let server: LocalServer | undefined
   let client: CliRpcClient
 
-  // Use a generous timeout for validation steps — source creation and MCP
-  // server startup can be slow on Windows.
+  // 验证步骤涉及 source 创建和 MCP 服务启动，Windows 上可能较慢，因此用更宽裕的超时。
   const validateArgs = { ...args, timeout: Math.max(args.timeout, 30_000) }
 
   if (args.url) {
@@ -750,6 +779,7 @@ async function cmdValidate(args: CliArgs): Promise<void> {
   }
 }
 
+/** cancel：取消指定会话正在进行的 AI 处理。 */
 async function cmdCancel(client: CliRpcClient, args: CliArgs): Promise<void> {
   const sessionId = args.rest[0]
   if (!sessionId) {
@@ -761,6 +791,7 @@ async function cmdCancel(client: CliRpcClient, args: CliArgs): Promise<void> {
   out(args.json ? { cancelled: sessionId } : `Cancelled: ${sessionId}`, args.json)
 }
 
+/** invoke：原始 RPC 调用，剩余参数会尝试按 JSON 解析。 */
 async function cmdInvoke(client: CliRpcClient, args: CliArgs): Promise<void> {
   const channel = args.rest[0]
   if (!channel) {
@@ -769,7 +800,7 @@ async function cmdInvoke(client: CliRpcClient, args: CliArgs): Promise<void> {
   }
   await client.connect()
 
-  // Parse remaining args as JSON
+  // 把剩下的参数逐个尝试 JSON.parse，失败就作为纯字符串传过去
   const invokeArgs: unknown[] = []
   for (let i = 1; i < args.rest.length; i++) {
     try {
@@ -783,6 +814,7 @@ async function cmdInvoke(client: CliRpcClient, args: CliArgs): Promise<void> {
   out(result, args.json)
 }
 
+/** listen：订阅某个频道并持续打印推送事件。 */
 async function cmdListen(client: CliRpcClient, args: CliArgs): Promise<void> {
   const channel = args.rest[0]
   if (!channel) {
@@ -797,29 +829,31 @@ async function cmdListen(client: CliRpcClient, args: CliArgs): Promise<void> {
 
   process.stdout.write(`Listening on ${channel} (Ctrl+C to stop)\n`)
 
-  // Keep alive
+  // 保持进程运行
   await new Promise(() => {
-    // Never resolves — Ctrl+C exits
+    // 永远不会 resolve，按 Ctrl+C 退出
   })
 }
 
 // ---------------------------------------------------------------------------
-// Validate server
+// 服务端验证
 // ---------------------------------------------------------------------------
 
+/** 单个验证步骤。 */
 export interface ValidateStep {
   name: string
   fn: (client: CliRpcClient, ctx: ValidateContext) => Promise<string>
 }
 
+/** 验证上下文：各步骤之间共享状态。 */
 export interface ValidateContext {
-  /** Pre-existing workspace directory (from --workspace-dir) */
+  /** 通过 --workspace-dir 传入的已有 workspace 目录 */
   workspaceDir?: string
-  /** Custom endpoint URL (from --base-url) */
+  /** 通过 --base-url 传入的自定义 endpoint */
   baseUrl?: string
-  /** API key override (from --api-key) */
+  /** 通过 --api-key 传入的 API key */
   apiKey?: string
-  /** Provider hint (from --provider, default 'anthropic') */
+  /** provider 提示（来自 --provider，默认 'anthropic'） */
   provider?: string
   workspaceId?: string
   workspaceRootPath?: string
@@ -829,22 +863,22 @@ export interface ValidateContext {
   createdSkillSlug?: string
   createdAutomation?: boolean
   automationTestSessionId?: string
-  /** Session created by automation that should be blocked by failing condition (if bug occurs) */
+  /** 如果 bug 出现，该 session 是被失败条件阻塞的 automation 创建的 */
   automationBlockedSessionId?: string
   automationName?: string
   automationBlockedName?: string
   createdLabelId?: string
-  /** Backup of existing automations.json before overwrite (undefined = didn't exist) */
+  /** 覆盖前 automations.json 的备份（undefined 表示文件不存在） */
   automationsJsonBackup?: string | null
-  /** Backup of existing automations-history.jsonl before overwrite (undefined = didn't exist) */
+  /** 覆盖前 automations-history.jsonl 的备份（undefined 表示文件不存在） */
   automationsHistoryBackup?: string | null
   branchedSessionId?: string
-  /** Label ID for e2e-test label created for session tool validation */
+  /** 用于 session tool 验证的 e2e-test label ID */
   e2eTestLabelId?: string
   onEvent?: (ev: { type: string; [key: string]: unknown }) => void
 }
 
-/** Minimal shapes for RPC responses used in validation steps. */
+/** 验证步骤中用到的 RPC 响应最小形状。 */
 interface ValidateStatus {
   id?: string
   label?: string
@@ -877,9 +911,9 @@ interface ValidateMessagesResponse {
 }
 
 /**
- * Send a message and wait for streaming events.
- * Returns a summary of received event types.
- * If expectTool is true, validates that tool_start + tool_result events arrived.
+ * 向会话发送消息并等待流式事件。
+ * 返回收到的事件类型摘要。
+ * 若 expectTool 为 true，会校验是否收到了 tool_start + tool_result。
  */
 async function waitForSendEvents(
   client: CliRpcClient,
@@ -920,7 +954,7 @@ async function waitForSendEvents(
 
     if (!finished) throw new Error('Timed out waiting for completion')
 
-    // Only treat as failure if error was the terminal event (no complete followed)
+    // 只有当最终事件是 error 且没有出现 complete 时才视为失败
     if (seen.has('error') && !seen.has('complete')) throw new Error('Session returned an error event')
 
     if (expectTool) {
@@ -940,8 +974,8 @@ async function waitForSendEvents(
 }
 
 /**
- * Clean up automation test artifacts (config files, session, label).
- * Shared between the automation:cleanup test step and runValidation error recovery.
+ * 清理自动化测试产物（配置文件、会话、label）。
+ * 供 automation:cleanup 验证步骤和 runValidation 的错误恢复共用。
  */
 async function cleanupAutomationArtifacts(
   client: CliRpcClient,
@@ -949,7 +983,7 @@ async function cleanupAutomationArtifacts(
 ): Promise<string[]> {
   const cleaned: string[] = []
 
-  // Restore or remove automation config files
+  // 恢复或删除 automation 配置文件
   if (ctx.workspaceRootPath && ctx.createdAutomation) {
     try {
       const { writeFile, unlink } = await import('fs/promises')
@@ -968,10 +1002,10 @@ async function cleanupAutomationArtifacts(
         await unlink(historyPath).catch(() => {})
       }
       ctx.createdAutomation = false
-    } catch { /* best effort */ }
+    } catch { /* 尽力而为 */ }
   }
 
-  // Delete automation-triggered sessions
+  // 删除 automation 触发的测试会话
   for (const key of ['automationTestSessionId', 'automationBlockedSessionId'] as const) {
     const id = ctx[key]
     if (!id || !client.isConnected) continue
@@ -979,21 +1013,22 @@ async function cleanupAutomationArtifacts(
       await client.invoke('sessions:delete', id)
       cleaned.push(`session ${id}`)
       ctx[key] = undefined
-    } catch { /* best effort */ }
+    } catch { /* 尽力而为 */ }
   }
 
-  // Delete test label
+  // 删除测试 label
   if (ctx.workspaceId && ctx.createdLabelId && client.isConnected) {
     try {
       await client.invoke('labels:delete', ctx.workspaceId, ctx.createdLabelId)
       cleaned.push(`label ${ctx.createdLabelId}`)
       ctx.createdLabelId = undefined
-    } catch { /* best effort */ }
+    } catch { /* 尽力而为 */ }
   }
 
   return cleaned
 }
 
+/** 返回所有验证步骤。 */
 export function getValidateSteps(): ValidateStep[] {
   return [
     {
@@ -1029,7 +1064,7 @@ export function getValidateSteps(): ValidateStep[] {
     {
       name: 'workspaces:get',
       fn: async (client, ctx) => {
-        // Register workspace from --workspace-dir if provided
+        // 如果传了 --workspace-dir，就从该目录注册 workspace
         if (ctx.workspaceDir) {
           const { resolve } = await import('path')
           const absPath = resolve(ctx.workspaceDir)
@@ -1043,12 +1078,12 @@ export function getValidateSteps(): ValidateStep[] {
         if (r?.length > 0) {
           ctx.workspaceId = r[0].id
           ctx.workspaceRootPath = r[0].rootPath ?? r[0].path
-          // Bind this client to the workspace so push events (e.g. session:event)
-          // routed { to: 'workspace' } reach us.
+          // 把当前客户端绑定到该 workspace，这样推送事件（如 session:event）
+          // 路由到 workspace 时才能到达本连接。
           await client.invoke('window:switchWorkspace', r[0].id)
           return `${r.length} workspaces`
         }
-        // Auto-bootstrap a temp workspace for CI environments
+        // CI 环境下自动创建一个临时 workspace
         const { mkdtemp } = await import('fs/promises')
         const { tmpdir } = await import('os')
         const tmpDir = await mkdtemp(`${tmpdir()}/craft-validate-`)
@@ -1073,7 +1108,7 @@ export function getValidateSteps(): ValidateStep[] {
       fn: async (client, ctx) => {
         const r = (await client.invoke('LLM_Connection:list')) as any[]
 
-        // Custom endpoint: always create/update when --base-url is provided
+        // 自定义 endpoint：只要传了 --base-url 就总是新建/更新连接
         if (ctx.baseUrl) {
           const provider = ctx.provider || 'anthropic'
           let key = ''
@@ -1103,7 +1138,7 @@ export function getValidateSteps(): ValidateStep[] {
           return `${r?.length ?? 0} existing + custom endpoint via ${ctx.baseUrl}`
         }
 
-        // Amazon Bedrock: IAM credential setup
+        // Amazon Bedrock：使用 IAM 凭证设置连接
         if (ctx.provider === 'amazon-bedrock') {
           const accessKeyId = process.env.AWS_ACCESS_KEY_ID
           const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY
@@ -1137,7 +1172,7 @@ export function getValidateSteps(): ValidateStep[] {
         if (!shouldSetupLlmConnection(r?.length ?? 0, { provider, baseUrl: ctx.baseUrl ?? '' })) {
           return `${r.length} connections`
         }
-        // Auto-setup from env / flags for the requested provider.
+        // 根据环境/参数自动为指定 provider 创建连接
         let key = ''
         try {
           key = resolveApiKey(provider, ctx.apiKey || '')
@@ -1208,7 +1243,7 @@ export function getValidateSteps(): ValidateStep[] {
           'Use the Bash tool to run: echo TOOL_VALIDATION_OK', 90_000, true, undefined, ctx.onEvent)
       },
     },
-    // ----- Session tool validation (guards against #511 regression) -----
+    // ----- Session tool 验证（防止 #511 回归）-----
     {
       name: 'labels:create (e2e-test)',
       fn: async (client, ctx) => {
@@ -1229,7 +1264,7 @@ export function getValidateSteps(): ValidateStep[] {
         const result = await waitForSendEvents(client, ctx.createdSessionId,
           'Use the set_session_labels tool to set labels: ["e2e-test"] on the current session. Do NOT use any other tool.',
           90_000, true, undefined, ctx.onEvent, 'set_session_labels')
-        // Verify labels were actually applied
+        // 校验 label 真的被应用到了 session 上
         const sessions = (await client.invoke('sessions:get', ctx.workspaceId)) as any[]
         const session = sessions?.find((s: any) => s.id === ctx.createdSessionId)
         const labels = session?.labels ?? session?.labelIds ?? []
@@ -1255,7 +1290,7 @@ export function getValidateSteps(): ValidateStep[] {
           90_000, true, undefined, ctx.onEvent, 'list_sessions')
       },
     },
-    // ----- Session branching -----
+    // ----- Session 分支 -----
     {
       name: 'sessions:branch',
       fn: async (client, ctx) => {
@@ -1298,7 +1333,7 @@ export function getValidateSteps(): ValidateStep[] {
           'Reply with exactly: BRANCH_OK', 60_000, false, undefined, ctx.onEvent)
       },
     },
-    // ----- Source lifecycle -----
+    // ----- Source 生命周期 -----
     {
       name: 'sources:create',
       fn: async (client, ctx) => {
@@ -1318,7 +1353,7 @@ export function getValidateSteps(): ValidateStep[] {
       name: 'send + source mention',
       fn: async (client, ctx) => {
         if (!ctx.createdSessionId || !ctx.createdSourceSlug) return 'skipped (no session or source)'
-        // Enable the source on the session
+        // 在会话上启用该 source
         await client.invoke('sessions:command', ctx.createdSessionId, {
           type: 'setSources',
           sourceSlugs: [ctx.createdSourceSlug],
@@ -1327,12 +1362,12 @@ export function getValidateSteps(): ValidateStep[] {
           `[source:${ctx.createdSourceSlug}] Get me a cat fact`, 90_000, false, undefined, ctx.onEvent)
       },
     },
-    // ----- MCP source validation (pre-committed in .github/agents/sources/) -----
+    // ----- MCP source 验证（源文件已预置在 .github/agents/sources/）-----
     {
       name: 'mcp:craft-public (auth:none)',
       fn: async (client, ctx) => {
         if (!ctx.createdSessionId) return 'skipped (no session)'
-        // Enable the pre-committed craft-public MCP source on the session
+        // 在会话上启用预置的 craft-public MCP source
         const enableSlugs = [ctx.createdSourceSlug, 'craft-public'].filter(Boolean) as string[]
         await client.invoke('sessions:command', ctx.createdSessionId, {
           type: 'setSources',
@@ -1349,9 +1384,9 @@ export function getValidateSteps(): ValidateStep[] {
         if (!ctx.createdSessionId) return 'skipped (no session)'
         const apiKey = process.env.STITCH_API_KEY
         if (!apiKey) return 'skipped (no STITCH_API_KEY)'
-        // Inject credential into store (multi-header JSON format, same as API headerNames)
+        // 以多 header JSON 格式把凭证写入 store，与 API headerNames 格式一致
         await client.invoke('sources:saveCredentials', ctx.workspaceId, 'stitch-mcp', JSON.stringify({ 'X-Goog-Api-Key': apiKey }))
-        // Enable stitch-mcp + existing sources on session
+        // 在会话上启用 stitch-mcp 和已有 source
         const enableSlugs = [ctx.createdSourceSlug, 'craft-public', 'stitch-mcp'].filter(Boolean) as string[]
         await client.invoke('sessions:command', ctx.createdSessionId, {
           type: 'setSources',
@@ -1362,7 +1397,7 @@ export function getValidateSteps(): ValidateStep[] {
           90_000, false, undefined, ctx.onEvent)
       },
     },
-    // ----- Skill lifecycle -----
+    // ----- Skill 生命周期 -----
     {
       name: 'send + skill create',
       fn: async (client, ctx) => {
@@ -1370,23 +1405,9 @@ export function getValidateSteps(): ValidateStep[] {
         ctx.createdSkillSlug = '__cli-validate-skill'
         const sourceSlug = ctx.createdSourceSlug ?? 'cat-facts'
         const skillDir = `${ctx.workspaceRootPath}/skills/${ctx.createdSkillSlug}`
-        // Use bash to create the skill file deterministically
+        // 用 Bash 工具在 workspace 下确定性创建 skill 文件
         return await waitForSendEvents(client, ctx.createdSessionId,
-          `Use the Bash tool to run this exact command:
-mkdir -p "${skillDir}" && cat > "${skillDir}/SKILL.md" << 'SKILLEOF'
----
-name: "CLI Validate Skill"
-description: "Validation skill created by craft-cli"
-requiredSources:
-  - "${sourceSlug}"
----
-
-This skill does two things:
-1. Check the current water temperature of Lake Balaton (search the web or estimate based on the season)
-2. Use the Cat Facts source to get a random cat fact
-
-Always perform both steps when this skill is invoked.
-SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
+          `Use the Bash tool to run this exact command:\nmkdir -p "${skillDir}" && cat > "${skillDir}/SKILL.md" << 'SKILLEOF'\n---\nname: "CLI Validate Skill"\ndescription: "Validation skill created by craft-cli"\nrequiredSources:\n  - "${sourceSlug}"\n---\n\nThis skill does two things:\n1. Check the current water temperature of Lake Balaton (search the web or estimate based on the season)\n2. Use the Cat Facts source to get a random cat fact\n\nAlways perform both steps when this skill is invoked.\nSKILLEOF`, 90_000, true, undefined, ctx.onEvent)
       },
     },
     {
@@ -1416,7 +1437,7 @@ SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
         return `deleted skill: ${ctx.createdSkillSlug}`
       },
     },
-    // ----- Automation lifecycle -----
+    // ----- Automation 生命周期 -----
     {
       name: 'automation:create',
       fn: async (client, ctx) => {
@@ -1425,8 +1446,7 @@ SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
         const historyPath = `${ctx.workspaceRootPath}/automations-history.jsonl`
         const { readFile, writeFile } = await import('fs/promises')
 
-        // Always backup + overwrite with deterministic validation config,
-        // then restore during cleanup.
+        // 先备份原配置，测试结束后再恢复；这样不会破坏用户已有的 automation 配置
         const existingConfig = await readFile(configPath, 'utf-8').catch(() => null)
         ctx.automationsJsonBackup = existingConfig
         ctx.automationsHistoryBackup = await readFile(historyPath, 'utf-8').catch(() => null)
@@ -1456,7 +1476,7 @@ SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
 
         await writeFile(configPath, templateConfig)
         ctx.createdAutomation = true
-        // ConfigWatcher auto-detects automations.json changes (debounced)
+        // ConfigWatcher 会自动检测 automations.json 变更（有防抖），稍等片刻让它加载
         await new Promise((r) => setTimeout(r, 2000))
         return `wrote config from template (blocked=${ctx.automationBlockedName}, pass=${ctx.automationName})`
       },
@@ -1465,7 +1485,7 @@ SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
       name: 'automation:trigger (status change)',
       fn: async (client, ctx) => {
         if (!ctx.createdSessionId || !ctx.workspaceId) return 'skipped (no session or workspace)'
-        // Get available statuses to find one containing "in-progress"
+        // 找到包含 "in-progress" 的状态
         const statuses = (await client.invoke('statuses:list', ctx.workspaceId)) as ValidateStatus[]
         const inProgress = statuses?.find((s) =>
           (s.id ?? '').toLowerCase().includes('in-progress') ||
@@ -1473,15 +1493,15 @@ SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
         )
         const statusValue = inProgress?.id ?? 'in-progress'
 
-        // Change session status to trigger the automations
+        // 修改会话状态以触发 automation
         await client.invoke('sessions:command', ctx.createdSessionId, {
           type: 'setSessionStatus',
           state: statusValue,
         })
 
-        // Poll for expected automation behavior:
-        // - pass automation MUST create a session
-        // - blocked automation MUST NOT create a session
+        // 轮询预期行为：
+        // - pass automation 必须创建 session
+        // - blocked automation 必须不能创建 session
         let delay = 1000
         const deadline = Date.now() + 60_000
         while (Date.now() < deadline) {
@@ -1503,7 +1523,7 @@ SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
           if (passSession) {
             ctx.automationTestSessionId = passSession.id
 
-            // Guard against delayed blocked-automation session creation.
+            // 再稍等一会，确认 blocked automation 没有延迟触发
             await new Promise((r) => setTimeout(r, 2000))
             const sessionsAfter = (await client.invoke('sessions:get', ctx.workspaceId)) as ValidateSession[]
             const blockedAfter = sessionsAfter?.find((s) =>
@@ -1524,7 +1544,7 @@ SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
       name: 'automation:verify session',
       fn: async (client, ctx) => {
         if (!ctx.automationTestSessionId) return 'skipped (no automation session)'
-        // Wait for the automation session to complete
+        // 等待 automation 创建的会话完成
         let delay = 1000
         const deadline = Date.now() + 90_000
         while (Date.now() < deadline) {
@@ -1550,13 +1570,13 @@ SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
       name: 'automation:verify labels',
       fn: async (client, ctx) => {
         if (!ctx.automationTestSessionId || !ctx.workspaceId) return 'skipped (no automation session)'
-        // Verify label was auto-created
+        // 校验 label 被自动创建
         const labels = (await client.invoke('labels:list', ctx.workspaceId)) as ValidateLabel[]
         const found = labels?.find((l) => (l.id ?? l.name ?? '') === 'cli-validate-label')
         if (!found) throw new Error('Label cli-validate-label was not auto-created')
         ctx.createdLabelId = found.id ?? 'cli-validate-label'
 
-        // Verify the automation session has the label
+        // 校验 automation session 带有该 label
         const sessions = (await client.invoke('sessions:get', ctx.workspaceId)) as ValidateSession[]
         const automationSession = sessions?.find((s) => s.id === ctx.automationTestSessionId)
         const sessionLabels: string[] = automationSession?.labels ?? []
@@ -1572,14 +1592,14 @@ SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
         const history = (await client.invoke('automations:getLastExecuted', ctx.workspaceId)) as Record<string, number>
         const entries = Object.entries(history)
         if (entries.length === 0) throw new Error('No automation execution history found')
-        // Verify at least one automation ran recently (within last 2 minutes)
+        // 校验至少有一次最近两分钟内的执行记录
         const recentThreshold = Date.now() - 120_000
         const recent = entries.find(([, ts]) => ts > recentThreshold)
         if (!recent) throw new Error(`No recent automation execution (latest: ${Math.max(...entries.map(([, ts]) => ts))})`)
         return `${entries.length} automation(s), latest ran ${Math.round((Date.now() - recent[1]) / 1000)}s ago`
       },
     },
-    // ----- Webhook validation -----
+    // ----- Webhook 验证 -----
     {
       name: 'webhook:test (RPC)',
       fn: async (client, ctx) => {
@@ -1705,6 +1725,7 @@ SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
   ]
 }
 
+/** 按顺序执行所有验证步骤，汇总结果并返回退出码。 */
 export async function runValidation(
   client: CliRpcClient,
   jsonMode: boolean,
@@ -1730,10 +1751,10 @@ export async function runValidation(
     const num = `[${i + 1}/${total}]`
     const plainLen = num.length + 1 + step.name.length
 
-    // Spinner + live event printer
-    // Spinner keeps running until the agent produces real output (text_delta/tool_start).
-    // Early events (user_message, connection_changed, usage_update) are buffered or ignored
-    // so the spinner stays visible while the agent is thinking.
+    // 转圈动画 + 实时事件打印
+    // 转圈持续到 AI 产生真实输出（text_delta/tool_start）为止。
+    // 早期内部事件（user_message、connection_changed、usage_update）会被缓冲或忽略，
+    // 让转圈在 AI 思考期间保持可见。
     let spinner: { stop(): void } | undefined
     if (!jsonMode) {
       let headerPrinted = false
@@ -1766,7 +1787,7 @@ export async function runValidation(
 
       ctx.onEvent = (ev) => {
         switch (ev.type) {
-          // Buffer prompt — shown when agent starts responding
+          // 缓冲用户提示词，等 AI 开始回复时一起显示
           case 'user_message': {
             const msg = ev.message as any
             let text = ''
@@ -1779,7 +1800,7 @@ export async function runValidation(
             bufferedPrompt = clean.length > 100 ? clean.slice(0, 100) + '…' : clean
             break
           }
-          // Agent text — stop spinner, show header + prompt + text
+          // AI 文本：停止转圈，显示标题 + 提示词 + 文本
           case 'text_delta':
             ensureHeader()
             accText += String(ev.delta ?? '')
@@ -1789,7 +1810,7 @@ export async function runValidation(
             ensureHeader()
             flushText()
             break
-          // Tool use — stop spinner, show header + prompt + tool
+          // 工具调用：停止转圈，显示标题 + 提示词 + 工具名
           case 'tool_start': {
             ensureHeader()
             flushText()
@@ -1800,7 +1821,7 @@ export async function runValidation(
             textFlushed = false
             break
           }
-          // Ignore internal events (connection_changed, usage_update, etc.)
+          // 忽略内部事件（connection_changed、usage_update 等）
         }
       }
     } else {
@@ -1833,40 +1854,40 @@ export async function runValidation(
     }
   }
 
-  // Cleanup: branched session
+  // 清理：分支会话
   if (ctx.branchedSessionId && client.isConnected) {
     try {
       await client.invoke('sessions:delete', ctx.branchedSessionId)
     } catch {
-      // best effort
+      // 尽力而为
     }
   }
 
-  // Cleanup: if a session was created but delete step hasn't run or failed
+  // 清理：如果创建了主会话但删除步骤未运行或失败
   if (ctx.createdSessionId && client.isConnected) {
     try {
       await client.invoke('sessions:delete', ctx.createdSessionId)
     } catch {
-      // best effort
+      // 尽力而为
     }
   }
 
-  // Cleanup: automation artifacts
+  // 清理：automation 产物
   await cleanupAutomationArtifacts(client, ctx)
 
-  // Cleanup: if we auto-created a temp workspace, remove it
+  // 清理：如果自动创建了临时 workspace，则删除
   if (ctx.createdWorkspace && ctx.workspaceId && client.isConnected) {
     try {
       await client.invoke('workspaces:delete', ctx.workspaceId)
     } catch {
-      // best effort
+      // 尽力而为
     }
     if (ctx.workspaceRootPath) {
       try {
         const { rm } = await import('fs/promises')
         await rm(ctx.workspaceRootPath, { recursive: true, force: true })
       } catch {
-        // best effort
+        // 尽力而为
       }
     }
   }
@@ -1887,9 +1908,10 @@ export async function runValidation(
 }
 
 // ---------------------------------------------------------------------------
-// Help
+// 帮助信息
 // ---------------------------------------------------------------------------
 
+/** 打印命令行帮助信息。 */
 function printHelp(): void {
   process.stdout.write(`craft-cli — Terminal client for Craft Agent server
 
@@ -1955,13 +1977,14 @@ Examples:
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// 主入口
 // ---------------------------------------------------------------------------
 
+/** 主函数：解析参数并分发到各命令。 */
 export async function main(argv: string[] = process.argv): Promise<void> {
   const args = parseArgs(argv)
 
-  // Set custom CA before any WS connections
+  // 在任何 WebSocket 连接前设置自定义 CA
   if (args.tlsCa) {
     process.env.NODE_EXTRA_CA_CERTS = args.tlsCa
   }
@@ -1977,19 +2000,19 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     return
   }
 
-  // run is self-contained — spawns its own server
+  // run 是自包含命令：自己启动服务
   if (args.command === 'run') {
     await cmdRun(args)
     return
   }
 
-  // validate can spawn its own server or use --url
+  // validate 可以自己启动服务，也可以用 --url 指定外部服务
   if (args.command === 'validate') {
     await cmdValidate(args)
     return
   }
 
-  // All other commands need a server URL
+  // 其他所有命令都需要显式服务端 URL
   if (!args.url) {
     err('No server URL. Use --url <ws://...> or set $CRAFT_SERVER_URL')
     process.exit(1)
@@ -2045,7 +2068,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       }
       case 'send':
         await cmdSend(client, args)
-        break // cmdSend calls process.exit
+        break // cmdSend 内部会调用 process.exit
       case 'cancel':
         await cmdCancel(client, args)
         break
@@ -2054,7 +2077,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         break
       case 'listen':
         await cmdListen(client, args)
-        break // never returns
+        break // 永远不会返回
       default:
         err(`Unknown command: ${args.command}`)
         printHelp()
@@ -2069,7 +2092,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   }
 }
 
-// Run if executed directly (not when imported by tests)
+// 直接执行脚本时启动（被测试导入时不执行）
 if (import.meta.main) {
   main()
 }

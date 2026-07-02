@@ -1,3 +1,9 @@
+/**
+ * Button — 基础按钮组件
+ *
+ * 使用 class-variance-authority（cva）管理变体样式，支持 variant、size、asChild。
+ * asChild=true 时用 Radix Slot 把属性传给子元素，而不是渲染额外 button。
+ */
 import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { cva, type VariantProps } from "class-variance-authority"
@@ -36,6 +42,7 @@ const buttonVariants = cva(
 export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
+  /** 是否把按钮属性透传给子元素（如 Link），而不是渲染 button 标签 */
   asChild?: boolean
 }
 

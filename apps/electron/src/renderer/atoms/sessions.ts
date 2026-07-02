@@ -1,11 +1,14 @@
 /**
- * Per-Session State Management with Jotai
+ * 基于 Jotai 的会话级状态管理
  *
- * Uses atomFamily to create isolated atoms per session.
- * Updates to one session don't trigger re-renders in other sessions.
+ * 使用 Jotai 管理每个会话（session）的状态。
+ * 通过 atomFamily 为每个 session 创建独立的 atom，
+ * 一个 session 的更新不会触发其他 session 组件的重渲染。
  *
- * This solves the performance issue where streaming in Session A
- * caused re-renders and focus loss in Session B.
+ * 这解决了“在 Session A 流式输出时导致 Session B 重渲染并丢失焦点”的性能问题。
+ *
+ * 对 Go 同学：atomFamily 类似一个按 key 创建变量的工厂函数，
+ * 每个 key 对应一块独立状态，互不干扰。
  */
 
 import { atom } from 'jotai'
@@ -14,13 +17,13 @@ import { atomFamily } from 'jotai-family'
 import type { Session, Message } from '../../shared/types'
 
 /**
- * Session metadata for list display (lightweight, no messages)
- * Used by SessionList to avoid re-rendering on message changes
+ * Session 元数据（用于列表展示，轻量，不含消息）
+ * SessionList 用它避免在消息变化时重渲染
  */
 export interface SessionMeta {
   id: string
   name?: string
-  /** Preview of first user message (for title fallback) */
+  /** 第一条用户消息的预览（用作标题兜底） */
   preview?: string
   workspaceId: string
   lastMessageAt?: number
@@ -29,35 +32,35 @@ export interface SessionMeta {
   lastReadMessageId?: string
   workingDirectory?: string
   enabledSourceSlugs?: string[]
-  /** Shared viewer URL (if shared via viewer) */
+  /** 通过 viewer 分享后的公开 URL */
   sharedUrl?: string
-  /** Shared session ID in viewer (for revoke) */
+  /** 在 viewer 中的分享 session ID（用于撤销分享） */
   sharedId?: string
-  /** ID of the last final (non-intermediate) assistant message - for unread detection */
+  /** 最后一条非中间态的 assistant/plan 消息 ID — 用于未读检测 */
   lastFinalMessageId?: string
   /**
-   * Explicit unread flag - single source of truth for NEW badge.
-   * Set to true when assistant message completes while user is NOT viewing.
-   * Set to false when user views the session (and not processing).
+   * 显式未读标记 — “NEW” 徽标的唯一真相源。
+   * 当 assistant 完成回复而用户没有查看时设为 true；
+   * 当用户查看该 session 且未在处理中时设为 false。
    */
   hasUnread?: boolean
-  /** Labels for filtering (additive tags, many-per-session) */
+  /** 用于过滤的标签（可叠加，一个 session 可有多个） */
   labels?: string[]
-  /** Permission mode ('safe', 'ask', 'allow-all') — used by view expressions */
+  /** 权限模式（'safe', 'ask', 'allow-all'）— 视图表达式使用 */
   permissionMode?: string
-  /** Session status for filtering */
+  /** 用于过滤的 session 状态 */
   sessionStatus?: string
-  /** Role/type of the last message (for badge display without loading messages) */
+  /** 最后一条消息的角色（用于在不加载消息时显示徽标） */
   lastMessageRole?: 'user' | 'assistant' | 'plan' | 'tool' | 'error'
-  /** Whether an async operation is ongoing (sharing, updating share, revoking, title regeneration) */
+  /** 是否有异步操作进行中（分享、更新分享、撤销、标题重生成） */
   isAsyncOperationOngoing?: boolean
-  /** @deprecated Use isAsyncOperationOngoing instead */
+  /** @deprecated 请改用 isAsyncOperationOngoing */
   isRegeneratingTitle?: boolean
-  /** Model override for this session */
+  /** 该 session 的模型覆盖 */
   model?: string
-  /** LLM connection slug for this session */
+  /** 该 session 的 LLM 连接 slug */
   llmConnection?: string
-  /** Token usage stats (from JSONL header, available without loading messages) */
+  /** Token 用量统计（来自 JSONL 头，无需加载消息即可获得） */
   tokenUsage?: {
     inputTokens: number
     outputTokens: number
@@ -65,15 +68,15 @@ export interface SessionMeta {
     costUsd: number
     contextTokens: number
   }
-  /** When the session was created (ms timestamp) */
+  /** session 创建时间（毫秒时间戳） */
   createdAt?: number
-  /** Total number of messages in this session */
+  /** 该 session 消息总数 */
   messageCount?: number
-  /** When true, session is hidden from session list (e.g., mini edit sessions) */
+  /** 为 true 时 session 在列表中隐藏（例如 mini edit sessions） */
   hidden?: boolean
-  /** Whether this session is archived */
+  /** 是否已归档 */
   isArchived?: boolean
-  /** Timestamp when session was archived (for retention policy) */
+  /** 归档时间戳（用于保留策略） */
   archivedAt?: number
   /** Workspace-scoped project id this session is bound to (undefined = unbound) */
   projectId?: string
@@ -94,12 +97,12 @@ export interface SessionMeta {
 }
 
 /**
- * Find the last final (non-intermediate) assistant or plan message ID
+ * 从消息数组中找到最后一条非中间态的 assistant 或 plan 消息 ID。
+ * plan 消息也算最终回复，因为它是 AI 生成的内容。
  */
 function findLastFinalMessageId(messages: Message[]): string | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]
-    // Include plan messages as final responses (they're AI-generated content)
     if ((msg.role === 'assistant' || msg.role === 'plan') && !msg.isIntermediate) {
       return msg.id
     }
@@ -108,12 +111,13 @@ function findLastFinalMessageId(messages: Message[]): string | undefined {
 }
 
 /**
- * Extract metadata from a full session object
+ * 从完整 Session 对象中提取轻量元数据。
+ * 通过解构去掉 SessionMeta 不需要的字段，再补充计算字段。
  */
 export function extractSessionMeta(session: Session): SessionMeta {
   const messages = session.messages || []
 
-  // Destructure fields that don't exist on SessionMeta or need overrides
+  // 解构出在 SessionMeta 中不存在或需要覆盖的字段
   const {
     messages: _msgs, sessionFolderPath: _sf, supportsBranching: _sb,
     workspaceName: _wn, thinkingLevel: _tl, currentStatus: _cs,
@@ -136,8 +140,8 @@ export function extractSessionMeta(session: Session): SessionMeta {
 }
 
 /**
- * Atom family for individual session state
- * Each session gets its own atom - updates are isolated
+ * 每个 session 对应一个独立 atom 的 atomFamily。
+ * 更新被隔离：只订阅某个 session 的组件才会重渲染。
  */
 export const sessionAtomFamily = atomFamily(
   (_sessionId: string) => atom<Session | null>(null),
@@ -145,47 +149,46 @@ export const sessionAtomFamily = atomFamily(
 )
 
 /**
- * Atom for session metadata map (for list display)
- * Only contains lightweight data needed for SessionList
+ * session 元数据映射（用于列表展示）
+ * 只包含 SessionList 所需的轻量数据
  */
 export const sessionMetaMapAtom = atom<Map<string, SessionMeta>>(new Map())
 
 /**
- * Derived atom: ordered list of session IDs (for list ordering)
+ * 派生 atom：排序后的 session ID 列表（用于列表顺序）
  */
 export const sessionIdsAtom = atom<string[]>([])
 
 /**
- * Track which sessions have had their messages loaded (for lazy loading)
- * Sessions are loaded with empty messages initially, messages are fetched on-demand
+ * 记录哪些 session 的消息已经加载（用于懒加载）
+ * session 初始化时 messages 为空，打开时才按需拉取
  */
 export const loadedSessionsAtom = atom<Set<string>>(new Set<string>())
 
 /**
- * Promise cache for deduplicating concurrent session load requests.
- * Prevents race condition where multiple calls (e.g., from React re-renders)
- * start loading before the first completes and marks the session as loaded.
- * Module-level map since it tracks in-flight promises, not React state.
+ * Promise 缓存，用于去重并发 session 加载请求。
+ * 防止竞态：多个调用（例如 React 重渲染）在第一次完成并标记 loaded 之前就发起加载。
+ * 模块级 Map，因为它追踪的是进行中的 Promise，不是 React 状态。
  */
 const sessionLoadingPromises = new Map<string, Promise<Session | null>>()
 
 /**
- * Currently active session ID - the session displayed in the main content area
- * This replaces the tab-based session selection
+ * 当前激活的 session ID — 主内容区显示的 session
+ * 替代原来的基于 tab 的 session 选择
  */
 export const activeSessionIdAtom = atom<string | null>(null)
 
-// NOTE: sessionsAtom REMOVED to fix memory leak
-// The sessions array with messages was being retained by Jotai's internal state.
-// Instead, we now use:
-// - sessionMetaMapAtom for listing (lightweight metadata, no messages)
-// - sessionAtomFamily(id) for individual session data
-// - initializeSessionsAtom for bulk initialization
-// - addSessionAtom, removeSessionAtom for individual operations
+// 注意：sessionsAtom 已被移除，以修复内存泄漏
+// 之前包含消息的 sessions 数组被 Jotai 内部状态持有。
+// 现在改为：
+// - sessionMetaMapAtom：列表用，轻量元数据，不含消息
+// - sessionAtomFamily(id)：单个 session 数据
+// - initializeSessionsAtom：批量初始化
+// - addSessionAtom、removeSessionAtom：单个增删
 
 /**
- * Action atom: update a single session
- * Only triggers re-render in components subscribed to this specific session
+ * Action atom：更新单个 session
+ * 只触发订阅了该 session 的组件重渲染
  */
 export const updateSessionAtom = atom(
   null,
@@ -195,7 +198,7 @@ export const updateSessionAtom = atom(
     const newSession = updater(currentSession)
     set(sessionAtom, newSession)
 
-    // Also update metadata if session exists
+    // 如果 session 存在，同步更新元数据
     if (newSession) {
       const metaMap = get(sessionMetaMapAtom)
       const newMetaMap = new Map(metaMap)
@@ -206,8 +209,8 @@ export const updateSessionAtom = atom(
 )
 
 /**
- * Action atom: update only session metadata (for list display updates)
- * Doesn't affect the full session atom
+ * Action atom：只更新 session 元数据（用于列表展示更新）
+ * 不影响完整 session atom
  */
 export const updateSessionMetaAtom = atom(
   null,
@@ -223,12 +226,12 @@ export const updateSessionMetaAtom = atom(
 )
 
 /**
- * Action atom: replace a session with an authoritative full session payload.
+ * Action atom：用权威完整 session 载荷替换当前 session。
  *
- * Use this for data returned by getSessionMessages() or createSession(), where
- * the `messages` array is known to represent the loaded transcript. Keeping the
- * full session atom and loadedSessionsAtom in one write prevents the chat panel
- * from hiding real messages behind a stale lazy-loading spinner.
+ * 适用于 getSessionMessages() 或 createSession() 返回的数据，
+ * 因为此时 messages 数组已知是完整的加载记录。
+ * 在一个写入里同时更新完整 session atom 和 loadedSessionsAtom，
+ * 防止聊天面板把真实消息藏在过时的懒加载 spinner 后面。
  */
 export const replaceLoadedSessionAtom = atom(
   null,
@@ -250,10 +253,10 @@ export const replaceLoadedSessionAtom = atom(
 )
 
 /**
- * Action atom: append message to session (for streaming)
- * Optimized to only update the specific session
- * Note: Does NOT update lastMessageAt - caller must handle timestamp updates
- * to avoid session list jumping on intermediate/tool messages
+ * Action atom：向 session 追加消息（用于流式输出）
+ * 优化为只更新特定 session
+ * 注意：不更新 lastMessageAt —— 调用方需自己处理时间戳，
+ * 避免中间态/工具消息导致 session 列表跳动
  */
 export const appendMessageAtom = atom(
   null,
@@ -264,15 +267,15 @@ export const appendMessageAtom = atom(
       set(sessionAtom, {
         ...session,
         messages: [...session.messages, message],
-        // Don't update lastMessageAt here - only user messages and final responses should update it
+        // 这里不更新 lastMessageAt —— 只有用户消息和最终回复才应更新它
       })
     }
   }
 )
 
 /**
- * Action atom: update streaming content for a session
- * For text_delta events - appends to the last streaming message
+ * Action atom：更新 session 的流式内容
+ * 用于 text_delta 事件 —— 追加到最后一条正在流式输出的消息
  */
 export const updateStreamingContentAtom = atom(
   null,
@@ -284,7 +287,7 @@ export const updateStreamingContentAtom = atom(
     const messages = [...session.messages]
     const lastMsg = messages[messages.length - 1]
 
-    // Append to existing streaming message
+    // 追加到现有的流式消息
     if (lastMsg?.role === 'assistant' && lastMsg.isStreaming &&
         (!turnId || lastMsg.turnId === turnId)) {
       messages[messages.length - 1] = {
@@ -297,14 +300,14 @@ export const updateStreamingContentAtom = atom(
 )
 
 /**
- * Action atom: initialize sessions from loaded data
+ * Action atom：从加载的数据初始化 sessions
  */
 export const initializeSessionsAtom = atom(
   null,
   (get, set, sessions: Session[]) => {
-    // Clean up stale atom family entries from previous workspace.
-    // Without this, switching workspaces leaves orphaned atoms in memory
-    // and components subscribed to old session IDs see stale/empty data.
+    // 清理上一个工作区遗留的 atom family 条目。
+    // 不清理的话，切换工作区后旧 session ID 的孤立 atom 会留在内存里，
+    // 订阅了旧 ID 的组件会看到过时/空数据。
     const oldIds = get(sessionIdsAtom)
     const newIdSet = new Set(sessions.map(s => s.id))
     for (const oldId of oldIds) {
@@ -313,43 +316,42 @@ export const initializeSessionsAtom = atom(
         backgroundTasksAtomFamily.remove(oldId)
       }
     }
-    // Reset loaded sessions tracking — new workspace needs fresh lazy loading
+    // 重置已加载记录 —— 新工作区需要重新懒加载
     set(loadedSessionsAtom, new Set<string>())
 
-    // Set individual session atoms
+    // 设置各个 session atom
     for (const session of sessions) {
       set(sessionAtomFamily(session.id), session)
     }
 
-    // Build metadata map
+    // 构建元数据映射
     const metaMap = new Map<string, SessionMeta>()
     for (const session of sessions) {
       metaMap.set(session.id, extractSessionMeta(session))
     }
     set(sessionMetaMapAtom, metaMap)
 
-    // Set ordered IDs (sorted by lastMessageAt desc)
+    // 设置排序后的 ID（按 lastMessageAt 降序）
     const ids = sessions
       .sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0))
       .map(s => s.id)
     set(sessionIdsAtom, ids)
 
-    // NOTE: Do NOT mark sessions as loaded here
-    // Sessions from getSessions() have empty messages: [] to save memory
-    // Messages are lazy-loaded via ensureSessionMessagesLoadedAtom when session is opened
-    // This reduces initial memory usage from ~500MB to ~50MB for 300+ sessions
+    // 注意：不要在这里把 session 标记为 loaded
+    // getSessions() 返回的 session messages: []，是为了省内存
+    // 消息在 session 打开时通过 ensureSessionMessagesLoadedAtom 懒加载
+    // 这样 300+ sessions 的初始内存从约 500MB 降到约 50MB
   }
 )
 
 /**
- * Action atom: refresh session metadata after a stale reconnect.
+ * Action atom：在陈旧的重连后刷新 session 元数据。
  *
- * Unlike initializeSessionsAtom (which resets everything for workspace switches),
- * this preserves messages for already-loaded sessions and only marks overwritten
- * metadata-only sessions as unloaded for lazy re-fetching.
+ * 与 initializeSessionsAtom（为切换工作区重置一切）不同，
+ * 这里会保留已加载 session 的消息，只把被覆盖的仅元数据 session 标记为未加载以便重新拉取。
  *
- * All cross-atom mutations happen inside a single write transaction so that
- * React subscribers see one consistent update instead of intermediate states.
+ * 所有跨 atom 的修改都在一个写事务里完成，
+ * 这样 React 订阅者看到的是一次一致更新，而不是中间状态。
  */
 export const refreshSessionsMetadataAtom = atom(
   null,
@@ -360,11 +362,8 @@ export const refreshSessionsMetadataAtom = atom(
   ): Map<string, SessionMeta> => {
     const { sessions, loadedSessionIds, removeMissing = true } = payload
 
-    // Remove stale sessions only for authoritative refreshes. Stale reconnect
-    // recovery can receive a transient partial list immediately after sleep/wake;
-    // treating that as authoritative is what makes the sidebar collapse to the
-    // single active session. In non-destructive mode we upsert returned sessions
-    // and preserve missing metadata until a confirmed delete/workspace reload.
+    // 只在权威刷新时移除陈旧 session。非破坏式刷新可能收到睡眠/唤醒后的临时局部列表；
+    // 把它当作权威列表会导致侧边栏折叠成只剩单个激活 session。
     const currentIds = get(sessionIdsAtom)
     const latestIds = new Set(sessions.map(s => s.id))
     if (removeMissing) {
@@ -375,7 +374,7 @@ export const refreshSessionsMetadataAtom = atom(
       }
     }
 
-    // Update each session atom, preserving messages for loaded sessions
+    // 更新每个 session atom，保留已加载 session 的消息
     const unloadedIds: string[] = []
     for (const session of sessions) {
       const currentSession = get(sessionAtomFamily(session.id))
@@ -386,22 +385,21 @@ export const refreshSessionsMetadataAtom = atom(
 
       set(sessionAtomFamily(session.id), nextSession)
 
-      // Track sessions that lost their messages so lazy-loading re-fetches them
+      // 记录丢失了消息的 session，让懒加载重新拉取
       if (!shouldPreserveMessages && loadedSessionIds.has(session.id)) {
         unloadedIds.push(session.id)
       }
     }
 
-    // Remove overwritten sessions from loadedSessionsAtom
+    // 从 loadedSessionsAtom 中移除被覆盖的 session
     if (unloadedIds.length > 0) {
       const nextLoaded = new Set(get(loadedSessionsAtom))
       for (const id of unloadedIds) nextLoaded.delete(id)
       set(loadedSessionsAtom, nextLoaded)
     }
 
-    // Build and set metadata map. Non-destructive refresh starts from the
-    // existing map so sessions omitted by a transient partial response remain
-    // visible. Returned sessions are still authoritative for their own fields.
+    // 构建并设置元数据映射。非破坏式刷新从现有映射开始，
+    // 这样被临时局部响应省略的 session 仍然可见；返回的 session 对自身字段仍是权威的。
     const nextMetaMap = removeMissing
       ? new Map<string, SessionMeta>()
       : new Map(get(sessionMetaMapAtom))
@@ -410,7 +408,7 @@ export const refreshSessionsMetadataAtom = atom(
     }
     set(sessionMetaMapAtom, nextMetaMap)
 
-    // Set ordered IDs from the metadata map we actually exposed to the UI.
+    // 从实际暴露给 UI 的元数据映射中生成排序 ID
     const nextIds = Array.from(nextMetaMap.values())
       .sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0))
       .map(s => s.id)
@@ -421,25 +419,25 @@ export const refreshSessionsMetadataAtom = atom(
 )
 
 /**
- * Action atom: add a new session
+ * Action atom：新增一个 session
  */
 export const addSessionAtom = atom(
   null,
   (get, set, session: Session) => {
-    // Set session atom
+    // 设置 session atom
     set(sessionAtomFamily(session.id), session)
 
-    // Add to metadata map
+    // 加入元数据映射
     const metaMap = get(sessionMetaMapAtom)
     const newMetaMap = new Map(metaMap)
     newMetaMap.set(session.id, extractSessionMeta(session))
     set(sessionMetaMapAtom, newMetaMap)
 
-    // Add to beginning of IDs list
+    // 加到 ID 列表开头
     const ids = get(sessionIdsAtom)
     set(sessionIdsAtom, [session.id, ...ids])
 
-    // Mark as loaded (new sessions are complete - no lazy loading needed)
+    // 标记为已加载（新 session 是完整的，不需要懒加载）
     const loadedSessions = get(loadedSessionsAtom)
     const newLoadedSessions = new Set(loadedSessions)
     newLoadedSessions.add(session.id)
@@ -448,98 +446,97 @@ export const addSessionAtom = atom(
 )
 
 /**
- * Action atom: remove a session
+ * Action atom：移除一个 session
  */
 export const removeSessionAtom = atom(
   null,
   (get, set, sessionId: string) => {
-    // Clear session atom value first
+    // 先把 session atom 值清空
     set(sessionAtomFamily(sessionId), null)
-    // Remove atom from family cache to allow GC of the atom and its stored value
+    // 从 family 缓存中移除，允许 GC 回收 atom 及其存储值
     sessionAtomFamily.remove(sessionId)
 
-    // Remove from metadata map
+    // 从元数据映射中移除
     const metaMap = get(sessionMetaMapAtom)
     const newMetaMap = new Map(metaMap)
     newMetaMap.delete(sessionId)
     set(sessionMetaMapAtom, newMetaMap)
 
-    // Remove from IDs list
+    // 从 ID 列表中移除
     const ids = get(sessionIdsAtom)
     set(sessionIdsAtom, ids.filter(id => id !== sessionId))
 
-    // Remove from loaded sessions tracking
+    // 从已加载记录中移除
     const loadedSessions = get(loadedSessionsAtom)
     const newLoadedSessions = new Set(loadedSessions)
     newLoadedSessions.delete(sessionId)
     set(loadedSessionsAtom, newLoadedSessions)
 
-    // Clean up additional atom families to prevent memory leaks
-    // These store per-session UI state that should be garbage collected
+    // 清理其他 per-session atom family，防止内存泄漏
+    // 这些存储的是应该被 GC 的 per-session UI 状态
     backgroundTasksAtomFamily.remove(sessionId)
   }
 )
 
 /**
- * Action atom: sync React state to per-session atoms
+ * Action atom：把 React state 同步到 per-session atoms
  *
- * This is the key to the hybrid approach:
- * - React state (sessions array) remains the source of truth
- * - This atom syncs changes to per-session atoms automatically
- * - Components using useSession(id) get isolated updates
- * - Jotai's referential equality prevents unnecessary re-renders
+ * 这是混合方案的关键：
+ * - React state（sessions 数组）仍然是真相源
+ * - 这个 atom 自动把变化同步到 per-session atoms
+ * - 使用 useSession(id) 的组件得到隔离更新
+ * - Jotai 的引用相等性防止不必要的重渲染
  *
- * IMPORTANT: During streaming, the atom is the source of truth.
- * Streaming events (text_delta, tool_start, tool_result) update atoms directly
- * and bypass React state for performance. We must NOT overwrite atoms for
- * sessions that are processing, or we lose streaming data (tool calls, text).
- * Once a "handoff" event (complete, error, etc.) occurs, React state catches up
- * and sync works normally again.
+ * 重要：流式输出期间，atom 才是真相源。
+ * 流式事件（text_delta、tool_start、tool_result）直接更新 atoms，
+ * 绕过 React state 以提升性能。对于正在处理的 session 一定不能覆盖 atom，
+ * 否则会丢失流式数据（工具调用、文本）。
+ * 一旦收到 handoff 事件（complete、error 等），React state 会追上来，
+ * 同步恢复正常。
  */
 export const syncSessionsToAtomsAtom = atom(
   null,
   (get, set, sessions: Session[]) => {
     const loadedSessions = get(loadedSessionsAtom)
 
-    // Update each session atom
+    // 更新每个 session atom
     for (const session of sessions) {
       const sessionAtom = sessionAtomFamily(session.id)
       const atomSession = get(sessionAtom)
 
-      // CRITICAL: If the atom's session is processing, it has streaming updates
-      // that React state doesn't know about yet. Don't overwrite - atom is
-      // source of truth during streaming. The handoff event will reconcile.
+      // 关键：如果 atom 里的 session 正在处理，说明它有流式更新，
+      // 而 React state 还不知道。不要覆盖 —— 流式期间 atom 是真相源。
+      // handoff 事件会来调和。
       if (atomSession?.isProcessing) {
         continue
       }
 
-      // CRITICAL: If session messages were lazy-loaded, atom has full messages
-      // but React state may have empty array. Only skip if React would lose messages.
-      // Allow sync when React has MORE messages (e.g., user just sent a message).
+      // 关键：如果消息已懒加载，atom 有完整消息，但 React state 可能为空数组。
+      // 只有当 React 消息更少时（会丢失数据）才跳过同步；
+      // 如果 React 消息更多（例如用户刚发了消息），允许同步。
       if (loadedSessions.has(session.id) && atomSession) {
         const atomMessageCount = atomSession.messages?.length ?? 0
         const reactMessageCount = session.messages?.length ?? 0
-        // Skip sync only if React has fewer messages (would lose data)
+        // 只有 React 消息更少时才跳过，防止丢失数据
         if (reactMessageCount < atomMessageCount) {
           continue
         }
       }
 
-      // Only update if the session object is different (referential check)
-      // This prevents unnecessary re-renders when the session hasn't changed
+      // 仅当 session 对象真的不同（引用检查）时才更新
+      // 避免 session 没变化时触发不必要的重渲染
       if (atomSession !== session) {
         set(sessionAtom, session)
       }
     }
 
-    // Update metadata map for list display
-    // Note: We still update metadata from React state, which is fine because
-    // metadata doesn't include messages - the streaming content we're protecting
+    // 更新列表展示的元数据映射
+    // 注意：仍然从 React state 更新元数据，没问题，因为元数据不含消息
     const metaMap = new Map<string, SessionMeta>()
     for (const session of sessions) {
       const meta = extractSessionMeta(session)
-      // Preserve isProcessing from atom if atom is processing
-      // React state may have stale isProcessing: false during streaming
+      // 如果 atom 正在处理，保留它的 isProcessing
+      // React state 在流式期间可能还是 isProcessing: false
       const atomSession = get(sessionAtomFamily(session.id))
       if (atomSession?.isProcessing) {
         meta.isProcessing = true
@@ -548,24 +545,23 @@ export const syncSessionsToAtomsAtom = atom(
     }
     set(sessionMetaMapAtom, metaMap)
 
-    // Update ordered IDs (preserve order from React state)
+    // 更新排序 ID（保留 React state 的顺序）
     set(sessionIdsAtom, sessions.map(s => s.id))
   }
 )
 
-// loadedSessionsAtom moved up before sessionsAtom (needed for self-syncing)
+// loadedSessionsAtom 已经提前定义，因为 syncSessionsToAtomsAtom 需要引用它
 
 /**
- * Action atom: Load session messages if not already loaded
- * Returns the loaded session or current session if already loaded.
- * Uses promise deduplication to prevent redundant IPC calls from concurrent requests.
+ * Action atom：如果尚未加载，则加载 session 消息。
+ * 返回加载后的 session；如果已经加载则返回当前 session。
+ * 使用 Promise 去重防止并发请求的重复 IPC 调用。
  *
- * IMPORTANT: This only merges messages into the existing session atom.
- * UI state fields (hasUnread, isFlagged, sessionStatus, etc.) are preserved from
- * the in-memory atom, NOT overwritten with potentially stale disk data.
- * This prevents a race condition where optimistic updates (e.g., clearing the
- * NEW badge on session view) get clobbered by async message loading that reads
- * older state from disk.
+ * 重要：这里只把消息合并进现有 session atom。
+ * UI 状态字段（hasUnread、isFlagged、sessionStatus 等）保留内存 atom 中的值，
+ * 不会被可能陈旧的磁盘数据覆盖。
+ * 这防止了竞态：用户查看 session 后清除了 NEW 徽标的乐观更新，
+ * 不会被异步加载时读到的旧状态覆盖。
  */
 async function loadSessionMessages(
   get: Getter,
@@ -580,36 +576,36 @@ async function loadSessionMessages(
     nextLoadedSessions.delete(sessionId)
     set(loadedSessionsAtom, nextLoadedSessions)
 
-    // Clear any stale in-flight request so the caller gets a fresh fetch.
+    // 清理任何进行中的旧请求，让调用方得到一次全新拉取
     sessionLoadingPromises.delete(sessionId)
   } else {
     const loadedSessions = get(loadedSessionsAtom)
 
-    // Already loaded, return current session
+    // 已经加载，直接返回当前 session
     if (loadedSessions.has(sessionId)) {
       return get(sessionAtomFamily(sessionId))
     }
   }
 
-  // Check if already loading - return existing promise to deduplicate concurrent calls
+  // 检查是否已经在加载 —— 返回现有 Promise 以去重并发调用
   const existingPromise = sessionLoadingPromises.get(sessionId)
   if (existingPromise) {
     return existingPromise
   }
 
-  // Create the loading promise with all the fetch and update logic
+  // 创建 loading Promise，里面包含所有拉取和更新逻辑
   const loadPromise = (async (): Promise<Session | null> => {
-    // Fetch messages from main process
+    // 从主进程拉取消息
     const loadedSession = await window.electronAPI.getSessionMessages(sessionId)
     if (!loadedSession) {
       return get(sessionAtomFamily(sessionId))
     }
 
-    // Merge messages and disk-only fields into existing session, preserving in-memory UI state.
-    // The renderer's atom is authoritative for UI fields (hasUnread, isFlagged, etc.)
-    // because optimistic updates may have changed them since the disk write.
-    // tokenUsage and sessionFolderPath are only returned by getSession() (not getSessions()),
-    // so they must be explicitly merged here to be available after app restart.
+    // 把消息和只有磁盘才有的字段合并进现有 session，同时保留内存里的 UI 状态。
+    // 渲染进程的 atom 对 UI 字段（hasUnread、isFlagged 等）是权威的，
+    // 因为自磁盘写入以来可能已有乐观更新。
+    // tokenUsage 和 sessionFolderPath 只有 getSession() 返回（getSessions() 不返回），
+    // 所以这里必须显式合并，才能在应用重启后可用。
     const existingSession = get(sessionAtomFamily(sessionId))
     const preservedStaleMessages = !!existingSession
       && existingSession.messages.length > 0
@@ -618,15 +614,13 @@ async function loadSessionMessages(
     const mergedSession = existingSession
       ? {
           ...existingSession,
-          // CRITICAL: Don't clobber messages if session is actively streaming
-          // AND already has messages in the atom. Streaming events update the atom
-          // directly and may contain messages the IPC response doesn't know about
-          // (race window between IPC request and response).
-          // The `messages.length > 0` guard ensures Cmd+R reload works: after reload,
-          // the atom starts with messages=[] from getSessions(), so IPC response
-          // (which has full history from main process memory) must be used.
-          // Also guard against sleep/wake edge case: the server may return
-          // empty messages if the session subprocess hasn't finished lazy-loading.
+          // 关键：如果 session 正在流式输出且 atom 里已有消息，不要覆盖消息。
+          // 流式事件直接更新 atom，可能包含 IPC 响应不知道的中间内容
+          // （IPC 请求和响应之间的竞态窗口）。
+          // messages.length > 0 这个守卫保证 Cmd+R 重载后正常工作：
+          // 重载后 atom 从 getSessions() 拿到 messages=[]，所以必须使用
+          // 主进程内存里的完整历史 IPC 响应。
+          // 也防护睡眠/唤醒边界情况：服务端可能在子进程还没完成懒加载时返回空消息。
           messages: preservedStaleMessages
             ? existingSession.messages
             : existingSession.isProcessing && existingSession.messages.length > 0
@@ -638,9 +632,8 @@ async function loadSessionMessages(
       : loadedSession
     set(sessionAtomFamily(sessionId), mergedSession)
 
-    // Update only lastFinalMessageId in metadata (now computable from loaded messages).
-    // Don't replace the full meta entry — other fields are maintained through
-    // optimistic updates and IPC events, and may be ahead of disk state.
+    // 只在元数据里更新 lastFinalMessageId（现在可以根据已加载消息计算出来）。
+    // 不要替换完整 meta 条目 —— 其他字段由乐观更新和 IPC 事件维护，可能领先于磁盘状态。
     const lastFinalMessageId = findLastFinalMessageId(loadedSession.messages)
     if (lastFinalMessageId) {
       const metaMap = get(sessionMetaMapAtom)
@@ -652,9 +645,9 @@ async function loadSessionMessages(
       }
     }
 
-    // Mark as loaded only when we received a fresh payload.
-    // If we had to preserve stale in-memory messages because the backend returned
-    // an empty array during lazy-load recovery, keep the session reloadable.
+    // 只有收到真正新载荷时才标记为已加载。
+    // 如果因为后端懒加载恢复期间返回空数组而不得不保留陈旧内存消息，
+    // 则保持该 session 可重新加载。
     if (!preservedStaleMessages) {
       const newLoadedSessions = new Set(get(loadedSessionsAtom))
       newLoadedSessions.add(sessionId)
@@ -664,13 +657,13 @@ async function loadSessionMessages(
     return mergedSession
   })()
 
-  // Cache the promise before awaiting
+  // 在 await 之前缓存 Promise
   sessionLoadingPromises.set(sessionId, loadPromise)
 
   try {
     return await loadPromise
   } finally {
-    // Always clean up the cache, whether success or failure
+    // 无论成功失败都清理缓存
     sessionLoadingPromises.delete(sessionId)
   }
 }
@@ -683,8 +676,8 @@ export const ensureSessionMessagesLoadedAtom = atom(
 )
 
 /**
- * Force-refresh session messages even if the session is currently marked as loaded.
- * Used by reconnect recovery when a session atom is stuck in an empty-but-loaded state.
+ * Action atom：即使 session 当前标记为已加载，也强制刷新消息。
+ * 用于重连恢复时 session atom 卡在“已加载但为空”的状态。
  */
 export const forceSessionMessagesReloadAtom = atom(
   null,
@@ -694,7 +687,7 @@ export const forceSessionMessagesReloadAtom = atom(
 )
 
 /**
- * Background task for ActiveTasksBar display
+ * ActiveTasksBar 展示的后台任务
  */
 /**
  * Lifecycle status of a background task chip.
@@ -707,21 +700,21 @@ export const forceSessionMessagesReloadAtom = atom(
 export type BackgroundTaskStatus = 'running' | 'completed' | 'failed' | 'stopped' | 'orphaned'
 
 export interface BackgroundTask {
-  /** Task or shell ID */
+  /** 任务或 shell ID */
   id: string
-  /** Task type. 'workflow' = a fan-out Workflow launch (many sub-agents). */
+  /** 任务类型。'workflow' = 扇出式 Workflow 启动（多个子 agent） */
   type: 'agent' | 'shell' | 'workflow'
-  /** Tool use ID for correlation with messages */
+  /** 用于与消息关联的工具调用 ID */
   toolUseId: string
-  /** Workflow run id (wf_...) — set for type 'workflow'; correlates agent-completed updates. */
+  /** Workflow 运行 ID（wf_...）—— 仅 type 为 'workflow' 时设置；用于关联 agent 完成更新 */
   workflowId?: string
-  /** Count of sub-agents that have completed so far (type 'workflow' only). */
+  /** 目前已完成的子 agent 数量（仅 type 为 'workflow'） */
   agentsCompleted?: number
-  /** When the task started */
+  /** 任务开始时间 */
   startTime: number
-  /** Elapsed seconds (from progress events; the chip also derives it from startTime) */
+  /** 已过去秒数（来自进度事件；chip 也会从 startTime 推导） */
   elapsedSeconds: number
-  /** Task intent/description */
+  /** 任务意图/描述 */
   intent?: string
   /** Lifecycle status; defaults to 'running' when added */
   status: BackgroundTaskStatus
@@ -734,9 +727,9 @@ export interface BackgroundTask {
 }
 
 /**
- * Atom family for tracking active background tasks per session
- * Updated on task_backgrounded, shell_backgrounded, task_progress events
- * Cleared when tasks complete or are killed
+ * 追踪每个 session 活跃后台任务的 atom family。
+ * 在 task_backgrounded、shell_backgrounded、task_progress 事件时更新；
+ * 任务完成或被 kill 时清空。
  */
 export const backgroundTasksAtomFamily = atomFamily(
   (_sessionId: string) => atom<BackgroundTask[]>([]),
@@ -744,13 +737,13 @@ export const backgroundTasksAtomFamily = atomFamily(
 )
 
 /**
- * Window's current workspace ID — shared between Root (ThemeProvider) and App.
- * Written by App on workspace switch, read by Root to keep the theme in sync.
+ * 当前窗口的工作区 ID —— 在 Root（ThemeProvider）和 App 之间共享。
+ * App 在工作区切换时写入，Root 读取以保持主题同步。
  */
 export const windowWorkspaceIdAtom = atom<string | null>(null)
 
 /**
- * State for "Send to Workspace" dialog.
- * Set session IDs to open; clear to close.
+ * “Send to Workspace” 弹窗状态。
+ * 设置要打开的 session ID 列表；清空数组表示关闭弹窗。
  */
 export const sendToWorkspaceAtom = atom<string[]>([])

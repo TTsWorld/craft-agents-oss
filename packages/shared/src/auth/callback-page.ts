@@ -1,16 +1,24 @@
 /**
- * OAuth callback page HTML generation.
- * This module is browser-safe (no Node.js dependencies) so it can be used
- * in both the callback server and the playground preview.
+ * OAuth 回调页面 HTML 生成器
+ *
+ * 这个模块是浏览器安全的（没有 Node.js 依赖），既可以在回调服务器里用，
+ * 也可以在 playground 预览里用。
  */
 
 import { CRAFT_LOGO_HTML } from '../branding.ts';
 
+/** 回调页面所属应用类型，决定样式细节 */
 export type AppType = 'terminal' | 'electron';
 
 /**
- * Generate a minimal, clean callback page matching the app's design system.
- * Logo at top, status message in a card below.
+ * 生成简洁的 OAuth 回调页面，和 Craft 应用的设计系统保持一致。
+ * 顶部是 Logo，下面是状态卡片。
+ *
+ * @param options.title - 页面标题（会拼到 <title> 里）
+ * @param options.isSuccess - 是否成功
+ * @param options.errorDetail - 失败时的错误详情
+ * @param options.appType - 应用类型
+ * @param options.deeplinkUrl - 成功时要跳转的 deeplink
  */
 export function generateCallbackPage(options: {
   title: string;
@@ -21,14 +29,14 @@ export function generateCallbackPage(options: {
 }): string {
   const { title, isSuccess, errorDetail, deeplinkUrl } = options;
 
-  // Status message based on success/error
+  // 根据成功/失败生成状态文案
   const statusMessage = isSuccess
     ? 'Authorization successful'
     : errorDetail
       ? `Authorization failed: ${errorDetail}`
       : 'Authorization failed';
 
-  // Generate deeplink redirect and auto-close for success
+  // 成功时 1.5 秒后自动跳转 deeplink 并关闭窗口
   const autoCloseScript = isSuccess
     ? `
     setTimeout(() => {
@@ -50,7 +58,7 @@ export function generateCallbackPage(options: {
     body {
       width: 100vw;
       height: 100vh;
-      /* bg-foreground-2: 2% foreground mixed with background */
+      /* 背景色：前景色 2% 混合背景 */
       background-color: #f7f7f7;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       display: flex;
@@ -60,15 +68,15 @@ export function generateCallbackPage(options: {
     }
 
     .logo {
-      /* Purple accent: oklch(0.62 0.13 293) */
+      /* 紫色强调色：oklch(0.62 0.13 293) */
       color: #8b5fb3;
       font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
       font-size: 6px;
       line-height: 1;
       white-space: pre;
-      /* Negative letter-spacing to close gaps between block characters */
+      /* 负字距，让方块字符之间没有缝隙 */
       letter-spacing: -0.05em;
-      /* 48px above the card */
+      /* 卡片上方留 48px */
       margin-bottom: 48px;
     }
 
@@ -83,16 +91,16 @@ export function generateCallbackPage(options: {
       border-radius: 8px;
       padding: 16px 24px;
       text-align: center;
-      /* Tinted background and shadow based on state */
+      /* 根据状态着色背景和阴影 */
       ${isSuccess
-        ? `/* Success state - green tinted */
+        ? `/* 成功态 - 绿色微调 */
       background-color: rgba(34, 120, 60, 0.03);
       box-shadow:
         rgba(34, 120, 60, 0.12) 0px 0px 0px 1px,
         rgba(34, 120, 60, 0.08) 0px 1px 1px -0.5px,
         rgba(34, 120, 60, 0.06) 0px 3px 3px -1.5px,
         rgba(34, 120, 60, 0.04) 0px 6px 6px -3px;`
-        : `/* Error state - red tinted */
+        : `/* 失败态 - 红色微调 */
       background-color: rgba(180, 60, 50, 0.03);
       box-shadow:
         rgba(180, 60, 50, 0.12) 0px 0px 0px 1px,
@@ -105,7 +113,7 @@ export function generateCallbackPage(options: {
     .status {
       font-size: 14px;
       font-weight: 400;
-      /* Text color mixed 50% with foreground for readability */
+      /* 文字颜色混入 50% 前景色以提高可读性 */
       color: ${isSuccess ? '#2d6b47' : '#a14040'};
     }
 
@@ -137,19 +145,19 @@ export function generateCallbackPage(options: {
         background-color: #1a1a1a;
       }
       .logo {
-        /* Brighter purple in dark mode: oklch(0.68 0.13 293) */
+        /* 暗模式下更亮的紫色：oklch(0.68 0.13 293) */
         color: #a882c9;
       }
       .card {
         ${isSuccess
-          ? `/* Success state dark - green tinted */
+          ? `/* 成功态暗色 - 绿色微调 */
         background-color: rgba(50, 140, 80, 0.03);
         box-shadow:
           rgba(50, 140, 80, 0.12) 0px 0px 0px 1px,
           rgba(50, 140, 80, 0.08) 0px 1px 1px -0.5px,
           rgba(50, 140, 80, 0.06) 0px 3px 3px -1.5px,
           rgba(50, 140, 80, 0.04) 0px 6px 6px -3px;`
-          : `/* Error state dark - red tinted */
+          : `/* 失败态暗色 - 红色微调 */
         background-color: rgba(200, 80, 70, 0.03);
         box-shadow:
           rgba(200, 80, 70, 0.12) 0px 0px 0px 1px,
@@ -159,7 +167,7 @@ export function generateCallbackPage(options: {
         }
       }
       .status {
-        /* Brighter text colors in dark mode */
+        /* 暗模式下更亮的文字 */
         color: ${isSuccess ? '#6bc489' : '#e88080'};
       }
       .hint {

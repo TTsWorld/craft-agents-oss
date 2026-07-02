@@ -1,8 +1,8 @@
 /**
- * AutomationEventLogger - Logs automation events to events.jsonl
+ * AutomationEventLogger - 将自动化事件写入 events.jsonl
  *
- * CloudEvents-inspired schema with batched I/O for performance.
- * Append-only design for audit trail and replay capabilities.
+ * 采用受 CloudEvents 启发的 schema，批量 I/O 以提升性能。
+ * 只追加写入，便于审计和后续回放。
  */
 
 import { appendFile } from 'fs/promises';
@@ -11,34 +11,35 @@ import { randomUUID } from 'crypto';
 import type { ActionExecutionResult } from './types.ts';
 
 // ============================================================================
-// Types
+// 类型定义
 // ============================================================================
 
 export interface LoggedAutomationEvent {
-  /** Unique event ID (UUID) */
+  /** 唯一事件 ID（UUID） */
   id: string;
-  /** Event type (e.g., 'LabelAdd', 'PermissionModeChange') */
+  /** 事件类型，例如 'LabelAdd'、'PermissionModeChange' */
   type: string;
-  /** ISO 8601 UTC timestamp */
+  /** ISO 8601 UTC 时间戳 */
   time: string;
-  /** Origin identifier */
+  /** 来源标识 */
   source: string;
-  /** Session context (if applicable) */
+  /** 所属会话 ID（如果有） */
   sessionId?: string;
-  /** Workspace context */
+  /** 所属 workspace ID */
   workspaceId?: string;
-  /** Event payload */
+  /** 事件 payload */
   data: Record<string, unknown>;
-  /** Automation execution results */
+  /** 自动化执行结果 */
   results: ActionExecutionResult[];
-  /** Total execution time in milliseconds */
+  /** 总执行耗时（毫秒） */
   durationMs: number;
 }
 
+// Omit<T, K> 是 TS 工具类型：从类型 T 中去掉 K 属性，得到输入类型
 export type LoggedAutomationEventInput = Omit<LoggedAutomationEvent, 'id' | 'time' | 'source'>;
 
 // ============================================================================
-// AutomationEventLogger Class
+// AutomationEventLogger 类
 // ============================================================================
 
 export class AutomationEventLogger {
@@ -51,7 +52,7 @@ export class AutomationEventLogger {
   private readonly MAX_RETRIES = 3;
   private readonly RETRY_DELAY_MS = 100;
 
-  /** Optional callback when events are lost (after all retries fail) */
+  /** 可选回调：当事件在重试后仍然丢失时触发 */
   onEventLost?: (events: string[], error: Error) => void;
 
   constructor(workspaceRootPath: string) {
@@ -59,8 +60,8 @@ export class AutomationEventLogger {
   }
 
   /**
-   * Log an event to the event stream.
-   * Events are buffered and flushed after a short delay to coalesce rapid writes.
+   * 记录一个事件到事件流。
+   * 事件会先进入缓冲区，经过短暂延迟后批量刷盘，以合并高频写入。
    */
   log(event: LoggedAutomationEventInput): void {
     if (this.isDisposed) {
@@ -68,6 +69,7 @@ export class AutomationEventLogger {
       return;
     }
 
+    // 用展开运算符 ...event 把输入字段合并到默认字段中
     const entry: LoggedAutomationEvent = {
       id: randomUUID(),
       time: new Date().toISOString(),
@@ -79,14 +81,14 @@ export class AutomationEventLogger {
   }
 
   /**
-   * Get the path to the event log file.
+   * 获取事件日志文件的完整路径。
    */
   getLogPath(): string {
     return this.logPath;
   }
 
   /**
-   * Schedule a flush if not already scheduled.
+   * 如果当前没有定时刷新任务，则安排一次延迟刷新。
    */
   private scheduleFlush(): void {
     if (!this.flushTimer && !this.isDisposed) {
@@ -95,13 +97,13 @@ export class AutomationEventLogger {
   }
 
   /**
-   * Flush buffered events to disk with retry logic.
-   * Uses atomic buffer swap to prevent race conditions.
+   * 将缓冲区事件刷盘，失败时自动重试。
+   * 通过原子交换缓冲区避免并发冲突。
    */
   private async flush(): Promise<void> {
     this.flushTimer = null;
 
-    // Prevent concurrent flushes
+    // 防止并发刷新
     if (this.flushInProgress) {
       this.scheduleFlush();
       return;
@@ -111,46 +113,44 @@ export class AutomationEventLogger {
 
     this.flushInProgress = true;
 
-    // Atomic buffer swap - take ownership of current buffer
+    // 原子交换：把当前缓冲区“拿走”，再开一个新的空缓冲区
     const toFlush = this.buffer;
     this.buffer = [];
 
     const lines = toFlush.join('\n') + '\n';
     let lastError: Error | null = null;
 
-    // Retry with exponential backoff
+    // 指数退避重试
     for (let attempt = 0; attempt < this.MAX_RETRIES; attempt++) {
       try {
         await appendFile(this.logPath, lines, 'utf-8');
         this.flushInProgress = false;
-        return; // Success
+        return; // 成功
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         console.error(`[AutomationEventLogger] Write failed (attempt ${attempt + 1}/${this.MAX_RETRIES}):`, error);
 
         if (attempt < this.MAX_RETRIES - 1) {
-          // Wait before retry with exponential backoff
+          // 重试前等待，指数退避
           await new Promise(resolve => setTimeout(resolve, this.RETRY_DELAY_MS * Math.pow(2, attempt)));
         }
       }
     }
 
-    // All retries failed - re-queue events at front of buffer for next attempt
-    // or notify callback if provided
+    // 全部重试失败：如果有回调则通知调用方，否则把事件塞回缓冲区头部等待下次
     this.flushInProgress = false;
 
     if (this.onEventLost) {
       this.onEventLost(toFlush, lastError!);
     } else {
-      // Re-queue failed events at front of buffer
       this.buffer = [...toFlush, ...this.buffer];
       console.error(`[AutomationEventLogger] Events re-queued after ${this.MAX_RETRIES} failed attempts`);
     }
   }
 
   /**
-   * Close the logger, flushing any remaining events.
-   * Call this during application shutdown.
+   * 关闭 logger，立即刷新剩余事件。
+   * 通常在应用关闭时调用。
    */
   async close(): Promise<void> {
     if (this.flushTimer) {
@@ -161,12 +161,12 @@ export class AutomationEventLogger {
   }
 
   /**
-   * Dispose the logger, clearing timers and preventing further logging.
-   * Alias for close() with additional cleanup.
+   * dispose logger：停止定时器、刷盘并阻止后续写入。
+   * close() 的别名，并额外清空残留缓冲区。
    */
   async dispose(): Promise<void> {
     this.isDisposed = true;
     await this.close();
-    this.buffer = []; // Clear any remaining events
+    this.buffer = []; // 清空残留事件
   }
 }

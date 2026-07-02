@@ -1,10 +1,10 @@
 /**
- * Hook for persisting TurnCard expanded/collapsed state across session switches.
+ * 持久化 TurnCard 展开/折叠状态的 hook。
  *
- * Stores expansion state in a single localStorage key as a bounded LRU map
- * (max 100 sessions). Only expanded IDs are stored since collapsed is the default.
+ * 把展开状态保存在单个 localStorage 键中，采用有上限的 LRU Map
+ * （最多 100 个会话）。默认折叠，因此只保存已展开的 ID。
  *
- * Shape: { [sessionId]: { turns: string[], groups: string[], lastAccessed: number } }
+ * 结构：{ [sessionId]: { turns: string[], groups: string[], lastAccessed: number } }
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react'
@@ -12,32 +12,29 @@ import * as storage from '@/lib/local-storage'
 
 const MAX_SESSIONS = 100
 
-/** Entry for a single session's expansion state */
+/** 单个会话的展开状态条目 */
 interface ExpansionEntry {
   turns: string[]
   groups: string[]
   lastAccessed: number
 }
 
-/** Full map stored in localStorage */
+/** localStorage 中保存的完整映射 */
 type ExpansionMap = Record<string, ExpansionEntry>
 
-/**
- * Read the full expansion map from localStorage.
- * Returns empty object on parse failure.
- */
+/** 从 localStorage 读取完整展开映射；解析失败返回空对象 */
 function readMap(): ExpansionMap {
   return storage.get<ExpansionMap>(storage.KEYS.turnCardExpansion, {})
 }
 
 /**
- * Write the expansion map to localStorage, pruning to MAX_SESSIONS
- * by dropping the oldest entries (lowest lastAccessed).
+ * 把展开映射写入 localStorage，超过 MAX_SESSIONS 时
+ * 按 lastAccessed 升序丢弃最旧的条目。
  */
 function writeMap(map: ExpansionMap): void {
   const entries = Object.entries(map)
   if (entries.length > MAX_SESSIONS) {
-    // Sort by lastAccessed ascending, keep only the most recent MAX_SESSIONS
+    // 按最后访问时间升序排序，只保留最近的 MAX_SESSIONS 条
     entries.sort((a, b) => a[1].lastAccessed - b[1].lastAccessed)
     const pruned: ExpansionMap = {}
     const keep = entries.slice(entries.length - MAX_SESSIONS)
@@ -51,11 +48,11 @@ function writeMap(map: ExpansionMap): void {
 }
 
 /**
- * Persist TurnCard expansion state for the given session.
- * Returns controlled state + callbacks to pass to TurnCard components.
+ * 为指定会话持久化 TurnCard 展开状态。
+ * 返回受控状态与回调，直接传给 TurnCard 组件使用。
  */
 export function useTurnCardExpansion(sessionId: string | undefined) {
-  // Initialize state from localStorage for this session
+  // 从 localStorage 初始化当前会话的展开状态
   const [expandedTurns, setExpandedTurns] = useState<Set<string>>(() => {
     if (!sessionId) return new Set()
     const map = readMap()
@@ -70,14 +67,14 @@ export function useTurnCardExpansion(sessionId: string | undefined) {
     return entry ? new Set(entry.groups) : new Set()
   })
 
-  // Track sessionId so we can save/restore on session switch
+  // 记录当前 sessionId，用于会话切换时保存/恢复
   const prevSessionIdRef = useRef(sessionId)
 
-  // When sessionId changes, save current state and load new session's state
+  // 会话切换时：保存当前状态并加载新会话的状态
   useEffect(() => {
     if (prevSessionIdRef.current === sessionId) return
 
-    // Load the new session's expansion state from localStorage
+    // 加载新会话的展开状态
     if (sessionId) {
       const map = readMap()
       const entry = map[sessionId]
@@ -91,8 +88,8 @@ export function useTurnCardExpansion(sessionId: string | undefined) {
     prevSessionIdRef.current = sessionId
   }, [sessionId])
 
-  // Persist to localStorage whenever expansion state changes.
-  // Uses a ref to avoid stale closures and only writes when we have a valid session.
+  // 展开状态变化时持久化到 localStorage。
+  // 用 ref 避免闭包过期，只在有有效会话时写入。
   const expandedTurnsRef = useRef(expandedTurns)
   const expandedGroupsRef = useRef(expandedActivityGroups)
   expandedTurnsRef.current = expandedTurns
@@ -104,7 +101,7 @@ export function useTurnCardExpansion(sessionId: string | undefined) {
     const turns = [...expandedTurnsRef.current]
     const groups = [...expandedGroupsRef.current]
 
-    // Only write an entry if there's something expanded; remove entry if empty
+    // 没有展开内容时移除该会话条目；有内容时才写入
     if (turns.length === 0 && groups.length === 0) {
       if (map[sessionId]) {
         delete map[sessionId]
@@ -121,7 +118,7 @@ export function useTurnCardExpansion(sessionId: string | undefined) {
     writeMap(map)
   }, [sessionId, expandedTurns, expandedActivityGroups])
 
-  // Toggle a single turn's expansion state
+  // 切换单个 turn 的展开状态
   const toggleTurn = useCallback((turnId: string, expanded: boolean) => {
     setExpandedTurns(prev => {
       const next = new Set(prev)

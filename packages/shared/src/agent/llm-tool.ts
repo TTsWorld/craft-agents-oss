@@ -14,6 +14,22 @@
  * All calls are delegated to the agent backend's queryLlm() implementation.
  */
 
+/**
+ * 文件：call_llm 工具实现
+ *
+ * 角色：session-scoped 工具，让主 agent 能调用次级 LLM 做摘要、分类、提取、分析等
+ * 子任务。可以理解为在主 agent 内部再开一次“小 LLM 调用”。
+ *
+ * 重点：
+ * - LLMQueryRequest / LLMQueryResult：定义与后端无关的请求/响应契约，各后端自行
+ *   实现 queryLlm()。
+ * - 附件处理：支持文件路径与 { path, startLine, endLine } 行范围，自动读取内容并
+ *   做大小/二进制校验。
+ * - 结构化输出：支持预定义 outputFormat 与自定义 outputSchema，后端原生支持时
+ *   直接走 structured output。
+ * - buildCallLlmRequest：PiAgent 的 PreToolUse 拦截复用同一套输入校验与附件处理。
+ */
+
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 

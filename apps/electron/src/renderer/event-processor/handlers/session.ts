@@ -1,8 +1,11 @@
 /**
- * Session Event Handlers
+ * Session 事件处理器
  *
- * Handles complete, error, sources_changed, etc.
- * Pure functions that return new state - no side effects.
+ * 处理 complete、error、sources_changed、labels_changed、session_status_changed 等事件。
+ * 都是纯函数：只读输入，返回新的 state，无副作用。
+ *
+ * 对 Go 同学：可以把它看作一个事件驱动的 reducer，每个 handler 处理一种事件类型，
+ * 返回新的状态和一个副作用列表（Effect[]）。
  */
 
 import type {
@@ -47,10 +50,11 @@ import type { Message } from '../../../shared/types'
 import { generateMessageId, appendMessage } from '../helpers'
 
 /**
- * Handle complete - agent loop finished
+ * 处理 complete 事件：Agent 一轮执行结束。
  *
- * Sets isProcessing: false, clears streaming state.
- * Also marks any running tools as complete (fail-safe).
+ * - 设置 isProcessing: false
+ * - 清空 streaming 状态
+ * - 把仍在运行中的 tool 标记为完成（安全兜底）
  */
 export function handleComplete(
   state: SessionState,
@@ -58,16 +62,15 @@ export function handleComplete(
 ): ProcessResult {
   const { session } = state
 
-  // Fail-safe: mark any non-terminal tools as complete.
-  // Catches 'executing' (normal) and 'backgrounded' (spurious — e.g. foreground Agent
-  // whose result contained agentId:). Genuinely backgrounded tasks have isBackground=true
-  // AND a taskId, so they're excluded — task_completed will finalize them.
+  // 安全兜底：把所有非终止状态的 tool 消息标记为完成。
+  // 这会捕获 'executing'（正常）和 'backgrounded'（伪后台，例如前台 Agent 结果里包含 agentId:）。
+  // 真正的后台任务同时具备 isBackground=true 和 taskId，因此会被排除，由 task_completed 事件最终处理。
   const TERMINAL_TOOL_STATUSES = new Set(['completed', 'error'])
   let updatedMessages = session.messages
   const hasRunningTools = session.messages.some(
     m => m.role === 'tool'
       && !TERMINAL_TOOL_STATUSES.has(m.toolStatus ?? '')
-      && !(m.isBackground && m.taskId)  // Don't force-complete genuine background tasks
+      && !(m.isBackground && m.taskId)  // 不要强制完成真正的后台任务
   )
 
   if (hasRunningTools) {
@@ -83,12 +86,11 @@ export function handleComplete(
     })
   }
 
-  // Clear isQueued from any user messages once the turn completes. Pi's steer
-  // path never emits a 'processing' status update to clear it (the message is
-  // injected mid-stream and absorbed into the current response), so this is
-  // the natural place to drop the indicator. Claude's queued path has already
-  // cleared via the 'processing' status update before this fires; this is
-  // a safe no-op for that case.
+  // 一轮执行完成后，清除所有用户消息的 isQueued 标记。
+  // Pi 的 steer 路径不会发送 'processing' 状态来清除它（消息是中途注入并合并进当前回复的），
+  // 所以在这里清除最自然。
+  // Claude 的排队路径已经在这个事件触发前通过 'processing' 状态清除了；
+  // 再次清除也是安全的空操作。
   const hasQueuedUserBubbles = updatedMessages.some(m => m.role === 'user' && m.isQueued)
   if (hasQueuedUserBubbles) {
     updatedMessages = updatedMessages.map(m =>
@@ -102,11 +104,11 @@ export function handleComplete(
         ...session,
         messages: updatedMessages,
         isProcessing: false,
-        currentStatus: undefined,  // Clear any lingering status
-        // Update tokenUsage from complete event (for real-time context counter updates)
+        currentStatus: undefined,  // 清除任何残留的状态提示
+        // 用 complete 事件里的 tokenUsage 更新（用于实时上下文计数器）
         tokenUsage: event.tokenUsage ?? session.tokenUsage,
-        // Update hasUnread flag from main process (state machine for NEW badge)
-        // Only update if explicitly provided - undefined means "don't change"
+        // 用主进程传来的 hasUnread 更新（NEW 角标的状态机）
+        // 只有显式提供时才更新；undefined 表示“不要改动”
         ...(event.hasUnread !== undefined && { hasUnread: event.hasUnread }),
       },
       streaming: null,
@@ -116,7 +118,9 @@ export function handleComplete(
 }
 
 /**
- * Handle error - simple error event
+ * 处理 error 事件：简单的错误事件。
+ *
+ * 把运行中的 tool 标记为失败，并在消息列表末尾追加一条 error 消息。
  */
 export function handleError(
   state: SessionState,
@@ -124,7 +128,7 @@ export function handleError(
 ): ProcessResult {
   const { session } = state
 
-  // Fail-safe: Mark any running tools as failed
+  // 安全兜底：把运行中的 tool 标记为失败。
   const messagesWithFailedTools = session.messages.map(m =>
     m.role === 'tool' && m.toolResult === undefined && m.toolStatus !== 'completed' && m.toolStatus !== 'error'
       ? { ...m, toolStatus: 'error' as const, toolResult: 'Error occurred', isError: true }
@@ -144,7 +148,7 @@ export function handleError(
         ...session,
         messages: [...messagesWithFailedTools, errorMessage],
         isProcessing: false,
-        currentStatus: undefined,  // Clear any lingering status
+        currentStatus: undefined,  // 清除任何残留的状态提示
       },
       streaming: null,
     },
@@ -153,7 +157,9 @@ export function handleError(
 }
 
 /**
- * Handle typed_error - error with structured details
+ * 处理 typed_error 事件：带有结构化详情的错误事件。
+ *
+ * 与 handleError 类似，但保留 error code、title、details、可重试标记和错误动作。
  */
 export function handleTypedError(
   state: SessionState,
@@ -161,7 +167,7 @@ export function handleTypedError(
 ): ProcessResult {
   const { session } = state
 
-  // Fail-safe: Mark any running tools as failed
+  // 安全兜底：把运行中的 tool 标记为失败。
   const messagesWithFailedTools = session.messages.map(m =>
     m.role === 'tool' && m.toolResult === undefined && m.toolStatus !== 'completed' && m.toolStatus !== 'error'
       ? { ...m, toolStatus: 'error' as const, toolResult: 'Error occurred', isError: true }
@@ -195,7 +201,7 @@ export function handleTypedError(
         ...session,
         messages: [...messagesWithFailedTools, errorMessage],
         isProcessing: false,
-        currentStatus: undefined,  // Clear any lingering status
+        currentStatus: undefined,  // 清除任何残留的状态提示
       },
       streaming: null,
     },
@@ -204,8 +210,10 @@ export function handleTypedError(
 }
 
 /**
- * Handle status - status message (e.g., compacting)
- * Stores on session for ProcessingIndicator AND appends as message for TurnCard activity
+ * 处理 status 事件：状态消息（例如 compacting）。
+ *
+ * 既把状态存到 session.currentStatus 供 ProcessingIndicator 使用，
+ * 也作为消息追加到消息列表供 TurnCard 展示活动状态。
  */
 export function handleStatus(
   state: SessionState,
@@ -227,7 +235,7 @@ export function handleStatus(
     state: {
       session: {
         ...updatedSession,
-        // Also store on session for ProcessingIndicator
+        // 同时存到 session 上，供 ProcessingIndicator 读取。
         currentStatus: {
           message: event.message,
           statusType: event.statusType,
@@ -240,7 +248,10 @@ export function handleStatus(
 }
 
 /**
- * Handle info - info message (may update existing compacting message)
+ * 处理 info 事件：信息消息。
+ *
+ * 如果是 compaction_complete，则更新已有的 compacting 消息并清空 currentStatus；
+ * 否则作为新的 info 消息追加。
  */
 export function handleInfo(
   state: SessionState,
@@ -248,7 +259,7 @@ export function handleInfo(
 ): ProcessResult {
   const { session, streaming } = state
 
-  // If this is a compaction complete, update the existing compacting message and clear currentStatus
+  // compaction_complete 时更新已有的 compacting 消息，并清空 currentStatus。
   if (event.statusType === 'compaction_complete') {
     const updatedMessages = session.messages.map(m =>
       m.role === 'status' && m.statusType === 'compacting'
@@ -260,7 +271,7 @@ export function handleInfo(
         session: {
           ...session,
           messages: updatedMessages,
-          currentStatus: undefined,  // Clear status from ProcessingIndicator
+          currentStatus: undefined,  // 清除 ProcessingIndicator 上的状态
         },
         streaming,
       },
@@ -268,7 +279,7 @@ export function handleInfo(
     }
   }
 
-  // Otherwise, add as new info message
+  // 否则作为新的 info 消息追加
   const infoMessage: Message = {
     id: generateMessageId(),
     role: 'info',
@@ -287,18 +298,15 @@ export function handleInfo(
 }
 
 /**
- * Handle interrupted - agent was interrupted.
+ * 处理 interrupted 事件：Agent 被中断。
  *
- * Two distinct shapes:
- * - **User-initiated stop** (`event.message` present): user clicked the Stop
- *   button. We render the "Response interrupted" notice, drop queued user
- *   bubbles, and restore their text to the input field so the user can edit
- *   and re-send.
- * - **Silent redirect** (`event.message` absent): the agent aborted internally
- *   so a new message could be processed. The backend's `processNextQueuedMessage`
- *   will auto-replay queued messages — we must NOT remove the queued bubbles
- *   nor restore them to the input, otherwise the user perceives a silent drop
- *   (#616).
+ * 有两种形态：
+ * - **用户主动停止**（`event.message` 存在）：用户点击了 Stop 按钮。
+ *   渲染“Response interrupted”提示，移除排队的用户气泡，并把它们的文本恢复到输入框，
+ *   方便用户编辑后重新发送。
+ * - **静默重定向**（`event.message` 不存在）：Agent 内部中止以处理新消息。
+ *   后端 `processNextQueuedMessage` 会自动重放排队消息；这里不能移除排队气泡，
+ *   也不能恢复到输入框，否则用户会觉得消息被静默丢弃（#616）。
  */
 export function handleInterrupted(
   state: SessionState,
@@ -308,34 +316,32 @@ export function handleInterrupted(
   const effects: Effect[] = []
   const isUserInitiated = !!event.message
 
-  // Clear transient streaming state (isPending, isStreaming) and mark running tools as interrupted
-  // These fields are not persisted, so this matches the state after a reload
-  // Also filter out status messages - they are transient UI state that shouldn't persist after interruption
+  // 清空瞬时 streaming 状态（isPending、isStreaming），并把运行中的 tool 标记为中断。
+  // 这些字段不会被持久化，因此这与刷新后的状态一致。
+  // 同时过滤掉 status 消息：它们是瞬时 UI 状态，中断后不应保留。
   const updatedMessages = session.messages
-    .filter(m => m.role !== 'status')  // Remove transient status messages
-    // Only drop queued bubbles when the user explicitly stopped — silent
-    // redirects auto-replay them so they must remain visible (#616).
+    .filter(m => m.role !== 'status')  // 移除瞬时 status 消息
+    // 只在用户主动停止时丢弃排队气泡；静默重定向会自动重放，必须保持可见（#616）。
     .filter(m => !(isUserInitiated && m.isQueued))
     .map(m => {
-      // Mark running tools as interrupted
+      // 把运行中的 tool 标记为中断
       if (m.role === 'tool' && m.toolResult === undefined && m.toolStatus !== 'completed' && m.toolStatus !== 'error') {
         return { ...m, toolStatus: 'error' as const, toolResult: 'Interrupted', isError: true }
       }
-      // Clear pending state on assistant messages (transient streaming state)
+      // 清除 assistant 消息的 pending 状态（瞬时 streaming 状态）
       if (m.role === 'assistant' && m.isPending) {
         return { ...m, isPending: false, isStreaming: false }
       }
       return m
     })
 
-  // Only add the "Response interrupted" message if provided (not a silent redirect)
+  // 只有非静默重定向时才追加“Response interrupted”消息。
   const messages = event.message
     ? [...updatedMessages, event.message]
     : updatedMessages
 
-  // Restore queued message text to the input field — only on user-initiated
-  // stops. Silent redirects keep the bubble in chat and rely on the backend's
-  // auto-replay (#616).
+  // 仅在用户主动停止时把排队消息文本恢复到输入框。
+  // 静默重定向保留气泡在聊天中，依赖后端自动重放（#616）。
   if (isUserInitiated && event.queuedMessages && event.queuedMessages.length > 0) {
     effects.push({
       type: 'restore_input',
@@ -349,7 +355,7 @@ export function handleInterrupted(
         ...session,
         isProcessing: false,
         messages,
-        currentStatus: undefined,  // Clear any lingering status
+        currentStatus: undefined,  // 清除任何残留的状态提示
       },
       streaming: null,
     },
@@ -358,7 +364,7 @@ export function handleInterrupted(
 }
 
 /**
- * Handle title_generated - update session title and clear regenerating state
+ * 处理 title_generated 事件：更新会话标题并清除标题生成中的状态
  */
 export function handleTitleGenerated(
   state: SessionState,
@@ -371,7 +377,7 @@ export function handleTitleGenerated(
       session: {
         ...session,
         name: event.title,
-        // Clear regenerating state - title generation completed
+        // 标题生成已完成，清除生成中状态
         isRegeneratingTitle: false,
       },
       streaming,
@@ -381,8 +387,8 @@ export function handleTitleGenerated(
 }
 
 /**
- * Handle title_regenerating - set regenerating state for shimmer effect
- * @deprecated Use handleAsyncOperation instead
+ * 处理 title_regenerating 事件：设置标题生成中状态，用于 shimmer 动画
+ * @deprecated 请改用 handleAsyncOperation
  */
 export function handleTitleRegenerating(
   state: SessionState,
@@ -403,8 +409,8 @@ export function handleTitleRegenerating(
 }
 
 /**
- * Handle async_operation - set async operation state for shimmer effect
- * Generic handler for any async operation (sharing, updating share, revoking, title regeneration)
+ * 处理 async_operation 事件：设置通用异步操作状态，用于 shimmer 动画
+ * 适用于分享、更新分享、撤销分享、标题重新生成等任意异步操作
  */
 export function handleAsyncOperation(
   state: SessionState,
@@ -425,7 +431,7 @@ export function handleAsyncOperation(
 }
 
 /**
- * Handle working_directory_changed - update session working directory (user-initiated via UI)
+ * 处理 working_directory_changed 事件：更新会话工作目录（用户通过 UI 主动切换）
  */
 export function handleWorkingDirectoryChanged(
   state: SessionState,
@@ -443,7 +449,7 @@ export function handleWorkingDirectoryChanged(
 }
 
 /**
- * Handle permission_mode_changed - return effect for parent to handle session options
+ * 处理 permission_mode_changed 事件：把事件转换成副作用，交给父组件处理会话选项
  */
 export function handlePermissionModeChanged(
   state: SessionState,
@@ -465,7 +471,7 @@ export function handlePermissionModeChanged(
 }
 
 /**
- * Handle session_model_changed - update session model
+ * 处理 session_model_changed 事件：更新会话使用的模型
  */
 export function handleSessionModelChanged(
   state: SessionState,
@@ -483,7 +489,7 @@ export function handleSessionModelChanged(
 }
 
 /**
- * Handle connection_changed - sync session.llmConnection to renderer state
+ * 处理 connection_changed 事件：把服务端的 session.llmConnection 同步到 renderer 状态
  */
 export function handleConnectionChanged(
   state: SessionState,
@@ -505,12 +511,12 @@ export function handleConnectionChanged(
 }
 
 /**
- * Handle user_message - confirms optimistic user message from backend
+ * 处理 user_message 事件：后端对乐观用户消息的确认
  *
- * Three statuses:
- * - 'accepted': Message is being processed (confirms optimistic message)
- * - 'queued': Message was queued during ongoing response (adds if not present, marks as queued)
- * - 'processing': Queued message is now being processed (updates status)
+ * 三种状态：
+ * - 'accepted'：消息正在处理中（确认乐观消息）
+ * - 'queued'：消息在正在进行中的回复期间被排队（如果不存在则添加，并标记为 queued）
+ * - 'processing'：排队的消息现在开始处理（更新状态）
  */
 export function handleUserMessage(
   state: SessionState,
@@ -519,7 +525,7 @@ export function handleUserMessage(
   const { session, streaming } = state
   const { message, status } = event
 
-  // Find existing message by ID match (backend ID, optimistic ID, or content+timestamp fallback)
+  // 按 ID 匹配查找已有消息（后端 ID、乐观 ID，或 content+timestamp 兜底）
   const existingIndex = session.messages.findIndex(m =>
     m.role === 'user' && (
       m.id === message.id ||
@@ -533,25 +539,23 @@ export function handleUserMessage(
   if (existingIndex >= 0) {
     const existingMessage = session.messages[existingIndex]
 
-    // Event sequence protection: don't regress from 'processing' back to 'queued'
-    // This handles out-of-order events (e.g., 'processing' arrives before 'queued')
+    // 事件顺序保护：不要从 'processing' 回退到 'queued'
+    // 处理乱序事件（例如 'processing' 比 'queued' 先到）
     if (status === 'queued' && existingMessage.isQueued === false) {
-      // Already progressed past queued state, ignore this late 'queued' event
+      // 已经过了 queued 阶段，忽略这个迟到的 'queued' 事件
       return { state, effects: [] }
     }
 
-    // Update existing message — clear isPending, set isQueued based on status.
+    // 更新已有消息 —— 清除 isPending，根据 status 设置 isQueued。
     //
-    // - 'queued'     → isQueued = true  (Claude path: backend queued for re-send)
-    // - 'processing' → isQueued = false (queued message is now actually running)
-    // - 'accepted'   → isQueued = false (Pi steer path: agent has the message)
+    // - 'queued'     → isQueued = true  （Claude 路径：后端排队等待重发）
+    // - 'processing' → isQueued = false （排队的消息现在真正开始执行）
+    // - 'accepted'   → isQueued = false （Pi steer 路径：Agent 已收到消息）
     //
-    // We deliberately do NOT swap `m.id` to the backend's canonical id here.
-    // ChatDisplay's `getTurnKey` keys user-message bubbles by id, and a swap
-    // would unmount/remount the UserMessageBubble — wiping its local timer
-    // state and dropping the queued chip mid-flight. The canonical backend
-    // id is irrelevant to subsequent events: they all use
-    // `event.optimisticMessageId` for routing (see the findIndex above).
+    // 这里故意不把 `m.id` 换成后端权威 id。
+    // ChatDisplay 的 `getTurnKey` 按 id 给用户消息气泡做 key，一旦替换 id 会导致
+    // UserMessageBubble 卸载/重挂，从而丢失本地计时器状态，并在动画中途丢掉 queued 标签。
+    // 后续事件都用 `event.optimisticMessageId` 路由（见上面的 findIndex），所以权威 id 并不关键。
     updatedMessages = session.messages.map((m, i) => {
       if (i === existingIndex) {
         return {
@@ -563,7 +567,7 @@ export function handleUserMessage(
       return m
     })
   } else {
-    // Message not found (e.g., queued message from backend) - add it
+    // 消息不存在（例如来自后端的新排队消息）——直接添加
     const newMessage: Message = {
       ...message,
       isPending: false,
@@ -578,8 +582,8 @@ export function handleUserMessage(
         ...session,
         messages: updatedMessages,
         lastMessageAt: Date.now(),
-        lastMessageRole: 'user',  // Clear plan badge when user responds
-        // Set isProcessing when message is accepted/processing (enables multi-window sync)
+        lastMessageRole: 'user',  // 用户回复后清除 plan 角标
+        // 当消息被 accepted/processing 时设置 isProcessing（支持多窗口同步）
         isProcessing: status === 'accepted' || status === 'processing',
       },
       streaming,
@@ -589,7 +593,7 @@ export function handleUserMessage(
 }
 
 /**
- * Handle message_annotations_updated - update annotations on a specific message.
+ * 处理 message_annotations_updated 事件：更新指定消息的批注
  */
 export function handleMessageAnnotationsUpdated(
   state: SessionState,
@@ -614,7 +618,7 @@ export function handleMessageAnnotationsUpdated(
 }
 
 /**
- * Handle sources_changed - update session's enabled sources
+ * 处理 sources_changed 事件：更新会话启用的来源列表
  */
 export function handleSourcesChanged(
   state: SessionState,
@@ -635,7 +639,7 @@ export function handleSourcesChanged(
 }
 
 /**
- * Handle labels_changed - update session's labels
+ * 处理 labels_changed 事件：更新会话标签
  */
 export function handleLabelsChanged(
   state: SessionState,
@@ -656,7 +660,7 @@ export function handleLabelsChanged(
 }
 
 /**
- * Handle project_id_changed - update session's projectId binding
+ * 处理 project_id_changed 事件：更新会话的 projectId 绑定
  */
 export function handleProjectIdChanged(
   state: SessionState,
@@ -677,7 +681,7 @@ export function handleProjectIdChanged(
 }
 
 /**
- * Handle session_status_changed - update session's sessionStatus (external metadata change or agent tool)
+ * 处理 session_status_changed 事件：更新 sessionStatus（外部元数据变更或 Agent 工具触发）
  */
 export function handleSessionStatusChanged(
   state: SessionState,
@@ -694,9 +698,9 @@ export function handleSessionStatusChanged(
 }
 
 /**
- * Handle session_metadata_changed - merge programmatic metadata changes (taskNodeCount,
- * kanbanColumn, and the taskDraft→taskSlug promotion on orchestrator adoption) that don't
- * propagate via the header-signature file watch.
+ * 处理 session_metadata_changed 事件：合并程序化的元数据变更（taskNodeCount、
+ * kanbanColumn，以及 orchestrator 接管时 taskDraft → taskSlug 的提升），
+ * 这些变更不会通过 header 签名文件监听传播。
  */
 export function handleSessionMetadataChanged(
   state: SessionState,
@@ -713,7 +717,7 @@ export function handleSessionMetadataChanged(
 }
 
 /**
- * Handle session_flagged - mark session as flagged
+ * 处理 session_flagged 事件：标记会话为已标星
  */
 export function handleSessionFlagged(
   state: SessionState,
@@ -730,7 +734,7 @@ export function handleSessionFlagged(
 }
 
 /**
- * Handle session_unflagged - mark session as unflagged
+ * 处理 session_unflagged 事件：标记会话为未标星
  */
 export function handleSessionUnflagged(
   state: SessionState,
@@ -747,7 +751,7 @@ export function handleSessionUnflagged(
 }
 
 /**
- * Handle session_archived - mark session as archived
+ * 处理 session_archived 事件：标记会话为已归档
  */
 export function handleSessionArchived(
   state: SessionState,
@@ -764,7 +768,7 @@ export function handleSessionArchived(
 }
 
 /**
- * Handle session_unarchived - mark session as unarchived
+ * 处理 session_unarchived 事件：标记会话为未归档
  */
 export function handleSessionUnarchived(
   state: SessionState,
@@ -781,7 +785,7 @@ export function handleSessionUnarchived(
 }
 
 /**
- * Handle name_changed - update session name (external metadata change)
+ * 处理 name_changed 事件：更新会话名称（外部元数据变更）
  */
 export function handleNameChanged(
   state: SessionState,
@@ -798,7 +802,7 @@ export function handleNameChanged(
 }
 
 /**
- * Handle permission_request - return effect for parent to handle
+ * 处理 permission_request 事件：把权限请求转换成副作用，交给父组件处理
  */
 export function handlePermissionRequest(
   state: SessionState,
@@ -814,7 +818,7 @@ export function handlePermissionRequest(
 }
 
 /**
- * Handle credential_request - return effect for parent to handle
+ * 处理 credential_request 事件：把凭据请求转换成副作用，交给父组件处理
  */
 export function handleCredentialRequest(
   state: SessionState,
@@ -830,7 +834,7 @@ export function handleCredentialRequest(
 }
 
 /**
- * Handle plan_submitted - add plan message to session
+ * 处理 plan_submitted 事件：把计划消息加入会话
  */
 export function handlePlanSubmitted(
   state: SessionState,
@@ -848,7 +852,7 @@ export function handlePlanSubmitted(
 }
 
 /**
- * Handle session_shared - session was shared to viewer
+ * 处理 session_shared 事件：会话已被分享到 viewer
  */
 export function handleSessionShared(
   state: SessionState,
@@ -869,7 +873,7 @@ export function handleSessionShared(
 }
 
 /**
- * Handle session_unshared - session share was revoked
+ * 处理 session_unshared 事件：会话分享已被撤销
  */
 export function handleSessionUnshared(
   state: SessionState,
@@ -891,8 +895,8 @@ export function handleSessionUnshared(
 }
 
 /**
- * Handle auth_request - add auth-request message to session
- * This is the unified auth flow - execution is paused until auth completes
+ * 处理 auth_request 事件：把 auth-request 消息加入会话
+ * 这是统一认证流程 —— 在认证完成前 Agent 执行会暂停
  */
 export function handleAuthRequest(
   state: SessionState,
@@ -900,22 +904,22 @@ export function handleAuthRequest(
 ): ProcessResult {
   const { session, streaming } = state
 
-  // Add auth-request message to session
+  // 把 auth-request 消息加入会话
   return {
     state: {
       session: {
         ...appendMessage(session, event.message),
-        isProcessing: false,  // Agent execution is paused
+        isProcessing: false,  // Agent 执行暂停
       },
-      streaming: null,  // Clear any streaming state
+      streaming: null,  // 清空任何流式状态
     },
     effects: [],
   }
 }
 
 /**
- * Handle auth_completed - update auth-request message status
- * The agent will resume via a new user message (sent by session manager)
+ * 处理 auth_completed 事件：更新 auth-request 消息状态
+ * Agent 会通过一条新的用户消息恢复执行（由 session manager 发送）
  */
 export function handleAuthCompleted(
   state: SessionState,
@@ -923,7 +927,7 @@ export function handleAuthCompleted(
 ): ProcessResult {
   const { session, streaming } = state
 
-  // Update the auth-request message status
+  // 更新 auth-request 消息状态
   const updatedMessages = session.messages.map(m => {
     if (
       m.role === 'auth-request' &&
@@ -956,8 +960,8 @@ export function handleAuthCompleted(
 }
 
 /**
- * Handle usage_update - real-time context usage during processing
- * Merges usage update into existing tokenUsage (preserves outputTokens, costUsd, etc.)
+ * 处理 usage_update 事件：处理过程中实时更新上下文用量
+ * 合并到现有 tokenUsage 中（保留 outputTokens、costUsd 等已有字段）
  */
 export function handleUsageUpdate(
   state: SessionState,
@@ -965,7 +969,7 @@ export function handleUsageUpdate(
 ): ProcessResult {
   const { session, streaming } = state
 
-  // Merge usage update into existing tokenUsage, providing defaults for required fields
+  // 合并用量更新到现有 tokenUsage，为必填字段提供默认值
   const updatedTokenUsage = {
     inputTokens: event.tokenUsage.inputTokens,
     outputTokens: session.tokenUsage?.outputTokens ?? 0,
@@ -988,4 +992,3 @@ export function handleUsageUpdate(
     effects: [],
   }
 }
-

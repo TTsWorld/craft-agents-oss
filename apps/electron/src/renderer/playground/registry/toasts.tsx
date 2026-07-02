@@ -1,3 +1,9 @@
+/**
+ * toasts 注册项
+ *
+ * 演示 sonner 提示通知组件：不同类型（success/error/warning/info/loading）、
+ * 带操作按钮、长 URL、堆叠效果等。
+ */
 import * as React from 'react'
 import type { ComponentEntry } from './types'
 import { cn } from '@/lib/utils'
@@ -5,7 +11,7 @@ import { toast } from 'sonner'
 
 // ============================================================================
 // Sonner Toast Playground
-// Demonstrates different toast types, actions, and stacking behavior
+// 演示不同 toast 类型、操作按钮和堆叠行为
 // ============================================================================
 
 type ToastType = 'default' | 'success' | 'error' | 'warning' | 'info' | 'loading' | 'action' | 'long-url'
@@ -126,9 +132,10 @@ function SonnerPlayground() {
 }
 
 // ============================================================================
-// Component Registry Entries
+// 组件注册表条目（Component Registry Entries）
 // ============================================================================
 
+/** toasts 组件注册列表。 */
 export const toastsComponents: ComponentEntry[] = [
   {
     id: 'sonner-toasts',

@@ -1,3 +1,9 @@
+/**
+ * MentionBadge — 展示已激活 @mention 的内联徽章
+ *
+ * 用户在输入框里 @skill 或 @source 后，会在输入框上方显示这些徽章，
+ * 表示当前会话已经引用了哪些 Skill 或 Source。
+ */
 import * as React from 'react'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -7,34 +13,31 @@ import type { LoadedSkill, LoadedSource } from '../../../shared/types'
 import type { MentionItemType } from './mention-menu'
 
 // ============================================================================
-// Types
+// 类型
 // ============================================================================
 
 export interface MentionBadgeProps {
+  /** mention 类型：skill / source */
   type: MentionItemType
+  /** 显示文本 */
   label: string
-  /** Skill data for skill mentions */
+  /** skill 类型 mention 的数据 */
   skill?: LoadedSkill
-  /** Source data for source mentions */
+  /** source 类型 mention 的数据 */
   source?: LoadedSource
-  /** Workspace ID for skill avatar */
+  /** Skill 头像需要的 workspace ID */
   workspaceId?: string
-  /** Called when the remove button is clicked */
+  /** 点击移除按钮时调用 */
   onRemove?: () => void
-  /** Additional className */
+  /** 额外 className */
   className?: string
 }
 
 // ============================================================================
-// MentionBadge Component
+// MentionBadge 组件
 // ============================================================================
 
-/**
- * MentionBadge - Inline badge for displaying active @mentions
- *
- * Used in the ActiveMentionBadges row above the input field to show
- * skills and sources that have been mentioned via @.
- */
+/** 单个 mention 徽章 */
 export function MentionBadge({
   type,
   label,
@@ -53,7 +56,7 @@ export function MentionBadge({
         className
       )}
     >
-      {/* Icon based on type */}
+      {/* 根据类型显示对应图标 */}
       {type === 'skill' && skill && (
         <SkillAvatar skill={skill} size="xs" workspaceId={workspaceId} />
       )}
@@ -61,10 +64,10 @@ export function MentionBadge({
         <SourceAvatar source={source} size="xs" />
       )}
 
-      {/* Label */}
+      {/* 标签文本 */}
       <span className="truncate max-w-[100px]">{label}</span>
 
-      {/* Remove button */}
+      {/* 移除按钮 */}
       {onRemove && (
         <button
           type="button"
@@ -82,33 +85,38 @@ export function MentionBadge({
 }
 
 // ============================================================================
-// ActiveMentionBadges Component
+// ActiveMentionBadges 组件
 // ============================================================================
 
 export interface ParsedMention {
+  /** mention 唯一 id */
   id: string
+  /** mention 类型 */
   type: MentionItemType
+  /** 显示文本 */
   label: string
+  /** skill 数据 */
   skill?: LoadedSkill
+  /** source 数据 */
   source?: LoadedSource
 }
 
 export interface ActiveMentionBadgesProps {
-  /** Parsed mentions to display */
+  /** 要展示的解析后 mention 列表 */
   mentions: ParsedMention[]
-  /** Workspace ID for skill avatars */
+  /** Skill 头像需要的 workspace ID */
   workspaceId?: string
-  /** Called when a mention is removed */
+  /** 移除某个 mention 时调用 */
   onRemove?: (id: string, type: MentionItemType) => void
-  /** Additional className for the container */
+  /** 容器额外 className */
   className?: string
 }
 
 /**
- * ActiveMentionBadges - Row of mention badges shown above the input
+ * ActiveMentionBadges — 输入框上方的一行 mention 徽章
  *
- * Displays all active @mentions (skills and sources) as removable badges.
- * Hidden when there are no mentions.
+ * 把所有已激活的 @mention（skill、source）展示为可移除徽章。
+ * 没有 mention 时返回 null（不渲染）。
  */
 export function ActiveMentionBadges({
   mentions,

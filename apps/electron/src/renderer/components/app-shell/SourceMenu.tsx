@@ -1,17 +1,16 @@
 /**
- * SourceMenu - Shared menu content for source actions
+ * SourceMenu - 来源操作菜单内容。
  *
- * Used by:
- * - SourcesListPanel (dropdown via "..." button, context menu via right-click)
- * - SourceInfoPage (title dropdown menu)
+ * 用于：
+ * - SourcesListPanel（“…” 按钮下拉菜单、右键上下文菜单）
+ * - SourceInfoPage（标题下拉菜单）
  *
- * Uses MenuComponents context to render with either DropdownMenu or ContextMenu
- * primitives, allowing the same component to work in both scenarios.
+ * 通过 MenuComponents 上下文渲染，因此同一套内容既能用于 DropdownMenu，也能用于 ContextMenu。
  *
- * Provides consistent source actions:
- * - Open in New Window
- * - Show in file manager
- * - Delete
+ * 提供的操作：
+ * - 在新窗口打开
+ * - 在文件管理器中显示
+ * - 删除
  */
 
 import * as React from 'react'
@@ -25,22 +24,23 @@ import {
 import { useMenuComponents } from '@/components/ui/menu-context'
 import { getFileManagerName } from '@/lib/platform'
 
+/** SourceMenuProps：组件 props 类型定义 */
 export interface SourceMenuProps {
-  /** Source slug */
+  /** 来源 slug */
   sourceSlug: string
-  /** Source name for display */
+  /** 来源名称，用于显示 */
   sourceName: string
-  /** Callbacks */
+  /** 回调 */
   onOpenInNewWindow: () => void
   onShowInFinder: () => void
   onDelete: () => void
-  /** Send to another workspace (omit to hide the option) */
+  /** 发送到其它工作区（不传则隐藏该选项） */
   onSendToWorkspace?: () => void
 }
 
 /**
- * SourceMenu - Renders the menu items for source actions
- * This is the content only, not wrapped in a DropdownMenu or ContextMenu
+ * SourceMenu - 渲染来源操作菜单项。
+ * 只返回菜单内容，不包裹 DropdownMenu 或 ContextMenu。
  */
 export function SourceMenu({
   sourceSlug,
@@ -52,24 +52,24 @@ export function SourceMenu({
 }: SourceMenuProps) {
   const { t } = useTranslation()
 
-  // Get menu components from context (works with both DropdownMenu and ContextMenu)
+  // 从上下文获取菜单组件（同时兼容 DropdownMenu 和 ContextMenu）
   const { MenuItem, Separator } = useMenuComponents()
 
   return (
     <>
-      {/* Open in New Window */}
+      {/* 在新窗口打开 */}
       <MenuItem onClick={onOpenInNewWindow}>
         <AppWindow className="h-3.5 w-3.5" />
         <span className="flex-1">{t("sidebarMenu.openInNewWindow")}</span>
       </MenuItem>
 
-      {/* Show in file manager */}
+      {/* 在文件管理器中显示 */}
       <MenuItem onClick={onShowInFinder}>
         <FolderOpen className="h-3.5 w-3.5" />
         <span className="flex-1">{t("sessionMenu.showInFileManager", { fileManager: getFileManagerName() })}</span>
       </MenuItem>
 
-      {/* Send to another workspace */}
+      {/* 发送到其它工作区 */}
       {onSendToWorkspace && (
         <MenuItem onClick={onSendToWorkspace}>
           <Send className="h-3.5 w-3.5" />
@@ -79,7 +79,7 @@ export function SourceMenu({
 
       <Separator />
 
-      {/* Delete */}
+      {/* 删除 */}
       <MenuItem onClick={onDelete} variant="destructive">
         <Trash2 className="h-3.5 w-3.5" />
         <span className="flex-1">{t("sidebarMenu.deleteSource")}</span>

@@ -1,3 +1,9 @@
+/**
+ * Source（数据来源）选择弹窗
+ *
+ * Source 是 Agent 可以调用的外部能力，比如 MCP 服务器、API、本地文件夹等。
+ * 这个组件封装了一个可过滤的多选弹窗，用于在聊天输入前选择要启用的 Source。
+ */
 import * as React from 'react'
 import { Check, DatabaseZap } from 'lucide-react'
 import { FilterableSelectPopover } from '@craft-agent/ui'
@@ -7,14 +13,21 @@ import { SourceAvatar } from '@/components/ui/source-avatar'
 import type { LoadedSource } from '../../../shared/types'
 
 export interface SourceSelectorPopoverProps {
+  /** 弹窗是否打开 */
   open: boolean
+  /** 打开状态变化回调 */
   onOpenChange: (open: boolean) => void
+  /** 锚点按钮 ref，弹窗会相对它定位 */
   anchorRef: React.RefObject<HTMLButtonElement | null>
+  /** 可选的 Source 列表 */
   sources: LoadedSource[]
+  /** 已选中的 Source slug 数组 */
   selectedSlugs: string[]
+  /** 切换某个 Source 选中状态的回调 */
   onToggleSlug: (slug: string) => void
 }
 
+/** Source 选择弹窗组件 */
 export function SourceSelectorPopover({
   open,
   onOpenChange,

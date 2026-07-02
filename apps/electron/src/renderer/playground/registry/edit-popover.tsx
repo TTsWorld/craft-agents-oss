@@ -1,3 +1,9 @@
+/**
+ * edit-popover 注册项
+ *
+ * 演示 EditPopover 组件：一个弹出式 inline 编辑面板，可以在里面用紧凑的 ChatDisplay 与 Agent 交互。
+ * 涉及概念：session（对话）、message（消息）、tool use（编辑操作可能会触发工具调用）。
+ */
 import * as React from 'react'
 import { useState, useCallback, useEffect, useRef } from 'react'
 import type { ComponentEntry } from './types'
@@ -13,11 +19,11 @@ import { GripHorizontal, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 
-// Ensure mock electronAPI is available before any component renders
+// 在组件渲染前先注入模拟的 electronAPI。
 ensureMockElectronAPI()
 
 // ============================================================================
-// Sample Message Data
+// 示例消息数据
 // ============================================================================
 
 const createMessage = (
@@ -68,7 +74,7 @@ const errorMessages: Message[] = [
 ]
 
 // ============================================================================
-// Helper to create Session from messages
+// 辅助函数：从消息数组构造 Session
 // ============================================================================
 
 const createSession = (messages: Message[], isProcessing = false): Session => ({
@@ -91,8 +97,8 @@ interface CompactChatPreviewProps {
 }
 
 /**
- * Wrapper that renders ChatDisplay in compact mode with a popover-like container
- * to simulate how it appears in the EditPopover.
+ * 在类 popover 容器里渲染紧凑版 ChatDisplay，模拟 EditPopover 里的效果。
+ * 同时支持拖拽移动和右下角缩放。
  */
 function CompactChatPreview({
   messages = completedMessages,
@@ -248,7 +254,7 @@ function CompactChatPreview({
 // EditPopover Preview Wrapper
 // ============================================================================
 
-// Mock AppShell context for playground
+// 给 playground 用的最小 AppShell 上下文，满足 EditPopover 的依赖。
 const mockAppShellContext = {
   sessions: [],
   workspaces: [{ id: 'playground-workspace', name: 'Playground', path: '/playground', rootPath: '/playground' }],
@@ -294,7 +300,7 @@ const mockAppShellContext = {
   onDeleteSession: async () => true,
 }
 
-// Sample edit context for playground
+// playground 里的示例编辑上下文
 const sampleEditContext: EditContext = {
   label: 'Label Configuration',
   filePath: '/playground/labels/config.json',
@@ -308,7 +314,7 @@ interface EditPopoverPreviewProps {
 }
 
 /**
- * Wrapper that renders the actual EditPopover component with a trigger button
+ * 渲染真实 EditPopover 组件，并带一个触发按钮。
  */
 function EditPopoverPreview({
   inlineExecution = true,
@@ -340,9 +346,10 @@ function EditPopoverPreview({
 }
 
 // ============================================================================
-// Registry Entries
+// 组件注册表条目（Component Registry Entries）
 // ============================================================================
 
+/** edit-popover 组件注册列表。 */
 export const editPopoverComponents: ComponentEntry[] = [
   {
     id: 'edit-popover',

@@ -6,22 +6,26 @@ import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import { perf } from '@craft-agent/shared/utils'
 import { isValidThinkingLevel, THINKING_LEVEL_IDS } from '@craft-agent/shared/agent/thinking-levels'
 
+// 合法的 thinking level 列表，用于错误提示
 const VALID_THINKING_LEVELS_LIST = THINKING_LEVEL_IDS.map(id => `'${id}'`).join(', ')
 import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { setTransferableHandler } from './transfer'
 
+/** 单个 client 的 session 文件 watcher 状态。 */
 interface ClientSessionWatchState {
   watcher: import('fs').FSWatcher
   sessionId: string
   debounceTimer: ReturnType<typeof setTimeout> | null
 }
 
-// Per-client session file watcher state (supports concurrent windows/clients safely)
+// 每个 client 的 session 文件 watcher 状态（支持多窗口/多 client 并发安全）
 const clientSessionWatches = new Map<string, ClientSessionWatchState>()
 
+// 日志中一次最多展示的 session ID 数量
 const SESSION_GET_LOG_ID_LIMIT = 25
 
+// summarizeIds：把 id 列表截断后用于日志，避免一次性打印大量 id。
 function summarizeIds(ids: Iterable<string>, limit = SESSION_GET_LOG_ID_LIMIT) {
   const all = Array.from(ids)
   return {
@@ -31,6 +35,7 @@ function summarizeIds(ids: Iterable<string>, limit = SESSION_GET_LOG_ID_LIMIT) {
   }
 }
 
+// sessionWorkspaceDistribution：统计 session 按 workspace 分布，用于日志排查。
 function sessionWorkspaceDistribution(sessions: Array<{ workspaceId?: string }>): Record<string, number> {
   const distribution: Record<string, number> = {}
   for (const session of sessions) {
@@ -41,9 +46,10 @@ function sessionWorkspaceDistribution(sessions: Array<{ workspaceId?: string }>)
 }
 
 /**
- * Clean up session file watcher for a client.
- * Called from main process disconnect hooks to prevent watcher leaks.
+ * 清理某个 client 的 session 文件 watcher。
+ * 由主进程断开连接的钩子调用，防止 watcher 泄漏。
  */
+// cleanupSessionFileWatchForClient：清理某个 client 的 session 文件 watcher。
 export function cleanupSessionFileWatchForClient(clientId: string): void {
   const state = clientSessionWatches.get(clientId)
   if (!state) return
@@ -57,24 +63,25 @@ export function cleanupSessionFileWatchForClient(clientId: string): void {
   clientSessionWatches.delete(clientId)
 }
 
-// Recursive directory scanner for session files
-// Filters out internal files (session.jsonl) and hidden files (. prefix)
-// Returns only non-empty directories
+// 递归扫描 session 文件目录。
+// 过滤内部文件（session.jsonl）和隐藏文件（. 开头）。
+// 只返回非空目录。
+// scanSessionDirectory：递归扫描 session 目录，过滤内部文件与隐藏文件，返回树形结构。
 async function scanSessionDirectory(dirPath: string): Promise<import('@craft-agent/shared/protocol').SessionFile[]> {
   const { readdir, stat } = await import('fs/promises')
   const entries = await readdir(dirPath, { withFileTypes: true })
   const files: import('@craft-agent/shared/protocol').SessionFile[] = []
 
   for (const entry of entries) {
-    // Skip internal and hidden files
+    // 跳过内部文件与隐藏文件
     if (entry.name === 'session.jsonl' || entry.name.startsWith('.')) continue
 
     const fullPath = join(dirPath, entry.name)
 
     if (entry.isDirectory()) {
-      // Recursively scan subdirectory
+      // 递归扫描子目录
       const children = await scanSessionDirectory(fullPath)
-      // Only include non-empty directories
+      // 仅包含非空目录
       if (children.length > 0) {
         files.push({
           name: entry.name,
@@ -94,13 +101,14 @@ async function scanSessionDirectory(dirPath: string): Promise<import('@craft-age
     }
   }
 
-  // Sort: directories first, then alphabetically
+  // 排序：目录优先，再按字母序
   return files.sort((a, b) => {
     if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
     return a.name.localeCompare(b.name)
   })
 }
 
+// 本 handler 负责注册的 session 相关 channel 列表
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.GET,
   RPC_CHANNELS.sessions.GET_UNREAD_SUMMARY,
@@ -129,12 +137,13 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER,
 ] as const
 
+// registerSessionsHandlers：注册 session 相关 RPC 路由。
+// Session 是 Agent 与用户一次完整对话的上下文，包含消息历史、附件、工具调用结果等。
 export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): void {
   const { sessionManager, platform } = deps
   const log = platform.logger
 
-  // Get all sessions for the calling window's workspace
-  // Waits for initialization to complete so sessions are never returned empty during startup
+  // 获取调用窗口所在 workspace 的所有 session；等待初始化完成，避免启动时返回空列表。
   server.handle(RPC_CHANNELS.sessions.GET, async (ctx) => {
     try {
       await sessionManager.waitForInit()
@@ -162,7 +171,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     return sessions
   })
 
-  // Get unread summary across all workspaces
+  // 获取所有 workspace 的未读摘要
   server.handle(RPC_CHANNELS.sessions.GET_UNREAD_SUMMARY, async () => {
     try {
       await sessionManager.waitForInit()
@@ -172,11 +181,12 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     return sessionManager.getUnreadSummary()
   })
 
+  // 标记 workspace 下所有 session 已读
   server.handle(RPC_CHANNELS.sessions.MARK_ALL_READ, async (_ctx, workspaceId: string) => {
     return sessionManager.markAllSessionsRead(workspaceId)
   })
 
-  // Get a single session with messages (for lazy loading)
+  // 获取单个 session 及其消息（懒加载用）
   server.handle(RPC_CHANNELS.sessions.GET_MESSAGES, async (_ctx, sessionId: string) => {
     const end = perf.start('rpc.getSessionMessages')
     const session = await sessionManager.getSession(sessionId)
@@ -184,7 +194,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     return session
   })
 
-  // Create a new session
+  // 创建新 session
   server.handle(RPC_CHANNELS.sessions.CREATE, async (_ctx, workspaceId: string, options?: import('@craft-agent/shared/protocol').CreateSessionOptions) => {
     const end = perf.start('rpc.createSession', { workspaceId })
     // The renderer adds the session synchronously from this return value (App.tsx handleCreateSession),
@@ -194,26 +204,18 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     return session
   })
 
-  // Delete a session
+  // 删除 session
   server.handle(RPC_CHANNELS.sessions.DELETE, async (_ctx, sessionId: string) => {
     return sessionManager.deleteSession(sessionId)
   })
 
-  // Send a message to a session (with optional file attachments).
-  //
-  // Behavior:
-  //   - Awaits until the user message is persisted to disk, then returns
-  //     `{ accepted: true, messageId }`. This guarantees the message survives
-  //     a mid-stream crash (#616).
-  //   - The actual model-streaming work continues in the background; results
-  //     flow back via SESSION_EVENT as before.
-  //   - Pre-persist errors (session not found, etc.) reject the RPC so the
-  //     caller can show a synchronous error.
-  //   - Post-persist errors (model API failures, etc.) are routed via the
-  //     event stream as today.
-  // attachments: FileAttachment[] for Claude (has content), storedAttachments: StoredAttachment[] for persistence (has thumbnailBase64)
+  // 向 session 发送消息（可带文件附件）。
+  // 行为：
+  //   - 等待用户消息落盘后再返回 `{ accepted: true, messageId }`，保证崩溃不丢消息。
+  //   - 实际的模型流式处理在后台继续，结果通过 SESSION_EVENT 推送。
+  //   - 持久化前错误会同步 reject；持久化后错误通过事件流返回。
   server.handle(RPC_CHANNELS.sessions.SEND_MESSAGE, async (ctx, sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachment[], options?: SendMessageOptions) => {
-    // Capture the caller's clientId for error routing
+    // 记录调用者 clientId，用于错误路由
     const callerClientId = ctx.clientId
 
     return await new Promise<{ accepted: true; messageId: string }>((resolve, reject) => {
@@ -228,9 +230,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       sessionManager
         .sendMessage(sessionId, message, attachments, storedAttachments, options, undefined, undefined, onAck, { callerClientId })
         .then(() => {
-          // sendMessage finished without firing onAck — should not happen in
-          // practice (every code path that creates a user message acks).
-          // Treat as a defensive failure rather than silently dropping.
+          // sendMessage 完成但 onAck 未被触发 —— 防御性失败
           if (!acked) {
             acked = true
             reject(new Error('sendMessage completed without persisting a user message'))
@@ -239,12 +239,12 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         .catch(err => {
           log.error('Error in sendMessage:', err)
           if (!acked) {
-            // Pre-persist error — surface synchronously to the caller.
+            // 持久化前错误：同步抛给调用方
             acked = true
             reject(err)
             return
           }
-          // Post-persist error — route via the event stream as today.
+          // 持久化后错误：通过事件流异步返回
           pushTyped(server, RPC_CHANNELS.sessions.EVENT, { to: 'client', clientId: callerClientId }, {
             type: 'error',
             sessionId,
@@ -258,17 +258,17 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     })
   })
 
-  // Cancel processing
+  // 取消 session 的当前处理
   server.handle(RPC_CHANNELS.sessions.CANCEL, async (_ctx, sessionId: string, silent?: boolean) => {
     return sessionManager.cancelProcessing(sessionId, silent)
   })
 
-  // Kill background shell
+  // 杀掉后台 shell 进程
   server.handle(RPC_CHANNELS.sessions.KILL_SHELL, async (_ctx, sessionId: string, shellId: string) => {
     return sessionManager.killShell(sessionId, shellId)
   })
 
-  // Get background task output
+  // 获取后台任务输出
   server.handle(RPC_CHANNELS.tasks.GET_OUTPUT, async (_ctx, taskId: string) => {
     try {
       const output = await sessionManager.getTaskOutput(taskId)
@@ -279,23 +279,21 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     }
   })
 
-  // Respond to a permission request (bash command approval)
-  // Returns true if the response was delivered, false if agent/session is gone
+  // 响应权限请求（bash 命令等是否允许执行）
   server.handle(RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION, async (_ctx, sessionId: string, requestId: string, allowed: boolean, alwaysAllow: boolean) => {
     return sessionManager.respondToPermission(sessionId, requestId, allowed, alwaysAllow)
   })
 
-  // Respond to a credential request (secure auth input)
-  // Returns true if the response was delivered, false if agent/session is gone
+  // 响应凭证请求（安全认证输入）
   server.handle(RPC_CHANNELS.sessions.RESPOND_TO_CREDENTIAL, async (_ctx, sessionId: string, requestId: string, response: import('@craft-agent/shared/protocol').CredentialResponse) => {
     return sessionManager.respondToCredential(sessionId, requestId, response)
   })
 
   // ==========================================================================
-  // Consolidated Command Handlers
+  // 聚合会话命令处理器
   // ==========================================================================
 
-  // Session commands - consolidated handler for session operations
+  // 用一个 handler 处理多种 session 命令，避免为每个小命令单独注册 channel。
   server.handle(RPC_CHANNELS.sessions.COMMAND, async (
     _ctx,
     sessionId: string,
@@ -319,12 +317,12 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       case 'markUnread':
         return sessionManager.markSessionUnread(sessionId)
       case 'setActiveViewing':
-        // Track which session user is actively viewing (for unread state machine)
+        // 记录用户正在查看的 session，用于未读状态机
         return sessionManager.setActiveViewingSession(sessionId, command.workspaceId)
       case 'setPermissionMode':
         return sessionManager.setSessionPermissionMode(sessionId, command.mode)
       case 'setThinkingLevel':
-        // Validate thinking level before passing to session manager
+        // 先校验 thinking level 合法性
         if (!isValidThinkingLevel(command.level)) {
           throw new Error(`Invalid thinking level: ${command.level}. Valid values: ${VALID_THINKING_LEVELS_LIST}`)
         }
@@ -347,7 +345,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         return
       }
       case 'copyPath': {
-        // Return the session folder path for copying to clipboard
+        // 返回 session 文件夹路径，供复制到剪贴板
         const sessionPath = sessionManager.getSessionPath(sessionId)
         return sessionPath ? { success: true, path: sessionPath } : { success: false }
       }
@@ -360,11 +358,11 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       case 'refreshTitle':
         log.info(`IPC: refreshTitle received for session ${sessionId}`)
         return sessionManager.refreshTitle(sessionId)
-      // Connection selection (locked after first message)
+      // 连接选择（首条消息发送后锁定）
       case 'setConnection':
         log.info(`IPC: setConnection received for session ${sessionId}, connection: ${command.connectionSlug}`)
         return sessionManager.setSessionConnection(sessionId, command.connectionSlug)
-      // Pending plan execution (Accept & Compact flow)
+      // 待执行计划（Accept & Compact 流程）
       case 'setPendingPlanExecution':
         return sessionManager.setPendingPlanExecution(sessionId, command.planPath, command.draftInputSnapshot)
       case 'markCompactionComplete':
@@ -386,7 +384,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     }
   })
 
-  // Get pending plan execution state (for reload recovery)
+  // 获取待执行计划状态（页面刷新后恢复用）
   server.handle(RPC_CHANNELS.sessions.GET_PENDING_PLAN_EXECUTION, async (
     _ctx,
     sessionId: string
@@ -394,7 +392,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     return sessionManager.getPendingPlanExecution(sessionId)
   })
 
-  // Get authoritative permission mode diagnostics for renderer reconciliation
+  // 获取权威的权限模式诊断信息（供 renderer 与主进程状态对账）
   server.handle(RPC_CHANNELS.sessions.GET_PERMISSION_MODE_STATE, async (
     _ctx,
     sessionId: string
@@ -403,10 +401,10 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   // ============================================================
-  // Session Content Search
+  // 会话内容搜索
   // ============================================================
 
-  // Search session content using ripgrep
+  // 使用 ripgrep 搜索 session 内容
   server.handle(RPC_CHANNELS.sessions.SEARCH_CONTENT, async (_ctx, workspaceId: string, query: string, searchId?: string) => {
     const id = searchId || Date.now().toString(36)
     log.info('[search]','ipc:request', { searchId: id, query })
@@ -430,7 +428,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       searchId: id,
     })
 
-    // Filter out hidden sessions (e.g., mini edit sessions)
+    // 过滤隐藏 session（如 mini edit session）
     const allSessions = await sessionManager.getSessions()
     const hiddenSessionIds = new Set(
       allSessions.filter(s => s.hidden).map(s => s.id)
@@ -442,10 +440,10 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   // ============================================================
-  // Session Info Panel (files, notes, file watching)
+  // 会话信息面板（文件、笔记、文件监听）
   // ============================================================
 
-  // Get files in session directory (recursive tree structure)
+  // 获取 session 目录下的文件树（递归）
   server.handle(RPC_CHANNELS.sessions.GET_FILES, async (_ctx, sessionId: string) => {
     const sessionPath = sessionManager.getSessionPath(sessionId)
     if (!sessionPath) return []
@@ -458,7 +456,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     }
   })
 
-  // Start watching a session directory for file changes (per client)
+  // 开始监听 session 目录文件变化（按 client）
   server.handle(RPC_CHANNELS.sessions.WATCH_FILES, async (ctx, sessionId: string) => {
     const clientId = ctx.clientId
     cleanupSessionFileWatchForClient(clientId)
@@ -476,12 +474,12 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       }
 
       state.watcher = watch(sessionPath, { recursive: true }, (_eventType, filename) => {
-        // Ignore internal files and hidden files
+        // 忽略内部文件与隐藏文件
         if (filename && (filename.includes('session.jsonl') || filename.startsWith('.'))) {
           return
         }
 
-        // Debounce: wait 100ms before notifying to batch rapid changes
+        // 100ms 防抖，批量处理频繁变更
         if (state.debounceTimer) {
           clearTimeout(state.debounceTimer)
         }
@@ -497,12 +495,12 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     }
   })
 
-  // Stop watching session files for the calling client
+  // 停止监听当前 client 的 session 文件变化
   server.handle(RPC_CHANNELS.sessions.UNWATCH_FILES, async (ctx) => {
     cleanupSessionFileWatchForClient(ctx.clientId)
   })
 
-  // Get session notes (reads notes.md from session directory)
+  // 读取 session 的 notes.md
   server.handle(RPC_CHANNELS.sessions.GET_NOTES, async (_ctx, sessionId: string) => {
     const sessionPath = sessionManager.getSessionPath(sessionId)
     if (!sessionPath) return ''
@@ -512,12 +510,12 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       const content = await readFile(notesPath, 'utf-8')
       return content
     } catch {
-      // File doesn't exist yet - return empty string
+      // 文件尚未创建时返回空字符串
       return ''
     }
   })
 
-  // Set session notes (writes to notes.md in session directory)
+  // 写入 session 的 notes.md
   server.handle(RPC_CHANNELS.sessions.SET_NOTES, async (_ctx, sessionId: string, content: string) => {
     const sessionPath = sessionManager.getSessionPath(sessionId)
     if (!sessionPath) {
@@ -534,10 +532,10 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   // ============================================
-  // Export / Import / Dispatch
+  // 导出 / 导入 / 分发
   // ============================================
 
-  // Export a session as a portable bundle
+  // 导出 session 为可迁移的 bundle
   server.handle(RPC_CHANNELS.sessions.EXPORT, async (ctx, sessionId: string) => {
     await sessionManager.waitForInit()
     const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
@@ -548,9 +546,8 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     return bundle
   })
 
-  // Import a session bundle into a target workspace
-  // targetWorkspaceId is passed explicitly (not from context) so the renderer
-  // can import into any workspace the server manages, not just the active one.
+  // 导入 session bundle 到目标 workspace
+  // targetWorkspaceId 显式传入，使 renderer 可导入 server 管理的任意 workspace，而不仅是当前窗口的 workspace。
   const importHandler = async (_ctx: any, targetWorkspaceId: string, bundle: unknown, mode: string) => {
     await sessionManager.waitForInit()
     if (!targetWorkspaceId || typeof targetWorkspaceId !== 'string') throw new Error('targetWorkspaceId is required')
@@ -559,10 +556,10 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     return sessionManager.importSession(targetWorkspaceId, bundle as import('@craft-agent/shared/sessions').SessionBundle, mode)
   }
   server.handle(RPC_CHANNELS.sessions.IMPORT, importHandler)
-  // Also register as transferable so chunked transfer can invoke it on commit
+  // 同时注册为可分片传输 handler，使大 bundle 可通过 transfer:commit 调用
   setTransferableHandler(RPC_CHANNELS.sessions.IMPORT, importHandler)
 
-  // Export a session as a summarized remote-transfer payload.
+  // 导出 session 为精简的远程转移 payload
   server.handle(RPC_CHANNELS.sessions.EXPORT_REMOTE_TRANSFER, async (ctx, sessionId: string) => {
     await sessionManager.waitForInit()
     const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
@@ -573,7 +570,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     return payload
   })
 
-  // Import a summarized remote-transfer payload into a target workspace.
+  // 导入精简的远程转移 payload 到目标 workspace
   server.handle(RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER, async (_ctx, targetWorkspaceId: string, payload: import('@craft-agent/shared/protocol').RemoteSessionTransferPayload) => {
     await sessionManager.waitForInit()
     if (!targetWorkspaceId || typeof targetWorkspaceId !== 'string') throw new Error('targetWorkspaceId is required')

@@ -1,10 +1,13 @@
 /**
- * Documentation links and summaries for contextual help throughout the UI.
- * Summaries provide quick context; "Learn more" opens the full docs.
+ * 文档链接与摘要：用于在 UI 各处的“帮助”气泡里提供上下文说明。
+ * 摘要提供一句话简介；“了解更多”会跳转到完整文档。
  */
 
+// 文档站点的基础 URL，所有 feature 的 path 都会拼接在它后面。
 const DOC_BASE_URL = 'https://agents.craft.do/docs'
 
+// 受支持的文档特性（功能主题）联合类型。
+// 类似 Go 里的 type DocFeature string + const 枚举，TS 用联合类型限定可取值。
 export type DocFeature =
   | 'sources'
   | 'sources-api'
@@ -21,15 +24,19 @@ export type DocFeature =
   | 'automations'
   | 'messaging'
 
+// 单个功能对应的文档信息结构。
+// 类似 Go 的 struct：interface 描述对象形状，字段可附带文档注释。
 export interface DocInfo {
-  /** Path relative to DOC_BASE_URL */
+  /** 相对于 DOC_BASE_URL 的文档路径 */
   path: string
-  /** Display title for the help popover */
+  /** 帮助气泡里显示的标题 */
   title: string
-  /** 1-2 sentence summary for quick context */
+  /** 1-2 句话的简介，用于快速了解该功能 */
   summary: string
 }
 
+// 特性 -> 文档信息的映射表。
+// Record<DocFeature, DocInfo> 表示“键必须是 DocFeature，值必须是 DocInfo”，类似 Go 的 map[DocFeature]DocInfo。
 export const DOCS: Record<DocFeature, DocInfo> = {
   sources: {
     path: '/sources/overview',
@@ -118,14 +125,15 @@ export const DOCS: Record<DocFeature, DocInfo> = {
 }
 
 /**
- * Get the full documentation URL for a feature
+ * 根据特性名拼接完整的文档 URL。
+ * 模板字符串 `${a}${b}` 类似 Go 的 fmt.Sprintf("%s%s", a, b)。
  */
 export function getDocUrl(feature: DocFeature): string {
   return `${DOC_BASE_URL}${DOCS[feature].path}`
 }
 
 /**
- * Get the doc info (title, summary, path) for a feature
+ * 根据特性名获取对应的文档信息（标题、摘要、路径）。
  */
 export function getDocInfo(feature: DocFeature): DocInfo {
   return DOCS[feature]

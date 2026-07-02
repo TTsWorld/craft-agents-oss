@@ -1,5 +1,5 @@
-// Load user's shell environment first (before other imports that may use env)
-// This ensures tools like Homebrew, nvm, etc. are available to the agent
+// 先加载用户 shell 环境（在其他可能读取 env 的 import 之前）
+// 这样 Homebrew、nvm 等工具对 agent 可用
 import { loadShellEnv } from './shell-env'
 loadShellEnv()
 
@@ -8,27 +8,26 @@ import { createHash, randomUUID } from 'crypto'
 import { hostname, homedir } from 'os'
 import * as Sentry from '@sentry/electron/main'
 
-// Initialize Sentry error tracking as early as possible after app import.
-// Only enabled in production (packaged) builds to avoid noise during development.
-// DSN is baked in at build time via esbuild --define (same pattern as OAuth secrets).
+// 在导入 app 后尽早初始化 Sentry 错误追踪。
+// 仅在生产（打包）构建中启用，避免开发环境噪音。
+// DSN 在构建时通过 esbuild --define 写入（与 OAuth secrets 同样的方式）。
 //
-// NOTE: Source map upload is intentionally disabled. Stack traces in Sentry will show
-// bundled/minified code. To enable source map upload in the future:
-//   1. Add SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECT to CI secrets
-//   2. Re-enable the @sentry/vite-plugin in vite.config.ts (handles renderer maps)
-//   3. Add @sentry/esbuild-plugin to scripts/electron-build-main.ts (handles main process maps)
+// 注意：Source map 上传被有意禁用，Sentry 里的堆栈会显示打包/压缩后的代码。
+// 将来如需启用 source map 上传：
+//   1. 在 CI secrets 里加 SENTRY_AUTH_TOKEN、SENTRY_ORG、SENTRY_PROJECT
+//   2. 在 vite.config.ts 里重新启用 @sentry/vite-plugin（处理渲染进程 map）
+//   3. 在 scripts/electron-build-main.ts 里加 @sentry/esbuild-plugin（处理主进程 map）
 Sentry.init({
   dsn: process.env.SENTRY_ELECTRON_INGEST_URL,
   environment: app.isPackaged ? 'production' : 'development',
   release: app.getVersion(),
-  // Enabled whenever the ingest URL is available — works in both production (baked via CI)
-  // and development (injected via .env / 1Password). Filter by environment in Sentry dashboard.
+  // 只要有 ingest URL 就启用——生产环境由 CI 烘焙，开发环境通过 .env / 1Password 注入。
+  // 在 Sentry 后台按 environment 过滤即可。
   enabled: !!process.env.SENTRY_ELECTRON_INGEST_URL,
 
-  // Scrub sensitive data before sending to Sentry.
-  // Removes authorization headers, API keys/tokens, and credential-like values.
+  // 发送给 Sentry 前先脱敏：移除 authorization header、API key/token 等凭证类数据。
   beforeSend(event) {
-    // Scrub request headers (authorization, cookies)
+    // 脱敏请求头（authorization、cookie）
     if (event.request?.headers) {
       const sensitiveHeaders = ['authorization', 'cookie', 'x-api-key']
       for (const header of sensitiveHeaders) {
@@ -38,7 +37,7 @@ Sentry.init({
       }
     }
 
-    // Scrub breadcrumb data that may contain sensitive values
+    // 脱敏可能包含敏感值的 breadcrumb 数据
     if (event.breadcrumbs) {
       for (const breadcrumb of event.breadcrumbs) {
         if (breadcrumb.data) {
@@ -58,15 +57,14 @@ Sentry.init({
   },
 })
 
-// Initialize i18n for main process (menus, dialogs, etc.)
+// 初始化主进程 i18n（用于菜单、对话框等）
 //
-// The main-process i18n instance has no detection plugin (no localStorage in Node)
-// — it always starts at `fallbackLng: 'en'`. We hydrate it here from the persisted
-// `uiLanguage` preference, which is maintained by the `i18n:changeLanguage` IPC
-// handler whenever the user changes Appearance → Language. Without this, the
-// renderer would restore its language from localStorage on every restart while
-// the main process silently stayed at English — breaking session title language,
-// the system prompt's "Preferred language" line, and the native menu.
+// 主进程的 i18n 实例没有探测插件（Node 里没有 localStorage），
+// 默认 fallbackLng 为 'en'。这里从持久化的 `uiLanguage` 偏好进行水合，
+// 该偏好由用户修改「外观 → 语言」时触发的 `i18n:changeLanguage` IPC handler 维护。
+// 如果不做这步，渲染进程每次重启都会从 localStorage 恢复语言，
+// 而主进程默默保持英文，导致会话标题语言、系统提示里的「Preferred language」、
+// 原生菜单都出错。
 import { setupI18n, i18n, SUPPORTED_LANGUAGE_CODES, type LanguageCode } from '@craft-agent/shared/i18n'
 import { getPersistedUiLanguage, setPersistedUiLanguage } from '@craft-agent/shared/config'
 setupI18n()
@@ -74,10 +72,10 @@ const persistedUiLanguage = getPersistedUiLanguage()
 if (persistedUiLanguage) {
   void i18n.changeLanguage(persistedUiLanguage)
 }
-// Note: deferred startup log lives below where mainLog is available (after log.initialize()).
+// 注意：启动相关日志放在 mainLog 可用之后（log.initialize() 之后）。
 
-// Set anonymous machine ID for Sentry user tracking (no PII — just a hash).
-// Uses hostname + homedir to produce a stable per-machine identifier.
+// 设置匿名机器 ID 用于 Sentry 用户跟踪（无 PII，只是一个 hash）。
+// 用 hostname + homedir 生成稳定的每机标识符。
 const machineId = createHash('sha256').update(hostname() + homedir()).digest('hex').slice(0, 16)
 Sentry.setUser({ id: machineId })
 
@@ -120,29 +118,28 @@ import { checkForUpdatesOnLaunch, setAutoUpdateEventSink, isUpdating, setBeforeU
 import type { EventSink } from '@craft-agent/server-core/transport'
 import { validateGitBashPath, checkVCRedistInstalled } from '@craft-agent/server-core/services'
 
-// Initialize electron-log for renderer process support
+// 初始化 electron-log，也支持渲染进程日志
 log.initialize()
 
-// Diagnostic: report main-process i18n hydration result. We log here (not inline
-// at the hydration site above) because mainLog is only available after this point.
+// 诊断日志：报告主进程 i18n 水合结果。这里才记录是因为 mainLog 到此点才可用。
 mainLog.info('[i18n] startup hydration', {
   persistedUiLanguage: persistedUiLanguage ?? null,
   resolvedLanguageAfterHydration: i18n.resolvedLanguage ?? null,
 })
 
-// Enable debug/perf in dev mode (running from source)
+// 开发模式（从源码运行）启用调试/性能日志
 if (isDebugMode) {
   process.env.CRAFT_DEBUG = '1'
   enableDebug()
   setPerfEnabled(true)
 }
 
-// Bundle CLI tools: resolve platform-specific uv binary and wrapper scripts.
-// These are available to all agent Bash sessions via CRAFT_UV, CRAFT_SCRIPTS env vars
-// and PATH prepend. uv auto-downloads Python 3.12 on first use (~5s, then cached).
+// 打包 CLI 工具：解析平台相关的 uv 二进制和包装脚本。
+// 通过 CRAFT_UV、CRAFT_SCRIPTS 环境变量和 PATH 前置暴露给所有 agent Bash 会话。
+// uv 首次使用时会自动下载 Python 3.12（约 5 秒，之后缓存）。
 {
-  // In packaged app: resources are at process.resourcesPath/app/resources/
-  // In dev: resources are at __dirname/../resources/ (sibling of dist/)
+  // 打包应用：资源位于 process.resourcesPath/app/resources/
+  // 开发环境：资源位于 __dirname/../resources/（dist 的同级目录）
   const resourcesBase = app.isPackaged
     ? join(process.resourcesPath, 'app')
     : join(__dirname, '..')
@@ -155,14 +152,14 @@ if (isDebugMode) {
   const bundledUvExists = existsSync(uvBinary)
   const fallbackUv = bundledUvExists ? null : 'uv'
 
-  // Runtime resolver hints for shared session tools
+  // 给共享 session 工具的运行时解析提示
   process.env.CRAFT_IS_PACKAGED = app.isPackaged ? '1' : '0'
   process.env.CRAFT_RESOURCES_BASE = resourcesBase
   process.env.CRAFT_APP_ROOT = app.isPackaged ? app.getAppPath() : process.cwd()
 
   process.env.CRAFT_UV = bundledUvExists ? uvBinary : (fallbackUv ?? uvBinary)
 
-  // Bun runtime (packaged builds should prefer bundled runtime over PATH)
+  // Bun 运行时：打包构建优先使用自带的 bun，而不是 PATH 上的
   const bunBinary = join(resourcesBase, 'vendor', 'bun', process.platform === 'win32' ? 'bun.exe' : 'bun')
   if (existsSync(bunBinary)) {
     process.env.CRAFT_BUN = bunBinary
@@ -180,9 +177,9 @@ if (isDebugMode) {
     : join(process.cwd(), 'apps', 'electron', 'resources', 'docs', 'craft-cli.md')
   process.env.CRAFT_CLI_DOC_PATH = process.env.CRAFT_COMMANDS_DOC_PATH
   process.env.CRAFT_AGENT_VERSION = app.getVersion()
-  // Prepend both generic wrappers dir and platform uv dir:
-  // - binDir exposes wrapper commands (pdf-tool, docx-tool, ...)
-  // - uvPlatformDir exposes raw `uv` for direct shell usage / debugging
+  // 把通用包装脚本目录和平台 uv 目录都加到 PATH 前面：
+  // - binDir 暴露包装命令（pdf-tool、docx-tool 等）
+  // - uvPlatformDir 暴露原始 `uv`，便于直接 shell 使用或调试
   process.env.PATH = `${binDir}${delimiter}${uvPlatformDir}${delimiter}${process.env.PATH}`
 
   if (!bundledUvExists) {
@@ -197,14 +194,14 @@ if (isDebugMode) {
   }
 }
 
-// Register Pi model resolver so llm-connections.ts can resolve Pi models
-// without importing @earendil-works/pi-ai (which breaks the Vite renderer build)
+// 注册 Pi model 解析器，让 llm-connections.ts 能解析 Pi 模型
+// 而不必引入 @earendil-works/pi-ai（会破坏 Vite 渲染进程构建）
 registerPiModelResolver((piAuthProvider) =>
   piAuthProvider ? getPiModelsForAuthProvider(piAuthProvider) : getAllPiModels()
 )
 
-// Custom URL scheme for deeplinks (e.g., craftagents://auth-complete)
-// Supports multi-instance dev: CRAFT_DEEPLINK_SCHEME env var (craftagents1, craftagents2, etc.)
+// 自定义 URL scheme，用于深链（如 craftagents://auth-complete）
+// 支持多实例开发：CRAFT_DEEPLINK_SCHEME 环境变量（craftagents1、craftagents2 等）
 const DEEPLINK_SCHEME = process.env.CRAFT_DEEPLINK_SCHEME || 'craftagents'
 
 let windowManager: WindowManager | null = null
@@ -214,43 +211,41 @@ let oauthFlowStore: OAuthFlowStore | null = null
 let moduleSink: EventSink | null = null
 let moduleClientResolver: ((webContentsId: number) => string | undefined) | null = null
 
-// Messaging gateway: the bootstrap handle is created once sessionManager is
-// available (inside createHandlerDeps) and populated with the WS publisher
-// after bootstrapServer resolves. Both hosts (Electron + standalone) wire
-// through createMessagingBootstrap — do not construct MessagingGatewayRegistry
-// directly.
+// Messaging gateway：bootstrap handle 在 sessionManager 可用时
+//（createHandlerDeps 内部）创建，bootstrapServer 完成后再把 WS publisher 注入进去。
+// Electron 和独立服务器两种宿主都通过 createMessagingBootstrap 接线，
+// 不要直接构造 MessagingGatewayRegistry。
 let messagingHandle: MessagingBootstrapHandle | null = null
 
-// Store pending deep link if app not ready yet (cold start)
+// 冷启动时如果应用还没准备好，先把深链存起来
 let pendingDeepLink: string | null = null
 
-// Set app name early (before app.whenReady) to ensure correct macOS menu bar title
-// Supports multi-instance dev: CRAFT_APP_NAME env var (e.g., "Craft Agents [1]")
+// 在 app.whenReady() 之前尽早设置应用名，确保 macOS 菜单栏标题正确
+// 支持多实例开发：CRAFT_APP_NAME 环境变量（如 "Craft Agents [1]"）
 app.setName(process.env.CRAFT_APP_NAME || 'Craft Agents')
 
-// Register as default protocol client for craftagents:// URLs
-// This must be done before app.whenReady() on some platforms
+// 注册为 craftagents:// URL 的默认协议客户端
+// 某些平台要求在 app.whenReady() 之前完成
 if (process.defaultApp) {
-  // Development mode: need to pass the app path
+  // 开发模式：需要传入应用路径
   if (process.argv.length >= 2) {
     app.setAsDefaultProtocolClient(DEEPLINK_SCHEME, process.execPath, [process.argv[1]])
   }
 } else {
-  // Production mode
+  // 生产模式
   app.setAsDefaultProtocolClient(DEEPLINK_SCHEME)
 }
 
-// Apply network proxy settings early (Node-level only — Electron sessions require app.whenReady)
+// 尽早应用网络代理设置（仅 Node 层；Electron session 要等 app.whenReady）
 import { applyConfiguredProxySettings } from './network-proxy'
 void applyConfiguredProxySettings()
 
-// Accept self-signed / untrusted certificates when connecting to a user-configured remote server.
-// Only bypasses cert validation for the exact CRAFT_SERVER_URL origin — all other connections
-// use standard certificate verification. Without this, wss:// to self-signed servers fails with
-// ERR_CERT_AUTHORITY_INVALID because Chromium's WebSocket rejects untrusted certs.
+// 连接用户配置的远程服务器时允许自签名/不受信任证书。
+// 只对 CRAFT_SERVER_URL 的来源跳过证书校验，其他连接仍走标准验证。
+// 否则 wss:// 到自签名服务器会因为 Chromium WebSocket 拒绝不受信任证书而报 ERR_CERT_AUTHORITY_INVALID。
 //
-// Electron's certificate-error always reports URLs with https:// scheme, so we normalize
-// wss:// → https:// (and ws:// → http://) to ensure origins compare correctly.
+// Electron 的 certificate-error 事件总是把 URL 报告成 https:// scheme，
+// 所以把 wss:// 归一化为 https://（ws:// 归一化为 http://），确保来源比较正确。
 function normalizeOriginForCert(urlStr: string): string {
   const u = new URL(urlStr)
   if (u.protocol === 'wss:') u.protocol = 'https:'
@@ -263,7 +258,7 @@ if (process.env.CRAFT_SERVER_URL) {
   try {
     serverOrigin = normalizeOriginForCert(process.env.CRAFT_SERVER_URL)
   } catch {
-    // Invalid URL — will fail later during connection, no need to handle here
+    // URL 无效，稍后连接时会失败，这里不需要处理
   }
   if (serverOrigin) {
     app.on('certificate-error', (event, _webContents, url, _error, _certificate, callback) => {
@@ -274,18 +269,18 @@ if (process.env.CRAFT_SERVER_URL) {
           return
         }
       } catch {
-        // URL parse failure — fall through to default rejection
+        // URL 解析失败，落到底层默认拒绝
       }
       callback(false)
     })
   }
 }
 
-// Register thumbnail:// custom protocol for file preview thumbnails in the sidebar.
-// Must happen before app.whenReady() — Electron requires early scheme registration.
+// 注册 thumbnail:// 自定义协议，用于侧边栏文件预览缩略图。
+// 必须在 app.whenReady() 之前完成——Electron 要求尽早注册 scheme。
 registerThumbnailScheme()
 
-// Handle deeplink on macOS (when app is already running)
+// macOS：处理应用运行期间收到的深链
 app.on('open-url', (event, url) => {
   event.preventDefault()
   mainLog.info('Received deeplink:', url)
@@ -295,19 +290,19 @@ app.on('open-url', (event, url) => {
       mainLog.error('Failed to handle deep link:', err)
     })
   } else {
-    // App not ready - store for later
+    // 应用还没准备好，先存起来稍后处理
     pendingDeepLink = url
   }
 })
 
-// Handle deeplink on Windows/Linux (single instance check)
+// Windows/Linux：单实例检查 + 深链处理
 const gotTheLock = app.requestSingleInstanceLock()
 if (!gotTheLock) {
   app.quit()
 } else {
   app.on('second-instance', (_event, commandLine, _workingDirectory) => {
-    // Someone tried to run a second instance, we should focus our window.
-    // On Windows/Linux, the deeplink is in commandLine
+    // 有第二个实例启动时，应该聚焦当前窗口。
+    // Windows/Linux 上深链在 commandLine 里
     const url = commandLine.find(arg => arg.startsWith(`${DEEPLINK_SCHEME}://`))
     if (url && windowManager) {
       mainLog.info('Received deeplink from second instance:', url)
@@ -315,7 +310,7 @@ if (!gotTheLock) {
         mainLog.error('Failed to handle deep link:', err)
       })
     } else if (windowManager) {
-      // No deep link - just focus the first window
+      // 没有深链，只聚焦第一个窗口
       const windows = windowManager.getAllWindows()
       if (windows.length > 0) {
         const win = windows[0].window
@@ -326,37 +321,37 @@ if (!gotTheLock) {
   })
 }
 
-// Helper to create initial windows on startup
+// 启动时创建初始窗口的辅助函数
 async function createInitialWindows(): Promise<void> {
   if (!windowManager) return
 
-  // Load saved window state
+  // 加载保存的窗口状态
   const savedState = loadWindowState()
   let workspaces = getWorkspaces()
 
-  // If no workspaces exist, create default "My Workspace" on first run
+  // 首次运行没有 workspace 时，创建默认的 "My Workspace"
   if (workspaces.length === 0) {
-    // Ensure config file exists (addWorkspace requires it)
+    // 确保配置文件存在（addWorkspace 需要）
     if (!loadStoredConfig()) {
       saveConfig({ workspaces: [], activeWorkspaceId: null, activeSessionId: null })
     }
     const defaultPath = join(getDefaultWorkspacesDir(), 'my-workspace')
     addWorkspace({ rootPath: defaultPath, name: 'My Workspace' })
-    workspaces = getWorkspaces() // Refresh after creation
+    workspaces = getWorkspaces() // 创建后刷新
     mainLog.info('Created default workspace on first run')
   }
 
   const validWorkspaceIds = workspaces.map(ws => ws.id)
 
   if (savedState?.windows.length) {
-    // Restore windows from saved state
+    // 从保存状态恢复窗口
     let restoredCount = 0
 
     for (const saved of savedState.windows) {
-      // Skip invalid workspaces
+      // 跳过无效 workspace
       if (!validWorkspaceIds.includes(saved.workspaceId)) continue
 
-      // Restore main window with focused mode if it was saved
+      // 恢复主窗口；如果保存时处于 focused 模式也恢复
       mainLog.info(`Restoring window: workspaceId=${saved.workspaceId}, focused=${saved.focused ?? false}, url=${saved.url ?? 'none'}`)
       const win = windowManager.createWindow({
         workspaceId: saved.workspaceId,
@@ -374,20 +369,20 @@ async function createInitialWindows(): Promise<void> {
     }
   }
 
-  // Default: open window for first workspace
+  // 默认：为第一个 workspace 打开窗口
   windowManager.createWindow({ workspaceId: workspaces[0].id })
   mainLog.info(`Created window for first workspace: ${workspaces[0].name}`)
 }
 
 app.whenReady().then(async () => {
-  // Export packaged state as env var so logger.ts (and headless Bun) don't need 'electron'
+  // 把打包状态导出为环境变量，这样 logger.ts（以及 headless Bun）不必引入 'electron'
   process.env.CRAFT_IS_PACKAGED = app.isPackaged ? 'true' : 'false'
 
-  // Register bundled assets root so all seeding functions can find their files
-  // (docs, permissions, themes, tool-icons resolve via getBundledAssetsDir)
+  // 注册打包资源根目录，所有 seeding 函数都能通过 getBundledAssetsDir 找到文件
+  //（docs、permissions、themes、tool-icons 都从这里解析）
   setBundledAssetsRoot(__dirname)
 
-  // Initialize backend runtime bootstrapping (Codex vendor root, Claude SDK runtime paths).
+  // 初始化后端运行时启动（Codex vendor 根目录、Claude SDK 运行时路径）
   initializeBackendHostRuntime({
     hostRuntime: {
       appRootPath: app.isPackaged ? app.getAppPath() : process.cwd(),
@@ -396,40 +391,40 @@ app.whenReady().then(async () => {
     },
   })
 
-  // Register PowerShell validator root so it can find the bundled parser script
-  // (Windows only: validates PowerShell commands in Explore mode using AST analysis)
+  // 注册 PowerShell 验证器根目录，让它能找到打包的解析脚本
+  //（仅 Windows：在 Explore 模式下用 AST 分析验证 PowerShell 命令）
   setPowerShellValidatorRoot(join(__dirname, 'resources'))
 
-  // Initialize bundled docs
+  // 初始化打包文档
   initializeDocs()
 
-  // Initialize bundled release notes
+  // 初始化打包 release notes
   initializeReleaseNotes()
 
-  // Ensure default permissions file exists (copies bundled default.json on first run)
+  // 确保默认权限文件存在（首次运行时从打包 default.json 复制）
   ensureDefaultPermissions()
 
-  // Seed tool icons to ~/.craft-agent/tool-icons/ (copies bundled SVGs on first run)
+  // 把工具图标种子复制到 ~/.craft-agent/tool-icons/（首次运行）
   ensureToolIcons()
 
-  // Seed preset themes to ~/.craft-agent/themes/ (copies bundled theme JSONs on first run)
+  // 把预设主题复制到 ~/.craft-agent/themes/（首次运行）
   ensurePresetThemes()
 
-  // Register thumbnail:// protocol handler (scheme was registered earlier, before app.whenReady)
+  // 注册 thumbnail:// 协议处理器（scheme 已在 app.whenReady 前注册）
   registerThumbnailHandler()
 
-  // Re-apply proxy settings now that Electron sessions are available
-  // (first call before app.whenReady only configured Node-level proxy)
+  // Electron session 已可用，重新应用代理设置
+  //（before app.whenReady 那次只配置了 Node 层代理）
   await applyConfiguredProxySettings()
 
-  // Note: electron-updater handles pending updates internally via autoInstallOnAppQuit
+  // 注意：electron-updater 通过 autoInstallOnAppQuit 自动处理待安装更新
 
-  // Application menu is created after windowManager initialization (see below)
+  // 应用菜单在 windowManager 初始化后再创建（见下文）
 
-  // Set dock icon on macOS (required for dev mode, bundled apps use Info.plist)
+  // macOS：设置 Dock 图标（开发模式需要；打包应用通过 Info.plist）
   if (process.platform === 'darwin' && app.dock) {
-    // In packaged app, resources are at dist/resources/ (same level as __dirname)
-    // In dev, resources are at ../resources/ (sibling of dist/)
+    // 打包应用：资源在 dist/resources/（与 __dirname 同级）
+    // 开发环境：资源在 ../resources/（dist 的兄弟目录）
     const dockIconPath = [
       join(__dirname, 'resources/icon.png'),
       join(__dirname, '../resources/icon.png'),
@@ -437,12 +432,12 @@ app.whenReady().then(async () => {
 
     if (dockIconPath) {
       app.dock.setIcon(dockIconPath)
-      // Initialize badge icon for canvas-based badge overlay
+      // 初始化用于 Canvas 角标叠加的基础图标
       initBadgeIcon(dockIconPath)
     }
 
-    // Multi-instance dev: show instance number badge on dock icon
-    // CRAFT_INSTANCE_NUMBER is set by detect-instance.sh for numbered folders
+    // 多实例开发：在 Dock 图标上显示实例编号角标
+    // CRAFT_INSTANCE_NUMBER 由 detect-instance.sh 为编号目录设置
     const instanceNum = process.env.CRAFT_INSTANCE_NUMBER
     if (instanceNum) {
       const num = parseInt(instanceNum, 10)
@@ -453,15 +448,15 @@ app.whenReady().then(async () => {
   }
 
   try {
-    // Initialize window manager
+    // 初始化窗口管理器
     windowManager = new WindowManager()
 
-    // Create the application menu (needs windowManager for New Window action)
+    // 创建应用菜单（新建窗口动作需要 windowManager）
     createApplicationMenu(windowManager)
 
-    // When CRAFT_SERVER_URL is set, this Electron instance is a thin client —
-    // it only creates windows whose preload connects to the remote server.
-    // Skip server-side initialization (SessionManager, model refresh, platform injection).
+    // 如果设置了 CRAFT_SERVER_URL，当前 Electron 实例是瘦客户端——
+    // 只创建窗口，preload 会连接到远程服务器。
+    // 跳过服务端初始化（SessionManager、模型刷新、平台注入）。
     const isClientOnly = !!process.env.CRAFT_SERVER_URL
     const isHeadless = !!process.env.CRAFT_HEADLESS
 
@@ -469,16 +464,16 @@ app.whenReady().then(async () => {
       mainLog.info(`Client-only mode: CRAFT_SERVER_URL=${process.env.CRAFT_SERVER_URL} (server initialization skipped)`)
     }
 
-    // Initialize notification service (always — triggered by server push events)
+    // 初始化通知服务（始终初始化，因为由服务器推送事件触发）
     initNotificationService(windowManager)
 
-    // Initialize browser pane manager (always — even in headless, for deps wiring)
+    // 初始化浏览器面板管理器（即使 headless 也要初始化，用于依赖接线）
     browserPaneManager = new BrowserPaneManager()
     browserPaneManager.setWindowManager(windowManager)
     browserPaneManager.registerToolbarIpc()
     browserPaneManager.registerCapabilityIpc()
 
-    // Build real PlatformServices from Electron APIs
+    // 从 Electron API 构建真正的 PlatformServices
     const platform: PlatformServices = createElectronPlatform({
       app,
       nativeImage,
@@ -490,7 +485,7 @@ app.whenReady().then(async () => {
       captureError: (err) => Sentry.captureException(err),
     })
 
-    // Bootstrap IPC handlers — preload uses sendSync for window-local details
+    // 启动 IPC handler —— preload 用 sendSync 获取窗口本地信息
     ipcMain.on('__get-web-contents-id', (e) => {
       e.returnValue = e.sender.id
     })
@@ -498,8 +493,8 @@ app.whenReady().then(async () => {
       e.returnValue = windowManager?.getWorkspaceForWindow(e.sender.id) ?? ''
     })
 
-    // Transport diagnostics bridge — preload reports remote WS connection state changes
-    // so failures are visible in terminal/main.log (not only renderer console).
+    // 传输诊断桥 —— preload 报告远程 WS 连接状态变化，
+    // 这样失败信息也能在终端/main.log 看到，而不仅限于渲染进程控制台。
     ipcMain.on('__transport:status', (_event, payload: unknown) => {
       if (!payload || typeof payload !== 'object') return
       const p = payload as {
@@ -533,8 +528,8 @@ app.whenReady().then(async () => {
       }
     })
 
-    // Dialog bridge — preload capability handlers use ipcRenderer.invoke to
-    // call main-process-only dialog APIs (dialog, BrowserWindow).
+    // 对话框桥 —— preload 的能力处理器通过 ipcRenderer.invoke 调用
+    // 主进程独占的 dialog/BrowserWindow API。
     ipcMain.handle('__dialog:showMessageBox', async (event, spec) => {
       const win = BrowserWindow.fromWebContents(event.sender)
         || BrowserWindow.getFocusedWindow()
@@ -551,7 +546,7 @@ app.whenReady().then(async () => {
     })
 
     if (!isClientOnly) {
-      // Restore persisted Git Bash path on Windows (must happen before any SDK subprocess spawn)
+      // Windows：恢复持久化的 Git Bash 路径（必须在任何 SDK 子进程启动前）
       if (process.platform === 'win32') {
         const { getGitBashPath, clearGitBashPath } = await import('@craft-agent/shared/config')
         const gitBashPath = getGitBashPath()
@@ -567,9 +562,9 @@ app.whenReady().then(async () => {
         }
       }
 
-      // Check for VC++ Redistributable on Windows (required by onnxruntime / markitdown).
-      // Without it, document conversion tools (PDF, PPTX, DOCX, XLSX) crash with DLL errors.
-      // Sets env var so renderer can show an actionable toast with install button.
+      // Windows：检查 VC++ Redistributable（onnxruntime / markitdown 需要）。
+      // 没有它时，PDF、PPTX、DOCX、XLSX 等文档转换工具会因 DLL 错误崩溃。
+      // 设置环境变量，让渲染进程显示可操作的安装提示 toast。
       if (process.platform === 'win32') {
         const vcCheck = checkVCRedistInstalled()
         if (!vcCheck.installed) {
@@ -583,19 +578,19 @@ app.whenReady().then(async () => {
         }
       }
 
-      // Pre-import power manager (async import needed for applyPlatformToSubsystems)
+      // 预加载电源管理器（applyPlatformToSubsystems 需要异步 import）
       const { onSessionStarted, onSessionStopped } = await import('./power-manager')
 
-      // Client ID tracking for Electron IPC bridge (webContentsId → clientId)
+      // Electron IPC 桥的 Client ID 映射（webContentsId → clientId）
       const clientMap = new Map<number, string>()
       const resolveClientId = (wcId: number) => clientMap.get(wcId)
 
-      // Read embedded server config (Server settings page)
+      // 读取内置服务器配置（服务器设置页）
       const { getServerConfig } = await import('@craft-agent/shared/config')
       const embeddedServerConfig = getServerConfig()
       const serverModeEnabled = embeddedServerConfig.enabled && !isClientOnly
 
-      // Derive host/port/token from server config (or env overrides)
+      // 从服务器配置或环境变量覆盖推导 host/port/token
       const serverToken = serverModeEnabled && embeddedServerConfig.token
         ? embeddedServerConfig.token
         : randomUUID()
@@ -605,7 +600,7 @@ app.whenReady().then(async () => {
         ? parseInt(process.env.CRAFT_RPC_PORT, 10)
         : (serverModeEnabled ? embeddedServerConfig.port : 0)
 
-      // Load TLS certificates if configured
+      // 如果配置了 TLS 证书则加载
       let tls: import('@craft-agent/server-core/transport').WsRpcTlsOptions | undefined
       if (serverModeEnabled && embeddedServerConfig.tlsCertPath && embeddedServerConfig.tlsKeyPath) {
         try {
@@ -623,7 +618,7 @@ app.whenReady().then(async () => {
         mainLog.info(`[server-mode] Enabled — binding ${rpcHost}:${rpcPort}${tls ? ' (TLS)' : ''}`)
       }
 
-      // Bootstrap the WS RPC server via shared bootstrap function.
+      // 通过共享 bootstrap 函数启动 WS RPC 服务器
       const instance = await bootstrapServer<SessionManager, HandlerDeps>({
         serverToken,
         rpcHost,
@@ -659,9 +654,9 @@ app.whenReady().then(async () => {
         },
         bindRpcServer: (sm, server) => sm.setRpcServer(server),
         createHandlerDeps: ({ sessionManager: sm, platform: p, oauthFlowStore: ofs }) => {
-          // The messaging handle is built here because it needs sessionManager.
-          // The WS publisher is attached after bootstrapServer resolves (via
-          // handle.setPublisher) because wsServer isn't available yet.
+          // messaging handle 在这里创建，因为它需要 sessionManager。
+          // WS publisher 在 bootstrapServer 完成后通过 handle.setPublisher 注入，
+          // 因为此时 wsServer 还不存在。
           messagingHandle = createMessagingBootstrap({
             sessionManager: sm,
             credentialManager: getCredentialManager(),
@@ -671,14 +666,13 @@ app.whenReady().then(async () => {
               const ws = getWorkspaces().find((w) => w.id === wsId)
               return ws ? join(ws.rootPath, 'messaging') : undefined
             },
-            // Route messaging diagnostics through the dedicated messaging log
-            // at ~/.craft-agent/logs/messaging-gateway.log.
+            // 把消息网关诊断日志路由到专用日志文件
+            // ~/.craft-agent/logs/messaging-gateway.log。
             logger: messagingGatewayLog,
-            // WhatsApp worker runs under Electron's embedded Node via
-            // ELECTRON_RUN_AS_NODE (WhatsAppAdapter defaults nodeBin to
-            // process.execPath). In dev we resolve worker.cjs from the
-            // monorepo; in packaged builds it's shipped via extraResources
-            // (see apps/electron/electron-builder.yml).
+            // WhatsApp worker 通过 Electron 的嵌入式 Node 运行（ELECTRON_RUN_AS_NODE）。
+            // WhatsAppAdapter 默认 nodeBin 为 process.execPath。
+            // 开发环境从 monorepo 解析 worker.cjs；打包构建通过 extraResources 分发
+            //（见 apps/electron/electron-builder.yml）。
             whatsapp: {
               workerEntry: app.isPackaged
                 ? join(process.resourcesPath, 'messaging-whatsapp-worker', 'worker.cjs')
@@ -695,8 +689,8 @@ app.whenReady().then(async () => {
             messagingRegistry: messagingHandle.registry,
           }
         },
-        // Headless: register only core handlers (no GUI handlers for browser, settings, etc.)
-        // GUI: register all handlers (core + GUI)
+        // Headless：只注册核心 handler（没有浏览器、设置等 GUI handler）
+        // GUI：注册全部 handler（核心 + GUI）
         registerAllRpcHandlers: isHeadless
           ? (server, deps, serverCtx) => registerCoreRpcHandlers(server, deps, serverCtx)
           : registerAllRpcHandlers,
@@ -727,16 +721,16 @@ app.whenReady().then(async () => {
         },
       })
 
-      // Capture module-level references for before-quit cleanup and deep-link handlers
+      // 捕获模块级引用，用于 before-quit 清理和深链处理器
       sessionManager = instance.sessionManager
       oauthFlowStore = instance.oauthFlowStore
       moduleSink = instance.wsServer.push.bind(instance.wsServer)
       moduleClientResolver = resolveClientId
 
       // -----------------------------------------------------------------------
-      // Messaging Gateway — attach the WS publisher, init local workspaces,
-      // install the fan-out event sink. The handle was created inside
-      // createHandlerDeps so the registry could be wired into HandlerDeps.
+      // Messaging Gateway —— 注入 WS publisher、初始化本地 workspace、
+      // 安装 fan-out 事件 sink。handle 在 createHandlerDeps 里创建，
+      // 这样 registry 才能被接到 HandlerDeps 里。
       // -----------------------------------------------------------------------
       try {
         if (!messagingHandle) {
@@ -745,15 +739,14 @@ app.whenReady().then(async () => {
 
         messagingHandle.setPublisher(instance.wsServer.push.bind(instance.wsServer))
 
-        // Skip remote-owned workspaces — messaging runs on the remote server.
+        // 跳过远程拥有的 workspace —— messaging 在远程服务器上运行
         const localWorkspaceIds = getWorkspaces()
           .filter((ws) => !ws.remoteServer)
           .map((ws) => ws.id)
         await messagingHandle.initializeWorkspaces(localWorkspaceIds)
 
-        // Compose fan-out event sink: RPC push + messaging gateway dispatch.
-        // Always install — this lets workspaces enable messaging at runtime
-        // without a process restart.
+        // 组合 fan-out 事件 sink：RPC push + messaging gateway 分发。
+        // 始终安装——这样 workspace 可以在运行时启用 messaging 而无需重启进程。
         const baseSink = instance.wsServer.push.bind(instance.wsServer)
         instance.sessionManager.setEventSink(messagingHandle.wrapSink(baseSink))
         if (messagingHandle.registry.size > 0) {
@@ -763,15 +756,15 @@ app.whenReady().then(async () => {
         mainLog.error('[messaging] Gateway initialization failed:', err)
       }
 
-      // IPC handlers — preload uses sendSync to get WS connection details
+      // IPC handler —— preload 用 sendSync 获取 WS 连接信息
 
-      // Remove workspace from config (cleanup stale entries)
+      // 从配置中移除 workspace（清理失效条目）
       ipcMain.handle('workspace:remove', async (_event, workspaceId: string) => {
         const { removeWorkspace: remove } = await import('@craft-agent/shared/config')
         return remove(workspaceId)
       })
 
-      // Cross-server RPC — invoke a channel on an arbitrary remote server
+      // 跨服务器 RPC —— 调用任意远程服务器上的 channel
       ipcMain.handle('server:invokeOnServer', async (_event, url: string, token: string, channel: string, ...args: unknown[]) => {
         const { connectToRemote } = await import('./handlers/workspace')
         const { client, error } = await connectToRemote(url, token)
@@ -783,8 +776,8 @@ app.whenReady().then(async () => {
         }
       })
 
-      // Transfer session to another workspace — orchestrated in main process
-      // so large bundles can be moved directly between owning servers.
+      // 把 session 转移到另一个 workspace —— 在主进程里编排，
+      // 这样大 bundle 可以直接在所属服务器之间搬运。
       ipcMain.handle('session:transferToRemoteWorkspace', async (_event, sessionId: string, targetWorkspaceId: string, sessionIndex?: number, sessionCount?: number) => {
         const idx = sessionIndex ?? 0
         const count = sessionCount ?? 1
@@ -860,7 +853,7 @@ app.whenReady().then(async () => {
           const payloadMB = (payloadSize / (1024 * 1024)).toFixed(1)
 
           const emitProgress = (chunkSent: number, chunkTotal: number) => {
-            try { _event.sender.send('transfer:progress', { sessionIndex: idx, sessionCount: count, chunkSent, chunkTotal }) } catch { /* renderer may be gone */ }
+            try { _event.sender.send('transfer:progress', { sessionIndex: idx, sessionCount: count, chunkSent, chunkTotal }) } catch { /* 渲染进程可能已关闭 */ }
           }
 
           if (payloadSize < CHUNKED_TRANSFER_THRESHOLD) {
@@ -886,20 +879,20 @@ app.whenReady().then(async () => {
         }
       })
 
-      // App relaunch (for server config changes — NOT an update install)
+      // 应用重启（用于服务器配置变化，不是更新安装）
       ipcMain.handle('app:relaunch', () => {
         app.relaunch()
         app.exit(0)
       })
 
-      // Language change: sync from renderer to main process, persist, and rebuild native menu.
-      // Persistence here is what lets the next app launch hydrate main's i18n correctly —
-      // see the `getPersistedUiLanguage()` block at the top of this file.
+      // 语言切换：从渲染进程同步到主进程，持久化，并重建原生菜单。
+      // 这里的持久化让下次启动时能正确水合主进程 i18n——
+      // 见文件顶部的 `getPersistedUiLanguage()` 块。
       ipcMain.handle('i18n:changeLanguage', async (_event, lang: unknown) => {
         const previousResolved = i18n.resolvedLanguage ?? null
         if (typeof lang !== 'string' || !SUPPORTED_LANGUAGE_CODES.includes(lang as LanguageCode)) {
-          // Defense-in-depth: renderer guarantees a supported code, but if a renegade
-          // caller hands us garbage we drop it silently rather than poison i18n state.
+          // 纵深防御：渲染进程保证传入受支持的语言代码，但如果有恶意/异常调用者
+          // 传垃圾数据，我们静默丢弃，避免污染 i18n 状态。
           mainLog.warn('[i18n] changeLanguage IPC rejected — unsupported code', {
             incoming: lang,
             previousResolved,
@@ -931,7 +924,7 @@ app.whenReady().then(async () => {
         e.returnValue = ws?.remoteServer ?? null
       })
 
-      // Server config RPC handlers (LOCAL_ONLY — Electron-specific)
+      // 服务器配置 RPC handler（LOCAL_ONLY —— Electron 专属）
       const runningServerState = {
         host: rpcHost,
         port: instance.port,
@@ -948,11 +941,11 @@ app.whenReady().then(async () => {
       instance.wsServer.handle(RPC_CHANNELS.settings.SET_SERVER_CONFIG, async (_ctx: unknown, config: unknown) => {
         const { setServerConfig: setConfig } = await import('@craft-agent/shared/config')
         const cfg = config as import('@craft-agent/shared/config/server-config').ServerConfig
-        // Validate port range
+        // 校验端口范围
         if (cfg.port < 1024 || cfg.port > 65535) {
           throw new Error(`Port must be between 1024 and 65535, got ${cfg.port}`)
         }
-        // Validate cert/key files exist if provided
+        // 校验证书/私钥文件存在
         if (cfg.tlsCertPath && !existsSync(cfg.tlsCertPath)) {
           throw new Error(`Certificate file not found: ${cfg.tlsCertPath}`)
         }
@@ -967,7 +960,7 @@ app.whenReady().then(async () => {
         const saved = getConfig()
         const protocol = runningServerState.tls ? 'wss' : 'ws'
 
-        // Determine display host (LAN IP if bound to 0.0.0.0)
+        // 确定展示用的 host（如果绑定到 0.0.0.0 则取局域网 IP）
         let displayHost = runningServerState.host
         if (displayHost === '0.0.0.0' || displayHost === '::') {
           const os = await import('os')
@@ -983,9 +976,8 @@ app.whenReady().then(async () => {
           }
         }
 
-        // Only compare port/tls/token when at least one side has server mode enabled.
-        // When both are disabled, the running port is random — comparing it to the
-        // saved default (9100) would always produce a false "restart required" banner.
+        // 只有至少一侧启用了 server 模式时才比较 port/tls/token。
+        // 如果两边都禁用，运行端口是随机的，和保存的默认值（9100）比较会永远误报「需要重启」。
         const needsRestart = saved.enabled !== runningServerState.enabled
           || ((saved.enabled || runningServerState.enabled) && (
             saved.port !== runningServerState.port
@@ -1005,9 +997,9 @@ app.whenReady().then(async () => {
         }
       })
 
-      // TLS enforcement — warn when server mode binds to a network address without TLS
-      // Mirrors the hard guard in packages/server/src/index.ts but warns instead of blocking,
-      // since the user explicitly enabled server mode via UI (may be on a trusted LAN).
+      // TLS 强制提醒：server 模式绑定到网络地址但没有 TLS 时警告
+      // 与 packages/server/src/index.ts 的硬守卫对应，但这里只警告不阻止，
+      // 因为用户通过 UI 显式启用了 server 模式（可能在受信任的局域网）。
       const isInsecureBind = serverModeEnabled && !tls
         && !['127.0.0.1', 'localhost', '::1'].includes(rpcHost)
       if (isInsecureBind) {
@@ -1018,30 +1010,30 @@ app.whenReady().then(async () => {
         )
       }
 
-      // Wire EventSink to Electron-specific services
-      // Must happen BEFORE createInitialWindows() so event handlers use WS from the start
+      // 把 EventSink 接到 Electron 专属服务
+      // 必须在 createInitialWindows() 之前完成，这样事件处理器从一开始就使用 WS
       windowManager.setRpcEventSink(moduleSink!, resolveClientId)
       const { setMenuEventSink } = await import('./menu')
       setMenuEventSink(moduleSink!, resolveClientId)
       const { setNotificationEventSink } = await import('./notifications')
       setNotificationEventSink(moduleSink!, resolveClientId)
 
-      // Headless: print connection details
+      // Headless：打印连接信息
       if (isHeadless) {
         console.log(`CRAFT_SERVER_URL=${instance.protocol}://${instance.host}:${instance.port}`)
         console.log(`CRAFT_SERVER_TOKEN=${instance.token}`)
       }
     }
 
-    // Create initial windows (restores from saved state or opens first workspace)
-    // In headless mode the server runs without any UI — skip window creation.
+    // 创建初始窗口（从保存状态恢复，或为第一个 workspace 打开窗口）
+    // headless 模式下服务器不带 UI，跳过窗口创建。
     if (!isHeadless) {
       await createInitialWindows()
     }
 
-    // Run credential health check at startup to detect issues early
-    // (corruption, machine migration, missing credentials for default connection)
-    // Skip in thin-client mode — credentials are managed by the remote server.
+    // 启动时执行凭证健康检查，尽早发现问题
+    //（损坏、机器迁移、默认连接缺失凭证等）
+    // 瘦客户端模式下跳过——凭证由远程服务器管理。
     if (!isClientOnly) {
       try {
         const { getCredentialManager } = await import('@craft-agent/shared/credentials')
@@ -1049,15 +1041,15 @@ app.whenReady().then(async () => {
         const health = await credentialManager.checkHealth()
         if (!health.healthy) {
           mainLog.warn('Credential health check failed:', health.issues)
-          // Issues will be displayed in Settings → AI when user navigates there
+          // 用户进入设置 → AI 时会显示这些问题
         }
       } catch (err) {
         mainLog.error('Credential health check error:', err)
       }
     }
 
-    // Initialize power manager (loads setting, must happen after config is available)
-    // Non-critical — powerSaveBlocker may not work on headless/xvfb setups
+    // 初始化电源管理器（加载设置，必须在配置可用后）
+    // 非关键——headless/xvfb 环境下 powerSaveBlocker 可能不可用
     try {
       const { initPowerManager } = await import('./power-manager')
       await initPowerManager()
@@ -1065,9 +1057,9 @@ app.whenReady().then(async () => {
       mainLog.warn('[power] Power manager init failed (non-critical):', err instanceof Error ? err.message : err)
     }
 
-    // Set Sentry context tags for error grouping (no PII — just config classification).
-    // Runs after init so config and auth state are available.
-    // Derives values from the default LLM connection instead of legacy config fields.
+    // 设置 Sentry 上下文标签用于错误分组（无 PII，仅配置分类）。
+    // 在初始化后运行，确保配置和认证状态已可用。
+    // 从默认 LLM 连接推导值，而不是 legacy config 字段。
     try {
       const { getLlmConnection, getDefaultLlmConnection } = await import('@craft-agent/shared/config')
       const workspaces = getWorkspaces()
@@ -1082,13 +1074,12 @@ app.whenReady().then(async () => {
       mainLog.warn('Failed to set Sentry context tags:', err)
     }
 
-    // Initialize auto-update (check immediately on launch)
-    // Skip in dev mode to avoid replacing /Applications app and launching it instead
+    // 初始化自动更新（启动后立即检查）
+    // 开发模式跳过，避免替换 /Applications 里的应用并意外启动它
     if (moduleSink) setAutoUpdateEventSink(moduleSink)
-    // Snapshot multi-window state BEFORE quitAndInstall. electron-updater
-    // (Squirrel.Mac) destroys BrowserWindows between quitAndInstall and
-    // before-quit firing; saving from before-quit alone would overwrite
-    // window-state.json with an empty array.
+    // 在 quitAndInstall 之前抓拍多窗口状态。
+    // electron-updater（Squirrel.Mac）会在 quitAndInstall 和 before-quit 之间
+    // 销毁 BrowserWindow；如果只在 before-quit 保存，window-state.json 会被覆盖成空数组。
     setBeforeUpdateQuitHook(() => captureAndSaveWindowState('pre-update'))
     if (app.isPackaged) {
       checkForUpdatesOnLaunch().catch(err => {
@@ -1098,7 +1089,7 @@ app.whenReady().then(async () => {
       mainLog.info('[auto-update] Skipping auto-update in dev mode')
     }
 
-    // Process pending deep link from cold start
+    // 处理冷启动时挂起的深链
     if (pendingDeepLink) {
       mainLog.info('Processing pending deep link:', pendingDeepLink)
       await handleDeepLink(pendingDeepLink, windowManager, moduleSink ?? undefined, moduleClientResolver ?? undefined)
@@ -1112,18 +1103,18 @@ app.whenReady().then(async () => {
     mainLog.info('Messaging gateway log path:', getMessagingGatewayLogFilePath())
   } catch (error) {
     mainLog.error('Failed to initialize app:', error instanceof Error ? error.message : error, (error as any)?.stack)
-    // Continue anyway - the app will show errors in the UI
+    // 即使初始化失败也继续，应用会在 UI 里显示错误
   }
 
-  // macOS: Re-create window when dock icon is clicked
+  // macOS：点击 Dock 图标时重新创建窗口
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0 && windowManager) {
-      // Open first workspace or last focused
+      // 打开第一个 workspace 或上次聚焦的 workspace
       const workspaces = getWorkspaces()
       if (workspaces.length > 0) {
         const savedState = loadWindowState()
         const wsId = savedState?.lastFocusedWorkspaceId || workspaces[0].id
-        // Verify workspace still exists
+        // 校验 workspace 仍存在
         if (workspaces.some(ws => ws.id === wsId)) {
           windowManager.createWindow({ workspaceId: wsId })
         } else {
@@ -1135,25 +1126,24 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.env.CRAFT_HEADLESS) return  // headless server stays alive
-  // On macOS, apps typically stay active until explicitly quit
+  if (process.env.CRAFT_HEADLESS) return  // headless 服务器保持运行
+  // macOS 上应用通常保持活跃直到显式退出
   if (process.platform !== 'darwin') {
     app.quit()
   }
 })
 
-// Track if we're in the process of quitting (to avoid re-entry)
+// 标记是否正在退出流程中，防止重入
 let isQuitting = false
 
 /**
- * Capture the current multi-window state and persist it to disk.
- * Called from two sites:
- *   - before-quit (normal quit path, reason='before-quit')
- *   - installUpdate hook (auto-update path, reason='pre-update'), because
- *     electron-updater destroys BrowserWindows between quitAndInstall and
- *     before-quit firing — by the time before-quit runs, getWindowStates()
- *     returns an empty array and would clobber the on-disk state.
- * Returns the number of windows saved, or -1 if windowManager isn't ready.
+ * 抓拍当前多窗口状态并持久化到磁盘。
+ * 两处调用：
+ *   - before-quit（正常退出路径，reason='before-quit'）
+ *   - installUpdate 钩子（自动更新路径，reason='pre-update'），因为
+ *     electron-updater 在 quitAndInstall 和 before-quit 之间销毁 BrowserWindow；
+ *     到 before-quit 时 getWindowStates() 已返回空数组，会覆盖掉磁盘上的真实状态。
+ * 返回保存的窗口数；windowManager 没准备好时返回 -1。
  */
 function captureAndSaveWindowState(reason: 'before-quit' | 'pre-update'): number {
   if (!windowManager) return -1
@@ -1167,29 +1157,27 @@ function captureAndSaveWindowState(reason: 'before-quit' | 'pre-update'): number
   return windows.length
 }
 
-// Save window state and clean up resources before quitting
+// 退出前保存窗口状态并清理资源
 app.on('before-quit', async (event) => {
-  // Avoid re-entry when we call app.exit()
+  // 调用 app.exit() 时避免重入
   if (isQuitting) return
   isQuitting = true
 
-  // Ensure Cmd+Q/app quit bypasses layered window close interception (Cmd+W behavior).
+  // 确保 Cmd+Q/应用退出绕过分层窗口关闭拦截（区别于 Cmd+W 行为）
   windowManager?.setAppQuitting(true)
 
   if (windowManager) {
     const windows = windowManager.getWindowStates()
-    // Empty-snapshot guard: during update-quit, electron-updater has already
-    // destroyed all BrowserWindows by the time before-quit fires. The pre-update
-    // hook already saved the real state — don't let this late save overwrite it.
+    // 空快照保护：更新退出时，electron-updater 在 before-quit 触发前已销毁所有 BrowserWindow。
+    // pre-update 钩子已经保存了真实状态，不要让这次迟到的保存覆盖它。
     if (windows.length === 0 && isUpdating()) {
       mainLog.warn('[window-state] skip save: empty snapshot during update-quit (pre-update snapshot wins)')
     } else {
       captureAndSaveWindowState('before-quit')
     }
-    // Diagnostic correlation with installUpdate's [update-flow] log. During an
-    // update-quit, record it to the dedicated always-on auto-update log (#891)
-    // so the install/quit handoff is diagnosable in production; normal quits
-    // stay on the debug-only main log.
+    // 与 installUpdate 的 [update-flow] 日志做诊断关联。
+    // 更新退出时把这条记录到始终开启的 auto-update 专用日志（#891），
+    // 这样生产环境也能诊断安装/退出交接；正常退出仍留在仅调试的 main log。
     const isUpdateQuit = isUpdating()
     const beforeQuitSave = {
       windowCount: windows.length,
@@ -1204,9 +1192,9 @@ app.on('before-quit', async (event) => {
     }
   }
 
-  // Flush all pending session writes before quitting
+  // 退出前 flush 所有待写入的 session
   if (sessionManager) {
-    // Prevent quit until sessions are flushed
+    // 先阻止退出，等 session 落盘
     event.preventDefault()
     try {
       await sessionManager.flushAllSessions()
@@ -1214,23 +1202,23 @@ app.on('before-quit', async (event) => {
     } catch (error) {
       mainLog.error('Failed to flush sessions:', error)
     }
-    // Clean up SessionManager resources (file watchers, timers, etc.)
+    // 清理 SessionManager 资源（文件监听、定时器等）
     sessionManager.cleanup()
 
-    // Clean up browser pane instances
+    // 清理浏览器面板实例
     if (browserPaneManager) {
       browserPaneManager.destroyAll()
     }
 
-    // Clean up OAuth flow store (stop periodic cleanup timer)
+    // 清理 OAuth flow store（停止定期清理定时器）
     if (oauthFlowStore) {
       oauthFlowStore.dispose()
     }
 
-    // Stop all model refresh timers
+    // 停止所有模型刷新定时器
     getModelRefreshService().stopAll()
 
-    // Stop messaging gateways so the WhatsApp worker subprocess exits cleanly.
+    // 停止 messaging gateway，让 WhatsApp worker 子进程干净退出
     if (messagingHandle) {
       try {
         await messagingHandle.dispose()
@@ -1239,29 +1227,29 @@ app.on('before-quit', async (event) => {
       }
     }
 
-    // Clean up power manager (release power blocker)
+    // 清理电源管理器（释放电源阻止器）
     const { cleanup: cleanupPowerManager } = await import('./power-manager')
     cleanupPowerManager()
 
-    // Release the server lock file so the next launch doesn't see a stale PID.
-    // This must happen regardless of the exit path (normal quit or update quit).
+    // 释放服务器锁文件，避免下次启动看到陈旧 PID。
+    // 无论正常退出还是更新退出都要执行。
     releaseServerLock()
 
-    // If update is in progress, let electron-updater handle the quit flow
-    // Force exit breaks the NSIS installer on Windows
+    // 如果正在更新，让 electron-updater 处理退出流程
+    // 强制退出会破坏 Windows 上的 NSIS 安装器
     if (isUpdating()) {
       mainLog.info('Update in progress, letting electron-updater handle quit')
       app.quit()
       return
     }
 
-    // Now actually quit
+    // 现在真正退出
     app.exit(0)
   }
 })
 
-// Handle uncaught exceptions — forward to Sentry explicitly since registering
-// a custom handler can interfere with @sentry/electron's automatic capture.
+// 捕获未处理异常——显式转发到 Sentry，因为注册自定义处理器可能
+// 干扰 @sentry/electron 的自动捕获。
 process.on('uncaughtException', (error) => {
   mainLog.error('Uncaught exception:', error)
   Sentry.captureException(error)

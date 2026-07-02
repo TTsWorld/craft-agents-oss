@@ -1,14 +1,14 @@
 /**
- * ShikiCodeEditor - Editable code/markdown editor using react-simple-code-editor
+ * ShikiCodeEditor - 基于 react-simple-code-editor 的可编辑代码/ Markdown 编辑器
  *
- * Replaces Monaco Editor for markdown editing with a lighter weight solution.
- * Uses textarea overlay technique with Shiki for syntax highlighting.
+ * 用更轻量的方案替代 Monaco Editor 来编辑 Markdown。
+ * 底层使用 textarea 覆盖技术，配合 Shiki 做语法高亮。
  *
- * Features:
- * - Syntax highlighting via Shiki
- * - Light/dark theme support
- * - Auto-indentation (tab key)
- * - Read-only mode support
+ * 主要功能：
+ * - 通过 Shiki 实现语法高亮
+ * - 支持浅色/深色主题
+ * - 自动缩进（Tab 键）
+ * - 支持只读模式
  */
 
 import * as React from 'react'
@@ -18,41 +18,44 @@ import { codeToHtml, bundledLanguages, type BundledLanguage } from 'shiki'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/useTheme'
 
+// props 接口：定义组件对外开放的能力，类似 Go 里某个函数的结构化参数
 export interface ShikiCodeEditorProps {
-  /** The code/markdown content */
+  /** 代码 / Markdown 内容 */
   value: string
-  /** Language for syntax highlighting (default: 'markdown') */
+  /** 语法高亮语言（默认 'markdown'） */
   language?: string
-  /** Callback when content changes */
+  /** 内容变化时的回调函数 */
   onChange?: (value: string) => void
-  /** Whether the editor is read-only */
+  /** 是否为只读模式 */
   readOnly?: boolean
-  /** Callback when ready */
+  /** 编辑器准备就绪时的回调函数 */
   onReady?: () => void
-  /** Additional class names */
+  /** 额外的 CSS 类名 */
   className?: string
-  /** Placeholder text when empty */
+  /** 内容为空时显示的占位文本（UI 文案，保持原样不翻译） */
   placeholder?: string
 }
 
-// Map aliases to Shiki language names
+// 语言别名映射：把常见缩写转成 Shiki 能识别的语言名
 const LANGUAGE_ALIASES: Record<string, BundledLanguage> = {
   'md': 'markdown',
   'js': 'javascript',
   'ts': 'typescript',
 }
 
+// 校验传入的语言是否被 Shiki 内置支持
 function isValidLanguage(lang: string): lang is BundledLanguage {
   const normalized = LANGUAGE_ALIASES[lang] || lang
   return normalized in bundledLanguages
 }
 
-// Simple cache for highlighted code
+// 简单的高亮结果缓存，避免重复渲染时反复调用 Shiki
 const highlightCache = new Map<string, string>()
 const CACHE_MAX_SIZE = 50
 
+// 生成缓存 key：长文本用长度+首尾片段做摘要，短文本直接用原始内容
 function getCacheKey(code: string, lang: string, theme: string): string {
-  // Use hash for large content
+  // 内容较长时，用长度和首尾 100 个字符拼一个简化的 key
   if (code.length > 500) {
     const hash = code.length.toString() + code.substring(0, 100) + code.substring(code.length - 100)
     return `${theme}:${lang}:${hash}`
@@ -61,7 +64,12 @@ function getCacheKey(code: string, lang: string, theme: string): string {
 }
 
 /**
- * ShikiCodeEditor - Lightweight syntax highlighted editor
+ * ShikiCodeEditor - 轻量带语法高亮的编辑器组件
+ *
+ * 说明：
+ * - useState / useRef / useCallback / useEffect 是 React Hooks，
+ *   分别用于状态、可变引用、缓存函数、副作用，可类比 Go 中闭包+状态机的组合。
+ * - React/TSX 的返回值是 JSX，描述 UI 长什么样，不是字符串模板。
  */
 export function ShikiCodeEditor({
   value,
@@ -72,16 +80,19 @@ export function ShikiCodeEditor({
   className,
   placeholder,
 }: ShikiCodeEditorProps) {
+  // useTheme() 读取当前 Electron renderer 进程的主题上下文
   const { isDark, shikiTheme } = useTheme()
+  // useRef 用来记录是否已经触发过一次 onReady，避免重复调用
   const hasCalledReady = useRef(false)
+  // 当前已经高亮好的 HTML 片段
   const [highlightedCode, setHighlightedCode] = useState<string>('')
 
-  // Resolve language alias
+  // 把语言别名解析成 Shiki 支持的语言名
   const resolvedLang = LANGUAGE_ALIASES[language.toLowerCase()] || language.toLowerCase()
-  // Use the Shiki theme from the preset, falling back to github themes
+  // 使用主题上下文中的 Shiki 主题
   const theme = shikiTheme
 
-  // Highlight function for the editor
+  // 高亮函数：异步调用 Shiki 把代码转成 HTML
   const highlight = useCallback(async (code: string): Promise<string> => {
     if (!code) return ''
 
@@ -90,15 +101,16 @@ export function ShikiCodeEditor({
     if (cached) return cached
 
     try {
+      // 如果语言不被支持，就降级成纯文本
       const lang = isValidLanguage(resolvedLang) ? resolvedLang : 'text'
       const html = await codeToHtml(code, { lang, theme })
 
-      // Extract just the content inside <pre><code>...</code></pre>
-      // Shiki returns: <pre class="..." style="..."><code>...</code></pre>
+      // 只取 <pre><code>...</code></pre> 内部的内容
+      // Shiki 返回格式：<pre class="..." style="..."><code>...</code></pre>
       const match = html.match(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/)
       const content = match ? match[1] : code
 
-      // Cache the result
+      // LRU 策略：缓存超过上限时删除最早插入的一条
       if (highlightCache.size >= CACHE_MAX_SIZE) {
         const firstKey = highlightCache.keys().next().value
         if (firstKey) highlightCache.delete(firstKey)
@@ -112,7 +124,7 @@ export function ShikiCodeEditor({
     }
   }, [resolvedLang, theme])
 
-  // Initial highlight
+  // 初始高亮：value 或 highlight 变化时重新渲染
   useEffect(() => {
     let cancelled = false
 
@@ -121,7 +133,7 @@ export function ShikiCodeEditor({
       if (!cancelled) {
         setHighlightedCode(result)
 
-        // Call onReady once
+        // 只在第一次高亮完成后触发 onReady
         if (!hasCalledReady.current && onReady) {
           hasCalledReady.current = true
           requestAnimationFrame(() => onReady())
@@ -131,37 +143,39 @@ export function ShikiCodeEditor({
 
     doHighlight()
 
+    // 清理函数：组件卸载或依赖变化时取消上一次未完成的渲染
     return () => {
       cancelled = true
     }
   }, [value, highlight, onReady])
 
-  // Handle change
+  // 处理编辑器内容变化
   const handleValueChange = useCallback((newValue: string) => {
     if (!readOnly && onChange) {
       onChange(newValue)
     }
   }, [readOnly, onChange])
 
-  // Synchronous highlight wrapper (for the editor component)
-  // The editor needs a sync function, so we return cached or plain text
+  // 同步高亮包装层
+  // react-simple-code-editor 需要一个同步的 highlight 函数，
+  // 所以我们先返回缓存/纯文本，同时触发异步高亮，完成后更新状态。
   const syncHighlight = useCallback((code: string): string => {
     const cacheKey = getCacheKey(code, resolvedLang, theme)
     const cached = highlightCache.get(cacheKey)
     if (cached) return cached
 
-    // Trigger async highlight
+    // 触发异步高亮，并在结果变化时更新 UI
     highlight(code).then(result => {
       if (result !== highlightedCode) {
         setHighlightedCode(result)
       }
     })
 
-    // Return plain text or cached highlighted code for now
+    // 如果已经有上一次高亮结果，先返回它；否则返回原始纯文本
     return highlightedCode || code
   }, [resolvedLang, theme, highlight, highlightedCode])
 
-  // Background color (must match CSS --background values)
+  // 背景色/文字色/占位符颜色，需与 CSS 变量 --background 保持一致
   const backgroundColor = isDark ? '#302f33' : '#faf9fb'
   const textColor = isDark ? '#d4d4d4' : '#1f1f1f'
   const placeholderColor = isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)'

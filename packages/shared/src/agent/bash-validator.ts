@@ -1,17 +1,25 @@
 /**
  * Bash Command Validator
  *
- * Uses bash-parser to create a proper AST and validate commands in Explore mode.
- * This enables compound commands like `git status && git log` to be allowed
- * when all parts are safe, while still blocking dangerous constructs.
+ * 本模块用于 Explore 模式（只读探索模式，permission mode 的一种）下，
+ * 通过 bash-parser 把 shell 字符串解析成 AST（抽象语法树），再递归校验
+ * 每一个子命令是否属于白名单只读命令。这样既能让 `git status && git log`
+ * 这类复合命令在所有部分都安全时被放行，又能拦截危险构造（写入、命令替换等）。
  *
- * AST Node Types:
- * - Command: Simple command with name and args
- * - LogicalExpression: && (and) or || (or) chains
- * - Pipeline: Piped commands (|)
- * - Subshell: Commands in parentheses (...)
- * - Redirect: File redirections (>, >>, <)
- * - CommandExpansion: $(...) substitution
+ * 主要 AST 节点类型（中文含义）：
+ * - Command（命令）：简单命令，包含命令名和参数
+ * - LogicalExpression（逻辑表达式）：&&（与）或 ||（或）连接的命令链
+ * - Pipeline（管道）：用 | 串联的命令（cmd1 | cmd2）
+ * - Subshell（子 shell）：括号内的命令 ( ... )
+ * - Redirect（重定向）：文件重定向操作符（>, >>, < 等）
+ * - CommandExpansion（命令替换）：$(...) 反引号形式的命令替换
+ *
+ * "fail closed"（失败即拒绝）原则：凡是 bash-parser 产生的、本模块没有显式
+ * 处理的节点类型（如 If / While / For / Case / Function），一律拒绝执行，
+ * 绝不"看不懂就放行"。这是安全代码的基本要求。
+ *
+ * Go 类比：本模块对每种 AST 节点类型写一个 validator 函数，整体相当于一个
+ * 递归的 visitor —— 类似 Go 里对 json / 树形节点做遍历访问的 visitor 模式。
  */
 
 /// <reference path="./bash-parser.d.ts" />
@@ -25,18 +33,24 @@ import type { CompiledBashPattern } from './mode-types.ts';
 
 /**
  * Result of validating a bash command AST.
+ * 校验一条 bash 命令 AST 后返回的结果。
  * Tracks which subcommands passed/failed for detailed error messages.
+ * 同时记录各子命令的通过/失败情况，用于生成详细的错误信息。
  */
 export interface BashValidationResult {
   allowed: boolean;
   /** Primary reason for rejection (if not allowed) */
+  /** 若被拒绝，这里给出主要的拒绝原因 */
   reason?: BashValidationReason;
   /** Individual results for compound commands */
+  /** 复合命令中每个子命令的逐项结果 */
   subcommandResults?: SubcommandResult[];
 }
 
+/** 单个子命令的校验结果（用于复合命令的明细） */
 export interface SubcommandResult {
   /** The command text that was validated */
+  /** 被校验的那段子命令文本 */
   command: string;
   allowed: boolean;
   reason?: string;
@@ -44,7 +58,13 @@ export interface SubcommandResult {
 
 /**
  * Detailed reason why validation failed.
+ * 校验失败的具体原因（带类型的可辨识联合），用于生成有用的错误信息。
  * Used to generate helpful error messages.
+ *
+ * TS 语法提示：下面这种 `{type:'pipeline'; ...} | {type:'redirect'; ...}`
+ * 形式叫做 discriminated union（可辨识联合）。每个分支都用一个共同的字面量
+ * 字段 `type` 作为"标签"来区分，调用方用 switch(node.type) 就能让 TS 自动
+ * 缩窄类型。可以类比 Go 里带 tag 字段的 sum type，只是 TS 是结构化的。
  */
 export type BashValidationReason =
   | { type: 'pipeline'; explanation: string }
@@ -60,27 +80,33 @@ export type BashValidationReason =
 
 // ============================================================
 // AST Node Types (from bash-parser)
+// bash-parser 生成的 AST 节点类型定义
 // ============================================================
 
+/** 所有 AST 节点的公共基类，都带一个 type 字段用于 visitor 分发 */
 interface ASTNode {
   type: string;
 }
 
+/** 单词节点：一个普通 token，可能包含展开（expansion）信息 */
 interface WordNode extends ASTNode {
   type: 'Word';
   text: string;
   expansion?: ExpansionNode[];
 }
 
+/** 命令节点：一条简单命令，包含命令名、前缀（赋值/重定向）和后缀（参数/重定向） */
 interface CommandNode extends ASTNode {
   type: 'Command';
   name?: WordNode;
   prefix?: ASTNode[];
   suffix?: ASTNode[];
   /** True if command runs in background with & operator */
+  /** 为真表示命令通过 & 在后台运行 */
   async?: boolean;
 }
 
+/** 逻辑表达式节点：&&（and）或 ||（or）连接的左右两个子命令 */
 interface LogicalExpressionNode extends ASTNode {
   type: 'LogicalExpression';
   op: 'and' | 'or';
@@ -88,33 +114,39 @@ interface LogicalExpressionNode extends ASTNode {
   right: ASTNode;
 }
 
+/** 管道节点：用 | 串联的多个命令 */
 interface PipelineNode extends ASTNode {
   type: 'Pipeline';
   commands: ASTNode[];
 }
 
+/** 子 shell 节点：括号 ( ... ) 内的命令，内部是一个 CompoundList */
 interface SubshellNode extends ASTNode {
   type: 'Subshell';
   list: CompoundListNode;
 }
 
+/** 复合列表节点：一组按顺序执行的命令（如子 shell 内部） */
 interface CompoundListNode extends ASTNode {
   type: 'CompoundList';
   commands: ASTNode[];
 }
 
+/** 重定向节点：文件重定向操作（>, >>, < 等）及其目标文件 */
 interface RedirectNode extends ASTNode {
   type: 'Redirect';
   op: { text: string; type: string };
   file: WordNode;
 }
 
+/** 展开节点：单词内部的展开结构（命令替换 / 参数展开 / 进程替换等） */
 interface ExpansionNode {
   type: string;
   command?: string;
   commandAST?: ScriptNode;
 }
 
+/** 脚本节点：bash-parser 解析顶层命令得到的根节点 */
 interface ScriptNode extends ASTNode {
   type: 'Script';
   commands: ASTNode[];
@@ -122,36 +154,54 @@ interface ScriptNode extends ASTNode {
 
 // ============================================================
 // Dangerous Argument Patterns
+// 危险参数模式：命令本身是只读的，但其参数能执行子命令或写入
 // ============================================================
 
 /**
  * Command arguments that execute subcommands or perform writes.
+ * 会执行子命令或产生写入的命令参数。
  * These are program-level features (not shell constructs) that the AST parser
+ * 这些是程序级特性（不是 shell 语法构造），AST 解析器无法识别 —— 例如
  * cannot detect — e.g., `find -exec` runs arbitrary commands despite `find`
+ * `find -exec touch file \;` 尽管本身是只读搜索工具，但 `-exec` 会执行任意命令。
  * being a read-only search tool.
  *
  * Checked BEFORE the regex allowlist pattern match in validateCommand().
+ * 在 validateCommand() 里早于正则白名单匹配进行检查。
+ *
+ * TS 语法提示：`Record<string, Set<string>>` 表示"键是 string、值是 Set<string>
+ * 的对象/map"。可以类比 Go 里的 `map[string]map[string]struct{}`（用集合去重）。
  */
 const DANGEROUS_COMMAND_ARGS: Record<string, Set<string>> = {
   find: new Set(['-exec', '-execdir', '-ok', '-okdir', '-delete']),
 };
 
+/** 所有 awk 系列命令名（awk 及其变体），用于针对性检测其脚本里的危险调用 */
 const AWK_COMMANDS = new Set(['awk', 'gawk', 'mawk', 'nawk']);
 
+/**
+ * 检测 awk 脚本里是否会执行外部命令。
+ * 返回拒绝原因字符串；如果安全则返回 null。
+ */
 function getDangerousAwkReason(commandParts: string[]): string | null {
   // commandParts[0] is awk/gawk/mawk/nawk - inspect script/args only
+  // commandParts[0] 是 awk/gawk/mawk/nawk —— 只检查后面的脚本/参数部分
   const scriptText = commandParts.slice(1).join(' ');
 
+  // TS 语法提示：正则的 `.test(str)` 类似 Go 的 `regexp.MatchString(pattern, str)`，
+  // 返回布尔值表示是否匹配。
   if (/\bsystem\s*\(/i.test(scriptText)) {
     return 'awk system() executes arbitrary shell commands';
   }
 
   // command | getline executes an external command and reads from it
+  // command | getline 会执行外部命令并读取其输出
   if (/\|\s*getline\b/i.test(scriptText)) {
     return 'awk command pipes to getline execute external commands';
   }
 
   // print ... | "cmd" (or with quoted command forms) executes external commands
+  // print ... | "cmd"（或带引号命令的形式）会执行外部命令
   if (/\bprint\b[^\n]*\|\s*["'`]/i.test(scriptText)) {
     return 'awk print-to-command pipes execute external commands';
   }

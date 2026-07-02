@@ -1,7 +1,8 @@
 /**
- * Settings Pages
+ * 设置页面索引
  *
- * All pages that appear under the settings navigator.
+ * SettingsNavigator 与所有设置子页面的统一出口。
+ * 每个页面除了默认导出组件外，还导出 meta 供导航注册表使用。
  */
 
 export { default as SettingsNavigator } from './SettingsNavigator'
@@ -15,5 +16,5 @@ export { default as LabelsSettingsPage, meta as LabelsMeta } from './LabelsSetti
 export { default as ShortcutsPage, meta as ShortcutsMeta } from './ShortcutsPage'
 export { default as PreferencesPage, meta as PreferencesMeta } from './PreferencesPage'
 
-// Re-export types
+// 重新导出导航元信息类型，方便外部统一引用
 export type { DetailsPageMeta } from '@/lib/navigation-registry'

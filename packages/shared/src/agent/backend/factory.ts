@@ -1,17 +1,22 @@
 /**
- * Agent Factory
+ * Agent 工厂（Agent Factory）
  *
- * Creates the appropriate AI agent based on configuration.
- * Supports two agents:
- * - ClaudeAgent (Anthropic) - Default, using @anthropic-ai/claude-agent-sdk
- * - PiAgent (Pi) - Using @earendil-works/pi-ai SDK
+ * 本文件是整个 Agent 子系统的"工厂入口"。根据传入的配置（config）创建对应的
+ * AI Agent 后端实例：ClaudeAgent 或 PiAgent。所有后端都直接实现 AgentBackend
+ * 接口（类似 Go 中所有实现都满足同一个 interface）。
  *
- * All agents implement AgentBackend directly.
+ * 当前支持两条 SDK 路径（Provider）：
+ * - ClaudeAgent（Anthropic）：默认实现，基于 @anthropic-ai/claude-agent-sdk
+ * - PiAgent（Pi）：基于 @earendil-works/pi-ai SDK
  *
- * LLM Connections:
- * - Backends can be created from LLM connection configs
- * - providerType determines SDK selection and credential routing
- * - authType determines how credentials are retrieved
+ * LLM Connection（模型连接配置）如何决定 SDK 选择与凭据路由：
+ * - 后端可以从 LLM connection 配置记录创建出来
+ * - providerType（provider 类型）决定选用哪条 SDK 路径（即实例化哪个 Agent 类），
+ *   也决定凭据路由（credentials routing，凭据往哪条链路送）
+ * - authType（鉴权类型，如 api_key / oauth_token 等）决定凭据如何被取回与传递
+ *
+ * Go 类比：本文件类似 Go 里的 `NewClient(cfg)` 工厂函数 + driver registry（注册表）模式，
+ * 根据 cfg.Provider 在注册表里找到对应的 driver 来构造客户端。
  */
 
 import type {
@@ -30,15 +35,15 @@ import {
   getDefaultLlmConnection,
   type LlmConnection,
 } from '../../config/storage.ts';
-// Import deprecated type for legacy migration function only
+// 仅在遗留迁移（legacy migration）函数里用到这些已废弃的类型
 import type { LlmConnectionType, CustomEndpointConfig } from '../../config/llm-connections.ts';
-// Import validation helpers for provider-auth combinations
+// 导入 provider-auth 组合的校验辅助函数（用来检查 provider 与 authType 是否匹配）
 import {
   isValidProviderAuthCombination,
 } from '../../config/llm-connections.ts';
 import { parseValidationError, type LlmValidationResult } from '../../config/llm-validation.ts';
 import type { ModelFetchResult } from '../../config/model-fetcher.ts';
-// Model resolution utilities
+// 模型解析（model resolution）相关的工具
 import { getModelProvider, DEFAULT_MODEL, normalizeDeprecatedModelId } from '../../config/models.ts';
 import { homedir } from 'node:os';
 import { rm } from 'node:fs/promises';
@@ -60,11 +65,16 @@ import {
 import { anthropicDriver } from './internal/drivers/anthropic.ts';
 import { piDriver } from './internal/drivers/pi.ts';
 
+// Driver 注册表：把每个 AgentProvider 映射到对应的 ProviderDriver。
+// TS 语法 Record<AgentProvider, ProviderDriver> 类似 Go 的 map[AgentProvider]ProviderDriver，
+// 但 TS 的 Record 还能在编译期保证覆盖所有 union 成员（缺一个 key 会报错）。
 const DRIVER_REGISTRY: Record<AgentProvider, ProviderDriver> = {
   anthropic: anthropicDriver,
   pi: piDriver,
 };
 
+// 根据 provider 名从注册表中取出对应的 driver；找不到就抛错。
+// Go 类比：类似 registry[provider] + ok 判断，这里直接抛异常。
 function getProviderDriver(provider: AgentProvider): ProviderDriver {
   const driver = DRIVER_REGISTRY[provider];
   if (!driver) {
@@ -73,6 +83,8 @@ function getProviderDriver(provider: AgentProvider): ProviderDriver {
   return driver;
 }
 
+// 解析出 provider 对应的 driver 以及运行时路径（runtime paths）。
+// 把"找 driver"和"算路径"两件事合并成一个调用，给上层用。
 function resolveDriverRuntime(
   provider: AgentProvider,
   hostRuntime: BackendHostRuntimeContext,
@@ -83,16 +95,16 @@ function resolveDriverRuntime(
 }
 
 /**
- * Detect provider from stored auth type.
+ * 根据已保存的 auth type（鉴权类型）推断 provider。
  *
- * Maps authentication types to their corresponding providers:
- * - api_key, oauth_token → Anthropic (Claude) by default
+ * 把鉴权类型映射到对应的 provider：
+ * - api_key、oauth_token → 默认走 Anthropic（Claude）
  *
- * Note: Provider is now determined by LLM connection type, not auth type.
- * This function is kept for backward compatibility.
+ * 注意：provider 现在由 LLM connection type 决定，不再由 auth type 决定。
+ * 保留本函数只是为了向后兼容（backward compatibility）。
  *
- * @param authType - The stored authentication type
- * @returns The detected provider
+ * @param authType - 已保存的鉴权类型字符串
+ * @returns 推断出的 provider（'anthropic' | 'pi'）
  */
 export function detectProvider(authType: string): AgentProvider {
   switch (authType) {
@@ -100,29 +112,29 @@ export function detectProvider(authType: string): AgentProvider {
     case 'oauth_token':
       return 'anthropic';
 
-    // Default to Anthropic for unknown types
+    // 未知类型默认走 Anthropic
     default:
       return 'anthropic';
   }
 }
 
 /**
- * Create the appropriate backend based on configuration.
+ * 根据配置创建对应的 backend 实例。
  *
- * @param config - Backend configuration including provider selection
- * @returns An initialized AgentBackend instance
- * @throws Error if the requested provider is not yet implemented
+ * @param config - Backend 配置，包含 provider 选择等字段
+ * @returns 已初始化的 AgentBackend 实例
+ * @throws Error 当请求的 provider 还未实现时抛出
  *
  * @example
  * ```typescript
- * // Create Anthropic (Claude) backend
+ * // 创建 Anthropic（Claude）backend
  * const backend = createBackend({
  *   provider: 'anthropic',
  *   workspace: myWorkspace,
  *   model: 'claude-sonnet-4-6',
  * });
  *
- * // Create Pi backend (routes OpenAI / Copilot / Bedrock / etc. via Pi SDK)
+ * // 创建 Pi backend（通过 Pi SDK 把 OpenAI / Copilot / Bedrock 等厂商路由进来）
  * const piBackend = createBackend({
  *   provider: 'pi',
  *   workspace: myWorkspace,
@@ -132,12 +144,12 @@ export function detectProvider(authType: string): AgentProvider {
 export function createBackend(config: BackendConfig): AgentBackend {
   switch (config.provider) {
     case 'anthropic':
-      // ClaudeAgent implements AgentBackend directly
+      // ClaudeAgent 直接实现 AgentBackend 接口
       return new ClaudeAgent(config);
 
     case 'pi':
-      // PiAgent implements AgentBackend directly
-      // Auth is API key based via Pi's AuthStorage
+      // PiAgent 直接实现 AgentBackend 接口
+      // 鉴权通过 Pi 自带的 AuthStorage 以 API key 形式处理
       return new PiAgent(config);
 
     default:
@@ -146,19 +158,19 @@ export function createBackend(config: BackendConfig): AgentBackend {
 }
 
 /**
- * Create the appropriate agent based on configuration.
- * Alias for createBackend - prefer this name for new code.
+ * 根据配置创建对应的 agent。本质是 createBackend 的别名，新代码建议优先用这个名字。
  */
 export const createAgent = createBackend;
 
 /**
- * Create backend from a pre-resolved context and provider-agnostic core config.
- * Provider-specific runtime resolution happens via internal driver registry.
+ * 根据预先解析好的 context 和与 provider 无关的核心配置（core config）创建 backend。
+ * provider 特有的运行时解析（runtime resolution）通过内部 driver 注册表完成。
  */
 export function createBackendFromResolvedContext(args: {
   context: ResolvedBackendContext;
   coreConfig: CoreBackendConfig;
   hostRuntime: BackendHostRuntimeContext;
+  // providerOptions?: 表示该字段可选；TS 中的 ? 类似 Go 里用指针表达"可能为空"。
   providerOptions?: BackendProviderOptions;
 }): AgentBackend {
   const { context, coreConfig, hostRuntime, providerOptions } = args;
@@ -172,12 +184,15 @@ export function createBackendFromResolvedContext(args: {
     providerOptions,
   };
 
+  // driver.prepareRuntime?.(...): 可选链调用，等价于 if (driver.prepareRuntime) driver.prepareRuntime(...)
   driver.prepareRuntime?.(buildArgs);
   const runtime = driver.buildRuntime(buildArgs);
 
   const config: ResolvedBackendConfig = {
+    // ...coreConfig 是对象展开（spread），把 coreConfig 的字段铺进来，类似 Go 里结构体嵌入后拷贝字段。
     ...coreConfig,
     provider: context.provider,
+    // ?? 是空值合并运算符：左侧为 null/undefined 时才取右侧。
     providerType: context.connection?.providerType ?? getDefaultProviderType(context.provider),
     authType: context.authType || getDefaultAuthType(context.provider),
     model: context.resolvedModel,
@@ -189,9 +204,9 @@ export function createBackendFromResolvedContext(args: {
 }
 
 /**
- * Initialize backend host runtime wiring once at app startup.
- * Keeps runtime/bootstrap details (Claude SDK executable, Pi interceptor bundle)
- * behind backend internals.
+ * 在 App 启动时执行一次性的 backend host runtime 接线（wiring）。
+ * 把运行时/启动相关细节（如 Claude SDK 可执行文件、Pi 的 interceptor bundle）
+ * 关在 backend 内部，不让外层直接感知。
  */
 export function initializeBackendHostRuntime(args: {
   hostRuntime: BackendHostRuntimeContext;
@@ -205,30 +220,32 @@ export function initializeBackendHostRuntime(args: {
 }
 
 /**
- * Resolve backend-managed host tooling paths (e.g. ripgrep) from generic host runtime metadata.
+ * 从通用的 host runtime 元数据里解析出由 backend 管理的宿主工具路径（如 ripgrep）。
  */
 export function resolveBackendHostTooling(args: {
   hostRuntime: BackendHostRuntimeContext;
 }): {
+  // ripgrep 可执行文件路径，可能为空
   ripgrepPath?: string;
 } {
   return resolveHostToolingPaths(args.hostRuntime);
 }
 
 /**
- * Get list of currently available providers.
+ * 获取当前可用的 provider 列表。
  *
- * @returns Array of provider identifiers that have working implementations
+ * @returns 已有可用实现的 provider 标识数组（'anthropic' | 'pi' 的联合类型数组）
  */
 export function getAvailableProviders(): AgentProvider[] {
+  // 这里的 ['anthropic', 'pi'] 是 AgentProvider 联合类型的全部成员
   return ['anthropic', 'pi'];
 }
 
 /**
- * Check if a provider is available for use.
+ * 判断某个 provider 是否可用。
  *
- * @param provider - Provider to check
- * @returns true if the provider has a working implementation
+ * @param provider - 待检查的 provider
+ * @returns 如果该 provider 有可用实现则返回 true
  */
 export function isProviderAvailable(provider: AgentProvider): boolean {
   return getAvailableProviders().includes(provider);
@@ -239,39 +256,39 @@ export function isProviderAvailable(provider: AgentProvider): boolean {
 // ============================================================
 
 /**
- * Map LlmProviderType to AgentProvider (SDK selection).
+ * 把 LLM connection 里的 providerType 映射为 AgentProvider（决定实例化哪个 SDK 后端）。
  *
- * AgentProvider determines which backend class to instantiate:
+ * AgentProvider 决定上层该创建哪个后端类：
  * - 'anthropic' → ClaudeAgent
  * - 'pi' → PiAgent
  *
- * @param providerType - The full provider type from LLM connection
- * @returns The agent provider for SDK selection
+ * @param providerType - LLM connection 中的完整 provider 类型
+ * @returns 用于 SDK 选择的 agent provider
  */
 export function providerTypeToAgentProvider(providerType: LlmProviderType): AgentProvider {
   switch (providerType) {
-    // Anthropic SDK backend (direct API only)
+    // Anthropic SDK 后端（仅直连 API）
     case 'anthropic':
       return 'anthropic';
 
-    // Pi backends (includes former bedrock/vertex/anthropic_compat via migration)
+    // Pi 后端（历史 bedrock/vertex/anthropic_compat 经迁移后也路由到 pi）
     case 'pi':
     case 'pi_compat':
       return 'pi';
 
     default:
-      // Exhaustive check
+      // 穷尽性检查：确保联合类型所有成员都被覆盖
       const _exhaustive: never = providerType;
       return 'anthropic';
   }
 }
 
 /**
- * @deprecated Use providerTypeToAgentProvider instead.
- * Map legacy LLM connection type to agent provider.
+ * @deprecated 请改用 providerTypeToAgentProvider。
+ * 把遗留的 LLM connection type 映射为 agent provider。
  *
- * @param connectionType - The legacy LLM connection type
- * @returns The corresponding agent provider
+ * @param connectionType - 遗留的 LLM connection 类型
+ * @returns 对应的 agent provider
  */
 export function connectionTypeToProvider(connectionType: LlmConnectionType): AgentProvider {
   switch (connectionType) {
@@ -279,18 +296,18 @@ export function connectionTypeToProvider(connectionType: LlmConnectionType): Age
       return 'anthropic';
     case 'openai':
     case 'openai-compat':
-      return 'pi'; // Legacy OpenAI connections are now routed through Pi
+      return 'pi'; // 历史 OpenAI connection 现在统一路由到 Pi
     default:
       return 'anthropic';
   }
 }
 
 /**
- * @deprecated Use LlmAuthType directly - no mapping needed.
- * Map legacy LLM auth type to backend auth type.
+ * @deprecated 请直接用 LlmAuthType，无需映射。
+ * 把遗留的 LLM auth type 映射为后端 auth type。
  *
- * @param authType - The legacy LLM connection auth type
- * @returns The corresponding backend auth type
+ * @param authType - 遗留的 LLM connection auth type
+ * @returns 对应的后端 auth type
  */
 export function connectionAuthTypeToBackendAuthType(
   authType: LlmAuthType
@@ -302,28 +319,28 @@ export function connectionAuthTypeToBackendAuthType(
     case 'bearer_token':
     case 'iam_credentials':
     case 'service_account_file':
-      // Pass through auth types that the backend handles
+      // 后端能处理的鉴权类型直接透传
       return authType;
     case 'none':
     case 'environment':
-      // These auth types don't require explicit credential passing
+      // 这些鉴权类型不需要显式传递凭据
       return undefined;
   }
 }
 
 /**
- * Get LLM connection for a session.
- * Resolution order: session.llmConnection > workspace.defaults.defaultLlmConnection > global default
+ * 为 session 解析最合适的 LLM connection。
+ * 解析顺序：session 级 > workspace 默认 > 全局默认
  *
- * @param sessionConnection - Connection slug from session (may be undefined)
- * @param workspaceDefaultConnection - Workspace default connection (may be undefined)
- * @returns The resolved LLM connection or null if not found
+ * @param sessionConnection - session 中指定的 connection slug（可能为空）
+ * @param workspaceDefaultConnection - workspace 默认 connection slug（可能为空）
+ * @returns 解析到的 LLM connection；找不到则返回 null
  */
 export function resolveSessionConnection(
   sessionConnection?: string,
   workspaceDefaultConnection?: string
 ): LlmConnection | null {
-  // 1. Session-level connection (locked after first message)
+  // 1. Session 级 connection（首次发消息后锁定）
   if (sessionConnection) {
     const connection = getLlmConnection(sessionConnection);
     if (connection) return connection;
@@ -342,13 +359,13 @@ export function resolveSessionConnection(
 }
 
 /**
- * Provider-agnostic resolution result used by session/ipc orchestration.
+ * 与 provider 无关的解析结果，供 session / IPC 编排层使用。
  */
 export interface ResolvedBackendContext extends BackendResolutionContext {}
 
 /**
- * Resolve connection + provider/auth/model/capabilities in one call.
- * This keeps main-process orchestration free from provider-specific branching.
+ * 一次性解析 connection + provider/auth/model/capabilities。
+ * 让主进程编排层无需写 provider 分支判断。
  */
 export function resolveBackendContext(args: {
   sessionConnectionSlug?: string;
@@ -380,8 +397,8 @@ export function resolveBackendContext(args: {
 }
 
 /**
- * Resolve provider hint for setup-time connection tests.
- * Keeps provider-specific hint mapping out of Electron main IPC handlers.
+ * 为设置阶段的连接测试解析 provider hint。
+ * 避免在 Electron main 的 IPC handler 里写 provider 特定逻辑。
  */
 export function resolveSetupTestConnectionHint(args: {
   provider: AgentProvider;
@@ -410,8 +427,8 @@ export function resolveSetupTestConnectionHint(args: {
 }
 
 /**
- * Provider-agnostic model discovery for model refresh flows.
- * Dispatches to provider drivers and keeps provider-specific SDK usage internal.
+ * 与 provider 无关的模型发现，用于“刷新模型列表”流程。
+ * 分派给各 provider driver 处理，把 SDK 细节关在后端内部。
  */
 export async function fetchBackendModels(args: {
   connection: LlmConnection;
@@ -442,8 +459,8 @@ export async function fetchBackendModels(args: {
 }
 
 /**
- * Provider-agnostic stored-connection validation.
- * Moves provider/auth branching out of Electron main IPC handlers.
+ * 与 provider 无关的“已保存连接”校验。
+ * 避免在 Electron main 的 IPC handler 里写 provider/auth 分支。
  */
 export async function validateStoredBackendConnection(args: {
   slug: string;
@@ -492,17 +509,17 @@ export async function validateStoredBackendConnection(args: {
 }
 
 /**
- * Create backend configuration from an LLM connection.
+ * 根据 LLM connection 创建后端配置。
  *
- * @param connection - The LLM connection config
- * @param baseConfig - Base backend config (workspace, session, etc.)
- * @returns Complete BackendConfig ready for createBackend()
+ * @param connection - LLM connection 配置
+ * @param baseConfig - 基础后端配置（workspace、session 等）
+ * @returns 可直接传给 createBackend() 的完整 BackendConfig
  */
 export function createConfigFromConnection(
   connection: LlmConnection,
   baseConfig: Omit<BackendConfig, 'provider' | 'authType' | 'providerType'>
 ): BackendConfig {
-  // Use new providerType if available, fall back to legacy type
+  // 优先用新的 providerType，没有则回退到遗留 type
   const providerType = connection.providerType || (connection.type ? connectionTypeToProvider(connection.type) as unknown as LlmProviderType : 'anthropic');
   const provider = providerTypeToAgentProvider(providerType);
 
@@ -512,18 +529,18 @@ export function createConfigFromConnection(
     providerType,
     authType: connection.authType,
     connectionSlug: connection.slug,
-    // Use connection's default model if no model specified in baseConfig
+    // 若 baseConfig 没指定模型，则使用 connection 的默认模型
     model: baseConfig.model || connection.defaultModel,
   };
 }
 
 /**
- * Create backend from an LLM connection slug.
+ * 根据 LLM connection 的 slug 创建后端实例。
  *
- * @param connectionSlug - The LLM connection slug
- * @param baseConfig - Base backend config (workspace, session, etc.)
- * @returns An initialized AgentBackend instance
- * @throws Error if connection not found or has invalid provider-auth combination
+ * @param connectionSlug - LLM connection 的 slug
+ * @param baseConfig - 基础后端配置（workspace、session 等）
+ * @returns 已初始化的 AgentBackend 实例
+ * @throws Error 当 connection 不存在或 provider-auth 组合不合法时抛出
  */
 export function createBackendFromConnection(
   connectionSlug: string,
@@ -536,8 +553,8 @@ export function createBackendFromConnection(
     throw new Error(`LLM connection not found: ${connectionSlug}`);
   }
 
-  // Validate provider-auth combination before creating backend
-  // This catches invalid configurations early with a clear error message
+  // 创建 backend 前先校验 provider-auth 组合是否合法
+  // 这样可以尽早捕获错误配置，并给出清晰的错误信息
   if (!isValidProviderAuthCombination(connection.providerType, connection.authType)) {
     throw new Error(
       `Invalid LLM connection configuration: provider '${connection.providerType}' ` +
@@ -579,14 +596,16 @@ export function createBackendFromConnection(
 // ============================================================
 
 /**
- * Declarative capabilities for each backend provider.
- * Used by the session layer to make decisions without checking provider strings.
+ * 声明式能力表：每个 backend provider 的能力。
+ * session 层据此做决策，不必再硬编码 provider 字符串判断。
  */
 export const BACKEND_CAPABILITIES: Record<AgentProvider, {
-  /** Whether the backend needs an HTTP pool server (external subprocess can't access McpClientPool directly) */
+  /** 该后端是否需要独立的 HTTP pool server（外部子进程无法直接访问 McpClientPool 时使用） */
   needsHttpPoolServer: boolean;
 }> = {
+  // Anthropic SDK 直接走本地二进制，不需要独立 HTTP pool server
   anthropic: { needsHttpPoolServer: false },
+  // Pi 子进程通过 stdio/JSONL 通信，也不需要 HTTP pool server
   pi: { needsHttpPoolServer: false },
 };
 
@@ -595,9 +614,9 @@ export const BACKEND_CAPABILITIES: Record<AgentProvider, {
 // ============================================================
 
 /**
- * Get the default auth type for a provider when none is explicitly specified.
+ * 当没有显式指定 auth type 时，返回 provider 的默认值。
  *
- * - anthropic: undefined (Claude uses env vars, not explicit authType)
+ * - anthropic: undefined（Claude 使用环境变量，不通过显式 authType）
  * - pi: 'api_key'
  */
 export function getDefaultAuthType(provider: AgentProvider): LlmAuthType | undefined {
@@ -613,29 +632,29 @@ export function getDefaultAuthType(provider: AgentProvider): LlmAuthType | undef
 // ============================================================
 
 /**
- * Resolve the model ID for a given provider, validating against the connection's model list.
+ * 为指定 provider 解析模型 ID，并校验其是否在 connection 的模型列表中。
  *
- * Each provider has different defaults and validation:
- * - Anthropic: falls back to DEFAULT_MODEL (Opus)
- * - Pi: falls back to empty string (Pi selects model internally)
+ * 各 provider 的默认/校验策略不同：
+ * - Anthropic: 回退到 DEFAULT_MODEL（Opus）
+ * - Pi: 回退到空字符串（Pi 内部自行选择模型）
  *
- * @param provider - The agent provider
- * @param managedModel - The model stored on the session (user's choice)
- * @param connection - The LLM connection config (has defaultModel and models[])
- * @returns Resolved model ID string
+ * @param provider - agent provider
+ * @param managedModel - session 上保存的模型（用户选择）
+ * @param connection - LLM connection 配置（含 defaultModel 与 models[]）
+ * @returns 解析后的模型 ID 字符串
  */
 export function resolveModelForProvider(
   provider: AgentProvider,
   managedModel: string | undefined,
   connection: LlmConnection | null
 ): string {
-  // Cross-provider guard: if the model belongs to a different provider, fall back
-  // to the connection's default. This prevents e.g. sending a Claude model to Pi.
+  // 跨 provider 保护：若模型属于另一个 provider，则回退到 connection 的默认模型。
+  // 例如避免把 Claude 模型发给 Pi。
   if (managedModel) {
     managedModel = normalizeDeprecatedModelId(managedModel);
     const modelProvider = getModelProvider(managedModel);
     if (modelProvider && modelProvider !== provider) {
-      managedModel = undefined; // Clear — will fall through to connection default
+      managedModel = undefined; // 清空 —— 让后续逻辑落到 connection 默认模型
     }
   }
 
@@ -666,8 +685,8 @@ export function resolveModelForProvider(
 // ============================================================
 
 /**
- * Remove backend runtime artifacts for disabled sources.
- * Currently removes bridge credential cache files in source directories.
+ * 清理被禁用 source 留下的后端运行时产物。
+ * 当前主要删除 source 目录下的 bridge credential 缓存文件。
  */
 export async function cleanupSourceRuntimeArtifacts(
   workspaceRootPath: string,
@@ -680,7 +699,7 @@ export async function cleanupSourceRuntimeArtifacts(
 }
 
 // ============================================================
-// Provider-Agnostic Connection Testing
+// 与 Provider 无关的连接测试
 // ============================================================
 
 export async function testBackendConnection(args: {
@@ -746,7 +765,7 @@ export async function testBackendConnection(args: {
         resolvedPaths,
         timeoutMs: args.timeoutMs ?? 20000,
       });
-      // null = driver declined to handle; fall through to generic subprocess test
+      // null 表示 driver 不处理该测试；继续走通用子进程测试路径
       if (driverResult !== null) return driverResult;
     }
 
@@ -796,7 +815,7 @@ export async function testBackendConnection(args: {
         : { success: false, error: 'No response from provider. Check your API key.' };
     } catch (error) {
       const base = error instanceof Error ? error.message : String(error);
-      // Avoid double-appending if the timeout branch already included stderr context.
+      // 如果超时分支已经包含 stderr 上下文，则避免重复追加
       const enriched = base.includes('subprocess stderr') ? base : withStderrContext(base);
       return { success: false, error: enriched };
     } finally {
@@ -813,21 +832,21 @@ export async function testBackendConnection(args: {
 }
 
 // ============================================================
-// Connection Validation
+// 连接校验
 // ============================================================
 
 /**
- * Validate an LLM connection by dispatching to provider-specific validation.
+ * 校验 LLM connection，按 provider 分派到具体校验逻辑。
  *
- * - Anthropic/compat/Bedrock/Vertex: validates via Claude Agent SDK (query with maxTurns:1)
- * - OpenAI/Copilot/Pi: returns success (these providers validate on connect, no pre-flight check available)
+ * - Anthropic/compat/Bedrock/Vertex: 通过 Claude Agent SDK 校验（发一个 maxTurns:1 的查询）
+ * - OpenAI/Copilot/Pi: 直接返回成功（这些 provider 在连接时校验，没有预检接口）
  *
- * For more thorough provider-specific validation (model list checks, OAuth refresh, etc.),
- * see the IPC handler in apps/electron/src/main/ipc.ts.
+ * 更详尽的 provider 专属校验（模型列表、OAuth 刷新等）见
+ * apps/electron/src/main/ipc.ts 里的 IPC handler。
  *
- * @param connection - The LLM connection to validate
- * @param credentials - API key or OAuth token for validation
- * @returns Validation result
+ * @param connection - 待校验的 LLM connection
+ * @param credentials - 用于校验的 API key 或 OAuth token
+ * @returns 校验结果
  */
 export async function validateConnection(
   connection: LlmConnection,
@@ -837,7 +856,7 @@ export async function validateConnection(
 
   switch (provider) {
     case 'anthropic': {
-      // Anthropic-based providers can be validated via the Claude Agent SDK
+      // 基于 Anthropic 的 provider 可通过 Claude Agent SDK 进行校验
       const { validateAnthropicConnection } = await import('../../config/llm-validation.ts');
       return validateAnthropicConnection({
         model: connection.defaultModel || DEFAULT_MODEL,
@@ -848,7 +867,7 @@ export async function validateConnection(
     }
 
     case 'pi':
-      // Pi validates on connect via its auth storage — no pre-flight check available
+      // Pi 在连接时通过其 auth storage 完成校验，没有预检接口
       return { success: true };
 
     default:

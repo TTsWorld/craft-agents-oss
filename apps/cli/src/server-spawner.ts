@@ -1,41 +1,44 @@
 /**
- * Server spawner — start a headless Craft Agent server as a child process.
+ * Server spawner —— 以后台子进程方式启动一个无界面的 Craft Agent 服务端。
  *
- * Spawns `bun run <serverEntry>`, reads stdout for the `CRAFT_SERVER_URL=`
- * and `CRAFT_SERVER_TOKEN=` lines, and returns a handle to stop the server.
+ * 可以理解为 Go 里用 exec.Command 启动一个子服务：通过 `bun run <serverEntry>` 拉起服务，
+ * 监听 stdout 里打印的 `CRAFT_SERVER_URL=` 和 `CRAFT_SERVER_TOKEN=` 行，
+ * 拿到地址后返回一个 handle，调用方可以调用 stop() 结束进程。
  */
 
 import { resolve, join } from 'node:path'
 import type { Subprocess } from 'bun'
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型定义
 // ---------------------------------------------------------------------------
 
+/** 已启动服务的句柄。类似 Go 的 struct 返回值。 */
 export interface SpawnedServer {
   url: string
   token: string
   stop: () => Promise<void>
 }
 
+/** spawnServer 的可选参数。 */
 export interface SpawnServerOptions {
-  /** Path to the server entry file. Auto-detected from monorepo root if omitted. */
+  /** 服务端入口文件路径。省略时自动从 monorepo 根目录推导。 */
   serverEntry?: string
-  /** Extra env vars to pass to the server process. */
+  /** 传给服务端子进程的额外环境变量。 */
   env?: Record<string, string>
-  /** How long to wait for the server to print its URL (ms). Default: 30000. */
+  /** 等待服务端打印 URL 的最长时间（毫秒），默认 30000。 */
   startupTimeout?: number
-  /** Suppress server stderr output (useful for validation where only test output matters). */
+  /** 安静模式：在集成测试中抑制服务端 stderr 输出。 */
   quiet?: boolean
 }
 
 // ---------------------------------------------------------------------------
-// Auto-detect server entry
+// 自动推导服务端入口
 // ---------------------------------------------------------------------------
 
+/** 从当前文件向上回溯目录树，尝试定位 packages/server/src/index.ts。 */
 function findServerEntry(): string {
-  // Walk up from this file's directory to find the monorepo root.
-  // Expected layout: apps/cli/src/server-spawner.ts → root/packages/server/src/index.ts
+  // 预期目录结构：apps/cli/src/server-spawner.ts → root/packages/server/src/index.ts
   let dir = import.meta.dir
   for (let i = 0; i < 10; i++) {
     const candidate = join(dir, 'packages', 'server', 'src', 'index.ts')
@@ -49,33 +52,33 @@ function findServerEntry(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Spawn
+// 启动服务
 // ---------------------------------------------------------------------------
 
+/** 启动服务端子进程，返回服务 URL、token 和停止函数。 */
 export async function spawnServer(opts?: SpawnServerOptions): Promise<SpawnedServer> {
   const serverEntry = opts?.serverEntry ?? findServerEntry()
   const startupTimeout = opts?.startupTimeout ?? 30_000
   const token = crypto.randomUUID()
 
-  // Strip CLAUDECODE to avoid the Claude Agent SDK's nesting guard rejecting
-  // subprocess launches when the CLI is invoked from within a Claude Code session.
+  // 去掉 CLAUDECODE 环境变量，防止在 Claude Code 会话里启动子服务时触发嵌套守护导致被拒绝。
   const { CLAUDECODE: _, ...parentEnv } = process.env
   const proc: Subprocess = Bun.spawn(['bun', 'run', serverEntry], {
     env: {
       ...parentEnv,
       ...opts?.env,
       CRAFT_SERVER_TOKEN: token,
-      CRAFT_RPC_PORT: '0',
+      CRAFT_RPC_PORT: '0', // 0 表示让系统随机分配可用端口
       CRAFT_RPC_HOST: '127.0.0.1',
     },
     stdout: 'pipe',
     stderr: 'pipe',
   })
 
-  // Pipe server stderr to our stderr so --debug logs are visible (unless quiet)
+  // 把服务端 stderr 透传到当前进程（quiet 模式下关闭），方便看 --debug 日志。
   if (proc.stderr && !opts?.quiet) {
     ;(async () => {
-      // @ts-expect-error — Bun Subprocess types don't narrow stderr to ReadableStream when stderr: 'pipe'
+      // @ts-expect-error —— Bun 的 Subprocess 类型无法将 stderr: 'pipe' 收窄为 ReadableStream
       const reader = proc.stderr.getReader()
       try {
         while (true) {
@@ -84,12 +87,12 @@ export async function spawnServer(opts?: SpawnServerOptions): Promise<SpawnedSer
           process.stderr.write(value)
         }
       } catch {
-        // Server exited — normal
+        // 服务已退出，这是正常情况
       }
     })()
   }
 
-  // Read stdout line by line looking for CRAFT_SERVER_URL=
+  // 按行读取 stdout，直到匹配到 CRAFT_SERVER_URL= 才算启动成功
   return new Promise<SpawnedServer>((resolve, reject) => {
     const timer = setTimeout(() => {
       proc.kill()
@@ -101,15 +104,15 @@ export async function spawnServer(opts?: SpawnServerOptions): Promise<SpawnedSer
 
     const processLines = () => {
       const lines = buffer.split('\n')
-      buffer = lines.pop() ?? '' // keep incomplete last line in buffer
+      buffer = lines.pop() ?? '' // 最后一行可能不完整，先留在缓冲区
       for (const line of lines) {
         if (line.startsWith('CRAFT_SERVER_URL=')) {
           url = line.slice('CRAFT_SERVER_URL='.length).trim()
         }
         if (line.startsWith('CRAFT_SERVER_TOKEN=')) {
-          // Server echoes the token — we already have it but this confirms ready
+          // 服务端会回显 token，这里不需要额外处理，但能确认服务已就绪
         }
-        // Once we have the URL, the server is ready
+        // 拿到 URL 即认为服务已可接受连接
         if (url) {
           clearTimeout(timer)
           resolve({
@@ -126,7 +129,7 @@ export async function spawnServer(opts?: SpawnServerOptions): Promise<SpawnedSer
     }
 
     ;(async () => {
-      // @ts-expect-error — Bun Subprocess types don't narrow stdout to ReadableStream when stdout: 'pipe'
+      // @ts-expect-error —— Bun 的 Subprocess 类型无法将 stdout: 'pipe' 收窄为 ReadableStream
       const reader = proc.stdout.getReader()
       const decoder = new TextDecoder()
       try {
@@ -137,9 +140,9 @@ export async function spawnServer(opts?: SpawnServerOptions): Promise<SpawnedSer
           processLines()
         }
       } catch {
-        // Stream closed
+        // 流已关闭
       }
-      // If we get here without resolving, the process exited before printing the URL
+      // 正常走到这里说明进程退出了；如果还没拿到 url，就按启动失败处理
       clearTimeout(timer)
       if (!url) {
         reject(new Error('Server process exited before printing CRAFT_SERVER_URL'))

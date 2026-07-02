@@ -1,12 +1,12 @@
 /**
  * AutomationsListPanel
  *
- * Navigator panel for displaying automations in the 2nd column.
- * Follows the SourcesListPanel pattern with avatar, title, subtitle, badges.
- * Title and Plus button are handled by the shared PanelHeader in AppShell.
+ * 在第二列显示的自动化导航面板。
+ * 遵循 SourcesListPanel 的模式：头像、标题、副标题、徽章。
+ * 标题和加号按钮由 AppShell 里共享的 PanelHeader 处理。
  *
- * Supports CMD/CTRL+click multi-select and Shift+click range select,
- * using the shared EntityRow + createEntitySelection infrastructure.
+ * 支持 CMD/CTRL+点击多选、Shift+点击区间选择，
+ * 使用共享的 EntityRow + createEntitySelection 基础设施。
  */
 
 import * as React from 'react'
@@ -34,7 +34,7 @@ const {
 } = automationSelection
 
 
-/** Tiny inline badge used for event name and action type in automation rows */
+/** 自动化行里用于事件名和动作类型的微型徽章 */
 function MicroBadge({ children, colorClass }: { children: React.ReactNode; colorClass: string }) {
   return (
     <span className={cn('shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded', colorClass)}>
@@ -44,7 +44,7 @@ function MicroBadge({ children, colorClass }: { children: React.ReactNode; color
 }
 
 // ============================================================================
-// Automation Item
+// 单个自动化条目
 // ============================================================================
 
 interface AutomationItemProps {
@@ -81,7 +81,7 @@ function AutomationItem({
   const { t } = useTranslation()
   const handleClick = useCallback((e: React.MouseEvent) => {
     if (e.button === 2) {
-      // Right-click: auto-add to selection if multi-select active
+      // 右键：如果处于多选模式且当前未选中，则自动加入多选
       if (isMultiSelectActive && !isInMultiSelect && onToggleSelect) onToggleSelect()
       return
     }
@@ -191,7 +191,7 @@ export function AutomationsListPanel({
   const { workspaces, activeWorkspaceId } = useAppShellContext()
   const hasOtherWorkspaces = workspaces.length > 1
 
-  // Send to Workspace dialog state
+  // “发送到工作区”弹窗状态
   const [sendDialogOpen, setSendDialogOpen] = useState(false)
   const [sendResourceId, setSendResourceId] = useState<string | null>(null)
   const [sendResourceLabel, setSendResourceLabel] = useState('')
@@ -206,7 +206,7 @@ export function AutomationsListPanel({
 
   const isSearchMode = searchActive && searchQuery.length >= 2
 
-  // Filter automations based on sidebar-driven filter (from route)
+  // 按侧边栏筛选（来自路由）过滤自动化
   const categoryFiltered = React.useMemo(() => {
     const kind = automationFilter?.kind ?? 'all'
     if (kind === 'all') return automations
@@ -216,7 +216,7 @@ export function AutomationsListPanel({
     return automations
   }, [automations, automationFilter?.kind])
 
-  // Further filter by search query (name, summary, event display name)
+  // 再用搜索关键词过滤（匹配名称、摘要、事件显示名）
   const searchFiltered = React.useMemo(() => {
     if (!isSearchMode) return categoryFiltered
     const q = searchQuery.toLowerCase()
@@ -227,7 +227,7 @@ export function AutomationsListPanel({
     )
   }, [categoryFiltered, isSearchMode, searchQuery])
 
-  // Sort: most recently executed first, never-run at the bottom
+  // 排序：最近执行过的排在最前，从未执行的沉底
   const filteredAutomations = React.useMemo(() => {
     return [...searchFiltered].sort((a, b) => {
       if (!a.lastExecutedAt && !b.lastExecutedAt) return 0
@@ -251,7 +251,7 @@ export function AutomationsListPanel({
     selectRange(toIndex, allIds)
   }, [filteredAutomations, selectRange])
 
-  // Empty state
+  // 空状态：没有任何自动化配置
   if (automations.length === 0) {
     return (
       <div className={cn('flex flex-col flex-1 min-h-0', className)}>
@@ -279,7 +279,7 @@ export function AutomationsListPanel({
 
   return (
     <div className={cn('flex flex-col flex-1 min-h-0', className)}>
-      {/* Search header */}
+      {/* 搜索头部 */}
       {searchActive && (
         <SessionSearchHeader
           searchQuery={searchQuery}
@@ -293,7 +293,7 @@ export function AutomationsListPanel({
         />
       )}
 
-      {/* Filtered empty state */}
+      {/* 过滤后为空的状态 */}
       {filteredAutomations.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-1">
           <p className="text-sm text-muted-foreground">
@@ -339,7 +339,7 @@ export function AutomationsListPanel({
         </ScrollArea>
       )}
 
-      {/* Send to Workspace dialog */}
+      {/* 发送到工作区弹窗 */}
       {sendResourceId && (
         <SendResourceToWorkspaceDialog
           open={sendDialogOpen}

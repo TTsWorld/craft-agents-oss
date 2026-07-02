@@ -1,7 +1,9 @@
 import type { SVGProps } from "react"
 
 /**
- * Custom right sidebar toggle icon with rounded design
+ * 自定义圆角右侧面板图标。
+ *
+ * 右侧有一条竖线，表示右侧面板；常用于展开/折叠右侧详情/工具面板。
  */
 export function PanelRightRounded(props: SVGProps<SVGSVGElement>) {
   return (

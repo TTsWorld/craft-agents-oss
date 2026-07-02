@@ -1,3 +1,11 @@
+/**
+ * ActionTypeIcon
+ *
+ * 根据动作类型显示对应的小图标：
+ * - webhook: Webhook 图标
+ * - prompt: 消息气泡图标
+ */
+
 import { MessageSquare, Webhook } from 'lucide-react'
 import { cn } from '@/lib/utils'
 

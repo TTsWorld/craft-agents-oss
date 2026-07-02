@@ -4,6 +4,7 @@ import { Spinner } from "@craft-agent/ui"
 import { CraftAgentsSymbol } from "@/components/icons/CraftAgentsSymbol"
 import { StepFormLayout } from "./primitives"
 
+// 完成步骤的 props 接口
 interface CompletionStepProps {
   status: 'saving' | 'complete'
   spaceName?: string
@@ -11,11 +12,11 @@ interface CompletionStepProps {
 }
 
 /**
- * CompletionStep - Success screen after onboarding
+ * CompletionStep - 引导结束后的成功页
  *
- * Shows:
- * - saving: Spinner while saving configuration
- * - complete: Success message with option to start
+ * 展示两种状态：
+ * - saving：正在保存配置，显示加载动画
+ * - complete：配置完成，显示开始按钮
  */
 export function CompletionStep({
   status,

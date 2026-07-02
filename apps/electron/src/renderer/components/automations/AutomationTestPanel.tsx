@@ -1,8 +1,8 @@
 /**
  * AutomationTestPanel
  *
- * Inline panel displaying test execution results.
- * Uses Info_Alert variants for consistent styling.
+ * 内联面板，显示自动化测试执行结果。
+ * 使用 Info_Alert 的变体保持样式一致。
  */
 
 import { useTranslation } from 'react-i18next'
@@ -20,7 +20,7 @@ export function AutomationTestPanel({ result, className }: AutomationTestPanelPr
   const { t } = useTranslation()
   if (result.state === 'idle') return null
 
-  // Running state
+  // 运行中
   if (result.state === 'running') {
     return (
       <div className={cn('flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground', className)}>
@@ -30,7 +30,7 @@ export function AutomationTestPanel({ result, className }: AutomationTestPanelPr
     )
   }
 
-  // Success state
+  // 成功
   if (result.state === 'success') {
     return (
       <Info_Alert variant="success" icon={<CheckCircle2 className="h-4 w-4" />} className={className}>
@@ -46,7 +46,7 @@ export function AutomationTestPanel({ result, className }: AutomationTestPanelPr
     )
   }
 
-  // Error state
+  // 失败
   if (result.state === 'error') {
     return (
       <Info_Alert variant="error" icon={<XCircle className="h-4 w-4" />} className={className}>

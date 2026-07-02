@@ -1,10 +1,10 @@
 /**
- * EditPopover
+ * EditPopover — 设置编辑浮层。
  *
- * A popover with title, subtitle, and multiline textarea for editing settings.
- * Supports two modes:
- * - Legacy: Opens a new focused window with a chat session
- * - Inline: Executes mini agent inline within the popover using compact ChatDisplay
+ * 一个带标题、副标题和多行输入区的浮层，用于让 Agent 协助编辑配置。
+ * 支持两种模式：
+ * - Legacy：打开新的独立窗口，在新聊天会话中执行
+ * - Inline：在浮层内用紧凑版 ChatDisplay 直接执行 mini agent
  */
 
 import * as React from 'react'
@@ -12,7 +12,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import i18n from 'i18next'
 import { GripHorizontal } from 'lucide-react'
-import { motion, AnimatePresence } from 'motion/react' // motion used for backdrop only
+import { motion, AnimatePresence } from 'motion/react' // 仅用于处理中的全屏遮罩
 import { Popover, PopoverTrigger, PopoverContent } from './popover'
 import { Button } from './button'
 import { cn } from '@/lib/utils'
@@ -22,7 +22,7 @@ import { useActiveWorkspace, useAppShellContext, useSession, usePendingPermissio
 import { useEscapeInterrupt } from '@/context/EscapeInterruptContext'
 import { ChatDisplay } from '../app-shell/ChatDisplay'
 
-/** Rotating placeholder keys for compact mode input - short, action-oriented */
+/** inline 模式输入框的轮播占位提示 key，短句、偏动作导向 */
 const COMPACT_PLACEHOLDER_KEYS = [
   'editPopover.placeholder1',
   'editPopover.placeholder2',
@@ -30,41 +30,37 @@ const COMPACT_PLACEHOLDER_KEYS = [
 ] as const
 
 /**
- * Context passed to the new chat session so the agent knows exactly
- * what is being edited and can execute quickly.
+ * 传给新聊天会话的上下文，让 Agent 知道当前在编辑什么，从而快速执行。
  *
- * Simplified structure: label for display, filePath for the agent to know
- * where to edit, and optional context for additional instructions.
+ * 结构简单：显示用 label、文件路径 filePath、可选的额外说明 context。
  */
 export interface EditContext {
-  /** Human-readable label for badge display and agent context (e.g., "Permissions") */
+  /** 给人看的标签，也作为 Agent 上下文（如 "Permissions"） */
   label: string
-  /** Absolute path to the file being edited */
+  /** 被编辑文件的绝对路径 */
   filePath: string
-  /** Optional additional context/instructions for the agent */
+  /** 给 Agent 的额外说明/指令 */
   context?: string
 }
 
 /* ============================================================================
- * EDIT CONTEXT REGISTRY - SINGLE SOURCE OF TRUTH
+ * 编辑上下文注册表 — 唯一真相源
  * ============================================================================
- * ALL edit contexts MUST be defined here. This is the canonical location.
+ * 所有编辑上下文必须在这里定义，禁止在代码其他地方内联创建 EditContext。
+ * 应使用本文件导出的 getEditConfig()。
  *
- * DO NOT create EditContext objects inline elsewhere in the codebase.
- * Instead, use getEditConfig() exported from this file.
+ * 新增编辑上下文的步骤：
+ * 1. 在 EditContextKey 类型里加 key
+ * 2. 在 EDIT_CONFIGS 里加配置
+ * 3. 通过 getEditConfig(key, location) 使用
  *
- * To add a new edit context:
- * 1. Add a new key to EditContextKey type
- * 2. Add the config to EDIT_CONFIGS
- * 3. Use via getEditConfig(key, location)
- *
- * This pattern ensures:
- * - All edit prompts and examples are reviewed in one place
- * - Consistent messaging to the agent
- * - Easy updates when context format changes
+ * 这样能保证：
+ * - 所有给 Agent 的提示和示例在一个地方审阅
+ * - 与 Agent 的沟通口径一致
+ * - 上下文格式变化时容易统一更新
  * ============================================================================ */
 
-/** Available edit context keys - add new ones here */
+/** 可用的编辑上下文 key — 新增请在这里扩展 */
 export type EditContextKey =
   | 'workspace-permissions'
   | 'default-permissions'
@@ -76,9 +72,9 @@ export type EditContextKey =
   | 'source-tool-permissions'
   | 'preferences-notes'
   | 'add-source'
-  | 'add-source-api'   // Filter-specific: user is viewing APIs
-  | 'add-source-mcp'   // Filter-specific: user is viewing MCPs
-  | 'add-source-local' // Filter-specific: user is viewing Local Folders
+  | 'add-source-api'   // 过滤后场景：用户正在查看 API 列表
+  | 'add-source-mcp'   // 过滤后场景：用户正在查看 MCP 列表
+  | 'add-source-local' // 过滤后场景：用户正在查看本地文件夹列表
   | 'add-skill'
   | 'edit-statuses'
   | 'edit-labels'
@@ -89,35 +85,35 @@ export type EditContextKey =
   | 'automation-config'
 
 /**
- * Full edit configuration including context for agent and example for UI.
- * Returned by getEditConfig() for use in EditPopover.
+ * 完整编辑配置，包含给 Agent 的上下文和给 UI 的示例。
+ * 由 getEditConfig() 返回，供 EditPopover 使用。
  */
 export interface EditConfig {
-  /** Context passed to the agent */
+  /** 给 Agent 的上下文 */
   context: EditContext
-  /** Example text shown in the popover placeholder */
+  /** 显示在浮层占位符里的示例文本 */
   example: string
-  /** Optional custom placeholder text - overrides the default "Describe what you'd like to change" */
+  /** 自定义占位符文本，覆盖默认的“Describe what you'd like to change” */
   overridePlaceholder?: string
-  /** Translated display label for UI (resolved from displayLabelKey, falls back to context.label) */
+  /** UI 显示用的翻译后标签（从 displayLabelKey 解析，回退到 context.label） */
   displayLabel?: string
-  /** i18n key for the display label (translated for UI, keeps context.label in English for agent) */
+  /** 显示标签的 i18n key（UI 显示用中文；context.label 仍保持英文给 Agent） */
   displayLabelKey?: string
-  /** i18n key for the example text */
+  /** 示例文本的 i18n key */
   exampleKey?: string
-  /** i18n key for overridePlaceholder */
+  /** 自定义占位符的 i18n key */
   overridePlaceholderKey?: string
-  /** Model tier hint: 'fast' uses the connection's mini model, 'default' uses the primary model */
+  /** 模型层级提示：fast 用连接的 mini 模型，default 用主模型 */
   model?: 'fast' | 'default'
-  /** Optional system prompt preset for mini agent (e.g., 'mini' for focused edits) */
+  /** mini agent 的系统提示预设（如 'mini' 用于聚焦编辑） */
   systemPromptPreset?: 'default' | 'mini'
-  /** When true, executes inline within the popover instead of opening a new window */
+  /** 为 true 时在浮层内 inline 执行，而不是打开新窗口 */
   inlineExecution?: boolean
 }
 
 /**
- * Registry of all edit configurations.
- * Each entry contains all strings needed for the edit popover and agent context.
+ * 所有编辑配置的注册表。
+ * 每个条目包含浮层展示和 Agent 上下文所需的全部字符串。
  */
 const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
   'workspace-permissions': (location) => ({
@@ -143,7 +139,7 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
   'default-permissions': (location) => ({
     context: {
       label: 'Default Permissions',
-      filePath: location, // location is the full path for default permissions
+      filePath: location, // 这里 location 就是默认权限的完整路径
       context:
         'The user is editing app-level default permissions (~/.craft-agent/permissions/default.json). ' +
         'This file configures Explore mode rules that apply to ALL workspaces. ' +
@@ -161,7 +157,7 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     inlineExecution: true,
   }),
 
-  // Skill editing contexts
+  // 技能编辑上下文
   'skill-instructions': (location) => ({
     context: {
       label: 'Skill Instructions',
@@ -201,7 +197,7 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     inlineExecution: true,
   }),
 
-  // Source editing contexts
+  // Source 编辑上下文
   'source-guide': (location) => ({
     context: {
       label: 'Source Documentation',
@@ -279,11 +275,11 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     inlineExecution: true,
   }),
 
-  // Preferences editing context
+  // 偏好设置编辑上下文
   'preferences-notes': (location) => ({
     context: {
       label: 'Preferences Notes',
-      filePath: location, // location is the full path for preferences
+      filePath: location, // 这里 location 就是偏好设置的完整路径
       context:
         'The user is editing the notes field in their preferences (~/.craft-agent/preferences.json). ' +
         'This is a JSON file. Only modify the "notes" field unless explicitly asked otherwise. ' +
@@ -299,11 +295,11 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     inlineExecution: true,
   }),
 
-  // Add new source/skill contexts - use overridePlaceholder for inspiring, contextual prompts
+  // 新增 Source/Skill 上下文 —— 用 overridePlaceholder 提供场景化提示
   'add-source': (location) => ({
     context: {
       label: 'Add Source',
-      filePath: `${location}/sources/`, // location is the workspace root path
+      filePath: `${location}/sources/`, // 这里 location 是 workspace 根路径
       context:
         'The user wants to add a new source to their workspace. ' +
         'Sources can be MCP servers (HTTP/SSE or stdio), REST APIs, or local filesystems. ' +
@@ -319,7 +315,7 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     overridePlaceholderKey: 'editPopover.placeholder.addSource',
   }),
 
-  // Filter-specific add-source contexts: user is viewing a filtered list and wants to add that type
+  // 按类型过滤后的“新增 Source”上下文：用户正在看某类 Source 列表并想添加该类型
   'add-source-api': (location) => ({
     context: {
       label: 'Add API',
@@ -384,7 +380,7 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
   'add-skill': (location) => ({
     context: {
       label: 'Add Skill',
-      filePath: `${location}/skills/`, // location is the workspace root path
+      filePath: `${location}/skills/`, // 这里 location 是 workspace 根路径
       context:
         'The user wants to add a new skill to their workspace. ' +
         'Skills are specialized instructions with a SKILL.md file containing YAML frontmatter (name, description) and markdown instructions. ' +
@@ -400,7 +396,7 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     overridePlaceholderKey: 'editPopover.placeholder.addSkill',
   }),
 
-  // Status configuration context
+  // 状态配置上下文
   'edit-statuses': (location) => ({
     context: {
       label: 'Status Configuration',
@@ -417,12 +413,12 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     example: 'Add a "Blocked" status',
     displayLabelKey: 'editPopover.label.statusConfiguration',
     exampleKey: 'editPopover.example.editStatuses',
-    model: 'fast',               // Use fast model for quick config edits
-    systemPromptPreset: 'mini',   // Use focused mini prompt
-    inlineExecution: true,        // Execute inline in popover
+    model: 'fast',               // 快速配置编辑用轻量模型
+    systemPromptPreset: 'mini',   // 使用聚焦的 mini 提示
+    inlineExecution: true,        // 在浮层内 inline 执行
   }),
 
-  // Label configuration context
+  // Label 配置上下文
   'edit-labels': (location) => ({
     context: {
       label: 'Label Configuration',
@@ -440,12 +436,12 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     example: 'Add a "Bug" label with red color',
     displayLabelKey: 'editPopover.label.labelConfiguration',
     exampleKey: 'editPopover.example.editLabels',
-    model: 'fast',               // Use fast model for quick config edits
-    systemPromptPreset: 'mini',   // Use focused mini prompt
-    inlineExecution: true,        // Execute inline in popover
+    model: 'fast',               // 快速配置编辑用轻量模型
+    systemPromptPreset: 'mini',   // 使用聚焦的 mini 提示
+    inlineExecution: true,        // 在浮层内 inline 执行
   }),
 
-  // Auto-label rules context (focused on regex patterns within labels)
+  // 自动标签规则上下文（聚焦 label 内的正则规则）
   'edit-auto-rules': (location) => ({
     context: {
       label: 'Auto-Apply Rules',
@@ -462,12 +458,12 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     example: 'Add a rule to detect GitHub issue URLs',
     displayLabelKey: 'editPopover.label.autoApplyRules',
     exampleKey: 'editPopover.example.editAutoRules',
-    model: 'fast',               // Use fast model for quick config edits
-    systemPromptPreset: 'mini',   // Use focused mini prompt
-    inlineExecution: true,        // Execute inline in popover
+    model: 'fast',               // 快速配置编辑用轻量模型
+    systemPromptPreset: 'mini',   // 使用聚焦的 mini 提示
+    inlineExecution: true,        // 在浮层内 inline 执行
   }),
 
-  // Add new label context (triggered from the # menu when no labels match)
+  // 新增 Label 上下文（从 # 菜单无匹配时触发）
   'add-label': (location) => ({
     context: {
       label: 'Add Label',
@@ -486,12 +482,12 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     displayLabelKey: 'editPopover.label.addLabel',
     exampleKey: 'editPopover.example.addLabel',
     overridePlaceholderKey: 'editPopover.placeholder.addLabel',
-    model: 'fast',               // Use fast model for quick config edits
-    systemPromptPreset: 'mini',   // Use focused mini prompt
-    inlineExecution: true,        // Execute inline in popover
+    model: 'fast',               // 快速配置编辑用轻量模型
+    systemPromptPreset: 'mini',   // 使用聚焦的 mini 提示
+    inlineExecution: true,        // 在浮层内 inline 执行
   }),
 
-  // Views configuration context
+  // Views 配置上下文
   'edit-views': (location) => ({
     context: {
       label: 'Views Configuration',
@@ -509,16 +505,16 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     example: 'Add a "Stale" view for sessions inactive > 7 days',
     displayLabelKey: 'editPopover.label.viewsConfiguration',
     exampleKey: 'editPopover.example.editViews',
-    model: 'fast',               // Use fast model for quick config edits
-    systemPromptPreset: 'mini',   // Use focused mini prompt
-    inlineExecution: true,        // Execute inline in popover
+    model: 'fast',               // 快速配置编辑用轻量模型
+    systemPromptPreset: 'mini',   // 使用聚焦的 mini 提示
+    inlineExecution: true,        // 在浮层内 inline 执行
   }),
 
-  // Tool icons configuration context
+  // 工具图标配置上下文
   'edit-tool-icons': (location) => ({
     context: {
       label: 'Tool Icons',
-      filePath: location, // location is the full path to tool-icons.json
+      filePath: location, // 这里 location 是 tool-icons.json 的完整路径
       context:
         'The user wants to edit CLI tool icon mappings. ' +
         'The file is tool-icons.json in ~/.craft-agent/tool-icons/. Icon image files live in the same directory. ' +
@@ -532,9 +528,9 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     example: 'Add an icon for my custom CLI tool "deploy"',
     displayLabelKey: 'editPopover.label.toolIcons',
     exampleKey: 'editPopover.example.editToolIcons',
-    model: 'fast',               // Use fast model for quick config edits
-    systemPromptPreset: 'mini',   // Use focused mini prompt
-    inlineExecution: true,        // Execute inline in popover
+    model: 'fast',               // 快速配置编辑用轻量模型
+    systemPromptPreset: 'mini',   // 使用聚焦的 mini 提示
+    inlineExecution: true,        // 在浮层内 inline 执行
   }),
 
   'automation-config': (location) => ({
@@ -558,10 +554,10 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
 }
 
 /**
- * Get full edit config by key. Returns both context (for agent) and example (for UI).
+ * 根据 key 获取完整编辑配置，同时返回给 Agent 的上下文和给 UI 的示例。
  *
- * @param key - The edit context key
- * @param location - Base path (e.g., workspace root path)
+ * @param key - 编辑上下文 key
+ * @param location - 基础路径（如 workspace 根路径）
  *
  * @example
  * const { context, example } = getEditConfig('workspace-permissions', workspace.rootPath)
@@ -573,8 +569,8 @@ export function getEditConfig(key: EditContextKey, location: string): EditConfig
   }
   const config = factory(location)
 
-  // Resolve i18n keys to translated strings for UI display
-  // context.label remains in English for agent prompts; displayLabel is used in UI
+  // 把 i18n key 解析为翻译后的 UI 字符串
+  // context.label 保持英文给 Agent 作提示；displayLabel 用于界面展示
   return {
     ...config,
     displayLabel: config.displayLabelKey ? i18n.t(config.displayLabelKey) : config.context.label,
@@ -584,107 +580,105 @@ export function getEditConfig(key: EditContextKey, location: string): EditConfig
 }
 
 /**
- * Optional secondary action button displayed on the left side of the popover footer.
- * Styled as plain text with underline on hover - typically used for "Edit File" actions.
+ * 浮层底部左侧可选的次要操作按钮。
+ * 样式为纯文本、hover 下划线，常用于“编辑文件”动作。
  */
 export interface SecondaryAction {
-  /** Button label (e.g., "Edit File") */
+  /** 按钮标签（如 "Edit File"） */
   label: string
-  /** File path to open directly in the system editor (bypasses link interceptor) */
+  /** 直接用系统编辑器打开的文件路径（绕过链接拦截器） */
   filePath: string
 }
 
+/** EditPopover 的 props。 */
 export interface EditPopoverProps {
-  /** Trigger element that opens the popover */
+  /** 触发浮层打开的 React 元素 */
   trigger: React.ReactNode
-  /** Example text shown in placeholder (e.g., "Allow 'make build' command") */
+  /** 显示在占位符里的示例文本（如 "Allow 'make build' command"） */
   example?: string
-  /** Context passed to the new chat session */
+  /** 传给新聊天会话的上下文 */
   context: EditContext
-  /** Permission mode for the new session (default: 'allow-all' / canonical: execute for fast execution) */
+  /** 新会话的权限模式（默认 'allow-all'） */
   permissionMode?: CreateSessionOptions['permissionMode']
   /**
-   * Working directory for the new session:
-   * - 'none' (default): No working directory (session folder only) - best for config edits
-   * - 'user_default': Use workspace's configured default
-   * - Absolute path string: Use this specific path
+   * 新会话的工作目录：
+   * - 'none'（默认）：无工作目录（仅用 session 文件夹），适合配置编辑
+   * - 'user_default': 使用 workspace 配置的默认目录
+   * - 绝对路径字符串：使用指定路径
    */
   workingDirectory?: string | 'user_default' | 'none'
-  /** Model tier hint: 'fast' uses the connection's mini model, 'default' uses the primary model */
+  /** 模型层级提示：fast 用 mini 模型，default 用主模型 */
   model?: 'fast' | 'default'
-  /** System prompt preset for mini agent (e.g., 'mini' for focused edits) */
+  /** mini agent 的系统提示预设（如 'mini' 用于聚焦编辑） */
   systemPromptPreset?: 'default' | 'mini'
-  /** Width of the popover (default: 320) */
+  /** 浮层宽度（默认 320） */
   width?: number
-  /** Additional className for the trigger */
+  /** 触发元素的额外 className */
   triggerClassName?: string
-  /** Side of the popover relative to trigger */
+  /** 浮层相对触发元素的方向 */
   side?: 'top' | 'right' | 'bottom' | 'left'
-  /** Alignment of the popover */
+  /** 浮层对齐方式 */
   align?: 'start' | 'center' | 'end'
-  /** Optional secondary action button on the left (e.g., "Edit File") */
+  /** 底部左侧可选的次要操作按钮（如 "Edit File"） */
   secondaryAction?: SecondaryAction
-  /** Optional custom placeholder - overrides the default "Describe what you'd like to change" */
+  /** 自定义占位符，覆盖默认的“Describe what you'd like to change” */
   overridePlaceholder?: string
-  /** Translated display label for badges and empty state (falls back to context.label) */
+  /** 翻译后的显示标签，用于徽标和空状态（回退到 context.label） */
   displayLabel?: string
   /**
-   * Controlled open state - when provided, the popover becomes controlled.
-   * Use this when opening the popover programmatically (e.g., from context menus).
+   * 受控打开状态。传入后浮层由父组件控制。
+   * 在程序化打开时使用（例如从右键菜单触发）。
    */
   open?: boolean
-  /** Callback when open state changes (for controlled mode) */
+  /** 打开状态变化回调（受控模式用） */
   onOpenChange?: (open: boolean) => void
   /**
-   * When true, prevents the popover from closing when clicking outside.
-   * Useful for context menu triggered popovers where focus management is tricky.
+   * 为 true 时点击外部不关闭浮层。
+   * 适用于右键菜单触发的浮层，焦点管理较复杂时。
    */
   modal?: boolean
   /**
-   * Default value to pre-fill the input with.
-   * Useful when the user types something (e.g., "#Test") and clicks "Add new label" -
-   * the input can be pre-filled with "Add new label Test".
+   * 输入框预填充值。
+   * 例如用户输入 "#Test" 后点“新增 label”，可把输入框预填为 "Add new label Test"。
    */
   defaultValue?: string
   /**
-   * When true, executes the mini agent inline within the popover instead of
-   * opening a new window. Best for quick config edits with mini agents.
+   * 为 true 时 mini agent 在浮层内 inline 执行，而不是打开新窗口。
+   * 适合用 mini agent 做快速配置编辑。
    */
   inlineExecution?: boolean
 }
 
 /**
- * Result from buildEditPrompt containing both the full prompt and badge metadata
- * for hiding the XML context in the UI while keeping it in the actual message.
+ * buildEditPrompt 的返回结果，包含完整提示和用于隐藏 XML 上下文的 badge 元数据。
  */
 interface EditPromptResult {
-  /** Full prompt including XML metadata and user instructions */
+  /** 包含 XML 元数据和用户指令的完整提示 */
   prompt: string
-  /** Badge marking the hidden metadata section */
+  /** 标记隐藏元数据区域的 badge */
   badges: ContentBadge[]
 }
 
 /**
- * Build the prompt that will be sent to the agent.
- * Uses XML-like tags for clear structure.
+ * 构建要发送给 Agent 的提示。
+ * 使用类 XML 标签让结构清晰。
  *
- * Returns both the prompt and a context badge that marks the metadata section
- * so it can be hidden in the UI while still being sent to the agent.
+ * 同时返回一个 context badge，把元数据区域在 UI 中折叠隐藏，但仍会发给 Agent。
  *
- * @param context - The edit context with label, filePath, and optional context
- * @param userInstructions - User's instructions (can be empty string for pre-filled context only)
+ * @param context - 编辑上下文，含 label、filePath、可选 context
+ * @param userInstructions - 用户指令（可传空字符串，仅预填充上下文）
  *
  * @example
- * // With user instructions (for EditPopover submit)
+ * // 用户提交时使用
  * const { prompt, badges } = buildEditPrompt(context, "Add a Blocked status")
  *
- * // Without user instructions (for context menu - opens window with context pre-filled)
+ * // 右键菜单打开窗口、仅预填充上下文时使用
  * const { prompt, badges } = buildEditPrompt(context, "")
  */
 export function buildEditPrompt(context: EditContext, userInstructions: string, displayLabel?: string): EditPromptResult {
-  // Build the metadata section (will be hidden by badge)
-  // Simple structure: label (for display/context), file (where to edit), optional context
-  // context.label stays in English for the agent; displayLabel is translated for UI
+  // 构建元数据段（会被 badge 折叠隐藏）
+  // 结构简单：label（显示/上下文）、file（编辑目标）、可选 context
+  // context.label 保持英文给 Agent；displayLabel 是翻译后的 UI 显示
   const metadataSection = `<edit_request>
 <label>${context.label}</label>
 <file>${context.filePath}</file>
@@ -692,13 +686,13 @@ ${context.context ? `<context>${context.context}</context>\n` : ''}</edit_reques
 
 `
 
-  // Badge display: use translated displayLabel if available, else English label
+  // badge 显示标签：优先用翻译后的 displayLabel，否则用英文 label
   const collapsedLabel = displayLabel || context.label
 
-  // Full prompt = metadata + user instructions
+  // 完整提示 = 元数据 + 用户指令
   const prompt = metadataSection + userInstructions
 
-  // Create badge marking the metadata section (start=0, end=metadata length)
+  // 创建标记元数据段的 badge（start=0，end=元数据长度）
   const badge: ContentBadge = {
     type: 'context',
     label: collapsedLabel,
@@ -711,15 +705,16 @@ ${context.context ? `<context>${context.context}</context>\n` : ''}</edit_reques
   return { prompt, badges: [badge] }
 }
 
+/** 编辑浮层组件 */
 export function EditPopover({
   trigger,
   example,
   context,
   permissionMode = 'allow-all',
-  workingDirectory = 'none', // Default to session folder for config edits
+  workingDirectory = 'none', // 配置编辑默认只用 session 文件夹
   model,
   systemPromptPreset,
-  width = 400, // Default 400px for compact chat embedding
+  width = 400, // 嵌入紧凑聊天默认 400px
   triggerClassName,
   side = 'bottom',
   align = 'end',
@@ -736,8 +731,8 @@ export function EditPopover({
   const { onOpenFile, onOpenUrl } = usePlatform()
   const workspace = useActiveWorkspace()
 
-  // Build placeholder: for inline execution use rotating array, otherwise build descriptive string
-  // overridePlaceholder allows contexts like add-source/add-skill to say "add" instead of "change"
+  // 构建占位提示：inline 模式用轮播数组，否则用描述性字符串
+  // overridePlaceholder 让 add-source/add-skill 等上下文显示“添加”而不是“修改”
   const placeholder = inlineExecution
     ? COMPACT_PLACEHOLDER_KEYS.map(key => t(key))
     : (() => {
@@ -747,9 +742,9 @@ export function EditPopover({
           : basePlaceholder
       })()
 
-  // Support both controlled and uncontrolled modes:
-  // - Uncontrolled (default): internal state manages open/close
-  // - Controlled: parent manages state via open/onOpenChange props
+  // 同时支持受控和非受控模式：
+  // - 非受控（默认）：内部 state 管理开关
+  // - 受控：父组件通过 open/onOpenChange 管理
   const [internalOpen, setInternalOpen] = useState(false)
   const isControlled = controlledOpen !== undefined
   const open = isControlled ? controlledOpen : internalOpen
@@ -761,25 +756,25 @@ export function EditPopover({
     }
   }
 
-  // Use App context for session management (same code path as main chat)
+  // 使用 App 上下文管理会话（与主聊天同一条代码路径）
   const { onCreateSession, onSendMessage, onRespondToPermission, onRespondToCredential } = useAppShellContext()
 
-  // Session ID for inline execution (created on first message)
+  // inline 执行用的会话 ID（在第一条消息时创建）
   const [inlineSessionId, setInlineSessionId] = useState<string | null>(null)
 
-  // Get session data from Jotai atom (same as main chat - includes optimistic updates)
-  // Pass empty string when no session yet - atom returns null for unknown IDs
+  // 从 Jotai atom 读取会话数据（与主聊天一致，包含乐观更新）
+  // 还没有会话时传空字符串，atom 对未知 ID 返回 null
   const inlineSession = useSession(inlineSessionId || '')
 
-  // Pending permission/credential requests for inline session (same flow as main chat)
+  // inline 会话的待处理权限/凭据请求（与主聊天流程一致）
   const pendingPermission = usePendingPermission(inlineSessionId || '')
   const pendingCredential = usePendingCredential(inlineSessionId || '')
 
-  // Model state for ChatDisplay (starts with prop value, can be changed by user)
+  // ChatDisplay 的模型状态（初始用 prop，用户可改）
   const [currentModel, setCurrentModel] = useState(model || 'haiku')
 
-  // Create a stub session for ChatDisplay when no real session exists yet
-  // This allows showing the input before the first message is sent
+  // 还没有真实会话时，给 ChatDisplay 一个占位会话，
+  // 这样第一条消息发出前就能显示输入框。
   const stubSession = useMemo((): Session => ({
     id: 'pending',
     workspaceId: workspace?.id || '',
@@ -789,71 +784,68 @@ export function EditPopover({
     lastMessageAt: Date.now(),
   }), [workspace?.id, workspace?.name])
 
-  // Use real session if available, otherwise stub
+  // 有真实会话用真实会话，否则用占位
   const displaySession = inlineSession || stubSession
 
-  // Track processing state for close prevention and backdrop
+  // 跟踪处理中状态，用于阻止关闭和显示遮罩
   const isProcessing = displaySession.isProcessing
 
-  // Use existing escape interrupt context for double-ESC flow
-  // This shows the "Press Esc again to interrupt" overlay in the input field
+  // 使用已有的 ESC 中断上下文实现“按两次 Esc 中断”流程
+  // 会在输入框显示“再按一次 Esc 中断”的覆盖提示
   const { handleEscapePress } = useEscapeInterrupt()
 
-  // Reset inline session when popover closes
+  // 浮层关闭时重置 inline 会话
   const resetInlineSession = useCallback(() => {
     setInlineSessionId(null)
   }, [])
 
-  // Stop/cancel generation for the inline session
+  // 中断 inline 会话的生成
   const handleStopGeneration = useCallback(() => {
     if (inlineSessionId && isProcessing) {
       window.electronAPI.cancelProcessing(inlineSessionId, false)
     }
   }, [inlineSessionId, isProcessing])
 
-  // Handle ESC key during generation:
-  // Uses EscapeInterruptContext for double-ESC flow (shows overlay, then interrupts)
+  // 生成过程中处理 ESC 键：
+  // 借助 EscapeInterruptContext 实现双击 ESC（第一次显示提示，第二次中断）
   const handleEscapeKeyDown = useCallback((e: KeyboardEvent) => {
     if (!isProcessing) {
-      // Not processing - allow normal close behavior
+      // 不在生成中，允许默认关闭行为
       return
     }
 
-    // Prevent default close behavior during processing
+    // 生成中阻止默认关闭
     e.preventDefault()
 
-    // Use context's double-ESC handler
-    // Returns true if this is the second press (should interrupt)
+    // 上下文的 ESC 处理器返回 true 表示是第二次按下，应中断
     const shouldInterrupt = handleEscapePress()
     if (shouldInterrupt) {
       handleStopGeneration()
     }
   }, [isProcessing, handleEscapePress, handleStopGeneration])
 
-  // Handle click outside during generation:
-  // Show the ESC overlay via context, prevent closing
+  // 生成过程中点击外部：
+  // 阻止关闭，并通过上下文显示 ESC 提示，告诉用户如何取消
   const handleInteractOutside = useCallback((e: Event) => {
     if (isProcessing) {
-      // Prevent close during processing
       e.preventDefault()
-      // Show the ESC overlay so user knows how to cancel
       handleEscapePress()
     }
   }, [isProcessing, handleEscapePress])
 
-  // Drag state for movable popover
+  // 可拖拽浮层的状态
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
   const dragStartRef = useRef({ x: 0, y: 0, offsetX: 0, offsetY: 0 })
   const dragOffsetRef = useRef({ x: 0, y: 0 })
   const popoverRef = useRef<HTMLDivElement>(null)
 
-  // Resize state for dynamic sizing
+  // 动态调整尺寸的状态
   const [containerSize, setContainerSize] = useState({ width: width || 400, height: 480 })
   const [isResizing, setIsResizing] = useState(false)
   const resizeStartRef = useRef({ x: 0, y: 0, width: 0, height: 0 })
 
-  // Reset drag position and size when popover opens
+  // 浮层打开时重置拖拽位置和尺寸
   useEffect(() => {
     if (open) {
       dragOffsetRef.current = { x: 0, y: 0 }
@@ -862,7 +854,7 @@ export function EditPopover({
     }
   }, [open, width])
 
-  // Handle drag events
+  // 拖拽事件处理
   const handleDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     setIsDragging(true)
@@ -882,7 +874,7 @@ export function EditPopover({
       if (!rect) return
 
       const MARGIN = 20
-      const MARGIN_TOP = 50 // Keep below header (chevrons, menu button)
+      const MARGIN_TOP = 50 // 保持在顶部标题栏（回退按钮、菜单按钮）下方
       const curr = dragOffsetRef.current
       const baseX = rect.left - curr.x
       const baseY = rect.top - curr.y
@@ -909,7 +901,7 @@ export function EditPopover({
     }
   }, [isDragging])
 
-  // Resize handlers
+  // 调整尺寸事件处理
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
@@ -946,7 +938,7 @@ export function EditPopover({
     }
   }, [isResizing])
 
-  // Reset state when popover opens
+  // 浮层打开时重置状态
   useEffect(() => {
     if (open) {
       setCurrentModel(model || 'haiku')
@@ -954,12 +946,12 @@ export function EditPopover({
     }
   }, [open, model, resetInlineSession])
 
-  // Handle sending message from ChatDisplay (inline mode)
-  // Creates hidden session on first message, then uses App context for sending
+  // ChatDisplay 发送消息处理（inline 模式）
+  // 第一条消息时创建隐藏会话，之后用 App 上下文发送
   const handleInlineSendMessage = useCallback(async (message: string) => {
     const { prompt, badges } = buildEditPrompt(context, message, displayLabel)
 
-    // Create session on first message
+    // 第一条消息时创建会话
     let sessionId = inlineSessionId
     if (!sessionId && workspace?.id) {
       const createOptions: CreateSessionOptions = {
@@ -967,21 +959,21 @@ export function EditPopover({
         systemPromptPreset: systemPromptPreset || 'mini',
         permissionMode,
         workingDirectory,
-        hidden: true, // Hidden sessions use same App code path but don't appear in list
+        hidden: true, // 隐藏会话走同一套 App 代码，但不出现在列表中
       }
       const newSession = await onCreateSession(workspace.id, createOptions)
       sessionId = newSession.id
       setInlineSessionId(sessionId)
     }
 
-    // Send message via App context (includes optimistic user message update)
-    // Pass badges to hide the <edit_request> XML metadata in the user message bubble
+    // 通过 App 上下文发送消息（包含乐观的用户消息更新）
+    // 传入 badges 把用户气泡里的 <edit_request> XML 元数据折叠隐藏
     if (sessionId) {
       onSendMessage(sessionId, prompt, undefined, undefined, badges)
     }
   }, [context, displayLabel, inlineSessionId, workspace?.id, model, systemPromptPreset, permissionMode, workingDirectory, onCreateSession, onSendMessage])
 
-  // Legacy mode: navigates to chat in the same window
+  // Legacy 模式：在当前窗口打开聊天
   const handleLegacySendMessage = useCallback((message: string) => {
     const { prompt, badges } = buildEditPrompt(context, message, displayLabel)
     const encodedInput = encodeURIComponent(prompt)
@@ -990,7 +982,7 @@ export function EditPopover({
     const workdirParam = workingDirectory ? `&workdir=${encodeURIComponent(workingDirectory)}` : ''
     const modelParam = model ? `&model=${encodeURIComponent(model)}` : ''
     const systemPromptParam = systemPromptPreset ? `&systemPrompt=${encodeURIComponent(systemPromptPreset)}` : ''
-    // Navigate in same window by omitting window=focused parameter
+    // 省略 window=focused 参数，在当前窗口打开
     const url = `craftagents://action/new-session?input=${encodedInput}&send=true&mode=${permissionMode}&badges=${encodedBadges}${workdirParam}${modelParam}${systemPromptParam}`
 
     window.electronAPI.openUrl(url)
@@ -999,7 +991,7 @@ export function EditPopover({
 
   return (
     <>
-      {/* Full-screen backdrop - rendered BEHIND the popover during processing */}
+      {/* 处理中全屏遮罩 — 渲染在浮层后方 */}
       <AnimatePresence>
         {open && isProcessing && (
           <motion.div
@@ -1031,7 +1023,7 @@ export function EditPopover({
             onInteractOutside={handleInteractOutside}
             onEscapeKeyDown={handleEscapeKeyDown}
           >
-            {/* Container */}
+            {/* 浮层容器 */}
             <div
               ref={popoverRef}
               className="relative bg-foreground-2 overflow-hidden w-full h-full shadow-modal-small"
@@ -1040,7 +1032,7 @@ export function EditPopover({
                 borderRadius: 16,
               }}
             >
-              {/* Drag handle - floating overlay */}
+              {/* 拖拽把手 — 悬浮覆盖层 */}
               <div
                 onMouseDown={handleDragStart}
                 className={cn(
@@ -1051,7 +1043,7 @@ export function EditPopover({
                 <GripHorizontal className="w-4 h-4 text-muted-foreground/30" />
               </div>
 
-              {/* Content area - always uses compact ChatDisplay */}
+              {/* 内容区 — 始终使用紧凑版 ChatDisplay */}
               <div className="flex-1 flex flex-col bg-foreground-2" style={{ height: '100%' }}>
                 <ChatDisplay
                   session={displaySession}
@@ -1071,7 +1063,7 @@ export function EditPopover({
               </div>
             </div>
 
-            {/* Bottom-right resize handle - outside overflow-hidden container */}
+            {/* 右下角调整大小把手 — 放在 overflow-hidden 容器外部 */}
             <div
               onMouseDown={handleResizeStart}
               className="absolute -bottom-2 -right-2 w-6 h-6 cursor-nwse-resize pointer-events-auto z-50"
@@ -1084,11 +1076,10 @@ export function EditPopover({
 }
 
 /**
- * Standard Edit button styled for use with EditPopover.
- * Use this as the trigger prop for consistent styling across the app.
+ * 与 EditPopover 配套的标准编辑按钮。
+ * 推荐作为 trigger prop 使用，保持应用内样式一致。
  *
- * Uses forwardRef to properly work with Radix's asChild pattern,
- * which requires the child to accept ref and spread props.
+ * 使用 forwardRef，以便配合 Radix 的 asChild 模式（子元素需要接受 ref 并展开 props）。
  *
  * @example
  * <EditPopover
@@ -1106,7 +1097,7 @@ export const EditButton = React.forwardRef<
       ref={ref}
       variant="ghost"
       size="sm"
-      // Merge our base styles with any className from asChild props
+      // 把基础样式与 asChild 传入的 className 合并
       className={cn("h-8 px-3 rounded-[6px] bg-background shadow-minimal text-foreground/70 hover:text-foreground", className)}
       {...props}
     >

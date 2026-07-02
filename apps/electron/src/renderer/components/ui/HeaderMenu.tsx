@@ -1,9 +1,8 @@
 /**
- * HeaderMenu
+ * HeaderMenu — 面板头部“…”下拉菜单。
  *
- * A "..." dropdown menu for panel headers with built-in Open in New Window action.
- * Pass page-specific menu items as children; they appear above the separator.
- * Optionally includes a "Learn More" link to documentation when helpFeature is provided.
+ * 内置“在新窗口打开”和可选的“了解更多”文档链接。
+ * 页面相关的菜单项通过 children 传入，会渲染在分隔线上方。
  */
 
 import * as React from 'react'
@@ -22,14 +21,15 @@ import {
 import { type DocFeature, getDocUrl } from '@craft-agent/shared/docs/doc-links'
 
 interface HeaderMenuProps {
-  /** Route string for Open in New Window action */
+  /** 路由字符串，用于“在新窗口打开” */
   route: string
-  /** Page-specific menu items (rendered before Open in New Window) */
+  /** 页面专属菜单项（渲染在“在新窗口打开”上方） */
   children?: React.ReactNode
-  /** Documentation feature - when provided, adds a "Learn More" link to docs */
+  /** 文档功能 key，传了会额外渲染“了解更多”入口 */
   helpFeature?: DocFeature
 }
 
+/** 面板头部菜单 */
 export function HeaderMenu({ route, children, helpFeature }: HeaderMenuProps) {
   const { t } = useTranslation()
   const handleOpenInNewWindow = async () => {

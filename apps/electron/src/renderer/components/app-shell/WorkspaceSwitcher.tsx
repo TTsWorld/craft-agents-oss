@@ -1,3 +1,10 @@
+/**
+ * WorkspaceSwitcher - 工作区切换下拉菜单。
+ *
+ * 支持两种触发器变体：
+ * - sidebar：左下角的工作区选择器
+ * - topbar：顶部栏中央的工作区选择器
+ */
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 import { useState, useCallback, useRef } from "react"
@@ -31,17 +38,11 @@ interface WorkspaceSwitcherProps {
   onSelect: (workspaceId: string, openInNewWindow?: boolean) => void | Promise<void>
   onWorkspaceCreated?: (workspace: Workspace) => void
   onWorkspaceRemoved?: () => void
-  /** workspaceId -> has unread */
+  /** workspaceId → 是否有未读 */
   workspaceUnreadMap?: Record<string, boolean>
 }
 
-/**
- * WorkspaceSwitcher - Dropdown to select active workspace.
- *
- * Supports two trigger variants:
- * - sidebar: bottom-left selector trigger
- * - topbar: center top-bar selector trigger
- */
+/** WorkspaceSwitcher - 选择当前活动工作区的下拉菜单 */
 export function WorkspaceSwitcher({
   variant = 'sidebar',
   isCollapsed = false,
@@ -61,13 +62,13 @@ export function WorkspaceSwitcher({
   const connectionState = useTransportConnectionState()
   const isRemote = connectionState?.mode === 'remote'
 
-  // Health check results for non-active remote workspaces (checked on dropdown open)
+  // 非活动远程工作区的健康检查结果（下拉打开时检测）
   const [remoteHealthMap, setRemoteHealthMap] = useState<Map<string, 'ok' | 'error' | 'checking'>>(new Map())
   const healthCheckAbort = useRef<AbortController | null>(null)
 
-  /** Check connectivity for all non-active remote workspaces when dropdown opens. */
+  /** 下拉打开时检查所有非活动的远程工作区连通性 */
   const checkRemoteHealth = useCallback(() => {
-    // Cancel any in-flight checks
+    // 取消进行中的检测
     healthCheckAbort.current?.abort()
     const abort = new AbortController()
     healthCheckAbort.current = abort
@@ -75,14 +76,14 @@ export function WorkspaceSwitcher({
     const remoteWorkspaces = workspaces.filter(w => w.remoteServer && w.id !== activeWorkspaceId)
     if (remoteWorkspaces.length === 0) return
 
-    // Mark all as checking
+    // 先把所有远程工作区标记为检测中
     setRemoteHealthMap(prev => {
       const next = new Map(prev)
       for (const ws of remoteWorkspaces) next.set(ws.id, 'checking')
       return next
     })
 
-    // Fire parallel checks
+    // 并行发起连通性检测
     for (const ws of remoteWorkspaces) {
       window.electronAPI.testRemoteConnection(ws.remoteServer!.url, ws.remoteServer!.token)
         .then(result => {
@@ -96,7 +97,7 @@ export function WorkspaceSwitcher({
     }
   }, [workspaces, activeWorkspaceId])
 
-  /** Tooltip for disconnected remote workspaces — shows error kind. */
+  /** 断开的远程工作区 tooltip：根据错误类型显示不同文案 */
   const getDisconnectTooltip = (workspaceId: string): string => {
     if (workspaceId === activeWorkspaceId && connectionState?.lastError) {
       const { kind } = connectionState.lastError
@@ -107,15 +108,15 @@ export function WorkspaceSwitcher({
     return t('toast.disconnected')
   }
 
-  /** True when we know a remote workspace is unreachable. */
+  /** 判断某个远程工作区是否不可达 */
   const isRemoteDisconnected = (workspaceId: string) => {
-    // Active workspace: use live transport state
+    // 活动工作区：使用实时传输状态
     if (workspaceId === activeWorkspaceId) {
       if (!isRemote || !connectionState) return false
       const { status } = connectionState
       return status !== 'connected' && status !== 'connecting' && status !== 'idle'
     }
-    // Non-active: use health check result
+    // 非活动工作区：使用健康检查结果
     return remoteHealthMap.get(workspaceId) === 'error'
   }
 
@@ -172,7 +173,7 @@ export function WorkspaceSwitcher({
 
   return (
     <>
-      {/* Full-screen workspace creation overlay */}
+      {/* 全屏工作区创建覆盖层 */}
       <AnimatePresence>
         {showCreationScreen && (
           <WorkspaceCreationScreen
@@ -287,7 +288,7 @@ export function WorkspaceSwitcher({
                   {workspaceUnreadMap?.[workspace.id] && <span className="h-2 w-2 rounded-full bg-accent shrink-0" />}
                 </div>
                 <div className="flex items-center gap-1">
-                  {/* Action buttons - only visible on hover for non-active workspaces */}
+                  {/* 操作按钮：仅对非活动工作区悬停显示 */}
                   {activeWorkspaceId !== workspace.id && (
                     <button
                       data-touch-reveal="true"
@@ -322,7 +323,7 @@ export function WorkspaceSwitcher({
             )
           })}
 
-          {/* Separator and New Workspace option */}
+          {/* 分隔线与新建工作区选项 */}
           <StyledDropdownMenuSeparator />
           <StyledDropdownMenuItem
             onClick={handleNewWorkspace}

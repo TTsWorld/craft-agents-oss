@@ -1,12 +1,12 @@
 /**
- * BatchAutomationMenu - Context menu content for batch operations on multi-selected automations.
+ * BatchAutomationMenu - 多选自动化后的批量操作右键/下拉菜单内容。
  *
- * Self-contained component that uses hooks to access selection state, automation metadata,
- * and mutation callbacks. Renders polymorphic menu items via useMenuComponents() so it
- * works in both DropdownMenu and ContextMenu scenarios.
+ * 自包含组件：通过 hook 读取多选状态、自动化元数据和 IPC 回调。
+ * 使用 useMenuComponents() 渲染多态菜单项，因此既能用于 DropdownMenu，
+ * 也能用于 ContextMenu。
  *
- * Mirrors the BatchSessionMenu pattern with automation-specific actions:
- * Enable/Disable All and Delete.
+ * 与 BatchSessionMenu 模式保持一致，提供自动化专属的批量操作：
+ * 全部启用/禁用、批量删除。
  */
 
 import { useCallback, useMemo } from 'react'
@@ -36,19 +36,19 @@ export function BatchAutomationMenu() {
     activeWorkspaceId,
   } = useAppShellContext()
 
-  // Resolve selected automations metadata
+  // 根据选中 ID 解析出对应的自动化元数据
   const selectedAutomations = useMemo(() => {
     return [...selectedIds]
       .map(id => automations.find(a => a.id === id))
       .filter((a): a is NonNullable<typeof a> => a != null)
   }, [selectedIds, automations])
 
-  // Check if all selected are enabled
+  // 判断当前选中的自动化是否全部已启用
   const allEnabled = useMemo(() => {
     return selectedAutomations.length > 0 && selectedAutomations.every(a => a.enabled)
   }, [selectedAutomations])
 
-  // Batch toggle — sequential IPC to avoid read-modify-write race on automations.json
+  // 批量启用/禁用：顺序调用 IPC，避免 automations.json 的读写竞争
   const handleBatchToggle = useCallback(async () => {
     if (!activeWorkspaceId) return
     const targetEnabled = !allEnabled
@@ -68,7 +68,7 @@ export function BatchAutomationMenu() {
     )
   }, [activeWorkspaceId, selectedAutomations, allEnabled, clearMultiSelect, t])
 
-  // Batch delete — sequential IPC in reverse matcherIndex order so earlier indices stay valid
+  // 批量删除：按 matcherIndex 降序顺序删除，这样先删后面的不会导致前面索引失效
   const handleBatchDelete = useCallback(async () => {
     if (!activeWorkspaceId) return
     const count = selectedIds.size
@@ -88,13 +88,13 @@ export function BatchAutomationMenu() {
 
   return (
     <>
-      {/* Header showing selection count */}
+      {/* 顶部显示已选中数量 */}
       <div className="px-2 py-1.5 text-xs text-muted-foreground font-medium">
         {t('automations.batchSelected', { count })}
       </div>
       <Separator />
 
-      {/* Enable/Disable All */}
+      {/* 启用/禁用全部 */}
       <MenuItem onClick={handleBatchToggle}>
         {allEnabled ? (
           <PowerOff className="h-3.5 w-3.5" />
@@ -106,7 +106,7 @@ export function BatchAutomationMenu() {
 
       <Separator />
 
-      {/* Delete */}
+      {/* 删除 */}
       {activeWorkspaceId && (
         <MenuItem onClick={handleBatchDelete} variant="destructive">
           <Trash2 className="h-3.5 w-3.5" />

@@ -1,14 +1,13 @@
 /**
  * LabelsSettingsPage
  *
- * Displays workspace label configuration in two data tables:
- * 1. Label Hierarchy - tree table with expand/collapse showing all labels
- * 2. Auto-Apply Rules - flat table showing all regex rules across labels
+ * 在工作区中展示标签配置，包含两张数据表：
+ * 1. 标签层级（Label Hierarchy）—— 可展开/折叠的树形表，展示全部标签
+ * 2. 自动应用规则（Auto-Apply Rules）—— 平铺表格，展示跨标签的所有正则规则
  *
- * Each section has an Edit button that opens an EditPopover for AI-assisted editing
- * of the underlying labels/config.json file.
+ * 每个区块都提供“编辑”按钮，点击后弹出 EditPopover，可借助 AI 编辑底层 labels/config.json 文件。
  *
- * Data is loaded via the useLabels hook which subscribes to live config changes.
+ * 数据通过 useLabels Hook 加载，并订阅实时配置变更。
  */
 
 import * as React from 'react'
@@ -32,23 +31,25 @@ import {
 import { routes } from '@/lib/navigate'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
 
+/** 页面元数据：设置导航中的“标签”页面 */
 export const meta: DetailsPageMeta = {
   navigator: 'settings',
   slug: 'labels',
 }
 
+/** 标签设置页面 */
 export default function LabelsSettingsPage() {
   const { t } = useTranslation()
   const { activeWorkspaceId } = useAppShellContext()
   const activeWorkspace = useActiveWorkspace()
   const { labels, isLoading } = useLabels(activeWorkspaceId)
 
-  // Resolve edit configs using the workspace root path
+  // 根据当前工作区根路径生成 EditPopover 配置
   const rootPath = activeWorkspace?.rootPath || ''
   const labelsEditConfig = getEditConfig('edit-labels', rootPath)
   const autoRulesEditConfig = getEditConfig('edit-auto-rules', rootPath)
 
-  // Secondary action: open the labels config file directly in system editor
+  // 辅助操作：在系统编辑器中直接打开标签配置文件
   const editFileAction = rootPath ? {
     label: t("common.editFile"),
     filePath: `${rootPath}/labels/config.json`,
@@ -67,7 +68,7 @@ export default function LabelsSettingsPage() {
                 </div>
               ) : (
                 <>
-                  {/* About Section */}
+                  {/* 关于标签区块 */}
                   <SettingsSection title={t("settings.labels.aboutLabels")}>
                     <SettingsCard className="px-4 py-3.5">
                       <div className="text-sm text-muted-foreground leading-relaxed space-y-1.5">
@@ -93,7 +94,7 @@ export default function LabelsSettingsPage() {
                     </SettingsCard>
                   </SettingsSection>
 
-                  {/* Label Hierarchy Section */}
+                  {/* 标签层级区块 */}
                   <SettingsSection
                     title={t("settings.labels.labelHierarchy")}
                     description={t("settings.labels.labelHierarchyDesc")}
@@ -129,7 +130,7 @@ export default function LabelsSettingsPage() {
                     </SettingsCard>
                   </SettingsSection>
 
-                  {/* Auto-Apply Rules Section */}
+                  {/* 自动应用规则区块 */}
                   <SettingsSection
                     title={t("settings.labels.autoApplyRules")}
                     description={t("settings.labels.autoApplyRulesDesc")}

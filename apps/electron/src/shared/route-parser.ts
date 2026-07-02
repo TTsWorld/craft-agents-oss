@@ -1,12 +1,11 @@
 /**
- * Route Parser
+ * Route Parser —— 路由解析器。
  *
- * Parses route strings back into structured navigation objects.
- * Used by both the navigate() function and deep link handler.
+ * 将路由字符串解析为结构化的导航对象，供 navigate() 与深链接处理器使用。
  *
- * Supports route formats:
- * - Action: action/{name}[/{id}] - Trigger side effects
- * - Compound: {filter}[/session/{sessionId}] - View routes for full navigation state
+ * 支持的路由格式：
+ * - Action: action/{name}[/{id}] —— 触发副作用
+ * - Compound: {filter}[/session/{sessionId}] —— 表达完整导航状态的组合视图路由
  */
 
 import type {
@@ -19,11 +18,13 @@ import type {
 import { isValidSettingsSubpage, type SettingsSubpage } from './settings-registry'
 
 // =============================================================================
-// Route Types
+// 路由类型
 // =============================================================================
 
+// 路由大类：'action' 表示动作路由，'view' 表示视图路由
 export type RouteType = 'action' | 'view'
 
+// 解析后的简单路由对象
 export interface ParsedRoute {
   type: RouteType
   name: string
@@ -32,23 +33,24 @@ export interface ParsedRoute {
 }
 
 // =============================================================================
-// Compound Route Types (new format)
+// 组合式路由类型（新格式）
 // =============================================================================
 
+// 导航器类型：分别对应 sessions、sources、skills、automations、projects、settings 六大模块
 export type NavigatorType = 'sessions' | 'sources' | 'skills' | 'automations' | 'projects' | 'settings'
 
 export interface ParsedCompoundRoute {
-  /** The navigator type */
+  // 导航器类型
   navigator: NavigatorType
-  /** Session filter (only for sessions navigator) */
+  // sessions 导航器下的筛选条件（仅当 navigator 为 sessions 时有效）
   sessionFilter?: SessionFilter
-  /** Source filter (only for sources navigator) */
+  // sources 导航器下的筛选条件（仅当 navigator 为 sources 时有效）
   sourceFilter?: SourceFilter
-  /** Automation filter (only for automations navigator) */
+  // automations 导航器下的筛选条件（仅当 navigator 为 automations 时有效）
   automationFilter?: AutomationFilter
-  /** Sessions presentation mode (only for sessions navigator). 'board' = Kanban view. */
+  /** 会话展示模式（仅用于 sessions 导航器）。'board' = 看板视图。 */
   viewMode?: 'list' | 'board'
-  /** Details page info (null for empty state) */
+  /** 详情页信息（null 表示空状态，只展示列表） */
   details: {
     type: string
     id: string
@@ -56,18 +58,18 @@ export interface ParsedCompoundRoute {
 }
 
 // =============================================================================
-// Compound Route Parsing
+// 组合式路由解析
 // =============================================================================
 
-/**
- * Known prefixes that indicate a compound route
- */
+// 表示组合式路由的前缀集合
 const COMPOUND_ROUTE_PREFIXES = [
   'allSessions', 'flagged', 'archived', 'state', 'label', 'view', 'board', 'sources', 'skills', 'automations', 'projects', 'settings'
 ]
 
 /**
- * Check if a route is a compound route (new format)
+ * 判断一段路由是否属于组合式路由（新格式）。
+ *
+ * 通过取第一个 segment 并检查是否在已知前缀列表中实现。
  */
 export function isCompoundRoute(route: string): boolean {
   const firstSegment = route.split('?')[0].split('/')[0]
@@ -75,9 +77,9 @@ export function isCompoundRoute(route: string): boolean {
 }
 
 /**
- * Parse a compound route into structured navigation
+ * 将组合式路由字符串解析为结构化的导航对象。
  *
- * Examples:
+ * 示例：
  *   'allSessions' -> { navigator: 'sessions', sessionFilter: { kind: 'allSessions' }, details: null }
  *   'allSessions/session/abc123' -> { navigator: 'sessions', sessionFilter: { kind: 'allSessions' }, details: { type: 'session', id: 'abc123' } }
  *   'flagged/session/abc123' -> { navigator: 'sessions', sessionFilter: { kind: 'flagged' }, details: { type: 'session', id: 'abc123' } }
@@ -87,7 +89,7 @@ export function isCompoundRoute(route: string): boolean {
  *   'sources/local' -> { navigator: 'sources', sourceFilter: { kind: 'type', sourceType: 'local' }, details: null }
  *   'sources/source/github' -> { navigator: 'sources', details: { type: 'source', id: 'github' } }
  *   'sources/api/source/gmail' -> { navigator: 'sources', sourceFilter: { kind: 'type', sourceType: 'api' }, details: { type: 'source', id: 'gmail' } }
- *   'settings' -> { navigator: 'settings', details: null }  // navigator-only view
+ *   'settings' -> { navigator: 'settings', details: null }  // 仅导航器视图
  *   'settings/shortcuts' -> { navigator: 'settings', details: { type: 'shortcuts', id: 'shortcuts' } }
  */
 export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
@@ -99,9 +101,9 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
 
   const first = segments[0]
 
-  // Kanban board — standalone route. A view of all sessions in board mode.
-  // Encoded as its own prefix (not `allSessions/board`) so it never collides
-  // with the positional `{filter}/session/{id}` detail parsing below.
+  // 看板视图 —— 独立路由。以看板模式查看所有会话。
+  // 编码为独立前缀（而非 `allSessions/board`），这样就不会与下面基于位置的
+  // `{filter}/session/{id}` 详情解析产生冲突。
   if (first === 'board') {
     return {
       navigator: 'sessions',
@@ -111,11 +113,11 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
     }
   }
 
-  // Settings navigator
+  // Settings 设置导航器
   if (first === 'settings') {
     const subpage = segments[1]
     if (subpage === undefined) {
-      // Bare `settings` route — navigator-only view (compact) / App fallback (desktop).
+      // 裸 `settings` 路由 —— 紧凑模式下的仅导航器视图 / 桌面端的 App 回退页。
       return { navigator: 'settings', details: null }
     }
     if (!isValidSettingsSubpage(subpage)) return null
@@ -125,19 +127,19 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
     }
   }
 
-  // Sources navigator - supports type filters (api, mcp, local)
+  // Sources 数据源导航器 —— 支持类型过滤：api、mcp、local
   if (first === 'sources') {
     if (segments.length === 1) {
       return { navigator: 'sources', details: null }
     }
 
-    // Check for type filter: sources/api, sources/mcp, sources/local
+    // 检查是否带类型过滤：sources/api、sources/mcp、sources/local
     const validSourceTypes = ['api', 'mcp', 'local']
     if (validSourceTypes.includes(segments[1])) {
       const sourceType = segments[1] as 'api' | 'mcp' | 'local'
       const sourceFilter: SourceFilter = { kind: 'type', sourceType }
 
-      // Check for source selection within filtered view: sources/api/source/{sourceSlug}
+      // 检查过滤视图内是否选中了某个 source：sources/api/source/{sourceSlug}
       if (segments[2] === 'source' && segments[3]) {
         return {
           navigator: 'sources',
@@ -146,11 +148,11 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
         }
       }
 
-      // Just the filter, no selection
+      // 只有过滤条件，没有选中项
       return { navigator: 'sources', sourceFilter, details: null }
     }
 
-    // Unfiltered source selection: sources/source/{sourceSlug}
+    // 未过滤的 source 选中：sources/source/{sourceSlug}
     if (segments[1] === 'source' && segments[2]) {
       return {
         navigator: 'sources',
@@ -161,7 +163,7 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
     return null
   }
 
-  // Skills navigator
+  // Skills 技能导航器
   if (first === 'skills') {
     if (segments.length === 1) {
       return { navigator: 'skills', details: null }
@@ -178,7 +180,7 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
     return null
   }
 
-  // Projects navigator
+  // Projects 项目导航器
   if (first === 'projects') {
     if (segments.length === 1) {
       return { navigator: 'projects', details: null }
@@ -192,19 +194,19 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
     return null
   }
 
-  // Automations navigator - supports type filters (scheduled, event, agentic)
+  // Automations 自动化导航器 —— 支持类型过滤：scheduled、event、agentic
   if (first === 'automations') {
     if (segments.length === 1) {
       return { navigator: 'automations', details: null }
     }
 
-    // Check for type filter: automations/scheduled, automations/event, automations/agentic
+    // 检查是否带类型过滤：automations/scheduled、automations/event、automations/agentic
     const validAutomationTypes = ['scheduled', 'event', 'agentic']
     if (validAutomationTypes.includes(segments[1])) {
       const automationType = segments[1] as 'scheduled' | 'event' | 'agentic'
       const automationFilter: AutomationFilter = { kind: 'type', automationType }
 
-      // Check for automation selection within filtered view: automations/scheduled/automation/{automationId}
+      // 检查过滤视图内是否选中了某个 automation：automations/scheduled/automation/{automationId}
       if (segments[2] === 'automation' && segments[3]) {
         return {
           navigator: 'automations',
@@ -213,11 +215,11 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
         }
       }
 
-      // Just the filter, no selection
+      // 只有过滤条件，没有选中项
       return { navigator: 'automations', automationFilter, details: null }
     }
 
-    // Unfiltered automation selection: automations/automation/{automationId}
+    // 未过滤的 automation 选中：automations/automation/{automationId}
     if (segments[1] === 'automation' && segments[2]) {
       return {
         navigator: 'automations',
@@ -228,7 +230,7 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
     return null
   }
 
-  // Sessions navigator (allSessions, flagged, state)
+  // Sessions 会话导航器（allSessions、flagged、state、label、view、archived）
   let sessionFilter: SessionFilter
   let detailsStartIndex: number
 
@@ -247,13 +249,13 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
       break
     case 'state':
       if (!segments[1]) return null
-      // Cast is safe because we're constructing from URL
+      // 类型断言是安全的，因为值来自 URL，且已做存在性检查
       sessionFilter = { kind: 'state', stateId: segments[1] as SessionFilter & { kind: 'state' } extends { stateId: infer T } ? T : never }
       detailsStartIndex = 2
       break
     case 'label':
       if (!segments[1]) return null
-      // Label IDs are URL-decoded (simple slugs, no special characters expected)
+      // Label ID 需要 URL 解码（预期为简单 slug，无特殊字符）
       sessionFilter = { kind: 'label', labelId: decodeURIComponent(segments[1]) }
       detailsStartIndex = 2
       break
@@ -266,7 +268,7 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
       return null
   }
 
-  // Check for details
+  // 检查是否有详情段
   if (segments.length > detailsStartIndex) {
     const detailsType = segments[detailsStartIndex]
     const detailsId = segments[detailsStartIndex + 1]
@@ -287,7 +289,7 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
 }
 
 /**
- * Build a compound route string from parsed state
+ * 从解析后的组合式路由对象重新构建路由字符串。
  */
 export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
   if (parsed.navigator === 'settings') {
@@ -296,7 +298,7 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
   }
 
   if (parsed.navigator === 'sources') {
-    // Build base from filter (sources, sources/api, sources/mcp, sources/local)
+    // 先根据过滤类型构造基础路径：sources、sources/api、sources/mcp、sources/local
     let base = 'sources'
     if (parsed.sourceFilter?.kind === 'type') {
       base = `sources/${parsed.sourceFilter.sourceType}`
@@ -311,7 +313,7 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
   }
 
   if (parsed.navigator === 'automations') {
-    // Build base from filter (automations, automations/scheduled, automations/event, automations/agentic)
+    // 先根据过滤类型构造基础路径：automations、automations/scheduled、automations/event、automations/agentic
     let base = 'automations'
     if (parsed.automationFilter?.kind === 'type') {
       base = `automations/${parsed.automationFilter.automationType}`
@@ -325,8 +327,8 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
     return `projects/project/${parsed.details.id}`
   }
 
-  // Sessions navigator
-  // Board is a standalone view of all sessions; emit its own prefix.
+  // Sessions 会话导航器
+  // 看板是所有会话的独立视图；输出其自己的前缀。
   if (parsed.viewMode === 'board') return 'board'
 
   let base: string
@@ -361,13 +363,13 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
 }
 
 // =============================================================================
-// Route Parsing
+// 路由解析（兼容旧格式）
 // =============================================================================
 
 /**
- * Parse a route string into structured navigation
+ * 将路由字符串解析为结构化的 ParsedRoute。
  *
- * Examples:
+ * 示例：
  *   'allSessions' -> { type: 'view', name: 'allSessions', params: {} }
  *   'allSessions/session/abc123' -> { type: 'view', name: 'session', id: 'abc123', params: { filter: 'allSessions' } }
  *   'settings/shortcuts' -> { type: 'view', name: 'shortcuts', params: {} }
@@ -375,7 +377,7 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
  */
 export function parseRoute(route: string): ParsedRoute | null {
   try {
-    // Check if this is a compound route (preferred format)
+    // 优先检查是否为组合式路由（推荐格式）
     if (isCompoundRoute(route)) {
       const compound = parseCompoundRoute(route)
       if (compound) {
@@ -383,7 +385,7 @@ export function parseRoute(route: string): ParsedRoute | null {
       }
     }
 
-    // Parse action routes: action/{name}[/{id}]
+    // 解析 action 路由：action/{name}[/{id}]
     const [pathPart, queryPart] = route.split('?')
     const segments = pathPart.split('/').filter(Boolean)
 
@@ -399,7 +401,7 @@ export function parseRoute(route: string): ParsedRoute | null {
     const name = segments[1]
     const id = segments[2]
 
-    // Parse query params
+    // 解析 query 参数
     const params: Record<string, string> = {}
     if (queryPart) {
       const searchParams = new URLSearchParams(queryPart)
@@ -415,10 +417,10 @@ export function parseRoute(route: string): ParsedRoute | null {
 }
 
 /**
- * Convert a parsed compound route to ParsedRoute format (type: 'view')
+ * 将解析后的组合式路由转换为 ParsedRoute 格式（type 为 'view'）。
  */
 function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute {
-  // Settings
+  // Settings 设置
   if (compound.navigator === 'settings') {
     const subpage = compound.details?.type || 'app'
     if (subpage === 'app') {
@@ -427,7 +429,7 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
     return { type: 'view', name: subpage, params: {} }
   }
 
-  // Sources
+  // Sources 数据源
   if (compound.navigator === 'sources') {
     if (!compound.details) {
       return { type: 'view', name: 'sources', params: {} }
@@ -435,7 +437,7 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
     return { type: 'view', name: 'source-info', id: compound.details.id, params: {} }
   }
 
-  // Skills
+  // Skills 技能
   if (compound.navigator === 'skills') {
     if (!compound.details) {
       return { type: 'view', name: 'skills', params: {} }
@@ -443,7 +445,7 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
     return { type: 'view', name: 'skill-info', id: compound.details.id, params: {} }
   }
 
-  // Automations
+  // Automations 自动化
   if (compound.navigator === 'automations') {
     if (!compound.details) {
       return { type: 'view', name: 'automations', params: {} }
@@ -451,7 +453,7 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
     return { type: 'view', name: 'automation-info', id: compound.details.id, params: {} }
   }
 
-  // Projects
+  // Projects 项目
   if (compound.navigator === 'projects') {
     if (!compound.details) {
       return { type: 'view', name: 'projects', params: {} }
@@ -459,7 +461,7 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
     return { type: 'view', name: 'project-info', id: compound.details.id, params: {} }
   }
 
-  // Sessions
+  // Sessions 会话
   if (compound.sessionFilter) {
     const filter = compound.sessionFilter
     if (compound.details) {
@@ -487,31 +489,31 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
 }
 
 // =============================================================================
-// NavigationState Parsing (new unified system)
+// NavigationState 解析（新的统一导航系统）
 // =============================================================================
 
 /**
- * Parse a route string directly to NavigationState (the unified state)
+ * 直接将路由字符串解析为 NavigationState（统一的导航状态）。
  *
- * This is the preferred way to parse routes - returns the unified state that
- * determines all 3 panels (sidebar, navigator, main content).
+ * 这是推荐的路由解析方式 —— 返回的状态同时决定三个面板：
+ * 侧边栏（sidebar）、导航器（navigator）、主内容区（main content）。
  *
- * Supports:
- * - Compound routes: allSessions, allSessions/session/abc, sources, sources/source/github, settings/shortcuts
- * - Right sidebar param: ?sidebar=files or ?sidebar=history
+ * 支持：
+ * - 组合式路由：allSessions、allSessions/session/abc、sources、sources/source/github、settings/shortcuts
+ * - 右侧边栏参数：?sidebar=files 或 ?sidebar=history
  *
- * Returns null for action routes (they don't map to a navigation state) and invalid routes.
+ * 对 action 路由（不映射到导航状态）和非法路由返回 null。
  */
 export function parseRouteToNavigationState(
   route: string,
   sidebarParam?: string
 ): NavigationState | null {
-  // Parse compound routes
+  // 解析组合式路由
   if (isCompoundRoute(route)) {
     const compound = parseCompoundRoute(route)
     if (compound) {
       const state = convertCompoundToNavigationState(compound)
-      // Add rightSidebar if param provided
+      // 如果提供了右侧边栏参数，则合并到状态
       const rightSidebar = parseRightSidebarParam(sidebarParam)
       if (rightSidebar) {
         return { ...state, rightSidebar }
@@ -520,17 +522,16 @@ export function parseRouteToNavigationState(
     }
   }
 
-  // Parse as route (may be action or view)
+  // 按普通路由解析（可能是 action 或 view）
   const parsed = parseRoute(route)
   if (!parsed) return null
 
-  // Actions don't map to navigation state
+  // action 路由不对应导航状态
   if (parsed.type === 'action') return null
 
-  // Convert view routes to NavigationState
+  // 将 view 路由转换为 NavigationState
   const state = convertParsedRouteToNavigationState(parsed)
   if (state) {
-    // Add rightSidebar if param provided
     const rightSidebar = parseRightSidebarParam(sidebarParam)
     if (rightSidebar) {
       return { ...state, rightSidebar }
@@ -540,10 +541,10 @@ export function parseRouteToNavigationState(
 }
 
 /**
- * Convert a ParsedCompoundRoute to NavigationState
+ * 将 ParsedCompoundRoute 转换为 NavigationState。
  */
 function convertCompoundToNavigationState(compound: ParsedCompoundRoute): NavigationState {
-  // Settings
+  // Settings 设置
   if (compound.navigator === 'settings') {
     if (!compound.details) {
       return { navigator: 'settings', subpage: null }
@@ -551,7 +552,7 @@ function convertCompoundToNavigationState(compound: ParsedCompoundRoute): Naviga
     return { navigator: 'settings', subpage: compound.details.type as SettingsSubpage }
   }
 
-  // Sources - include filter if present
+  // Sources 数据源 —— 如果存在筛选条件则一并带上
   if (compound.navigator === 'sources') {
     if (!compound.details) {
       return {
@@ -567,7 +568,7 @@ function convertCompoundToNavigationState(compound: ParsedCompoundRoute): Naviga
     }
   }
 
-  // Skills
+  // Skills 技能
   if (compound.navigator === 'skills') {
     if (!compound.details) {
       return { navigator: 'skills', details: null }
@@ -578,7 +579,7 @@ function convertCompoundToNavigationState(compound: ParsedCompoundRoute): Naviga
     }
   }
 
-  // Automations - include filter if present
+  // Automations 自动化 —— 如果存在筛选条件则一并带上
   if (compound.navigator === 'automations') {
     if (!compound.details) {
       return {
@@ -594,7 +595,7 @@ function convertCompoundToNavigationState(compound: ParsedCompoundRoute): Naviga
     }
   }
 
-  // Projects
+  // Projects 项目
   if (compound.navigator === 'projects') {
     if (!compound.details) {
       return { navigator: 'projects', details: null }
@@ -605,7 +606,7 @@ function convertCompoundToNavigationState(compound: ParsedCompoundRoute): Naviga
     }
   }
 
-  // Sessions
+  // Sessions 会话
   const filter = compound.sessionFilter || { kind: 'allSessions' as const }
   if (compound.details) {
     return {
@@ -623,10 +624,10 @@ function convertCompoundToNavigationState(compound: ParsedCompoundRoute): Naviga
 }
 
 /**
- * Convert a ParsedRoute (view type) to NavigationState
+ * 将 ParsedRoute（view 类型）转换为 NavigationState。
  */
 function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationState | null {
-  // Only handle view routes (compound routes converted to view type)
+  // 只处理 view 路由（组合式路由在这里已经被转成 view 类型）
   if (parsed.type !== 'view') {
     return null
   }
@@ -695,7 +696,7 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
       return { navigator: 'projects', details: null }
     case 'session':
       if (parsed.id) {
-        // Reconstruct filter from params
+        // 从 params 重建筛选条件
         const filterKind = (parsed.params.filter || 'allSessions') as SessionFilter['kind']
         let filter: SessionFilter
         if (filterKind === 'state' && parsed.params.stateId) {
@@ -765,7 +766,7 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
 }
 
 /**
- * Convert NavigationState to ParsedCompoundRoute
+ * 将 NavigationState 转换为 ParsedCompoundRoute。
  */
 function navigationStateToCompoundRoute(state: NavigationState): ParsedCompoundRoute {
   if (state.navigator === 'settings') {
@@ -808,7 +809,7 @@ function navigationStateToCompoundRoute(state: NavigationState): ParsedCompoundR
     }
   }
 
-  // Sessions
+  // Sessions 会话
   return {
     navigator: 'sessions',
     sessionFilter: state.filter,
@@ -818,20 +819,20 @@ function navigationStateToCompoundRoute(state: NavigationState): ParsedCompoundR
 }
 
 /**
- * Build a route string from NavigationState
+ * 从 NavigationState 构建路由字符串。
  */
 export function buildRouteFromNavigationState(state: NavigationState): string {
   return buildCompoundRoute(navigationStateToCompoundRoute(state))
 }
 
 // =============================================================================
-// Right Sidebar Param Parsing
+// 右侧边栏参数解析
 // =============================================================================
 
 /**
- * Parse right sidebar param from URL query string
+ * 从 URL query string 中解析右侧边栏参数。
  *
- * Examples:
+ * 示例：
  *   'history' -> { type: 'history' }
  *   'files' -> { type: 'files' }
  *   'files/src/main.ts' -> { type: 'files', path: 'src/main.ts' }
@@ -844,7 +845,7 @@ export function parseRightSidebarParam(sidebarStr?: string): RightSidebarPanel |
     return { type: 'history' }
   }
   if (sidebarStr.startsWith('files')) {
-    const path = sidebarStr.substring(6) // Remove 'files/' prefix
+    const path = sidebarStr.substring(6) // 去掉 'files/' 前缀
     return { type: 'files', path: path || undefined }
   }
   if (sidebarStr === 'none') {
@@ -855,9 +856,9 @@ export function parseRightSidebarParam(sidebarStr?: string): RightSidebarPanel |
 }
 
 /**
- * Build right sidebar param for URL query string
+ * 将右侧边栏面板对象编码为 URL query string 值。
  *
- * Returns undefined for 'none' type (omit from URL to keep URLs clean)
+ * 对 'none' 类型返回 undefined，以便从 URL 中省略，保持 URL 简洁。
  */
 export function buildRightSidebarParam(panel?: RightSidebarPanel): string | undefined {
   if (!panel || panel.type === 'none') return undefined

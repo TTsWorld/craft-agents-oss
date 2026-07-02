@@ -1,3 +1,10 @@
+/**
+ * auth 模块统一导出入口
+ *
+ * 从这里可以拿到所有与 OAuth / 认证相关的类型、配置和函数。
+ * 对 Go 同学来说，类似于一个 package 的公开 API 列表。
+ */
+
 export { type OAuthSessionContext, buildOAuthDeeplinkUrl } from './types.ts';
 export * from './oauth-flow-types.ts';
 export * from './oauth-flow-store.ts';

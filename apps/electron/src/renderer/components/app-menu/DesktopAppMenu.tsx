@@ -31,11 +31,24 @@ import {
 import type { MenuItem, MenuSection } from "../../../shared/menu-schema"
 import type { AppMenuProps } from "./types"
 
+/** 桌面端 Craft logo 下拉菜单。 */
+
+/**
+ * 桌面端菜单里除了 role（系统级操作）之外，需要业务层提供回调的动作。
+ *
+ * 例如：切换专注模式、切换侧边栏。
+ */
 type MenuActionHandlers = {
   toggleFocusMode?: () => void
   toggleSidebar?: () => void
 }
 
+/**
+ * 系统级 role 命令到 electronAPI 的映射。
+ *
+ * 这些对应 Electron 主进程的窗口/编辑操作：撤销、重做、剪切、复制、粘贴、
+ * 全选、缩放、最小化、最大化等。点击菜单项时直接调用 preload 暴露的 IPC。
+ */
 const roleHandlers: Record<string, () => void> = {
   undo: () => window.electronAPI.menuUndo(),
   redo: () => window.electronAPI.menuRedo(),
@@ -50,11 +63,26 @@ const roleHandlers: Record<string, () => void> = {
   zoom: () => window.electronAPI.menuMaximize(),
 }
 
+/**
+ * 根据图标名称从 lucide-react 中取出对应的图标组件。
+ *
+ * @param name lucide 图标名，如 'Settings'。
+ * @returns 图标组件，若找不到则返回 null。
+ */
 function getIcon(name: string): React.ComponentType<{ className?: string }> | null {
   const IconComponent = Icons[name as keyof typeof Icons] as React.ComponentType<{ className?: string }> | undefined
   return IconComponent ?? null
 }
 
+/**
+ * 渲染单个二级菜单项。
+ *
+ * 支持四种类型：
+ * - separator：分隔线
+ * - url：外部链接，点击后通过 electronAPI.openUrl 打开
+ * - role：系统级操作，映射到 roleHandlers
+ * - action：业务动作，如切换专注模式/侧边栏
+ */
 function renderSubmenuItem(
   item: MenuItem,
   index: number,
@@ -111,6 +139,11 @@ function renderSubmenuItem(
   return null
 }
 
+/**
+ * 渲染一个顶级菜单分组（如 Edit / View / Window）。
+ *
+ * 使用 DropdownMenuSub 实现悬浮子菜单。
+ */
 function renderMenuSection(
   section: MenuSection,
   actionHandlers: MenuActionHandlers,
@@ -131,11 +164,11 @@ function renderMenuSection(
 }
 
 /**
- * Desktop AppMenu — Craft logo dropdown with Edit/View/Window/Settings/Help/Debug submenus.
+ * 桌面端 AppMenu：点击 Craft logo 弹出的下拉菜单。
  *
- * Behavior matches the pre-refactor version that lived inline in `TopBar.tsx`.
- * Labels, hotkey strings, and update-actions are pulled from `menu-schema.ts`
- * so the mobile sheet and this dropdown share a single source of truth.
+ * 包含 New Chat / New Window、Edit、View、Window、Settings、Help、Debug、Quit 等子菜单。
+ * 行为与重构前直接内联在 TopBar.tsx 里的版本保持一致。
+ * 标签、热键、更新动作统一从 menu-schema.ts 读取，保证桌面端与移动端共用同一份数据源。
  */
 export function DesktopAppMenu({
   onNewChat,
@@ -149,12 +182,14 @@ export function DesktopAppMenu({
   const { t } = useTranslation()
   const [isDebugMode, setIsDebugMode] = useState(false)
 
+  // 从全局 action 系统读取各菜单项的快捷键显示文本。
   const newChatHotkey = useActionLabel('app.newChat').hotkey
   const newWindowHotkey = useActionLabel('app.newWindow').hotkey
   const settingsHotkey = useActionLabel('app.settings').hotkey
   const keyboardShortcutsHotkey = useActionLabel('app.keyboardShortcuts').hotkey
   const quitHotkey = useActionLabel('app.quit').hotkey
 
+  // 组件挂载后询问主进程是否处于 Debug 模式，决定是否显示 Debug 子菜单。
   useEffect(() => {
     window.electronAPI.isDebugMode().then(setIsDebugMode)
   }, [])
@@ -262,9 +297,10 @@ export function DesktopAppMenu({
 }
 
 /**
- * Renders the Debug submenu by mapping over `DEBUG_MENU.items`. The three actions
- * that drive it (`checkForUpdates`, `installUpdate`, `toggleDevTools`) all live on
- * `window.electronAPI` directly and never traverse the menu IPC channels.
+ * 渲染 Debug 子菜单。
+ *
+ * 三个动作（checkForUpdates / installUpdate / toggleDevTools）直接调用 window.electronAPI，
+ * 不走普通菜单项的 IPC 通道。
  */
 function renderDebugSubmenu(t: (key: string) => string): React.ReactNode {
   const SectionIcon = getIcon(DEBUG_MENU.icon)
@@ -300,6 +336,7 @@ function renderDebugSubmenu(t: (key: string) => string): React.ReactNode {
   )
 }
 
+/** Debug 菜单项 ID 到具体 electronAPI 调用的映射。 */
 const debugHandlers: Record<string, () => void> = {
   checkForUpdates: () => window.electronAPI.checkForUpdates(),
   installUpdate: () => window.electronAPI.installUpdate(),

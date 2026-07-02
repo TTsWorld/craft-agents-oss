@@ -1,9 +1,10 @@
 /**
- * Platform services — dependency injection seam.
+ * 平台服务抽象 — 依赖注入缝合层。
  *
- * SessionManager and core handlers receive this instead of importing
- * directly from 'electron'. On Electron, the implementations wrap
- * app/shell/nativeImage. On headless Node, they use sharp/pino/etc.
+ * SessionManager 和核心 handler 依赖 PlatformServices 接口，而不是直接 import 'electron'。
+ * Electron 环境下实现会包装 app/shell/nativeImage；headless 环境下用 sharp + console。
+ *
+ * 这是典型的"依赖倒置"：核心逻辑依赖抽象，具体平台提供实现。
  */
 
 export interface Logger {
@@ -13,17 +14,17 @@ export interface Logger {
   debug(...args: unknown[]): void
 }
 
+/**
+ * 图像处理抽象。
+ *
+ * Electron 用 nativeImage，headless 用 sharp。
+ */
 export interface ImageProcessor {
-  /** Get image dimensions. Returns null if buffer is not a valid image. */
+  /** 获取图片尺寸，无效图片返回 null */
   getMetadata(buffer: Buffer): Promise<{ width: number; height: number } | null>
 
   /**
-   * Process an image: resize and/or re-encode.
-   * @param input - Buffer or file path
-   * @param opts.resize - target dimensions (default: no resize)
-   * @param opts.fit - 'inside' to maintain aspect ratio (default: 'inside')
-   * @param opts.format - output format (default: 'png')
-   * @param opts.quality - JPEG quality 0-100 (default: 90)
+   * 处理图片：缩放、重新编码。
    */
   process(
     input: Buffer | string,
@@ -36,37 +37,40 @@ export interface ImageProcessor {
   ): Promise<Buffer>
 }
 
+/**
+ * 平台服务能力集合。
+ */
 export interface PlatformServices {
-  // -- Path resolution --
+  // -- 路径解析 --
   appRootPath: string
   resourcesPath: string
   isPackaged: boolean
 
-  // -- App metadata --
+  // -- 应用元数据 --
   appVersion: string
 
-  // -- Image processing (nativeImage on Electron, sharp on headless) --
+  // -- 图像处理 --
   imageProcessor: ImageProcessor
 
-  // -- OS integration (no-ops on headless) --
+  // -- 操作系统集成（headless 下为 undefined） --
   openPath?(path: string): Promise<void>
   openExternal?(url: string): Promise<void>
   showItemInFolder?(path: string): void
 
-  // -- App lifecycle (no-ops on headless) --
+  // -- 应用生命周期（headless 下为 undefined） --
   quit?(): void
   systemDarkMode?(): boolean
 
-  // -- Observability --
+  // -- 可观测性 --
   logger: Logger
   isDebugMode: boolean
   getLogFilePath?(): string | undefined
   captureError?(error: Error): void
 }
 
-// ── Logger helpers ──────────────────────────────────────────────────────────
+// ── Logger 辅助函数 ─────────────────────────────────────────────────────────
 
-/** Console-based Logger for use before platform initialization. */
+/** 平台初始化前可用的基于 console 的 Logger */
 export const CONSOLE_LOGGER: Logger = {
   info: (...args: unknown[]) => console.log(...args),
   warn: (...args: unknown[]) => console.warn(...args),
@@ -74,7 +78,7 @@ export const CONSOLE_LOGGER: Logger = {
   debug: (...args: unknown[]) => console.debug(...args),
 }
 
-/** Create a Logger that prefixes every message with [scope]. */
+/** 创建一个带 [scope] 前缀的 Logger */
 export function createScopedLogger(base: Logger, scope: string): Logger {
   return {
     info: (...args: unknown[]) => base.info(`[${scope}]`, ...args),

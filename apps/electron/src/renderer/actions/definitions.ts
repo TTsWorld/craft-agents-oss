@@ -1,8 +1,16 @@
 import type { ActionDefinition } from './types'
 
+/**
+ * 全应用 action（动作/命令）的集中定义表。
+ *
+ * 每个 action 代表一个可被快捷键触发、也可被代码显式调用的操作，
+ * 类似 IDE/编辑器里的命令系统（VSCode command / Go 里可理解为注册表中的 handler 名）。
+ * 这里只声明元数据（id、显示名、默认快捷键、分类、触发条件等），
+ * 真正的执行逻辑在 registry.tsx 中通过 register() 注册。
+ */
 export const actions = {
   // ═══════════════════════════════════════════
-  // General
+  // 通用（General）
   // ═══════════════════════════════════════════
   'app.newChat': {
     id: 'app.newChat',
@@ -62,7 +70,7 @@ export const actions = {
   },
 
   // ═══════════════════════════════════════════
-  // Navigation
+  // 导航（Navigation）
   // ═══════════════════════════════════════════
   'nav.focusSidebar': {
     id: 'nav.focusSidebar',
@@ -87,7 +95,7 @@ export const actions = {
     label: 'Focus Next Zone',
     defaultHotkey: 'tab',
     category: 'Navigation',
-    when: '!inputFocus',  // Tab should work normally in text inputs
+    when: '!inputFocus',  // 在文本输入框里要让 Tab 保持正常切焦点的行为
   },
   'nav.goBack': {
     id: 'nav.goBack',
@@ -109,7 +117,7 @@ export const actions = {
     description: 'Navigate to previous session (arrow key)',
     defaultHotkey: 'mod+left',
     category: 'Navigation',
-    when: '!inputFocus',  // CMD+Left = cursor to line start in text inputs
+    when: '!inputFocus',  // 在文本输入框里 Cmd+Left 是把光标移到行首
   },
   'nav.goForwardAlt': {
     id: 'nav.goForwardAlt',
@@ -117,11 +125,11 @@ export const actions = {
     description: 'Navigate to next session (arrow key)',
     defaultHotkey: 'mod+right',
     category: 'Navigation',
-    when: '!inputFocus',  // CMD+Right = cursor to line end in text inputs
+    when: '!inputFocus',  // 在文本输入框里 Cmd+Right 是把光标移到行尾
   },
 
   // ═══════════════════════════════════════════
-  // View
+  // 视图（View）
   // ═══════════════════════════════════════════
   'view.toggleSidebar': {
     id: 'view.toggleSidebar',
@@ -138,7 +146,7 @@ export const actions = {
   },
 
   // ═══════════════════════════════════════════
-  // Navigator (scoped — active entity list in middle panel)
+  // 导航器/中间面板（Navigator，作用域限定）
   // ═══════════════════════════════════════════
   'navigator.selectAll': {
     id: 'navigator.selectAll',
@@ -146,7 +154,7 @@ export const actions = {
     defaultHotkey: 'mod+a',
     category: 'Navigator',
     scope: 'navigator',
-    when: 'navigatorFocus',  // CMD+A = select all text when in input
+    when: 'navigatorFocus',  // 在文本输入框里 Cmd+A 应该是“全选文本”
   },
   'navigator.clearSelection': {
     id: 'navigator.clearSelection',
@@ -158,7 +166,7 @@ export const actions = {
   },
 
   // ═══════════════════════════════════════════
-  // Panels
+  // 面板（Panels）
   // ═══════════════════════════════════════════
   'panel.focusNext': {
     id: 'panel.focusNext',
@@ -176,7 +184,7 @@ export const actions = {
   },
 
   // ═══════════════════════════════════════════
-  // Chat
+  // 聊天（Chat）
   // ═══════════════════════════════════════════
   'chat.stopProcessing': {
     id: 'chat.stopProcessing',
@@ -185,7 +193,7 @@ export const actions = {
     defaultHotkey: 'escape',
     category: 'Chat',
     scope: 'chat',
-    when: '!hasSelection',  // Let browser clear selection first; overlays handled by hasOpenOverlay() in enabled callback
+    when: '!hasSelection',  // 先让浏览器用 Esc 清除选区；浮层由 enabled 回调里的 hasOpenOverlay() 处理
   },
   'chat.cyclePermissionMode': {
     id: 'chat.cyclePermissionMode',
@@ -208,14 +216,17 @@ export const actions = {
   },
 
 } as const satisfies Record<string, ActionDefinition>
+// `as const` 把对象里的每个值都变成最窄的 literal 类型（比如 id 是 'app.newChat' 而不是 string），
+// `satisfies Record<string, ActionDefinition>` 保证这个对象符合 ActionDefinition 的结构，
+// 这样 TS 既能做类型检查，又能精确推导出所有 action ID。
 
-// Type-safe action IDs
+/** 从 actions 对象推导出的 action ID 类型，保证类型安全（keyof + typeof 是 TS 常用技巧）。 */
 export type ActionId = keyof typeof actions
 
-// Get all actions as array (for shortcuts page)
+/** 将所有 action 转为数组，常用于快捷键说明页。 */
 export const actionList = Object.values(actions)
 
-// Get actions by category (for organized display)
+/** 按分类把 action 分组，用于设置页/帮助页的分组展示。 */
 export const actionsByCategory = actionList.reduce((acc, action) => {
   if (!acc[action.category]) acc[action.category] = []
   acc[action.category].push(action)

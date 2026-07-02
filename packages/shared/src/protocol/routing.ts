@@ -1,30 +1,30 @@
 /**
- * Exhaustive channel routing table for hybrid local/remote transport.
+ * 混合本地/远程传输的详尽频道路由表。
  *
- * Every RPC channel must belong to exactly one of two sets:
- * - LOCAL_ONLY: Always runs on the local Electron server, never proxied.
- * - REMOTE_ELIGIBLE: Runs on whichever server owns the workspace.
+ * 每个 RPC channel 必须恰好属于下面两类之一：
+ * - LOCAL_ONLY：永远在本地 Electron 服务端执行，不代理到远程。
+ * - REMOTE_ELIGIBLE：运行在持有该 workspace 的服务端上。
  *
- * An exhaustiveness test ensures new channels fail CI until classified.
+ * 有一个穷尽性测试保证：新增 channel 后若未分类，CI 会失败。
  */
 
 import { RPC_CHANNELS } from './channels'
 
 // ---------------------------------------------------------------------------
-// LOCAL_ONLY — fundamentally requires local OS / Electron
+// LOCAL_ONLY — 本质依赖本地 OS / Electron 能力
 // ---------------------------------------------------------------------------
 
 export const LOCAL_ONLY_CHANNELS = new Set<string>([
-  // remote — local connectivity management (reaches out to remote server from local app)
+  // remote：本地连接管理（本地应用主动连远程服务端）
   RPC_CHANNELS.remote.TEST_CONNECTION,
 
-  // workspaces — local workspace CRUD (workspace list is local config)
+  // workspaces：本地 workspace 的增删改查（workspace 列表属于本地配置）
   RPC_CHANNELS.workspaces.GET,
   RPC_CHANNELS.workspaces.CREATE,
   RPC_CHANNELS.workspaces.CHECK_SLUG,
   RPC_CHANNELS.workspaces.UPDATE_REMOTE,
 
-  // window — Electron window management
+  // window：Electron 窗口管理
   RPC_CHANNELS.window.GET_WORKSPACE,
   RPC_CHANNELS.window.GET_MODE,
   RPC_CHANNELS.window.OPEN_WORKSPACE,
@@ -38,37 +38,36 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.window.FOCUS_STATE,
   RPC_CHANNELS.window.GET_FOCUS_STATE,
 
-  // file — native file dialog
+  // file：原生文件对话框
   RPC_CHANNELS.file.OPEN_DIALOG,
-  // file — draft hydration for user-attached paths. Paths in drafts.json were captured
-  // via webUtils.getPathForFile in the renderer, so they point at the user's local machine
-  // — even when the workspace itself lives on a remote server. Routing this REMOTE_ELIGIBLE
-  // would send the local path to a remote filesystem that can't resolve it.
+  // file：读取用户附加的本地路径。
+  // drafts.json 里的路径由 renderer 通过 webUtils.getPathForFile 捕获，指向用户本机；
+  // 若标记为 REMOTE_ELIGIBLE，会把本机路径发到远端文件系统，远端无法解析。
   RPC_CHANNELS.file.READ_USER_ATTACHMENT,
 
-  // dialog — native folder dialog
+  // dialog：原生文件夹对话框
   RPC_CHANNELS.dialog.OPEN_FOLDER,
 
-  // auth — local auth state + native dialogs
+  // auth：本地认证状态 + 原生对话框
   RPC_CHANNELS.auth.LOGOUT,
   RPC_CHANNELS.auth.SHOW_LOGOUT_CONFIRMATION,
   RPC_CHANNELS.auth.SHOW_DELETE_SESSION_CONFIRMATION,
 
-  // shell — local OS shell (openFile/showInFolder guarded for remote)
+  // shell：本地操作系统 shell（openFile/showInFolder 在远程模式下会做保护）
   RPC_CHANNELS.shell.OPEN_URL,
   RPC_CHANNELS.shell.OPEN_FILE,
   RPC_CHANNELS.shell.SHOW_IN_FOLDER,
 
-  // skills — local filesystem actions (guarded for remote)
+  // skills：本地文件系统操作（在远程模式下会做保护）
   RPC_CHANNELS.skills.OPEN_EDITOR,
   RPC_CHANNELS.skills.OPEN_FINDER,
 
-  // system — local OS info
+  // system：本地 OS 信息
   RPC_CHANNELS.system.VERSIONS,
   RPC_CHANNELS.system.HOME_DIR,
   RPC_CHANNELS.system.IS_DEBUG_MODE,
 
-  // theme — app/OS-level preferences, not workspace content
+  // theme：应用/操作系统级偏好设置，不属于 workspace 内容
   RPC_CHANNELS.theme.GET_SYSTEM_PREFERENCE,
   RPC_CHANNELS.theme.SYSTEM_CHANGED,
   RPC_CHANNELS.theme.APP_CHANGED,
@@ -85,7 +84,7 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.theme.BROADCAST_WORKSPACE_THEME,
   RPC_CHANNELS.theme.WORKSPACE_THEME_CHANGED,
 
-  // update — local auto-update
+  // update：本地自动更新
   RPC_CHANNELS.update.CHECK,
   RPC_CHANNELS.update.GET_INFO,
   RPC_CHANNELS.update.INSTALL,
@@ -94,17 +93,17 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.update.AVAILABLE,
   RPC_CHANNELS.update.DOWNLOAD_PROGRESS,
 
-  // releaseNotes — local app info
+  // releaseNotes：本地应用信息
   RPC_CHANNELS.releaseNotes.GET,
   RPC_CHANNELS.releaseNotes.GET_LATEST_VERSION,
 
-  // badge — local dock badge
+  // badge：本地 Dock 角标
   RPC_CHANNELS.badge.REFRESH,
   RPC_CHANNELS.badge.SET_ICON,
   RPC_CHANNELS.badge.DRAW,
   RPC_CHANNELS.badge.DRAW_WINDOWS,
 
-  // menu — local menu events
+  // menu：本地菜单事件
   RPC_CHANNELS.menu.NEW_CHAT,
   RPC_CHANNELS.menu.NEW_WINDOW,
   RPC_CHANNELS.menu.OPEN_SETTINGS,
@@ -125,16 +124,16 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.menu.PASTE,
   RPC_CHANNELS.menu.SELECT_ALL,
 
-  // deeplink — local deep link handling
+  // deeplink：本地 deep link 处理
   RPC_CHANNELS.deeplink.NAVIGATE,
 
-  // notification — local OS notifications
+  // notification：本地 OS 通知
   RPC_CHANNELS.notification.SHOW,
   RPC_CHANNELS.notification.NAVIGATE,
   RPC_CHANNELS.notification.GET_ENABLED,
   RPC_CHANNELS.notification.SET_ENABLED,
 
-  // input — local input preferences
+  // input：本地输入偏好
   RPC_CHANNELS.input.GET_AUTO_CAPITALISATION,
   RPC_CHANNELS.input.SET_AUTO_CAPITALISATION,
   RPC_CHANNELS.input.GET_SEND_MESSAGE_KEY,
@@ -142,31 +141,31 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.input.GET_SPELL_CHECK,
   RPC_CHANNELS.input.SET_SPELL_CHECK,
 
-  // power — local power management
+  // power：本地电源管理
   RPC_CHANNELS.power.GET_KEEP_AWAKE,
   RPC_CHANNELS.power.SET_KEEP_AWAKE,
 
-  // appearance — local UI preferences
+  // appearance：本地 UI 偏好
   RPC_CHANNELS.appearance.GET_RICH_TOOL_DESCRIPTIONS,
   RPC_CHANNELS.appearance.SET_RICH_TOOL_DESCRIPTIONS,
 
-  // caching — prompt cache and context settings
+  // caching：prompt cache 与上下文设置
   RPC_CHANNELS.caching.GET_EXTENDED_PROMPT_CACHE,
   RPC_CHANNELS.caching.SET_EXTENDED_PROMPT_CACHE,
   RPC_CHANNELS.caching.GET_ENABLE_1M_CONTEXT,
   RPC_CHANNELS.caching.SET_ENABLE_1M_CONTEXT,
 
-  // rtk — token-optimization opt-in
+  // rtk：token 优化相关开关/状态
   RPC_CHANNELS.rtk.GET_ENABLED,
   RPC_CHANNELS.rtk.SET_ENABLED,
   RPC_CHANNELS.rtk.GET_STATUS,
   RPC_CHANNELS.rtk.GET_GAIN,
 
-  // tools — local tool settings
+  // tools：本地工具开关
   RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED,
   RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED,
 
-  // browserPane — Electron BrowserView
+  // browserPane：Electron BrowserView
   RPC_CHANNELS.browserPane.CREATE,
   RPC_CHANNELS.browserPane.DESTROY,
   RPC_CHANNELS.browserPane.LIST,
@@ -188,15 +187,15 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.browserPane.REMOVED,
   RPC_CHANNELS.browserPane.INTERACTED,
 
-  // gitbash — Windows-specific local
+  // gitbash：Windows 专用本地命令
   RPC_CHANNELS.gitbash.CHECK,
   RPC_CHANNELS.gitbash.BROWSE,
   RPC_CHANNELS.gitbash.SET_PATH,
 
-  // debug — local debug logging
+  // debug：本地调试日志
   RPC_CHANNELS.debug.LOG,
 
-  // onboarding — local auth setup flow
+  // onboarding：本地认证设置流程
   RPC_CHANNELS.onboarding.GET_AUTH_STATE,
   RPC_CHANNELS.onboarding.VALIDATE_MCP,
   RPC_CHANNELS.onboarding.START_MCP_OAUTH,
@@ -204,18 +203,18 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.settings.GET_NETWORK_PROXY,
   RPC_CHANNELS.settings.SET_NETWORK_PROXY,
 
-  // server config — local embedded server settings
+  // server config：本地嵌入式服务端设置
   RPC_CHANNELS.settings.GET_SERVER_CONFIG,
   RPC_CHANNELS.settings.SET_SERVER_CONFIG,
   RPC_CHANNELS.settings.GET_SERVER_STATUS,
 ])
 
 // ---------------------------------------------------------------------------
-// REMOTE_ELIGIBLE — runs on whichever server owns the workspace
+// REMOTE_ELIGIBLE — 运行在持有该 workspace 的服务端上
 // ---------------------------------------------------------------------------
 
 export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
-  // server — server-level operations (no workspace context needed)
+  // server：服务端级操作，不依赖某个 workspace 上下文
   RPC_CHANNELS.server.GET_WORKSPACES,
   RPC_CHANNELS.server.CREATE_WORKSPACE,
   RPC_CHANNELS.server.GET_STATUS,
@@ -225,7 +224,7 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.server.STATUS_CHANGED,
   RPC_CHANNELS.server.HOME_DIR,
 
-  // sessions — core session runtime
+  // sessions：核心会话运行时
   RPC_CHANNELS.sessions.GET,
   RPC_CHANNELS.sessions.GET_UNREAD_SUMMARY,
   RPC_CHANNELS.sessions.MARK_ALL_READ,
@@ -256,13 +255,13 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.sessions.EXPORT_REMOTE_TRANSFER,
   RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER,
 
-  // transfer — chunked large-payload import (sessions, resources)
+  // transfer：大文件/会话分块导入导出
   RPC_CHANNELS.transfer.START,
   RPC_CHANNELS.transfer.CHUNK,
   RPC_CHANNELS.transfer.COMMIT,
   RPC_CHANNELS.transfer.ABORT,
 
-  // tasks — workspace content (Conductor DAG runs on the workspace server)
+  // tasks：workspace 内容（Conductor DAG 在 workspace 服务端运行）
   RPC_CHANNELS.tasks.GET_OUTPUT,
   RPC_CHANNELS.tasks.VALIDATE,
   RPC_CHANNELS.tasks.CREATE,
@@ -276,7 +275,7 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.tasks.LIST,
   RPC_CHANNELS.tasks.GET_RESULTS,
 
-  // file — workspace files (not openDialog which is native)
+  // file：workspace 文件操作（openDialog 除外，那是原生的）
   RPC_CHANNELS.file.READ,
   RPC_CHANNELS.file.READ_DATA_URL,
   RPC_CHANNELS.file.READ_PREVIEW_DATA_URL,
@@ -285,14 +284,14 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.file.STORE_ATTACHMENT,
   RPC_CHANNELS.file.GENERATE_THUMBNAIL,
 
-  // fs — workspace filesystem
+  // fs：workspace 文件系统搜索
   RPC_CHANNELS.fs.SEARCH,
   RPC_CHANNELS.fs.LIST_DIRECTORY,
 
-  // credentials — remote server's credential state
+  // credentials：远端服务端的 credential 状态
   RPC_CHANNELS.credentials.HEALTH_CHECK,
 
-  // llmConnections — LLM config lives on server running workspace
+  // llmConnections：LLM 配置跟随 workspace 所在服务端
   RPC_CHANNELS.llmConnections.LIST,
   RPC_CHANNELS.llmConnections.LIST_WITH_STATUS,
   RPC_CHANNELS.llmConnections.GET,
@@ -305,50 +304,50 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.llmConnections.REFRESH_MODELS,
   RPC_CHANNELS.llmConnections.CHANGED,
 
-  // chatgpt — OAuth via capability passthrough
+  // chatgpt：OAuth 通过能力透传
   RPC_CHANNELS.chatgpt.START_OAUTH,
   RPC_CHANNELS.chatgpt.COMPLETE_OAUTH,
   RPC_CHANNELS.chatgpt.CANCEL_OAUTH,
   RPC_CHANNELS.chatgpt.GET_AUTH_STATUS,
   RPC_CHANNELS.chatgpt.LOGOUT,
 
-  // copilot — OAuth via capability passthrough
+  // copilot：OAuth 通过能力透传
   RPC_CHANNELS.copilot.START_OAUTH,
   RPC_CHANNELS.copilot.CANCEL_OAUTH,
   RPC_CHANNELS.copilot.GET_AUTH_STATUS,
   RPC_CHANNELS.copilot.LOGOUT,
   RPC_CHANNELS.copilot.DEVICE_CODE,
 
-  // Claude OAuth — runs on workspace server so credentials and connection config
-  // end up on the same server that will use them. Browser opening is client-side.
-  // (ChatGPT OAuth stays LOCAL_ONLY — requires localhost callback server.)
+  // Claude OAuth：运行在 workspace 服务端，使 credential 与连接配置落在同一台机器；
+  // 打开浏览器的行为仍在客户端。
+  // （ChatGPT OAuth 保留为 LOCAL_ONLY，因为它需要本机 localhost 回调服务。）
   RPC_CHANNELS.onboarding.START_CLAUDE_OAUTH,
   RPC_CHANNELS.onboarding.EXCHANGE_CLAUDE_CODE,
   RPC_CHANNELS.onboarding.HAS_CLAUDE_OAUTH_STATE,
   RPC_CHANNELS.onboarding.CLEAR_CLAUDE_OAUTH_STATE,
 
-  // settings — workspace-level settings
+  // settings：workspace 级别的设置
   RPC_CHANNELS.settings.SETUP_LLM_CONNECTION,
   RPC_CHANNELS.settings.TEST_LLM_CONNECTION_SETUP,
   RPC_CHANNELS.settings.GET_DEFAULT_THINKING_LEVEL,
   RPC_CHANNELS.settings.SET_DEFAULT_THINKING_LEVEL,
 
-  // pi — provider config on workspace server
+  // pi：workspace 服务端上的 provider 配置
   RPC_CHANNELS.pi.GET_API_KEY_PROVIDERS,
   RPC_CHANNELS.pi.GET_PROVIDER_BASE_URL,
   RPC_CHANNELS.pi.GET_PROVIDER_MODELS,
 
-  // preferences — workspace-level preferences
+  // preferences：workspace 级别偏好
   RPC_CHANNELS.preferences.READ,
   RPC_CHANNELS.preferences.WRITE,
 
-  // drafts — workspace content
+  // drafts：workspace 内容
   RPC_CHANNELS.drafts.GET,
   RPC_CHANNELS.drafts.SET,
   RPC_CHANNELS.drafts.DELETE,
   RPC_CHANNELS.drafts.GET_ALL,
 
-  // sources — source config per-workspace
+  // sources：每个 workspace 独立的 source 配置
   RPC_CHANNELS.sources.GET,
   RPC_CHANNELS.sources.CREATE,
   RPC_CHANNELS.sources.DELETE,
@@ -358,51 +357,51 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.sources.GET_PERMISSIONS,
   RPC_CHANNELS.sources.GET_MCP_TOOLS,
 
-  // oauth — OAuth state management
+  // oauth：OAuth 状态管理
   RPC_CHANNELS.oauth.START,
   RPC_CHANNELS.oauth.COMPLETE,
   RPC_CHANNELS.oauth.CANCEL,
   RPC_CHANNELS.oauth.REVOKE,
 
-  // workspace — workspace config + images (sharp on headless)
+  // workspace：workspace 配置与图片处理（headless 端用 sharp）
   RPC_CHANNELS.workspace.GET_PERMISSIONS,
   RPC_CHANNELS.workspace.READ_IMAGE,
   RPC_CHANNELS.workspace.WRITE_IMAGE,
   RPC_CHANNELS.workspace.SETTINGS_GET,
   RPC_CHANNELS.workspace.SETTINGS_UPDATE,
 
-  // permissions — workspace permissions
+  // permissions：workspace 权限
   RPC_CHANNELS.permissions.GET_DEFAULTS,
   RPC_CHANNELS.permissions.DEFAULTS_CHANGED,
 
-  // skills — skill content per-workspace (not openEditor/openFinder which are local OS)
+  // skills：每个 workspace 独立的 skill 内容（openEditor/openFinder 除外，那是本地 OS 操作）
   RPC_CHANNELS.skills.GET,
   RPC_CHANNELS.skills.GET_FILES,
   RPC_CHANNELS.skills.DELETE,
   RPC_CHANNELS.skills.CHANGED,
 
-  // statuses — workspace metadata
+  // statuses：workspace 元数据
   RPC_CHANNELS.statuses.LIST,
   RPC_CHANNELS.statuses.REORDER,
   RPC_CHANNELS.statuses.CHANGED,
 
-  // labels — workspace metadata
+  // labels：workspace 元数据
   RPC_CHANNELS.labels.LIST,
   RPC_CHANNELS.labels.CREATE,
   RPC_CHANNELS.labels.DELETE,
   RPC_CHANNELS.labels.CHANGED,
 
-  // views — workspace UI views
+  // views：workspace UI 视图
   RPC_CHANNELS.views.LIST,
   RPC_CHANNELS.views.SAVE,
 
-  // toolIcons — workspace config
+  // toolIcons：workspace 配置
   RPC_CHANNELS.toolIcons.GET_MAPPINGS,
 
-  // logo — workspace config
+  // logo：workspace 配置
   RPC_CHANNELS.logo.GET_URL,
 
-  // automations — workspace automations
+  // automations：workspace 自动化
   RPC_CHANNELS.automations.GET,
   RPC_CHANNELS.automations.TEST,
   RPC_CHANNELS.automations.SET_ENABLED,
@@ -413,7 +412,7 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.automations.REPLAY,
   RPC_CHANNELS.automations.CHANGED,
 
-  // projects — workspace projects
+  // projects：workspace 项目
   RPC_CHANNELS.projects.GET,
   RPC_CHANNELS.projects.GET_ONE,
   RPC_CHANNELS.projects.CREATE,
@@ -424,14 +423,14 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.projects.DELETE_ASSET,
   RPC_CHANNELS.projects.CHANGED,
 
-  // git — workspace filesystem
+  // git：workspace 文件系统
   RPC_CHANNELS.git.GET_BRANCH,
 
-  // resources — workspace resource export/import
+  // resources：workspace 资源导入导出
   RPC_CHANNELS.resources.EXPORT,
   RPC_CHANNELS.resources.IMPORT,
 
-  // messaging — gateway channels run on workspace server
+  // messaging：网关 channel 运行在 workspace 服务端
   RPC_CHANNELS.messaging.WA_REGISTER,
   RPC_CHANNELS.messaging.WA_INCOMING,
   RPC_CHANNELS.messaging.WA_BUTTON_PRESS,
@@ -464,7 +463,7 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.messaging.WA_START_CONNECT,
   RPC_CHANNELS.messaging.WA_SUBMIT_PHONE,
   RPC_CHANNELS.messaging.WA_UI_EVENT,
-  // messaging access control — UI ↔ Server, per-platform owners + per-binding allow-list
+  // messaging 访问控制：UI ↔ Server，含平台级 owner 与 binding 白名单
   RPC_CHANNELS.messaging.GET_PLATFORM_OWNERS,
   RPC_CHANNELS.messaging.SET_PLATFORM_OWNERS,
   RPC_CHANNELS.messaging.GET_PLATFORM_ACCESS_MODE,
@@ -476,13 +475,15 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
 ])
 
 // ---------------------------------------------------------------------------
-// Query helpers
+// 查询辅助函数
 // ---------------------------------------------------------------------------
 
+/** 判断某个 channel 是否只在本地 Electron 服务端执行。 */
 export function isLocalOnly(channel: string): boolean {
   return LOCAL_ONLY_CHANNELS.has(channel)
 }
 
+/** 判断某个 channel 是否可以路由到远端 workspace 服务端执行。 */
 export function isRemoteEligible(channel: string): boolean {
   return REMOTE_ELIGIBLE_CHANNELS.has(channel)
 }

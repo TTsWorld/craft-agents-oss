@@ -1,3 +1,8 @@
+/**
+ * Badge — 徽章组件
+ *
+ * 用 cva 管理变体样式，支持 default、secondary、destructive、outline 等风格。
+ */
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"

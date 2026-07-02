@@ -1,3 +1,9 @@
+/**
+ * Tabs —— 选项卡组件
+ *
+ * 基于 Radix UI Tabs 封装，提供 TabsList、TabsTrigger、TabsContent。
+ * 用于在同一区域切换不同内容面板。
+ */
 import * as React from "react"
 import * as TabsPrimitive from "@radix-ui/react-tabs"
 import { cn } from "@/lib/utils"

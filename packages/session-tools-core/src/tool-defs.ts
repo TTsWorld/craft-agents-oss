@@ -1,14 +1,12 @@
 /**
- * Session Tool Definitions — Single Source of Truth
+ * Session Tool 定义 —— 唯一数据源
  *
- * Canonical Zod schemas, descriptions, and handler registry for all
- * session-scoped tools. Consumers derive what they need:
+ * 所有 session 级 tool 的权威 Zod schema、描述和 handler 注册表。使用者按需取用：
  *
- * - Claude SDK  → `.shape` extracts the plain `{ key: z.string() }` literal
- * - MCP / Pi    → `getToolDefsAsJsonSchema()` auto-converts to JSON Schema
+ * - Claude SDK  → 用 `.shape` 提取原始的 `{ key: z.string() }` 字面量
+ * - MCP / Pi    → `getToolDefsAsJsonSchema()` 自动转成 JSON Schema
  *
- * Adding a new tool: define the schema, description, handler import, and
- * one entry in SESSION_TOOL_DEFS.
+ * 新增 tool 时：定义 schema、描述、handler import，并在 SESSION_TOOL_DEFS 里加一条。
  */
 
 import { z } from 'zod';
@@ -16,7 +14,7 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { SessionToolContext } from './context.ts';
 import type { ToolResult } from './types.ts';
 
-// Handlers
+// Handler 导入
 import { handleSubmitPlan } from './handlers/submit-plan.ts';
 import { handleConfigValidate } from './handlers/config-validate.ts';
 import { handleSkillValidate } from './handlers/skill-validate.ts';
@@ -43,7 +41,7 @@ import { handleSendAgentMessage } from './handlers/send-agent-message.ts';
 import { handleListMessagingChannels, handleUnbindMessagingChannel } from './handlers/messaging.ts';
 
 // ============================================================
-// Canonical Zod Schemas
+// 权威 Zod Schemas
 // ============================================================
 
 export const SubmitPlanSchema = z.object({
@@ -153,7 +151,7 @@ export const SendDeveloperFeedbackSchema = z.object({
   message: z.string().describe('Freeform markdown feedback — be detailed, use headings, lists, code blocks. Include what happened, what you expected, what would help, or any ideas/suggestions.'),
 });
 
-// Browser tool schema (single CLI-like tool for all browser actions)
+// Browser tool schema（单个 CLI 风格 tool，处理所有浏览器操作）
 export const BrowserToolSchema = z.object({
   command: z.union([
     z.string(),
@@ -179,7 +177,7 @@ export const SpawnSessionSchema = z.object({
   })).optional().describe('Files to include with the prompt'),
 });
 
-// Session self-management tools
+// Session 自我管理 tools
 export const SetSessionLabelsSchema = z.object({
   sessionId: z.string().optional().describe('Session ID to update. Omit to update the current session.'),
   labels: z.array(z.string()).describe('Labels to set (replaces all existing labels)'),
@@ -207,7 +205,7 @@ export const ListBackgroundTasksSchema = z.object({
   sessionId: z.string().optional().describe('Session ID to query. Omit to list background tasks for the current session.'),
 });
 
-// Inter-session messaging
+// 跨 session 消息
 export const SendAgentMessageSchema = z.object({
   sessionId: z.string().describe('Target session ID to send the message to'),
   message: z.string().describe('The message to send to the target session'),
@@ -226,7 +224,7 @@ export const UnbindMessagingChannelSchema = z.object({
 });
 
 // ============================================================
-// Canonical Tool Descriptions (base — no DOC_REFS)
+// 权威 Tool 描述（基础版 —— 不含 DOC_REFS）
 // ============================================================
 
 export const TOOL_DESCRIPTIONS = {
@@ -505,45 +503,45 @@ Messages will no longer be forwarded between the chat app and this session.`,
 } as const;
 
 // ============================================================
-// Tool Definition Type
+// Tool 定义类型
 // ============================================================
 
-/** Handler function signature for session tools. */
+/** session tool 的 handler 函数签名。 */
 export type SessionToolHandler = (ctx: SessionToolContext, args: any) => Promise<ToolResult>;
 
-/** Where a session tool is executed. */
+/** session tool 在哪里执行。 */
 export type SessionToolExecutionMode = 'registry' | 'backend';
 
-/** Safe/Explore mode behavior for a session tool. */
+/** session tool 在 Safe/Explore 模式下的行为。 */
 export type SessionToolSafeMode = 'allow' | 'block';
 
 interface SessionToolDefBase {
   name: string;
   description: string;
   inputSchema: z.ZodObject<z.ZodRawShape>;
-  /** Whether this tool is allowed in Explore/Safe mode. */
+  /** 该 tool 在 Explore/Safe 模式下是否允许使用。 */
   safeMode: SessionToolSafeMode;
-  /** Whether this tool only reads data (no side effects). Enables parallel execution in backends that support it. */
+  /** 该 tool 是否只读数据（无副作用）。支持的后端会对这类 tool 并行执行。 */
   readOnly?: boolean;
 }
 
-/** Tool executed from the canonical registry (requires a concrete handler). */
+/** 从权威注册表执行的 tool（需要具体的 handler）。 */
 export interface RegistrySessionToolDef extends SessionToolDefBase {
   executionMode: 'registry';
   handler: SessionToolHandler;
 }
 
-/** Tool executed by backend-specific adapters (Pi/Claude/session-mcp-server). */
+/** 由后端专属适配器执行的 tool（Pi/Claude/session-mcp-server）。 */
 export interface BackendSessionToolDef extends SessionToolDefBase {
   executionMode: 'backend';
   handler: null;
 }
 
-/** A single session tool definition combining name, description, schema, mode, and handler. */
+/** 单个 session tool 定义，聚合名称、描述、schema、模式和 handler。 */
 export type SessionToolDef = RegistrySessionToolDef | BackendSessionToolDef;
 
 // ============================================================
-// Canonical Tool Registry
+// 权威 Tool 注册表
 // ============================================================
 
 export const SESSION_TOOL_DEFS: SessionToolDef[] = [
@@ -564,32 +562,31 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   { name: 'send_developer_feedback', description: TOOL_DESCRIPTIONS.send_developer_feedback, inputSchema: SendDeveloperFeedbackSchema, executionMode: 'registry', safeMode: 'allow', handler: handleSendDeveloperFeedback },
   { name: 'call_llm', description: TOOL_DESCRIPTIONS.call_llm, inputSchema: CallLlmSchema, executionMode: 'backend', safeMode: 'allow', readOnly: true, handler: null },
   { name: 'spawn_session', description: TOOL_DESCRIPTIONS.spawn_session, inputSchema: SpawnSessionSchema, executionMode: 'backend', safeMode: 'block', handler: null },
-  // Browser tool (backend-specific — requires BrowserPaneManager in Electron)
-  // Single CLI-like tool that handles all browser actions via command string.
+  // Browser tool（后端专属 —— 需要 Electron 里的 BrowserPaneManager）
+  // 单个 CLI 风格的 tool，通过命令字符串处理所有浏览器操作。
   { name: 'browser_tool', description: TOOL_DESCRIPTIONS.browser_tool, inputSchema: BrowserToolSchema, executionMode: 'backend', safeMode: 'allow', handler: null },
-  // Session self-management tools (registry — use context callbacks to reach SessionManager)
+  // Session 自我管理 tool（注册表执行 —— 通过 context 回调访问 SessionManager）
   { name: 'set_session_labels', description: TOOL_DESCRIPTIONS.set_session_labels, inputSchema: SetSessionLabelsSchema, executionMode: 'registry', safeMode: 'block', handler: handleSetSessionLabels },
   { name: 'set_session_status', description: TOOL_DESCRIPTIONS.set_session_status, inputSchema: SetSessionStatusSchema, executionMode: 'registry', safeMode: 'block', handler: handleSetSessionStatus },
   { name: 'get_session_info', description: TOOL_DESCRIPTIONS.get_session_info, inputSchema: GetSessionInfoSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleGetSessionInfo },
   { name: 'list_sessions', description: TOOL_DESCRIPTIONS.list_sessions, inputSchema: ListSessionsSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleListSessions },
   { name: 'list_background_tasks', description: TOOL_DESCRIPTIONS.list_background_tasks, inputSchema: ListBackgroundTasksSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleListBackgroundTasks },
-  // Inter-session messaging
+  // 跨 session 消息
   { name: 'send_agent_message', description: TOOL_DESCRIPTIONS.send_agent_message, inputSchema: SendAgentMessageSchema, executionMode: 'registry', safeMode: 'block', handler: handleSendAgentMessage },
-  // Messaging gateway tools
+  // 消息网关 tool
   { name: 'list_messaging_channels', description: TOOL_DESCRIPTIONS.list_messaging_channels, inputSchema: ListMessagingChannelsSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleListMessagingChannels },
   { name: 'unbind_messaging_channel', description: TOOL_DESCRIPTIONS.unbind_messaging_channel, inputSchema: UnbindMessagingChannelSchema, executionMode: 'registry', safeMode: 'block', handler: handleUnbindMessagingChannel },
 ];
 
 export interface SessionToolFilterOptions {
-  /** Include the experimental send_developer_feedback tool. */
+  /** 是否包含实验性的 send_developer_feedback tool。 */
   includeDeveloperFeedback?: boolean;
 }
 
 /**
- * Return session tools with optional feature filtering.
+ * 返回 session tool 列表，可按特性过滤。
  *
- * Callers should use this helper instead of filtering ad hoc so tool visibility
- * stays consistent across Claude, Pi, and session-mcp-server backends.
+ * 各后端应使用这个辅助函数，而不是自己过滤，以保证 Claude、Pi 和 session-mcp-server 的 tool 可见性一致。
  */
 export function getSessionToolDefs(options?: SessionToolFilterOptions): SessionToolDef[] {
   const includeDeveloperFeedback = options?.includeDeveloperFeedback ?? true;
@@ -603,40 +600,40 @@ export function getSessionToolDefs(options?: SessionToolFilterOptions): SessionT
 }
 
 /**
- * Build a name->definition registry with optional feature filtering.
+ * 构造 name → definition 的注册表，支持按特性过滤。
  */
 export function getSessionToolRegistry(options?: SessionToolFilterOptions): Map<string, SessionToolDef> {
   return new Map(getSessionToolDefs(options).map(def => [def.name, def]));
 }
 
 /**
- * Return session tool names with optional feature filtering.
+ * 返回 session tool 名称集合，支持按特性过滤。
  */
 export function getSessionToolNames(options?: SessionToolFilterOptions): Set<string> {
   return new Set(getSessionToolDefs(options).map(def => def.name));
 }
 
 /**
- * Return backend-executed tool names with optional feature filtering.
+ * 返回由后端执行的 tool 名称集合，支持按特性过滤。
  */
 export function getSessionBackendToolNames(options?: SessionToolFilterOptions): Set<string> {
   return new Set(getSessionToolDefs(options).filter(d => d.executionMode === 'backend').map(d => d.name));
 }
 
 /**
- * Return registry-executed tool names with optional feature filtering.
+ * 返回从注册表执行的 tool 名称集合，支持按特性过滤。
  */
 export function getSessionRegistryToolNames(options?: SessionToolFilterOptions): Set<string> {
   return new Set(getSessionToolDefs(options).filter(d => d.executionMode === 'registry').map(d => d.name));
 }
 
 export interface SessionToolNameOptions extends SessionToolFilterOptions {
-  /** Optional name prefix for consumers (e.g. 'mcp__session__'). */
+  /** 调用方可选的名称前缀（如 'mcp__session__'）。 */
   prefix?: string;
 }
 
 /**
- * Return session tool names that are allowed in Explore/Safe mode.
+ * 返回在 Explore/Safe 模式下允许使用的 session tool 名称。
  */
 export function getSessionSafeAllowedToolNames(options?: SessionToolNameOptions): Set<string> {
   const prefix = options?.prefix ?? '';
@@ -648,7 +645,7 @@ export function getSessionSafeAllowedToolNames(options?: SessionToolNameOptions)
 }
 
 /**
- * Return session tool names that are blocked in Explore/Safe mode.
+ * 返回在 Explore/Safe 模式下被阻止的 session tool 名称。
  */
 export function getSessionSafeBlockedToolNames(options?: SessionToolNameOptions): Set<string> {
   const prefix = options?.prefix ?? '';
@@ -660,39 +657,40 @@ export function getSessionSafeBlockedToolNames(options?: SessionToolNameOptions)
 }
 
 // ============================================================
-// Derived Lookups
+// 派生查找表
 // ============================================================
 
-/** Set of session tool names for quick membership checks. */
+/** session tool 名称集合，用于快速判断是否属于 session tool。 */
 export const SESSION_TOOL_NAMES = new Set(SESSION_TOOL_DEFS.map(d => d.name));
 
-/** Session tool names that must be handled by backend-specific adapters (Pi/Claude/session-mcp-server). */
+/** 必须由后端专属适配器处理的 session tool 名称（Pi/Claude/session-mcp-server）。 */
 export const SESSION_BACKEND_TOOL_NAMES = new Set(
   SESSION_TOOL_DEFS.filter(d => d.executionMode === 'backend').map(d => d.name)
 );
 
-/** Session tool names that are always executable from the canonical registry. */
+/** 总是可以从权威注册表执行的 session tool 名称。 */
 export const SESSION_REGISTRY_TOOL_NAMES = new Set(
   SESSION_TOOL_DEFS.filter(d => d.executionMode === 'registry').map(d => d.name)
 );
 
-/** Session tool names allowed in Explore/Safe mode (unfiltered canonical set). */
+/** 在 Explore/Safe 模式下允许的 session tool 名称（未过滤的权威集合）。 */
 export const SESSION_SAFE_ALLOWED_TOOL_NAMES = new Set(
   SESSION_TOOL_DEFS.filter(d => d.safeMode === 'allow').map(d => d.name)
 );
 
-/** Session tool names blocked in Explore/Safe mode (unfiltered canonical set). */
+/** 在 Explore/Safe 模式下被阻止的 session tool 名称（未过滤的权威集合）。 */
 export const SESSION_SAFE_BLOCKED_TOOL_NAMES = new Set(
   SESSION_TOOL_DEFS.filter(d => d.safeMode === 'block').map(d => d.name)
 );
 
-/** Map from tool name → definition for O(1) lookup. */
+/** tool 名称 → 定义的 Map，支持 O(1) 查找。 */
 export const SESSION_TOOL_REGISTRY = new Map(SESSION_TOOL_DEFS.map(d => [d.name, d]));
 
 // ============================================================
-// JSON Schema Converter (for MCP / Pi consumers)
+// JSON Schema 转换器（供 MCP / Pi 使用）
 // ============================================================
 
+/** JSON Schema 格式的 tool 定义。 */
 export interface JsonSchemaToolDef {
   name: string;
   description: string;
@@ -700,11 +698,11 @@ export interface JsonSchemaToolDef {
 }
 
 /**
- * Convert session tool definitions to JSON Schema format.
+ * 把 session tool 定义转换成 JSON Schema 格式。
  *
- * @param opts.prefix - Optional prefix for tool names (e.g., 'mcp__session__' for Pi)
- * @param opts.includeDeveloperFeedback - Include experimental feedback tool in output
- * @returns Array of tool definitions with JSON Schema inputSchema
+ * @param opts.prefix - tool 名称的可选前缀（例如 Pi 用 'mcp__session__'）
+ * @param opts.includeDeveloperFeedback - 是否在输出中包含实验性反馈 tool
+ * @returns 使用 JSON Schema 作为 inputSchema 的 tool 定义数组
  */
 export function getToolDefsAsJsonSchema(opts?: {
   prefix?: string;
@@ -714,10 +712,10 @@ export function getToolDefsAsJsonSchema(opts?: {
   const defs = getSessionToolDefs({ includeDeveloperFeedback: opts?.includeDeveloperFeedback });
 
   return defs.map(def => {
-    // Explicit `as any` avoids TS2589 ("type instantiation is excessively deep")
-    // caused by zodToJsonSchema inferring deep generic chains from union schemas.
+    // 显式用 as any 绕开 TS2589（"type instantiation is excessively deep"）
+    // 因为 zodToJsonSchema 从 union schema 推断出过深的泛型链。
     const jsonSchema = zodToJsonSchema(def.inputSchema as any, { $refStrategy: 'none' }) as Record<string, unknown>;
-    // Strip metadata not needed by MCP/Pi consumers
+    // 去掉 MCP/Pi 不需要的元数据
     delete jsonSchema.$schema;
     delete jsonSchema.additionalProperties;
     return {

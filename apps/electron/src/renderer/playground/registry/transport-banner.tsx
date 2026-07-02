@@ -1,3 +1,10 @@
+/**
+ * transport-banner 注册项
+ *
+ * 演示远程服务器连接状态横幅：reconnecting / connecting / failed / disconnected，
+ * 以及它与顶部 TopBar 按钮的间距处理。
+ * 涉及概念：transport（前后端通信通道，这里用 WebSocket）、stream（实时数据流）。
+ */
 import * as React from 'react'
 import type { ComponentEntry } from './types'
 import { TransportConnectionBanner } from '@/components/app-shell/TransportConnectionBanner'
@@ -6,7 +13,7 @@ import { HelpCircle, Plus } from 'lucide-react'
 
 // =============================================================================
 // TransportConnectionBanner Playground
-// Demonstrates the banner in context with a mock TopBar to verify no overlap.
+// 在模拟 TopBar 环境下展示横幅，验证 Retry 按钮不会和右上角帮助按钮重叠。
 // =============================================================================
 
 /** Mock TopBar strip — just the right-side buttons that caused the overlap. */
@@ -41,7 +48,7 @@ function LayoutWrapper({ children }: { children: React.ReactNode }) {
   )
 }
 
-// --- Mock states ---
+// --- 模拟连接状态 ---
 
 const reconnectingState: TransportConnectionState = {
   mode: 'remote',
@@ -101,6 +108,7 @@ function BannerInLayout({ state }: { state: TransportConnectionState }) {
   )
 }
 
+/** transport-banner 组件注册列表。 */
 export const transportBannerComponents: ComponentEntry[] = [
   {
     id: 'transport-banner-layout',

@@ -1,12 +1,12 @@
 /**
  * InputSettingsPage
  *
- * Input behavior settings that control how the chat input works.
+ * 输入行为设置：控制聊天输入框的工作方式。
  *
- * Settings:
- * - Auto Capitalisation (on/off)
- * - Spell Check (on/off)
- * - Send Message Key (Enter or ⌘+Enter)
+ * 设置项：
+ * - 自动大写（开/关）
+ * - 拼写检查（开/关）
+ * - 发送消息快捷键（Enter 或 ⌘+Enter）
  */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -31,22 +31,22 @@ export const meta: DetailsPageMeta = {
 }
 
 // ============================================
-// Main Component
+// 主组件
 // ============================================
 
 export default function InputSettingsPage() {
   const { t } = useTranslation()
 
-  // Auto-capitalisation state
+  // 自动大写状态
   const [autoCapitalisation, setAutoCapitalisation] = useState(true)
 
-  // Spell check state (default off)
+  // 拼写检查状态（默认关闭）
   const [spellCheck, setSpellCheck] = useState(false)
 
-  // Send message key state
+  // 发送消息快捷键状态
   const [sendMessageKey, setSendMessageKey] = useState<'enter' | 'cmd-enter'>('enter')
 
-  // Load settings on mount
+  // 挂载时加载设置
   useEffect(() => {
     const loadSettings = async () => {
       if (!window.electronAPI) return
@@ -89,7 +89,7 @@ export default function InputSettingsPage() {
         <ScrollArea className="h-full">
           <div className="px-5 py-7 max-w-3xl mx-auto">
             <div className="space-y-8">
-              {/* Typing Behavior */}
+              {/* 输入行为 */}
               <SettingsSection title={t("settings.input.typing")} description={t("settings.input.typingDesc")}>
                 <SettingsCard>
                   <SettingsToggle
@@ -107,7 +107,7 @@ export default function InputSettingsPage() {
                 </SettingsCard>
               </SettingsSection>
 
-              {/* Send Behavior */}
+              {/* 发送行为 */}
               <SettingsSection title={t("settings.input.sending")} description={t("settings.input.sendingDesc")}>
                 <SettingsCard>
                   <SettingsMenuSelectRow

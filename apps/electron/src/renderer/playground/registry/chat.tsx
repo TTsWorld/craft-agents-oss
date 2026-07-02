@@ -1,3 +1,11 @@
+/**
+ * chat 注册项
+ *
+ * 这个文件演示聊天界面的各种输入、附件、任务、权限请求、标签/状态等组合。
+ * 涉及概念：session（一次对话）、workspace（工作区）、source（数据源）、
+ * permission mode（权限模式，ask/approve-yolo 等）、tool use（工具调用产生的 PermissionRequest）、
+ * background task（Agent 或 shell 后台任务）。
+ */
 import * as React from 'react'
 import type { ComponentEntry } from './types'
 import { AttachmentPreview } from '@/components/app-shell/AttachmentPreview'
@@ -176,6 +184,8 @@ const inputContainerSampleStatuses: SessionStatus[] = [
   },
 ]
 
+// AppShellProvider 需要一个“应用外壳上下文”，这里用假数据构造一个最小上下文。
+// 真实运行时它由 main/renderer 之间的状态和 IPC 驱动。
 const playgroundAppShellContext = {
   workspaces: [{ id: 'playground-workspace', name: 'Playground', path: '/playground', rootPath: '/playground' }],
   activeWorkspaceId: 'playground-workspace',
@@ -219,10 +229,11 @@ const playgroundAppShellContext = {
 }
 
 // ============================================================================
-// Sample Nested Tool Activities (Task subagent with child tools)
+// 示例嵌套工具活动（Task subagent 及其子工具）
 // ============================================================================
+// ActivityItem 代表 Agent 执行的一次工具调用；parentId/depth 表示父子嵌套关系。
 
-/** Flat list of tools (no nesting) */
+/** 平铺工具列表（没有嵌套）。 */
 const flatActivities: ActivityItem[] = [
   {
     id: 'tool-1',
@@ -259,7 +270,7 @@ const flatActivities: ActivityItem[] = [
   },
 ]
 
-/** Task with nested child tools (completed) */
+/** 已完成 Task，内部包含若干子工具。 */
 const nestedActivitiesCompleted: ActivityItem[] = [
   {
     id: 'task-1',
@@ -322,7 +333,7 @@ const nestedActivitiesCompleted: ActivityItem[] = [
   },
 ]
 
-/** Task with nested child tools (in progress) */
+/** 进行中的 Task，内部包含已完成和运行中的子工具。 */
 const nestedActivitiesInProgress: ActivityItem[] = [
   {
     id: 'task-2',
@@ -371,7 +382,7 @@ const nestedActivitiesInProgress: ActivityItem[] = [
   },
 ]
 
-/** Multiple nested Task tools */
+/** 多个独立的嵌套 Task。 */
 const multipleNestedTasks: ActivityItem[] = [
   {
     id: 'task-a',
@@ -457,7 +468,7 @@ const multipleNestedTasks: ActivityItem[] = [
   },
 ]
 
-/** Deep nesting example (2+ levels) */
+/** 深度嵌套示例（2 层以上）。 */
 const deepNestedActivities: ActivityItem[] = [
   {
     id: 'task-outer',
@@ -532,8 +543,11 @@ const deepNestedActivities: ActivityItem[] = [
   },
 ]
 
+// 输入容器在 playground 里可以切换的几种模式：
+// freeform（普通输入）、permission（权限请求横幅）、admin_approval（管理员审批）。
 type InputContainerMode = 'freeform' | 'permission' | 'admin_approval'
 
+// interface 描述 InputContainerPlayground 组件接收的所有 props，都是可选的。
 interface InputContainerPlaygroundProps {
   disabled?: boolean
   isProcessing?: boolean
@@ -559,6 +573,7 @@ interface InputContainerPlaygroundProps {
   followUpCount?: number
 }
 
+// 一个 playground 包装组件：根据 props 开关控制输入区展示哪些元素（task、label、source、附件等）。
 function InputContainerPlayground({
   disabled = false,
   isProcessing = false,
@@ -962,13 +977,18 @@ function PermissionInputToggle({ autoToggle = false, autoToggleInterval = 3000, 
   )
 }
 
-// Generate variants for all hints dynamically
+// 动态生成 EmptyStateHint 的所有 variant，避免手动罗列。
 const emptyStateHintVariants = Array.from({ length: getHintCount() }, (_, i) => ({
   name: `Hint ${i + 1}`,
   description: getHintTemplate(i).slice(0, 50) + '...',
   props: { hintIndex: i },
 }))
 
+// ============================================================================
+// 组件注册表条目（Component Registry Entries）
+// ============================================================================
+
+/** chat 组件注册列表。 */
 export const chatComponents: ComponentEntry[] = [
   {
     id: 'empty-state-hint',

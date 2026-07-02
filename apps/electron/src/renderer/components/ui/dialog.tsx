@@ -1,3 +1,8 @@
+/**
+ * Dialog — 弹窗组件。
+ *
+ * 基于 Radix UI Dialog 封装，提供遮罩、内容区、标题、描述、页脚等结构。
+ */
 import * as React from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { XIcon } from "lucide-react"

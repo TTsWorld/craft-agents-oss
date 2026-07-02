@@ -6,14 +6,13 @@ import type { IWindowManager } from './window-manager-interface'
 import type { IMessagingGatewayRegistry } from './messaging-registry-interface'
 
 /**
- * Generic handler dependency bag.
- * Concrete hosts specialize these generics to their runtime implementations.
+ * RPC handler 的通用依赖包（dependency bag）。
  *
- * TSessionManager defaults to ISessionManager, TOAuthFlowStore
- * defaults to IOAuthFlowStore, TWindowManager defaults to IWindowManager,
- * and TBrowserPaneManager defaults to IBrowserPaneManager so core handlers
- * get typed access without specialization.  Electron narrows all to their
- * concrete implementations.
+ * 用泛型让 Electron 和无头模式可以注入各自的具体实现，
+ * 而核心 handler 代码只需要依赖接口。
+ *
+ * 类似 Golang 项目里把依赖汇总到一个 struct，handler 函数统一接收：
+ * type HandlerDeps struct { SessionManager ISessionManager; Platform PlatformServices; ... }
  */
 export interface HandlerDeps<
   TSessionManager extends ISessionManager = ISessionManager,

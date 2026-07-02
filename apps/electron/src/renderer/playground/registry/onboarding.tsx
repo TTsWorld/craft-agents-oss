@@ -1,3 +1,9 @@
+/**
+ * onboarding 注册项
+ *
+ * 这个文件把首次启动/设置向导里的各个步骤注册到 playground，
+ * 包括欢迎页、 provider/API 选择、凭证输入、完成页、Git Bash 检测等。
+ */
 import type { ComponentEntry } from './types'
 import { OnboardingFlowDemo } from '../demos/OnboardingFlowDemo'
 import { ProviderSelectStep } from '@/components/onboarding/ProviderSelectStep'
@@ -9,6 +15,7 @@ import { GitBashWarning, type GitBashStatus } from '@/components/onboarding/GitB
 import { OnboardingWizard } from '@/components/onboarding/OnboardingWizard'
 import type { OnboardingState } from '@/components/onboarding/OnboardingWizard'
 
+// 用默认值 + Partial 覆盖的方式生成 onboarding 状态， playground 里用来构造不同 variant。
 const createOnboardingState = (overrides: Partial<OnboardingState> = {}): OnboardingState => ({
   step: 'welcome',
   loginStatus: 'idle',
@@ -22,8 +29,10 @@ const createOnboardingState = (overrides: Partial<OnboardingState> = {}): Onboar
   ...overrides,
 })
 
+// noopHandler 是一个“什么都不做，只打印日志”的回调，用于满足组件 props 要求。
 const noopHandler = () => console.log('[Playground] Action triggered')
 
+/** onboarding 组件注册列表。 */
 export const onboardingComponents: ComponentEntry[] = [
   {
     id: 'onboarding-flow-demo',

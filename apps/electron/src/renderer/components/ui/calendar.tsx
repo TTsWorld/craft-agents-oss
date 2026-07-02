@@ -1,8 +1,8 @@
 /**
- * Calendar - Date picker calendar based on react-day-picker v9.
+ * Calendar — 基于 react-day-picker v9 的日期选择日历。
  *
- * Adapted from the official shadcn/ui Calendar component.
- * Supports single/range selection and dropdown month/year navigation.
+ * 改编自官方 shadcn/ui Calendar 组件。
+ * 支持单选/范围选择，以及月份/年份下拉导航。
  */
 
 import * as React from 'react'
@@ -12,6 +12,7 @@ import { DayButton, DayPicker, getDefaultClassNames } from 'react-day-picker'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 
+/** 日历组件。 */
 function Calendar({
   className,
   classNames,
@@ -27,7 +28,7 @@ function Calendar({
       showOutsideDays={showOutsideDays}
       captionLayout={captionLayout}
       formatters={{
-        // Show short month names in the dropdown (Jan, Feb, ...)
+        // 下拉框中显示月份简写（Jan、Feb...）
         formatMonthDropdown: (date) =>
           date.toLocaleString('default', { month: 'short' }),
         ...formatters,
@@ -61,17 +62,17 @@ function Calendar({
           'flex h-[--cell-size] w-full items-center justify-center px-[--cell-size]',
           defaultClassNames.month_caption
         ),
-        // Dropdown container for month/year selectors
+        // 月份/年份下拉选择器容器
         dropdowns: cn(
           'flex h-[--cell-size] w-full items-center justify-center gap-1.5 text-sm font-medium',
           defaultClassNames.dropdowns
         ),
-        // Individual dropdown wrapper (month or year)
+        // 单个下拉包装器（月份或年份）
         dropdown_root: cn(
           'relative rounded-[5px] shadow-minimal',
           defaultClassNames.dropdown_root
         ),
-        // The native <select> is visually hidden; the caption_label shows the displayed value
+        // 原生 <select> 视觉上隐藏，caption_label 展示当前选中的值
         dropdown: cn('absolute inset-0 opacity-0 cursor-pointer', defaultClassNames.dropdown),
         caption_label: cn(
           'select-none font-medium',
@@ -114,7 +115,7 @@ function Calendar({
           if (orientation === 'right') {
             return <ChevronRightIcon className={cn('size-4', className)} {...props} />
           }
-          // Down chevron used in dropdown caption labels
+          // 下拉标题标签中使用的向下箭头
           return <ChevronDownIcon className={cn('size-3.5', className)} {...props} />
         },
         DayButton: CalendarDayButton,
@@ -125,8 +126,8 @@ function Calendar({
 }
 
 /**
- * CalendarDayButton - Individual day cell button.
- * Uses flex sizing to fill the parent cell, with proper selection/focus states.
+ * 日历单日单元格按钮。
+ * 使用弹性尺寸填满父单元格，并处理选中/聚焦状态。
  */
 function CalendarDayButton({
   className,
@@ -136,7 +137,7 @@ function CalendarDayButton({
 }: React.ComponentProps<typeof DayButton>) {
   const ref = React.useRef<HTMLButtonElement>(null)
 
-  // Focus the button when react-day-picker marks it as focused (keyboard nav)
+  // 当 react-day-picker 标记该日为 focused（键盘导航）时让按钮获得焦点
   React.useEffect(() => {
     if (modifiers.focused) {
       ref.current?.focus()
@@ -149,10 +150,10 @@ function CalendarDayButton({
       type="button"
       className={cn(
         'inline-flex items-center justify-center rounded-md text-sm',
-        // Fill the cell: flexible width, fixed min size from CSS var
+        // 填满单元格：宽度自适应，最小高度/宽度由 CSS 变量决定
         'h-[--cell-size] w-full min-w-[--cell-size] select-none',
         'hover:bg-foreground/5 transition-colors cursor-pointer',
-        // Selection state from modifiers
+        // 根据 modifiers 处理选中态
         modifiers.selected && 'bg-background shadow-minimal font-medium',
         'outline-none focus-visible:ring-1 focus-visible:ring-ring',
         className

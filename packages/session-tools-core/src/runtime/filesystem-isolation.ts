@@ -1,6 +1,20 @@
+/**
+ * 文件系统隔离（filesystem isolation）
+ *
+ * 本模块负责为脚本沙箱（script sandbox）构造一层“笼子”：
+ * 子进程只能写入当前 session 目录，无法越界修改宿主系统的其他路径。
+ * 类比 Golang：相当于在启动 os/exec.Cmd 之前，先给它套一个 chroot/namespace 规则。
+ */
+
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
+/**
+ * 文件系统隔离方案
+ * status: 是否成功启用
+ * backend: 使用哪种后端实现
+ * command/args: 最终要执行的命令及其参数
+ */
 export interface FilesystemIsolationPlan {
   status: 'enforced' | 'unavailable';
   backend: 'sandbox-exec' | 'bwrap' | 'firejail' | 'none';
@@ -8,18 +22,34 @@ export interface FilesystemIsolationPlan {
   args: string[];
 }
 
+/**
+ * 文件系统隔离的可选配置
+ * includeNetworkDeny: 是否同时禁止网络（用于和 network isolation 配合）
+ */
 export interface FilesystemIsolationOptions {
   includeNetworkDeny?: boolean;
 }
 
+/**
+ * 检查某个可执行文件是否在 PATH 中
+ * Windows 用 where，其他系统用 which
+ */
 function existsOnPath(binary: string): boolean {
   const checker = process.platform === 'win32' ? 'where' : 'which';
   const result = spawnSync(checker, [binary], { stdio: 'ignore' });
   return result.status === 0;
 }
 
+/**
+ * sandbox-exec 可用性缓存，避免重复探测
+ * boolean | null 是 TS 联合类型，null 表示“尚未探测”
+ */
 let sandboxExecUsableCache: boolean | null = null;
 
+/**
+ * 探测当前系统是否可用 sandbox-exec
+ * 通过执行一个最小 profile 并看退出码判断
+ */
 function canUseSandboxExec(): boolean {
   if (sandboxExecUsableCache !== null) return sandboxExecUsableCache;
   if (!existsOnPath('sandbox-exec')) {
@@ -32,10 +62,17 @@ function canUseSandboxExec(): boolean {
   return sandboxExecUsableCache;
 }
 
+/**
+ * 对路径里的反斜杠和双引号做转义，防止拼接到 sandbox profile 时语法出错
+ */
 function escapeSandboxPath(path: string): string {
   return path.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
+/**
+ * 为 macOS sandbox-exec 构造 profile 字符串
+ * 规则：默认拒绝所有文件写入，但允许写入 sessionDir 及其子目录
+ */
 export function buildDarwinSandboxProfile(
   sessionDir: string,
   options?: FilesystemIsolationOptions,
@@ -51,6 +88,7 @@ export function buildDarwinSandboxProfile(
     `(allow file-write* (subpath "${escapedRoot}"))`,
   ];
 
+  // 如果调用方希望同时禁网，就在 profile 里追加网络拒绝规则
   if (options?.includeNetworkDeny) {
     profileParts.push('(deny network*)');
   }
@@ -59,12 +97,12 @@ export function buildDarwinSandboxProfile(
 }
 
 /**
- * Wrap command execution to deny writes outside the current session directory.
+ * 把原始命令包装成“带文件系统隔离”的命令。
  *
- * Current support:
+ * 当前支持的平台：
  * - macOS: sandbox-exec profile
- * - Linux: bubblewrap (preferred) or firejail private/whitelist profile
- * - others: unavailable (fail-safe for script_sandbox)
+ * - Linux: bubblewrap（优先）或 firejail private/whitelist profile
+ * - 其他平台: 不可用（对 script_sandbox 采取 fail-safe）
  */
 export function applyFilesystemIsolation(
   command: string,
@@ -87,8 +125,8 @@ export function applyFilesystemIsolation(
 
   if (process.platform === 'linux') {
     if (existsOnPath('bwrap')) {
-      // Read-only root + writable bind mount for the session subtree.
-      // This limits writes to sessionRoot while preserving runtime/library access.
+      // Linux bubblewrap：根目录只读绑定，session 目录可写绑定。
+      // 这样运行时可以访问系统库，但写入被限制在 sessionRoot。
       return {
         status: 'enforced',
         backend: 'bwrap',
@@ -116,6 +154,7 @@ export function applyFilesystemIsolation(
     }
   }
 
+  // 没有任何可用后端时回退，status 标记为 unavailable，让上层决定如何处理
   return {
     status: 'unavailable',
     backend: 'none',

@@ -1,51 +1,64 @@
 /**
  * Source Types
  *
- * Sources are external data connections (MCP servers, APIs, local filesystems).
- * They replace the old "connections" concept with a more flexible, folder-based architecture.
+ * Source（数据源）是 Agent 连接外部系统的抽象，比如 MCP 服务器、REST API、本地文件/应用。
+ * 它用文件夹来组织配置：每个 source 对应一个目录，里面有 config.json 和 guide.md。
  *
- * File structure:
+ * TS 小知识：
+ * - `export type ...` 是给类型起别名，类似 Go 的 `type xxx = ...`。
+ * - `export interface ...` 定义对象结构约束，类似 Go 的 interface（但这里是“结构必须长这样”）。
+ *
+ * 文件结构：
  * ~/.craft-agent/workspaces/{workspaceId}/sources/{sourceSlug}/
- *   ├── config.json   - Source settings
- *   └── guide.md      - Usage guidelines + cached data (in YAML frontmatter)
+ *   ├── config.json   - Source 配置
+ *   └── guide.md      - 使用说明 + 缓存数据（YAML frontmatter）
  */
 
 /**
- * Source types - how we connect to the source
+ * Source 类型：连接方式
+ * - 'mcp': 通过 MCP 协议连接远程/本地服务器
+ * - 'api': 普通 REST API
+ * - 'local': 本地文件系统或应用
  */
 export type SourceType = 'mcp' | 'api' | 'local';
 
 /**
- * MCP source authentication types (for individual source connections)
- * Note: Different from workspace McpAuthType which uses 'workspace_oauth' | 'workspace_bearer' | 'public'
+ * MCP source 的认证类型（针对单个 source 连接）
+ * 注意：这和 workspace 级别的 McpAuthType 不同，后者用 'workspace_oauth' | 'workspace_bearer' | 'public'。
  */
 export type SourceMcpAuthType = 'oauth' | 'bearer' | 'none';
 
 /**
- * API authentication types
+ * API 认证类型
+ * - bearer: Authorization: Bearer <token>
+ * - header: 自定义请求头
+ * - query: URL 查询参数
+ * - basic: HTTP Basic Auth
+ * - oauth: OAuth 2.0
+ * - none: 公开接口，无需认证
  */
 export type ApiAuthType = 'bearer' | 'header' | 'query' | 'basic' | 'oauth' | 'none';
 
 /**
- * Google service types for OAuth scope selection
+ * Google 服务类型，用于 OAuth scope 选择
  */
 export type GoogleService = 'gmail' | 'calendar' | 'drive' | 'docs' | 'sheets' | 'youtube' | 'searchconsole';
 
 /**
- * Slack service types for OAuth scope selection
+ * Slack 服务类型，用于 OAuth scope 选择
  */
 export type SlackService = 'messaging' | 'channels' | 'users' | 'files' | 'full';
 
 /**
- * Microsoft service types for OAuth scope selection
+ * Microsoft 服务类型，用于 OAuth scope 选择
  */
 export type MicrosoftService = 'outlook' | 'microsoft-calendar' | 'onedrive' | 'teams' | 'sharepoint';
 
 /**
- * Infer Google service from API baseUrl.
- * Returns undefined if URL doesn't match a known Google API pattern.
+ * 从 API baseUrl 推断 Google 服务类型。
+ * 如果 URL 不匹配已知 Google API 模式，返回 undefined。
  *
- * Uses proper URL parsing to avoid false positives from arbitrary path matching.
+ * 这里用 URL 解析而不是简单的字符串匹配，避免路径里的巧合字符造成误判。
  */
 export function inferGoogleServiceFromUrl(baseUrl: string | undefined): GoogleService | undefined {
   if (!baseUrl) return undefined;
@@ -60,7 +73,7 @@ export function inferGoogleServiceFromUrl(baseUrl: string | undefined): GoogleSe
     return undefined;
   }
 
-  // Match by hostname (most reliable)
+  // 按主机名匹配（最可靠）
   if (hostname === 'calendar.googleapis.com') return 'calendar';
   if (hostname === 'drive.googleapis.com') return 'drive';
   if (hostname === 'gmail.googleapis.com') return 'gmail';
@@ -69,7 +82,7 @@ export function inferGoogleServiceFromUrl(baseUrl: string | undefined): GoogleSe
   if (hostname === 'youtube.googleapis.com') return 'youtube';
   if (hostname === 'searchconsole.googleapis.com' || hostname === 'webmasters.googleapis.com') return 'searchconsole';
 
-  // Fallback: check path patterns only on googleapis.com domains
+  // 兜底：只在 googleapis.com 域名下按路径匹配
   if (hostname === 'www.googleapis.com' || hostname === 'googleapis.com') {
     if (pathname.startsWith('/calendar/')) return 'calendar';
     if (pathname.startsWith('/drive/')) return 'drive';
@@ -84,8 +97,8 @@ export function inferGoogleServiceFromUrl(baseUrl: string | undefined): GoogleSe
 }
 
 /**
- * Infer Slack service from API baseUrl.
- * Returns 'full' by default if URL matches Slack API pattern.
+ * 从 API baseUrl 推断 Slack 服务类型。
+ * 如果 URL 匹配 Slack API 模式，默认返回 'full'。
  */
 export function inferSlackServiceFromUrl(baseUrl: string | undefined): SlackService | undefined {
   if (!baseUrl) return undefined;
@@ -98,18 +111,18 @@ export function inferSlackServiceFromUrl(baseUrl: string | undefined): SlackServ
     return undefined;
   }
 
-  // Match Slack API hostname
+  // 匹配 Slack API 主机名
   if (hostname === 'slack.com' || hostname === 'api.slack.com') {
-    return 'full'; // Default to full service for Slack
+    return 'full'; // Slack 默认用 full service
   }
 
   return undefined;
 }
 
 /**
- * Infer Microsoft service from API baseUrl.
- * Microsoft Graph API uses graph.microsoft.com for all services.
- * Returns undefined if service cannot be determined from URL path.
+ * 从 API baseUrl 推断 Microsoft 服务类型。
+ * Microsoft Graph API 所有服务都共用 graph.microsoft.com，所以主要靠路径区分。
+ * 如果无法从 URL 路径判断，返回 undefined，需要用户在配置里显式指定 microsoftService。
  */
 export function inferMicrosoftServiceFromUrl(baseUrl: string | undefined): MicrosoftService | undefined {
   if (!baseUrl) return undefined;
@@ -124,9 +137,9 @@ export function inferMicrosoftServiceFromUrl(baseUrl: string | undefined): Micro
     return undefined;
   }
 
-  // Match Microsoft Graph API hostname
+  // Microsoft Graph API 主机名
   if (hostname === 'graph.microsoft.com') {
-    // Try to infer service from path
+    // 按路径推断服务
     if (pathname.includes('/me/messages') || pathname.includes('/me/mailfolders') || pathname.includes('/mail')) {
       return 'outlook';
     }
@@ -142,11 +155,11 @@ export function inferMicrosoftServiceFromUrl(baseUrl: string | undefined): Micro
     if (pathname.includes('/sites')) {
       return 'sharepoint';
     }
-    // Cannot determine service from generic Graph URL - require explicit microsoftService config
+    // 通用 Graph URL 无法判断，要求显式配置
     return undefined;
   }
 
-  // Match Outlook-specific API (legacy, but still used)
+  // 旧版 Outlook API（仍在使用）
   if (hostname === 'outlook.office.com' || hostname === 'outlook.office365.com') {
     return 'outlook';
   }
@@ -155,49 +168,56 @@ export function inferMicrosoftServiceFromUrl(baseUrl: string | undefined): Micro
 }
 
 /**
- * Known providers for special handling (OAuth flows, icons, etc.)
- * These have well-known OAuth endpoints or special behavior.
+ * 已知 provider：需要特殊处理 OAuth 流程、图标等的来源。
+ * 这些 provider 有标准的 OAuth 端点或特殊行为。
  */
 export type KnownProvider =
-  | 'google' // Google APIs (Gmail, etc.) - uses Google OAuth
-  | 'microsoft' // Microsoft APIs (Outlook, OneDrive, etc.) - uses Microsoft OAuth
-  | 'linear' // Linear - standard MCP OAuth
-  | 'github' // GitHub - standard MCP OAuth
-  | 'notion' // Notion - standard MCP OAuth
-  | 'slack' // Slack - standard MCP OAuth
-  | 'exa'; // Exa search API
+  | 'google' // Google API - 使用 Google OAuth
+  | 'microsoft' // Microsoft API - 使用 Microsoft OAuth
+  | 'linear' // Linear - 标准 MCP OAuth
+  | 'github' // GitHub - 标准 MCP OAuth
+  | 'notion' // Notion - 标准 MCP OAuth
+  | 'slack' // Slack - 标准 MCP OAuth
+  | 'exa'; // Exa 搜索 API
 
 /**
- * API providers that use OAuth for authentication.
- * These providers store credentials as source_oauth and use SourceCredentialManager.
+ * 使用 OAuth 认证的 API provider 白名单。
+ * 这些 provider 的凭证存为 source_oauth，由 SourceCredentialManager 管理。
  */
 export const API_OAUTH_PROVIDERS = ['google', 'microsoft', 'slack'] as const;
+
+/**
+ * 从上面数组中推导出具体 provider 类型。
+ * `typeof API_OAUTH_PROVIDERS[number]` 是 TS 用法：取只读数组元素的联合类型。
+ */
 export type ApiOAuthProvider = typeof API_OAUTH_PROVIDERS[number];
 
 /**
- * Check if a provider uses OAuth for API authentication
+ * 类型守卫：判断某个 provider 是否属于 OAuth API provider。
+ * `provider is ApiOAuthProvider` 是 TS 自定义类型守卫，返回 true 时 TS 会把它窄化为该类型。
  */
 export function isApiOAuthProvider(provider: string | undefined): provider is ApiOAuthProvider {
   return API_OAUTH_PROVIDERS.includes(provider as ApiOAuthProvider);
 }
 
 /**
- * Check if a source uses OAuth authentication (for proactive token refresh).
+ * 判断 source 是否使用 OAuth 认证（用于主动刷新 token）。
  *
- * Returns true for:
- * - MCP sources with authType: 'oauth'
- * - API sources with OAuth providers (google, slack, microsoft)
+ * 返回 true 的情况：
+ * - MCP source 且 authType 为 'oauth'
+ * - API source 且 provider 是 google/slack/microsoft
+ * - API source 且是 generic OAuth
  */
 export function isOAuthSource(source: LoadedSource): boolean {
-  // MCP OAuth sources
+  // MCP OAuth source
   if (source.config.type === 'mcp') {
     return source.config.mcp?.authType === 'oauth';
   }
 
-  // API OAuth sources (Google, Slack, Microsoft)
+  // API OAuth source（Google、Slack、Microsoft）
   if (source.config.type === 'api') {
     if (isApiOAuthProvider(source.config.provider)) return true;
-    // Generic OAuth API sources (e.g. GitHub, Linear)
+    // 通用 OAuth API source（例如 GitHub、Linear）
     if (isGenericOAuthSource(source)) return true;
   }
 
@@ -205,9 +225,8 @@ export function isOAuthSource(source: LoadedSource): boolean {
 }
 
 /**
- * Check if a source uses generic OAuth (not Google/Slack/Microsoft provider-specific).
- * Matches API sources with authType 'oauth' — either explicit oauth config block
- * or auto-discovery from baseUrl via RFC 9728/8414.
+ * 判断 source 是否使用 generic OAuth（非 Google/Slack/Microsoft 这种 provider-specific OAuth）。
+ * 匹配 API source 中 authType 为 'oauth' 的情况：可以是显式配置了 oauth 块，也可以是从 baseUrl 自动发现。
  */
 export function isGenericOAuthSource(source: LoadedSource): boolean {
   return (
@@ -218,225 +237,221 @@ export function isGenericOAuthSource(source: LoadedSource): boolean {
 }
 
 /**
- * Check if an API source has a token renew endpoint configured.
+ * 判断 API source 是否配置了 token 续期端点。
  */
 export function hasRenewEndpoint(source: LoadedSource): boolean {
   return source.config.type === 'api' && !!source.config.api?.renewEndpoint?.path;
 }
 
 /**
- * Check if a source can auto-refresh its token.
- * Returns true for OAuth sources OR sources with a renewEndpoint.
+ * 判断 source 是否可以自动刷新 token。
+ * 返回 true 当：OAuth source 或配置了 renewEndpoint。
  *
- * Use this as the single guard for "can this source refresh?" instead of
- * sprinkling provider/authType/renewEndpoint checks in multiple places.
+ * 推荐用这一个函数代替散落在各处的 provider/authType/renewEndpoint 判断。
  */
 export function isRefreshableSource(source: LoadedSource): boolean {
   return isOAuthSource(source) || hasRenewEndpoint(source);
 }
 
 /**
- * MCP transport type for sources
- * - 'http': HTTP-based MCP server (URL endpoint)
- * - 'sse': Server-Sent Events MCP server (URL endpoint)
- * - 'stdio': Local subprocess MCP server (spawned command)
+ * MCP 传输类型
+ * - 'http': 基于 HTTP 的 MCP 服务器
+ * - 'sse': 基于 Server-Sent Events 的 MCP 服务器
+ * - 'stdio': 本地子进程 MCP 服务器（通过命令启动）
  */
 export type McpTransport = 'http' | 'sse' | 'stdio';
 
 /**
- * MCP-specific configuration
- * Supports both HTTP-based and local stdio-based MCP servers.
+ * MCP source 专属配置。
+ * 支持 HTTP/SSE 远程服务器和 stdio 本地子进程两种形式。
  */
 export interface McpSourceConfig {
   /**
-   * Transport type. Defaults to 'http' if not specified.
+   * 传输类型。不填时默认 'http'。
    */
   transport?: McpTransport;
 
-  // === HTTP/SSE transport fields ===
+  // === HTTP/SSE 传输字段 ===
   /**
-   * URL endpoint for HTTP or SSE transport.
-   * Required when transport is 'http' or 'sse' (or undefined).
+   * HTTP 或 SSE 的服务端 URL。
+   * transport 为 'http'/'sse'（或未指定）时必填。
    */
   url?: string;
 
   /**
-   * Authentication type for HTTP/SSE servers.
+   * HTTP/SSE 服务器的认证类型。
    */
   authType?: SourceMcpAuthType;
 
   /**
-   * OAuth client ID (stored in config, not secret).
+   * OAuth client ID（存在 config.json 里，不是密钥）。
    */
   clientId?: string;
 
-  // === Stdio transport fields ===
+  // === stdio 传输字段 ===
   /**
-   * Command to spawn for stdio transport.
-   * Required when transport is 'stdio'.
+   * stdio 传输要启动的命令。
+   * transport 为 'stdio' 时必填。
    */
   command?: string;
 
   /**
-   * Arguments to pass to the command.
+   * 传给命令的参数。
    */
   args?: string[];
 
   /**
-   * Environment variables for the spawned process.
+   * 子进程环境变量。
    */
   env?: Record<string, string>;
 
-  // === HTTP/SSE custom headers ===
+  // === HTTP/SSE 自定义请求头 ===
   /**
-   * Custom headers to include in every MCP request.
-   * Auth headers (e.g. Authorization) are merged on top when authType is set.
+   * 每次 MCP 请求都带的自定义请求头。
+   * 当 authType 启用时，Authorization 等认证头会在这些头之上合并。
    */
   headers?: Record<string, string>;
 
   /**
-   * Header names for credential-store auth (e.g., ["X-API-Key"]).
-   * Values are stored as JSON in the credential store, same as API multi-header auth.
-   * Precedence: static headers < credential-store headerNames < Authorization bearer.
+   * 从凭证库读取的 header 名称列表（例如 ["X-API-Key"]）。
+   * 凭证值以 JSON 形式存在凭证库里，和 API multi-header 认证共用同一套存储。
+   * 优先级：静态 headers < 凭证库 headerNames < Authorization bearer。
    */
   headerNames?: string[];
 }
 
 /**
- * API test endpoint configuration for connection validation
+ * API 连通性测试端点配置
  */
 export interface ApiTestEndpoint {
   method: 'GET' | 'POST';
   path: string;
-  body?: Record<string, unknown>; // For POST requests
-  headers?: Record<string, string>; // Custom headers for the test request
+  body?: Record<string, unknown>; // POST 请求体
+  headers?: Record<string, string>; // 测试请求的自定义头
 }
 
 /**
- * Generic OAuth configuration for API sources.
- * Allows any OAuth 2.0 provider to be configured via config.json
- * without needing an MCP server or manual PAT.
+ * API source 的通用 OAuth 2.0 配置。
+ * 有了它，任何 OAuth 2.0 provider 都可以在 config.json 里直接配置，
+ * 不需要 MCP 服务器，也不需要用户手动填 PAT。
  */
 export interface ApiOAuthConfig {
-  /** OAuth authorization endpoint URL (REQUIRED) */
+  /** OAuth 授权端点 URL（必填） */
   authorizationUrl: string;
-  /** OAuth token exchange endpoint URL (REQUIRED) */
+  /** OAuth token 交换端点 URL（必填） */
   tokenUrl: string;
-  /** OAuth client ID (REQUIRED) */
+  /** OAuth client ID（必填） */
   clientId: string;
-  /** OAuth client secret (optional for public PKCE clients) */
+  /** OAuth client secret（PKCE 公开客户端可省略） */
   clientSecret?: string;
-  /** Requested OAuth scopes */
+  /** 请求的 OAuth scope */
   scopes?: string[];
-  /** Auth0-style audience parameter */
+  /** Auth0 风格的 audience 参数 */
   audience?: string;
-  /** Additional parameters to include in the authorization URL */
+  /** 授权 URL 中附加的额外参数 */
   extraParams?: Record<string, string>;
 }
 
 /**
- * Token renewal endpoint configuration for non-OAuth API sources.
- * Allows custom bearer-token APIs to auto-renew expired tokens by calling
- * a provider-specific endpoint (not OAuth-compliant).
+ * 非 OAuth API source 的 token 续期端点配置。
+ * 让一些自定义 bearer-token API 通过调用 provider 自己的续期端点来自动续期（不是标准 OAuth）。
  *
- * MVP scope: access-token-based renewal only. The current access token is
- * sent via the Authorization header and/or substituted into body/headers
- * using the {{token}} placeholder.
+ * MVP 范围：仅支持 access-token 续期。当前 access token 会通过 Authorization 头
+ * 或 {{token}} 占位符发送到 body/headers 里。
  */
 export interface ApiRenewEndpoint {
-  /** Renew URL — relative path (resolved against baseUrl) or absolute URL */
+  /** 续期 URL：相对路径（会拼到 baseUrl）或绝对 URL */
   path: string;
-  /** HTTP method (default: POST) */
+  /** HTTP 方法（默认 POST） */
   method?: 'GET' | 'POST';
-  /** Request body — {{token}} in string leaves is substituted with current access token.
-   *  Supports nested objects (recursive substitution on string leaves). */
+  /** 请求体 —— 字符串叶子节点里的 {{token}} 会被替换为当前 access token。
+   *  支持嵌套对象（递归替换字符串叶子）。 */
   body?: Record<string, unknown>;
-  /** Extra headers for the renew request — {{token}} substitution applies here too.
-   *  Merged on top of defaultHeaders. Authorization header is always sent unless
-   *  explicitly overridden here. */
+  /** 续期请求的额外请求头 —— 同样支持 {{token}} 替换。
+   *  会覆盖 defaultHeaders。Authorization 头默认会发送，除非在这里显式覆盖。 */
   headers?: Record<string, string>;
-  /** JSON field name for the new access token in response (default: "access_token") */
+  /** 响应里新 access token 的 JSON 字段名（默认 "access_token"） */
   tokenField?: string;
-  /** JSON field name for expiry in seconds in response (default: "expires_in") */
+  /** 响应里过期秒数的 JSON 字段名（默认 "expires_in"） */
   expiresInField?: string;
-  /** Fallback TTL in seconds when renew response doesn't include expiry (optional).
-   *  Without this, missing expiry causes refresh on every session start (safe but noisy). */
+  /** 响应没有过期时间时的兜底 TTL（秒，可选）。
+   *  不填的话，每次会话启动都会触发刷新（安全但吵闹）。 */
   fallbackTtlSecs?: number;
 }
 
 /**
- * API-specific configuration
+ * API source 专属配置
  */
 export interface ApiSourceConfig {
   baseUrl: string;
   authType: ApiAuthType;
-  headerName?: string; // For 'header' auth (e.g., "X-API-Key")
-  headerNames?: string[]; // For multi-header auth (e.g., ["DD-API-KEY", "DD-APPLICATION-KEY"])
-  queryParam?: string; // For 'query' auth (e.g., "api_key")
-  authScheme?: string; // For 'bearer' auth (default: "Bearer", could be "Token")
-  defaultHeaders?: Record<string, string>; // Headers to include with every request
-  testEndpoint?: ApiTestEndpoint; // Endpoint to use for connection testing
-  renewEndpoint?: ApiRenewEndpoint; // Optional token renewal endpoint for non-OAuth sources
+  headerName?: string; // 'header' 认证时使用，例如 "X-API-Key"
+  headerNames?: string[]; // multi-header 认证，例如 ["DD-API-KEY", "DD-APPLICATION-KEY"]
+  queryParam?: string; // 'query' 认证时使用，例如 "api_key"
+  authScheme?: string; // 'bearer' 认证时使用，默认 "Bearer"，也可以是 "Token"
+  defaultHeaders?: Record<string, string>; // 每次请求都带的头
+  testEndpoint?: ApiTestEndpoint; // 连通性测试端点
+  renewEndpoint?: ApiRenewEndpoint; // 非 OAuth source 的可选续期端点
 
-  // Google OAuth fields (used when provider is 'google')
-  googleService?: GoogleService; // Predefined service for scope selection
-  googleScopes?: string[]; // Custom scopes (overrides googleService)
-  // User-provided OAuth credentials (for OSS users who create their own Google Cloud project)
-  googleOAuthClientId?: string; // User's Google OAuth Client ID
-  googleOAuthClientSecret?: string; // User's Google OAuth Client Secret
+  // Google OAuth 字段（provider 为 'google' 时使用）
+  googleService?: GoogleService; // 预定义服务，用于选择 scope
+  googleScopes?: string[]; // 自定义 scope（覆盖 googleService）
+  // 用户自建的 Google Cloud 项目 OAuth 凭据
+  googleOAuthClientId?: string; // 用户 Google OAuth Client ID
+  googleOAuthClientSecret?: string; // 用户 Google OAuth Client Secret
 
-  // Slack OAuth fields (used when provider is 'slack')
-  // Uses user_scope for user authentication (posts as the user, not a bot)
-  slackService?: SlackService; // Predefined service for scope selection
-  slackUserScopes?: string[]; // Custom user scopes (overrides slackService)
+  // Slack OAuth 字段（provider 为 'slack' 时使用）
+  // 使用 user_scope，以用户身份发帖（不是 bot）
+  slackService?: SlackService; // 预定义服务，用于选择 scope
+  slackUserScopes?: string[]; // 自定义 user scope（覆盖 slackService）
 
-  // Microsoft OAuth fields (used when provider is 'microsoft')
-  microsoftService?: MicrosoftService; // Predefined service for scope selection
-  microsoftScopes?: string[]; // Custom scopes (overrides microsoftService)
+  // Microsoft OAuth 字段（provider 为 'microsoft' 时使用）
+  microsoftService?: MicrosoftService; // 预定义服务，用于选择 scope
+  microsoftScopes?: string[]; // 自定义 scope（覆盖 microsoftService）
 
-  // Generic OAuth config (used when authType is 'oauth' and provider is not google/slack/microsoft)
+  // 通用 OAuth 配置（authType 为 'oauth' 且 provider 不是 google/slack/microsoft 时使用）
   oauth?: ApiOAuthConfig;
 }
 
 /**
- * Local filesystem/app configuration
+ * 本地文件系统/应用配置
  */
 export interface LocalSourceConfig {
   path: string;
-  format?: string; // Optional hint: 'filesystem' | 'obsidian' | 'git' | 'sqlite' | etc.
+  format?: string; // 可选提示：'filesystem' | 'obsidian' | 'git' | 'sqlite' 等
 }
 
 /**
- * Source connection status
- * - 'connected': Source is connected and working
- * - 'needs_auth': Source requires authentication
- * - 'failed': Connection failed with error
- * - 'untested': Connection has not been tested
- * - 'local_disabled': Stdio source is disabled (local MCP servers off)
+ * Source 连接状态
+ * - 'connected': 已连接且可用
+ * - 'needs_auth': 需要认证
+ * - 'failed': 连接失败并带错误信息
+ * - 'untested': 还没测试过
+ * - 'local_disabled': stdio source 被禁用（本地 MCP 服务器关闭）
  */
 export type SourceConnectionStatus = 'connected' | 'needs_auth' | 'failed' | 'untested' | 'local_disabled';
 
 // ============================================================================
-// Source Brand
+// Source 品牌/主题
 // ============================================================================
 
 /**
- * Brand theming for a source's UI elements.
- * Uses the EntityColor system for light/dark mode support.
+ * Source 的 UI 品牌主题。
+ * 使用 EntityColor 系统支持亮色/暗色模式。
  */
 export interface SourceBrand {
-  /** Primary brand color — used for source-branded UI elements.
-   *  Can be a system color name ("accent", "info") or custom { light, dark } values.
-   *  Defaults to "accent" if not set. */
+  /** 主品牌色 —— 用于 source 相关的 UI 元素。
+   *  可以是系统颜色名（"accent"、"info"）或自定义 { light, dark } 值。
+   *  不填默认 "accent"。 */
   color?: import('../colors/types').EntityColor;
 }
 
 // ============================================================================
-// Main Source Config
+// 主 Source 配置
 // ============================================================================
 
 /**
- * Main source configuration (stored in config.json)
+ * 主 source 配置（存在 config.json 里）
  */
 export interface FolderSourceConfig {
   id: string;
@@ -444,91 +459,91 @@ export interface FolderSourceConfig {
   slug: string;
   enabled: boolean;
 
-  // Provider is a freeform label (e.g., "linear", "todoist", "my-custom-api")
+  // provider 是自由标签，例如 "linear"、"todoist"、"my-custom-api"
   provider: string;
 
-  // Connection type determines which config block is used
+  // type 决定使用哪个配置块
   type: SourceType;
 
-  // Type-specific configuration (exactly one should be present)
+  // 类型专属配置（通常只会有一个存在）
   mcp?: McpSourceConfig;
   api?: ApiSourceConfig;
   local?: LocalSourceConfig;
 
-  // Icon: emoji or URL
-  // Config is the source of truth. Local icon files are auto-discovered only when icon is undefined.
-  // Priority: emoji > URL > local file (auto-discovered)
+  // 图标：emoji 或 URL
+  // config 是图标唯一来源。本地图标文件只在 icon 未定义时自动发现。
+  // 优先级：emoji > URL > 本地文件（自动发现）
   icon?: string;
 
-  // Short description for agent context (e.g., "Issue tracking, bugs, tasks, sprints")
-  // If not set, extracted from guide.md first paragraph
+  // 给 agent 上下文的简短描述，例如 "Issue tracking, bugs, tasks, sprints"
+  // 不填时从 guide.md 第一段提取
   tagline?: string;
 
-  // Brand theming for this source's UI elements
+  // 该 source UI 元素的品牌主题
   brand?: SourceBrand;
 
-  // Status tracking
+  // 状态记录
   isAuthenticated?: boolean;
   connectionStatus?: SourceConnectionStatus;
-  connectionError?: string; // Error message if status is 'failed'
+  connectionError?: string; // status 为 'failed' 时的错误信息
   lastTestedAt?: number;
 
-  // Metadata (optional - manually created configs may not have them)
+  // 元数据（手动创建的配置可能没有）
   createdAt?: number;
   updatedAt?: number;
 }
 
 /**
- * Parsed guide.md content with embedded cache
+ * 解析后的 guide.md 内容，包含嵌入缓存
  */
 export interface SourceGuide {
-  // Full raw markdown
+  // 完整原始 markdown
   raw: string;
 
-  // Parsed sections (extracted via regex/parsing)
+  // 解析出的章节（通过正则/解析提取）
   scope?: string;
   guidelines?: string;
   context?: string;
   apiNotes?: string;
 
-  // Embedded cache data (from YAML frontmatter)
+  // 嵌入缓存数据（来自 YAML frontmatter）
   cache?: Record<string, unknown>;
 }
 
 /**
- * Fully loaded source with all files
+ * 完全加载后的 source，包含所有文件信息
  */
 export interface LoadedSource {
   config: FolderSourceConfig;
   guide: SourceGuide | null;
 
-  /** Absolute path to source folder (for resolving relative icon paths) */
+  /** source 文件夹绝对路径（用于解析相对图标路径） */
   folderPath: string;
 
-  /** Absolute path to workspace folder (e.g., ~/.craft-agent/workspaces/xxx) */
+  /** workspace 文件夹绝对路径，例如 ~/.craft-agent/workspaces/xxx */
   workspaceRootPath: string;
 
   /**
-   * Workspace this source belongs to.
-   * Used for credential lookups: source_oauth::{workspaceId}::{sourceSlug}
+   * 该 source 所属 workspace。
+   * 用于凭证查找：source_oauth::{workspaceId}::{sourceSlug}
    */
   workspaceId: string;
 
   /**
-   * Whether this is a built-in source (e.g., craft-agents-docs).
-   * Built-in sources are always available and not shown in the sources UI.
+   * 是否为内置 source（例如 craft-agents-docs）。
+   * 内置 source 始终可用，且不在 sources UI 列表中显示。
    */
   isBuiltin?: boolean;
 
   /**
-   * Pre-computed path to local icon file (icon.svg, icon.png, etc.) if it exists.
-   * Computed during source loading so renderer doesn't need filesystem access.
+   * 预计算的本地图标文件路径（icon.svg、icon.png 等）。
+   * 在加载 source 时就算好，渲染层不需要再访问文件系统。
    */
   iconPath?: string;
 }
 
 /**
- * Source creation input (without auto-generated fields)
+ * 创建 source 时的输入（不含自动生成字段）
  */
 export interface CreateSourceInput {
   name: string;
@@ -537,13 +552,13 @@ export interface CreateSourceInput {
   mcp?: McpSourceConfig;
   api?: ApiSourceConfig;
   local?: LocalSourceConfig;
-  icon?: string; // Emoji or URL (auto-downloaded)
+  icon?: string; // emoji 或 URL（会自动下载）
   enabled?: boolean;
 }
 
 /**
- * REST API configuration for API sources
- * Used by api-tools.ts to create dynamic API tools
+ * API source 的 REST API 配置
+ * api-tools.ts 用它创建动态 API tool
  */
 export interface ApiConfig {
   name: string;
@@ -551,7 +566,7 @@ export interface ApiConfig {
   auth?: {
     type: 'none' | 'header' | 'bearer' | 'query' | 'basic';
     headerName?: string;
-    headerNames?: string[]; // For multi-header auth (e.g., ["DD-API-KEY", "DD-APPLICATION-KEY"])
+    headerNames?: string[]; // multi-header 认证，例如 ["DD-API-KEY", "DD-APPLICATION-KEY"]
     queryParam?: string;
     authScheme?: string;
     credentialLabel?: string;

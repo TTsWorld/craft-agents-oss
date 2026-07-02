@@ -1,12 +1,14 @@
 /**
- * Header - App header with branding and controls
+ * Header - 应用顶部导航栏，包含品牌 Logo 和主题/清除控制按钮。
  */
 
 import { Sun, Moon, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 /**
- * CraftAgentLogo - The Craft Agent "C" logo
+ * CraftAgentLogo - Craft Agent 的 "C" 形 Logo 组件。
+ *
+ * @param className - 可选的 Tailwind 样式类名，用于控制尺寸和颜色。
  */
 function CraftAgentLogo({ className }: { className?: string }) {
   return (
@@ -26,6 +28,11 @@ function CraftAgentLogo({ className }: { className?: string }) {
   )
 }
 
+/**
+ * HeaderProps - Header 组件的属性接口。
+ *
+ * TypeScript 接口类似 Go 里的 struct 定义，用来约束组件接收哪些字段。
+ */
 interface HeaderProps {
   hasSession: boolean
   sessionTitle?: string
@@ -38,7 +45,7 @@ export function Header({ hasSession, sessionTitle, isDark, onToggleTheme, onClea
   const { t } = useTranslation()
   return (
     <header className="shrink-0 grid grid-cols-[auto_1fr_auto] items-center px-4 py-3">
-      {/* Logo - links to main site */}
+      {/* Logo 链接，点击后跳转到 Craft Agent 主站 */}
       <a
         href="https://agents.craft.do"
         className="hover:opacity-80 transition-opacity"
@@ -47,7 +54,7 @@ export function Header({ hasSession, sessionTitle, isDark, onToggleTheme, onClea
         <CraftAgentLogo className="w-6 h-6 text-[#9570BE]" />
       </a>
 
-      {/* Session title - centered */}
+      {/* 会话标题，居中显示 */}
       <div className="flex justify-center">
         {sessionTitle && (
           <span className="text-sm font-semibold text-foreground truncate max-w-md">
@@ -57,7 +64,7 @@ export function Header({ hasSession, sessionTitle, isDark, onToggleTheme, onClea
       </div>
 
       <div className="flex items-center gap-2">
-        {/* Clear button (when session is loaded) */}
+        {/* 已加载会话时显示清除按钮 */}
         {hasSession && (
           <button
             onClick={onClear}
@@ -68,7 +75,7 @@ export function Header({ hasSession, sessionTitle, isDark, onToggleTheme, onClea
           </button>
         )}
 
-        {/* Theme toggle */}
+        {/* 主题切换按钮：深色/浅色 */}
         <button
           onClick={onToggleTheme}
           className="p-1.5 rounded-md bg-background shadow-minimal text-foreground/40 hover:text-foreground/70 transition-colors"

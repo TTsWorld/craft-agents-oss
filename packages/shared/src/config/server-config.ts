@@ -1,43 +1,45 @@
 /**
- * Server mode configuration — controls whether the Electron app
- * accepts remote connections from other machines.
+ * 服务端模式配置：控制 Electron 应用是否接受来自其他机器的远程连接。
  *
- * When enabled, the app binds to 0.0.0.0 on a fixed port instead of
- * localhost on a random port, allowing thin clients to connect.
+ * 启用后，应用会绑定到 0.0.0.0 的固定端口（而不是 localhost 的随机端口），
+ * 这样瘦客户端才能连进来。可以理解为“是否开启远程 Agent 服务”。
  */
 
+/** 服务端模式配置项（类似 Go 的结构体） */
 export interface ServerConfig {
-  /** Whether remote server mode is active (bind 0.0.0.0 vs 127.0.0.1) */
+  /** 是否启用远程服务（true 绑定 0.0.0.0，false 只监听 127.0.0.1） */
   enabled: boolean
-  /** Fixed port to listen on (default 9100) */
+  /** 固定监听端口，默认 9100 */
   port: number
-  /** Path to PEM certificate file (enables TLS / wss://) */
+  /** PEM 证书路径，设置后启用 wss:// TLS */
   tlsCertPath?: string
-  /** Path to PEM private key file (required when cert is set) */
+  /** PEM 私钥路径，配了证书时必须填 */
   tlsKeyPath?: string
-  /** Stable auth token for remote clients (auto-generated on first enable) */
+  /** 远程客户端连接用的稳定鉴权 token，首次启用时自动生成 */
   token?: string
 }
 
+/** 服务端实时运行状态 */
 export interface ServerStatus {
-  /** Whether the server is currently running */
+  /** 服务是否正在运行 */
   running: boolean
-  /** Current bind address */
+  /** 当前绑定地址 */
   host: string
-  /** Current port */
+  /** 当前监听端口 */
   port: number
-  /** Whether TLS is active */
+  /** 是否启用了 TLS */
   tls: boolean
-  /** Full connection URL (ws:// or wss://) */
+  /** 完整连接 URL（ws:// 或 wss://） */
   url: string
-  /** Current auth token */
+  /** 当前鉴权 token */
   token: string
-  /** Whether saved config differs from running config (restart needed) */
+  /** 已保存配置与运行中配置不一致，需要重启 */
   needsRestart: boolean
-  /** True when server is bound to a network address without TLS */
+  /** 如果服务绑定到公网地址且没有 TLS，提示不安全 */
   insecureWarning: boolean
 }
 
+/** 服务端默认配置 */
 export const DEFAULT_SERVER_CONFIG: ServerConfig = {
   enabled: false,
   port: 9100,

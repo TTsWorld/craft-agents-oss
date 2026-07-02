@@ -1,8 +1,10 @@
 /**
- * Playground registry for EntityRow and EntityList primitives.
+ * entity-lists 注册项
  *
- * Demonstrates all three entity types (Sessions, Sources, Skills)
- * composed through the same EntityRow/EntityList building blocks.
+ * 这个文件演示 EntityRow / EntityList 这两个基础组件如何组合出三种实体列表：
+ * Session（会话）、Source（数据源）、Skill（技能）。
+ * 涉及概念：session（一次对话）、source（Agent 数据源）、skill（Agent 专项能力）、
+ * MCP（Model Context Protocol，一种让 LLM 调用外部工具的协议）。
  */
 
 import * as React from 'react'
@@ -806,9 +808,10 @@ function InteractiveEntityListPreview({
 }
 
 // ============================================================================
-// Registry Entries
+// 组件注册表条目（Component Registry Entries）
 // ============================================================================
 
+/** entity-lists 组件注册列表。 */
 export const entityListComponents: ComponentEntry[] = [
   // ---- EntityRow primitive ----
   {

@@ -1,15 +1,30 @@
 /**
- * PromptBuilder - System Prompt and Context Building
+ * PromptBuilder - 系统提示词与上下文构建
  *
- * Provides utilities for building system prompts and context blocks that both
- * ClaudeAgent and PiAgent can use. Handles workspace capabilities, recovery
- * context, and user preferences formatting.
+ * 【中文学习注释 - 文件级】
+ * 本模块负责构造 system prompt 以及每轮注入到 LLM 输入里的上下文块（context blocks）。
+ * 是 ClaudeAgent 和 PiAgent 共用的提示词构造工具。
  *
- * Key responsibilities:
- * - Build workspace capabilities context
- * - Format recovery context for session resume failures
- * - Build session state context blocks
- * - Format user preferences for prompt injection
+ * 类比后端：它像是一个请求拦截器，在每个 user message 发出去之前，把当前时间、权限模式、
+ * source 状态、工作区能力等“非 LLM 生成的上下文”塞进消息体。
+ *
+ * 核心职责：
+ * 1. 构建 Context Parts：分成 volatile（每轮可能变化）和 stable（整个会话不变）两类。
+ * 2. volatile 包含：时间、session_state（含 permission mode / plans/data 路径）、source state。
+ *    这些必须放在 user message 尾部，不能放进缓存的 system prompt，否则会破坏 prompt caching。
+ * 3. stable 包含：workspace_capabilities、working_directory_context，可以放到 system prompt 里复用缓存。
+ * 4. 提供 recovery context（会话恢复失败时的兜底上下文）、user preferences 的格式化。
+ *
+ * Agent 概念速查：
+ * - permission mode：safe / ask / allow-all 三种权限模式，决定工具能否自动执行。
+ * - source：外部能力来源（MCP server / API / local），会带来连接状态需要注入。
+ * - session：一次会话，有自己的 id、工作目录、plans/data 目录。
+ * - workspace：工作区，rootPath 下管理 sources/skills/sessions 等。
+ * - prompt caching：LLM 服务会缓存 system prompt 前缀以降低成本，volatile 内容塞进去会让缓存失效。
+ *
+ * TypeScript 注意点：
+ * - 使用 private 字段保存 config 和缓存的 pinnedPreferencesPrompt。
+ * - 返回 string[] 而不是一个大字符串，方便调用者按自己的顺序拼接。
  */
 
 import { isLocalMcpEnabled } from '../../workspaces/storage.ts';
@@ -24,9 +39,9 @@ import type {
 } from './types.ts';
 
 /**
- * PromptBuilder provides utilities for building prompts and context blocks.
+ * 构造提示词与上下文块的工具类。
  *
- * Usage:
+ * 用法示例：
  * ```typescript
  * const promptBuilder = new PromptBuilder({
  *   workspace,
@@ -34,7 +49,7 @@ import type {
  *   debugMode: { enabled: true },
  * });
  *
- * // Build context blocks for a user message
+ * // 为某条用户消息构造上下文块
  * const contextParts = promptBuilder.buildContextParts({
  *   permissionMode: 'explore',
  *   plansFolderPath: '/path/to/plans',
@@ -52,25 +67,22 @@ export class PromptBuilder {
   }
 
   // ============================================================
-  // Context Building
+  // 上下文构建
   // ============================================================
 
   /**
-   * Build all context parts for a user message (volatile blocks first, then
-   * stable blocks). Returns an array of strings that should be prepended to the
-   * user message.
+   * 为一条用户消息构造全部上下文块（先 volatile，再 stable）。
+   * 返回字符串数组，调用者应把它们拼到用户消息前面。
    *
-   * This is the Claude path: it composes {@link buildVolatileContextParts} and
-   * {@link buildStableContextParts} so the output is byte-identical to the
-   * pre-split version (same 5 blocks, same order) AND the one-shot mode-change
-   * signal is consumed exactly once per turn (only the volatile builder consumes
-   * it). Callers that place volatile vs stable context in different locations
-   * (e.g. the Pi adapter, to preserve prompt caching — issue #862) should call
-   * the two halves directly instead of this method.
+   * 这是 Claude 路径：组合 {@link buildVolatileContextParts} 与
+   * {@link buildStableContextParts}，保证输出与拆分前完全一致（5 个块、顺序相同），
+   * 并且一次性的 mode-change 信号每轮只被消费一次（只有 volatile builder 消费它）。
+   * 若调用者需要把 volatile 与 stable 放在不同位置（例如 Pi 适配器为了保留 prompt
+   * caching —— issue #862），应直接调用那两个半段方法，而不是本方法。
    *
-   * @param options - Context building options
-   * @param sourceStateBlock - Pre-formatted source state (from SourceManager)
-   * @returns Array of context strings
+   * @param options - 上下文构造选项
+   * @param sourceStateBlock - SourceManager 预格式化的 source 状态块
+   * @returns 上下文字符串数组
    */
   buildContextParts(
     options: ContextBlockOptions,
@@ -83,24 +95,26 @@ export class PromptBuilder {
   }
 
   /**
-   * Volatile context blocks — content that can change every turn, so it must
-   * ride the user-message tail rather than the cached system prefix (issue
-   * #862). Folding these into the system prompt re-stamps the cache prefix each
-   * turn and kills prompt-cache reuse for all downstream history.
+   * 易变（volatile）上下文块 —— 每轮都可能变化，因此必须挂在 user message 尾部，
+   * 而不是缓存的 system prompt 前缀里（issue #862）。把这些内容折进 system prompt
+   * 会导致每轮都重新盖章缓存前缀，扼杀后续历史的 prompt-cache 复用。
    *
-   * Blocks (in order):
-   *  1. date/time (minute precision)
-   *  2. session_state (permission mode + plans/data paths; carries
-   *     modeChangedAt/modeVersion and **consumes** the one-shot mode-change user
-   *     signal — see {@link formatSessionState})
-   *  3. source state (auth/connection status), when provided
+   * 【中文学习注释】volatile = 易变的。LLM 服务（如 Claude）会对 system prompt 做缓存，
+   * 如果每轮都把会变的内容塞进 system prompt，缓存就失效了。所以：
+   * - 时间、session_state、source_state 这些每轮可能变的，必须放在 user message 尾部。
+   * - 本方法每轮只能调用一次，因为 formatSessionState 会“消费”一次性的 mode-change 信号。
    *
-   * MUST be called exactly once per turn, because it consumes one-shot mode
-   * state. Never call it a second time to compute a cache-debug hash — hash the
-   * already-produced string instead.
+   * 块顺序：
+   *  1. date/time（分钟精度）
+   *  2. session_state（权限模式 + plans/data 路径；携带 modeChangedAt/modeVersion，
+   *     并**消费**一次性的 mode-change 用户信号 —— 详见 {@link formatSessionState}）
+   *  3. source state（鉴权/连接状态），仅在提供时加入
    *
-   * @param options - Context building options
-   * @param sourceStateBlock - Pre-formatted source state (from SourceManager)
+   * 每轮必须且只能调用一次，因为它消费一次性 mode 状态。不要为计算缓存调试 hash
+   * 第二次调用 —— 应该对已经产出的字符串做 hash。
+   *
+   * @param options - 上下文构造选项
+   * @param sourceStateBlock - SourceManager 预格式化的 source 状态块
    */
   buildVolatileContextParts(
     options: ContextBlockOptions,
@@ -108,11 +122,11 @@ export class PromptBuilder {
   ): string[] {
     const parts: string[] = [];
 
-    // Date/time first (kept on the user tail to preserve prompt caching)
+    // 时间/日期放最前（挂在 user message 尾部以保留 prompt caching）
     parts.push(getDateTimeContext());
 
-    // Session state (permission mode, plans folder path, data folder path).
-    // Only this volatile builder may consume the one-shot mode-change signal.
+    // session_state（权限模式、plans 目录路径、data 目录路径）
+    // 只有这个 volatile builder 可以消费一次性的 mode-change 信号
     const sessionId = this.config.session?.id ?? `temp-${Date.now()}`;
     const plansFolderPath = options.plansFolderPath ??
       getSessionPlansPath(this.workspaceRootPath, sessionId);
@@ -124,7 +138,7 @@ export class PromptBuilder {
       consumeModeChangeUserSignal: true,
     }));
 
-    // Source state if provided
+    // 如果提供了 source 状态块，则加入
     if (sourceStateBlock) {
       parts.push(sourceStateBlock);
     }
@@ -133,23 +147,25 @@ export class PromptBuilder {
   }
 
   /**
-   * Stable context blocks — content that is invariant across a session, so it
-   * can safely live in the cached system prefix (issue #862).
+   * 稳定（stable）上下文块 —— 整个会话期间通常不变，因此可以安全地放在被缓存的
+   * system prompt 前缀里（issue #862）。
    *
-   * Blocks (in order):
+   * 【中文学习注释】stable = 稳定的。工作区能力、当前工作目录在整个会话期间通常不变，
+   * 可以放进 system prompt 被 LLM 缓存，从而降低 token 消耗。这是性能优化点。
+   *
+   * 块顺序：
    *  1. workspace capabilities
-   *  2. working directory, when available
+   *  2. working directory（若有）
    *
-   * Pure and idempotent: holds no one-shot state, so it is safe to call any
-   * number of times per turn.
+   * 纯函数、幂等：不含一次性状态，每轮调用任意次数都安全。
    */
   buildStableContextParts(): string[] {
     const parts: string[] = [];
 
-    // Workspace capabilities
+    // 工作区能力
     parts.push(this.formatWorkspaceCapabilities());
 
-    // Working directory context
+    // 工作目录上下文
     const workingDirContext = this.getWorkingDirectoryContext();
     if (workingDirContext) {
       parts.push(workingDirContext);
@@ -159,13 +175,13 @@ export class PromptBuilder {
   }
 
   /**
-   * Format workspace capabilities for prompt injection.
-   * Informs the agent about what features are available in this workspace.
+   * 格式化 workspace capabilities 用于 prompt 注入。
+   * 告知 agent 当前工作区可用哪些特性。
    */
   formatWorkspaceCapabilities(): string {
     const capabilities: string[] = [];
 
-    // Check local MCP server capability
+    // 检查本地 MCP server 能力
     const localMcpEnabled = isLocalMcpEnabled(this.workspaceRootPath);
     if (localMcpEnabled) {
       capabilities.push('local-mcp: enabled (stdio subprocess servers supported)');
@@ -177,7 +193,7 @@ export class PromptBuilder {
   }
 
   /**
-   * Get working directory context for prompt injection.
+   * 获取工作目录上下文用于 prompt 注入。
    */
   getWorkingDirectoryContext(): string | null {
     const sessionId = this.config.session?.id;
@@ -193,25 +209,25 @@ export class PromptBuilder {
   }
 
   // ============================================================
-  // Recovery Context
+  // 恢复上下文
   // ============================================================
 
   /**
-   * Build recovery context from previous messages when SDK resume fails.
-   * Called when we detect an empty response during resume.
+   * 当 SDK 恢复失败时，根据历史消息构造恢复上下文。
+   * 在恢复过程中检测到空响应时调用。
    *
-   * @param messages - Previous messages to include in recovery context
-   * @returns Formatted recovery context string, or null if no messages
+   * @param messages - 要包含进恢复上下文的历史消息
+   * @returns 格式化的恢复上下文字符串；无消息则返回 null
    */
   buildRecoveryContext(messages?: RecoveryMessage[]): string | null {
     if (!messages || messages.length === 0) {
       return null;
     }
 
-    // Format messages as a conversation block
+    // 把消息格式化成对话块
     const formattedMessages = messages.map((m) => {
       const role = m.type === 'user' ? 'User' : 'Assistant';
-      // Truncate very long messages to avoid bloating context
+      // 超长消息截断，避免撑爆上下文
       const content = m.content.length > 1000
         ? m.content.slice(0, 1000) + '...[truncated]'
         : m.content;
@@ -230,40 +246,40 @@ Please continue the conversation naturally from where we left off.
   }
 
   // ============================================================
-  // User Preferences
+  // 用户偏好
   // ============================================================
 
   /**
-   * Format user preferences for prompt injection.
-   * Preferences are pinned on first call to ensure consistency within a session.
+   * 格式化用户偏好用于 prompt 注入。
+   * 首次调用后会把结果钉住（pin），保证同一 session 内偏好一致。
    *
-   * @param forceRefresh - Force refresh of cached preferences
-   * @returns Formatted preferences string
+   * @param forceRefresh - 是否强制刷新缓存的偏好
+   * @returns 格式化后的偏好字符串
    */
   formatPreferences(forceRefresh = false): string {
-    // Return pinned preferences if available (ensures session consistency)
+    // 如果已固定偏好设置则直接返回（保证会话内一致）
     if (this.pinnedPreferencesPrompt && !forceRefresh) {
       return this.pinnedPreferencesPrompt;
     }
 
-    // Load and format preferences (function loads internally)
+    // 加载并格式化偏好设置（函数内部会自行读取文件）
     this.pinnedPreferencesPrompt = formatPreferencesForPrompt();
     return this.pinnedPreferencesPrompt;
   }
 
   /**
-   * Clear pinned preferences (called on session clear).
+   * 清除已钉住的偏好（session 清空时调用）。
    */
   clearPinnedPreferences(): void {
     this.pinnedPreferencesPrompt = null;
   }
 
   // ============================================================
-  // Configuration Accessors
+  // 配置访问器
   // ============================================================
 
   /**
-   * Update the workspace configuration.
+   * 更新 workspace 配置。
    */
   setWorkspace(workspace: PromptBuilderConfig['workspace']): void {
     this.config.workspace = workspace;
@@ -271,28 +287,28 @@ Please continue the conversation naturally from where we left off.
   }
 
   /**
-   * Update the session configuration.
+   * 更新 session 配置。
    */
   setSession(session: PromptBuilderConfig['session']): void {
     this.config.session = session;
   }
 
   /**
-   * Get the workspace root path.
+   * 获取 workspace 根路径。
    */
   getWorkspaceRootPath(): string {
     return this.workspaceRootPath;
   }
 
   /**
-   * Check if debug mode is enabled.
+   * 检查调试模式是否启用。
    */
   isDebugMode(): boolean {
     return this.config.debugMode?.enabled ?? false;
   }
 
   /**
-   * Get the system prompt preset.
+   * 获取 system prompt 预设。
    */
   getSystemPromptPreset(): string {
     return this.config.systemPromptPreset ?? 'default';

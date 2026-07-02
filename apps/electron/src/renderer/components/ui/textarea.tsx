@@ -1,3 +1,8 @@
+/**
+ * Textarea — 基础多行文本输入框
+ *
+ * React.ComponentProps<"textarea"> 表示接收所有原生 textarea 属性。
+ */
 import * as React from "react"
 
 import { cn } from "@/lib/utils"

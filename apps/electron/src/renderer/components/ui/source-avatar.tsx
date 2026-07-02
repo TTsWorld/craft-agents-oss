@@ -1,12 +1,10 @@
 /**
- * SourceAvatar - Thin wrapper around EntityIcon for sources.
- *
- * Sets fallbackIcon based on source type (McpIcon, Globe, HardDrive, etc.)
- * and adds source-specific extras:
- * - Favicon resolution as secondary fallback when no local icon found
- * - Connection status indicator dot (only when showStatus=true)
- *
- * Use `fluid` prop for fill-parent sizing (e.g., hero panels).
+ * 来源头像组件（SourceAvatar）。
+ * 对 EntityIcon 的薄封装，根据来源类型（mcp/api/gmail/local）设置不同的默认图标，
+ * 并支持：
+ * - 当没有本地图标时，尝试解析 favicon 作为次级兜底
+ * - 在 showStatus=true 时显示连接状态指示点
+ * fluid 为 true 时会让图标填满父容器，常用于顶部大卡片。
  */
 
 import * as React from 'react'
@@ -19,29 +17,30 @@ import type { IconSize, ResolvedEntityIcon } from '@craft-agent/shared/icons'
 import { SourceStatusIndicator, deriveConnectionStatus } from './source-status-indicator'
 
 // ============================================================================
-// Types
+// 类型
 // ============================================================================
 
+/** 来源类型。 */
 export type SourceType = 'mcp' | 'api' | 'gmail' | 'local'
 
 interface SourceAvatarProps {
-  /** LoadedSource object */
+  /** 已加载的来源对象。 */
   source: LoadedSource
-  /** Size variant (default: 'md') */
+  /** 尺寸（默认 'md'）。 */
   size?: IconSize
-  /** Fill parent container (h-full w-full). Overrides size. */
+  /** 是否填满父容器（h-full w-full），优先级高于 size。 */
   fluid?: boolean
-  /** Show connection status indicator (auto-derived from source) */
+  /** 是否显示连接状态指示点。 */
   showStatus?: boolean
-  /** Additional className overrides */
+  /** 外层样式类。 */
   className?: string
 }
 
 // ============================================================================
-// Fallback Icons per Source Type
+// 按来源类型映射的默认图标
 // ============================================================================
 
-/** Source-specific fallback icons based on source type */
+/** 各来源类型对应的默认图标。 */
 const SOURCE_FALLBACKS: Record<string, IconComponent> = {
   mcp: McpIcon,
   api: Globe,
@@ -50,14 +49,14 @@ const SOURCE_FALLBACKS: Record<string, IconComponent> = {
 }
 
 /**
- * Get the fallback icon for a source type
+ * 根据来源类型获取默认图标。
  */
 export function getSourceFallbackIcon(type: SourceType): IconComponent {
   return SOURCE_FALLBACKS[type] ?? Plug
 }
 
 // ============================================================================
-// Status Indicator Size Mapping
+// 状态指示点尺寸映射
 // ============================================================================
 
 const STATUS_SIZE_CONFIG: Record<IconSize, 'xs' | 'sm' | 'md'> = {
@@ -69,12 +68,12 @@ const STATUS_SIZE_CONFIG: Record<IconSize, 'xs' | 'sm' | 'md'> = {
 }
 
 // ============================================================================
-// Favicon Hook (source-specific secondary fallback)
+// Favicon 兜底 Hook
 // ============================================================================
 
 /**
- * Resolve a favicon URL from the source's service URL.
- * Only attempts resolution when the primary icon (local file) is not found.
+ * 根据来源的服务地址解析 favicon URL。
+ * 仅在主图标未找到本地文件（kind 为 fallback）时才尝试解析。
  */
 function useFaviconFallback(
   source: LoadedSource,
@@ -82,10 +81,10 @@ function useFaviconFallback(
 ): string | null {
   const [faviconUrl, setFaviconUrl] = React.useState<string | null>(null)
 
-  // Only resolve favicon when primary icon resolved to fallback (no local file found)
+  // 只有主图标降级为默认图标时才需要 favicon
   const needsFavicon = primaryIcon.kind === 'fallback'
 
-  // Extract stable primitive deps from source.config to avoid re-renders on object ref changes
+  // 从 source.config 中提取稳定的基础类型依赖，避免对象引用变化导致重复渲染
   const slug = source.config.slug
   const provider = source.config.provider
   const mcpUrl = source.config.mcp?.url
@@ -98,7 +97,7 @@ function useFaviconFallback(
       return
     }
 
-    // Derive service URL from primitive fields
+    // 根据来源类型提取服务地址
     let serviceUrl: string | null = null
     if (sourceType === 'mcp' && mcpUrl) serviceUrl = mcpUrl
     else if (sourceType === 'api' && apiBaseUrl) serviceUrl = apiBaseUrl
@@ -111,14 +110,14 @@ function useFaviconFallback(
     const resolvedProvider = slug ?? provider
     const cacheKey = `${serviceUrl}:${resolvedProvider ?? ''}`
 
-    // Check logo URL cache first
+    // 先查缓存
     const cached = logoUrlCache.get(cacheKey)
     if (cached !== undefined) {
       setFaviconUrl(cached)
       return
     }
 
-    // Resolve via IPC
+    // 通过 IPC 异步解析
     let cancelled = false
     window.electronAPI.getLogoUrl(serviceUrl, resolvedProvider)
       .then((result) => {
@@ -139,10 +138,12 @@ function useFaviconFallback(
 }
 
 // ============================================================================
-// Component
+// 组件
 // ============================================================================
 
+/** 来源头像组件。 */
 export function SourceAvatar({ source, size = 'md', fluid, showStatus, className }: SourceAvatarProps) {
+  // 解析本地图标
   const icon = useEntityIcon({
     workspaceId: source.workspaceId,
     entityType: 'source',
@@ -151,10 +152,10 @@ export function SourceAvatar({ source, size = 'md', fluid, showStatus, className
     iconValue: source.config.icon,
   })
 
-  // Source-specific: favicon as secondary fallback when no local icon found
+  // 没有本地图标时，尝试 favicon 作为次级兜底
   const faviconUrl = useFaviconFallback(source, icon)
 
-  // If primary icon resolved to fallback but we have a favicon, use it as file icon
+  // 如果主图标 fallback 且成功拿到 favicon，就把它当作文件图标使用
   const finalIcon: ResolvedEntityIcon = icon.kind === 'fallback' && faviconUrl
     ? { kind: 'file', value: faviconUrl, colorable: false }
     : icon
@@ -172,7 +173,7 @@ export function SourceAvatar({ source, size = 'md', fluid, showStatus, className
     />
   )
 
-  // Only wrap with relative container when status indicator is needed
+  // 只有需要展示状态时才套一个相对定位容器
   if (showStatus) {
     const connectionStatus = deriveConnectionStatus(source)
     const statusSize = STATUS_SIZE_CONFIG[size]

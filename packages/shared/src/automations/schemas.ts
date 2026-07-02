@@ -1,8 +1,8 @@
 /**
- * Automations Schema Definitions
+ * 自动化 Schema 定义
  *
- * Zod schemas for validating automations.json configuration.
- * Extracted from index.ts for better separation of concerns.
+ * 用 Zod 校验 automations.json 配置。
+ * 从 index.ts 抽离出来，职责更清晰。
  */
 
 import { z } from 'zod';
@@ -11,11 +11,11 @@ import { APP_EVENTS, AGENT_EVENTS } from './types.ts';
 import { THINKING_LEVEL_IDS, normalizeThinkingLevel } from '../agent/thinking-levels.ts';
 
 // ============================================================================
-// Zod Schemas
+// Zod Schema 定义
 // ============================================================================
 
-// Mirrors the workspace-default pattern in `config/storage.ts` so that the
-// legacy 'think' value is silently migrated to a current thinking level.
+// 与 config/storage.ts 里的 workspace 默认模式保持一致：
+// 旧的 'think' 值会被静默迁移为当前有效的思考级别。
 const ThinkingLevelInputSchema = z
   .enum([...THINKING_LEVEL_IDS, 'think'])
   .transform((value) => normalizeThinkingLevel(value))
@@ -33,9 +33,9 @@ export const WebhookActionSchema = z.object({
   type: z.literal('webhook'),
   url: z.string().min(1, 'URL cannot be empty').refine(
     (url) => {
-      // Allow env var templates — validated at runtime after expansion
+      // 允许环境变量模板 - 运行时展开后再校验
       if (url.includes('$')) return true;
-      // Literal URLs must be valid http/https
+      // 字面量 URL 必须是有效的 http/https
       try {
         const parsed = new URL(url);
         return parsed.protocol === 'http:' || parsed.protocol === 'https:';
@@ -63,7 +63,7 @@ export const WebhookActionSchema = z.object({
   ]).optional(),
 });
 
-/** Accepts prompt and webhook actions strictly; passes through legacy/unknown action types without erroring */
+/** 严格接受 prompt 和 webhook 动作；对遗留/未知动作类型透传而不报错 */
 export const ActionDefinitionSchema = z.union([
   PromptActionSchema,
   WebhookActionSchema,
@@ -71,7 +71,7 @@ export const ActionDefinitionSchema = z.union([
 ]);
 
 // ============================================================================
-// Condition Schemas
+// 条件 Schemas
 // ============================================================================
 
 const VALID_WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
@@ -134,7 +134,7 @@ export const AutomationConditionSchema: z.ZodType = z.lazy(() =>
 );
 
 // ============================================================================
-// Matcher Schema
+// Matcher Schema 定义
 // ============================================================================
 
 export const AutomationMatcherSchema = z.object({
@@ -147,22 +147,22 @@ export const AutomationMatcherSchema = z.object({
   labels: z.array(z.string()).optional(),
   enabled: z.boolean().optional(),
   conditions: z.array(AutomationConditionSchema).optional(),
-  // Telegram forum-topic name (1–128 chars). Silently ignored at runtime when
-  // no supergroup is paired or the Telegram adapter is not connected.
+  // Telegram 论坛主题名（1-128 字符）。运行时如果没有配对超级群或
+  // Telegram 适配器未连接，会被静默忽略。
   telegramTopic: z.string().min(1).max(128).optional(),
   actions: z.array(ActionDefinitionSchema).min(1, 'At least one action required'),
 });
 
 /**
- * Deprecated event name aliases.
- * Old names are accepted during schema validation and silently rewritten to canonical names.
- * A console.warn() is emitted at runtime so users know to update their configs.
+ * 已废弃的事件名别名。
+ * 旧名在校验时被接受，并静默重写为规范名。
+ * 运行时会输出 console.warn() 提醒用户更新配置。
  */
 export const DEPRECATED_EVENT_ALIASES: Record<string, string> = {
   'TodoStateChange': 'SessionStatusChange',
 };
 
-/** All valid event names: canonical events + deprecated aliases. Derived from types.ts. */
+/** 所有有效事件名：规范事件 + 废弃别名。由 types.ts 推导。 */
 export const VALID_EVENTS: readonly string[] = [
   ...APP_EVENTS,
   ...AGENT_EVENTS,
@@ -175,13 +175,13 @@ export const AutomationsConfigSchema = z.object({
 }).transform((data) => {
   const automations = data.automations ?? {};
 
-  // Filter out invalid event names, rewrite deprecated aliases, and warn
+  // 过滤无效事件名、重写废弃别名并警告
   const validAutomations: Record<string, z.infer<typeof AutomationMatcherSchema>[]> = {};
   const invalidEvents: string[] = [];
 
   for (const [event, matchers] of Object.entries(automations)) {
     if (VALID_EVENTS.includes(event)) {
-      // Rewrite deprecated aliases to canonical names
+      // 把废弃别名改写为规范名
       const canonical = DEPRECATED_EVENT_ALIASES[event];
       if (canonical) {
         console.warn(`[automations] Deprecated event name "${event}" — use "${canonical}" instead`);
@@ -202,11 +202,11 @@ export const AutomationsConfigSchema = z.object({
 });
 
 // ============================================================================
-// Schema Utilities
+// Schema 工具
 // ============================================================================
 
 /**
- * Convert Zod error to ValidationIssues (matches validators.ts pattern)
+ * 把 Zod 错误转换为 ValidationIssue（与 validators.ts 的风格一致）。
  */
 export function zodErrorToIssues(error: z.ZodError, file: string): ValidationIssue[] {
   return error.issues.map((issue) => ({

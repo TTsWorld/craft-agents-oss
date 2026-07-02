@@ -1,22 +1,30 @@
 /**
- * Panel Stack State
+ * 面板栈状态
  *
- * Single-lane panel model for side-by-side content panels.
+ * 单通道（single-lane）的面板模型，用于并排展示内容面板。
+ * 例如同时打开多个 session/source/settings 面板。
+ *
+ * Jotai atom 保存面板栈状态；读写操作通过 action atom 完成。
  */
 
 import { atom } from 'jotai'
 import { parseRouteToNavigationState } from '../../shared/route-parser'
 import type { ViewRoute } from '../../shared/routes'
 
+// 自增面板 ID 计数器。闭包变量，类似 Go 的局部变量。
 let nextPanelId = 0
 function generatePanelId(): string {
   return `panel-${++nextPanelId}-${Date.now()}`
 }
 
+/** 面板类型：会话 / 来源 / 设置 / 技能 / 其他。 */
 export type PanelType = 'session' | 'source' | 'settings' | 'skills' | 'other'
+/** 面板通道 ID；当前只有 'main' 一个通道。 */
 export type PanelLaneId = 'main'
+/** 打开意图：implicit（隐式打开）或 explicit（用户主动打开）。 */
 export type OpenIntent = 'implicit' | 'explicit'
 
+/** 面板通道策略：定义该通道允许哪些类型、是否锁定、是否为单例等。 */
 export interface PanelLanePolicy {
   id: PanelLaneId
   order: number
@@ -25,6 +33,10 @@ export interface PanelLanePolicy {
   singleton: boolean
 }
 
+/**
+ * 通道策略表。Record<PanelLaneId, PanelLanePolicy> 等价于 Go 的 map[PanelLaneId]PanelLanePolicy。
+ * 目前只有 main 通道，允许所有面板类型。
+ */
 export const PANEL_LANE_POLICIES: Record<PanelLaneId, PanelLanePolicy> = {
   main: {
     id: 'main',
@@ -35,6 +47,7 @@ export const PANEL_LANE_POLICIES: Record<PanelLaneId, PanelLanePolicy> = {
   },
 }
 
+/** 面板栈条目：保存单个面板的 ID、路由、宽度比例、类型和所在通道。 */
 export interface PanelStackEntry {
   id: string
   route: ViewRoute
@@ -43,11 +56,15 @@ export interface PanelStackEntry {
   laneId: PanelLaneId
 }
 
+/** 当前面板栈数组。空数组表示没有打开任何面板。 */
 export const panelStackAtom = atom<PanelStackEntry[]>([])
+/** 当前获得焦点的面板 ID。 */
 export const focusedPanelIdAtom = atom<string | null>(null)
 
+/** 派生 atom：当前栈里面板的数量。 */
 export const panelCountAtom = atom((get) => get(panelStackAtom).length)
 
+/** 派生 atom：当前焦点面板在栈中的索引。 */
 export const focusedPanelIndexAtom = atom((get) => {
   const stack = get(panelStackAtom)
   const focusedId = get(focusedPanelIdAtom)
@@ -56,12 +73,17 @@ export const focusedPanelIndexAtom = atom((get) => {
   return idx === -1 ? 0 : idx
 })
 
+/** 派生 atom：当前焦点面板对应的路由。 */
 export const focusedPanelRouteAtom = atom((get) => {
   const stack = get(panelStackAtom)
   const idx = get(focusedPanelIndexAtom)
   return stack[idx]?.route ?? null
 })
 
+/**
+ * 根据路由判断面板类型。
+ * 先用 parseRouteToNavigationState 把路由字符串解析成导航状态，再映射到 PanelType。
+ */
 export function getPanelTypeFromRoute(route: ViewRoute): PanelType {
   const navState = parseRouteToNavigationState(route)
   if (!navState) return 'other'
@@ -80,10 +102,18 @@ export function getPanelTypeFromRoute(route: ViewRoute): PanelType {
   }
 }
 
+/**
+ * 返回某类面板默认所在的通道。
+ * 当前所有类型都默认放到 main 通道，保留函数以便未来扩展。
+ */
 export function getDefaultLaneForType(_type: PanelType): PanelLaneId {
   return 'main'
 }
 
+/**
+ * 创建一条面板栈条目。
+ * id 可选，未提供时自动生成。
+ */
 function createEntry(route: ViewRoute, proportion: number, id?: string): PanelStackEntry {
   const panelType = getPanelTypeFromRoute(route)
   return {
@@ -95,6 +125,10 @@ function createEntry(route: ViewRoute, proportion: number, id?: string): PanelSt
   }
 }
 
+/**
+ * 规范化面板宽度比例，使所有面板比例之和为 1。
+ * 如果总和小于等于 0，则均分。
+ */
 function normalizeProportions(stack: PanelStackEntry[]): PanelStackEntry[] {
   if (stack.length === 0) return stack
   const total = stack.reduce((sum, p) => sum + p.proportion, 0)
@@ -105,6 +139,10 @@ function normalizeProportions(stack: PanelStackEntry[]): PanelStackEntry[] {
   return stack.map(p => ({ ...p, proportion: p.proportion / total }))
 }
 
+/**
+ * 从路由字符串中解析出 session ID。
+ * 例如 route 为 "/session/abc/..." 时返回 "abc"。
+ */
 export function parseSessionIdFromRoute(route: ViewRoute): string | null {
   // Strip any query string first — a `?x=y` tail on the last segment would otherwise
   // leak into the extracted session id and poison every focused-session consumer.
@@ -116,6 +154,7 @@ export function parseSessionIdFromRoute(route: ViewRoute): string | null {
   return null
 }
 
+/** 派生 atom：当前焦点面板所属的 session ID（如果不是 session 面板则返回 null）。 */
 export const focusedSessionIdAtom = atom((get) => {
   const route = get(focusedPanelRouteAtom)
   if (!route) return null
@@ -123,9 +162,8 @@ export const focusedSessionIdAtom = atom((get) => {
 })
 
 /**
- * Session ids currently on screen across all open panels (the focused panel
- * plus any split-view siblings). Used to decide whether a session is "in the
- * background" — a session shown in any panel is not.
+ * 当前所有打开面板（焦点面板以及分屏兄弟面板）中显示在屏幕上的 session ID 集合。
+ * 用于判断某个 session 是否"在后台"——只要显示在任一面板中就不算后台。
  */
 export const visibleSessionIdsAtom = atom((get) => {
   const ids = new Set<string>()
@@ -136,6 +174,10 @@ export const visibleSessionIdsAtom = atom((get) => {
   return ids
 })
 
+/**
+ * Action atom：在面板栈中推入一个新面板。
+ * afterIndex 指定插入位置；不指定则追加到末尾。
+ */
 export const pushPanelAtom = atom(
   null,
   (get, set, { route, afterIndex }: {
@@ -163,6 +205,10 @@ export const pushPanelAtom = atom(
   }
 )
 
+/**
+ * Action atom：关闭指定 ID 的面板。
+ * 如果关闭的是当前焦点面板，则把焦点移到相邻面板。
+ */
 export const closePanelAtom = atom(
   null,
   (get, set, id: string) => {
@@ -180,6 +226,14 @@ export const closePanelAtom = atom(
   }
 )
 
+/**
+ * Action atom：用外部传入的目标列表对面板栈进行协调/对齐。
+ *
+ * 用于持久化状态恢复或主进程同步：当外部给出一组期望的面板时，
+ * 尽量复用现有面板的 ID，只更新路由和比例，减少 React 组件的卸载/重建。
+ *
+ * 返回 true 表示栈确实发生了改变，false 表示没有变化。
+ */
 export const reconcilePanelStackAtom = atom(
   null,
   (get, set, { entries, focusedIndex }: {
@@ -197,12 +251,14 @@ export const reconcilePanelStackAtom = atom(
     const newStack = entries.map((target, i) => {
       const positional = current[i]
 
+      // 优先复用同一位置且路由相同的面板
       if (positional && positional.route === target.route && !used.has(positional.id)) {
         used.add(positional.id)
         const updated = createEntry(target.route, target.proportion, positional.id)
         return { ...updated, proportion: target.proportion }
       }
 
+      // 其次复用任何路由相同的面板
       const any = current.find(c => c.route === target.route && !used.has(c.id))
       if (any) {
         used.add(any.id)
@@ -210,17 +266,21 @@ export const reconcilePanelStackAtom = atom(
         return { ...updated, proportion: target.proportion }
       }
 
+      // 再次复用同位置但路由不同的面板
       if (positional && !used.has(positional.id)) {
         used.add(positional.id)
         const updated = createEntry(target.route, target.proportion, positional.id)
         return { ...updated, proportion: target.proportion }
       }
 
+      // 都没有则新建面板
       return createEntry(target.route, target.proportion)
     })
 
     const normalized = normalizeProportions(newStack)
 
+    // 如果新栈和旧栈完全一致（ID、路由、通道、类型、比例都相同），
+    // 只更新焦点，避免触发不必要的重渲染。
     if (
       normalized.length === current.length &&
       normalized.every((p, i) =>
@@ -253,6 +313,10 @@ export const reconcilePanelStackAtom = atom(
   }
 )
 
+/**
+ * Action atom：调整两个相邻面板的宽度比例。
+ * leftIndex/rightIndex 是面板在栈中的索引。
+ */
 export const resizePanelsAtom = atom(
   null,
   (get, set, { leftIndex, rightIndex, leftProportion, rightProportion }: {
@@ -272,6 +336,10 @@ export const resizePanelsAtom = atom(
   }
 )
 
+/**
+ * Action atom：更新当前焦点面板的路由。
+ * 如果栈为空，则新增一个占满宽度的面板。
+ */
 export const updateFocusedPanelRouteAtom = atom(
   null,
   (get, set, route: ViewRoute) => {
@@ -298,6 +366,7 @@ export const updateFocusedPanelRouteAtom = atom(
   }
 )
 
+/** Action atom：焦点切换到下一个面板（循环）。 */
 export const focusNextPanelAtom = atom(
   null,
   (get, set) => {
@@ -309,6 +378,7 @@ export const focusNextPanelAtom = atom(
   }
 )
 
+/** Action atom：焦点切换到上一个面板（循环）。 */
 export const focusPrevPanelAtom = atom(
   null,
   (get, set) => {

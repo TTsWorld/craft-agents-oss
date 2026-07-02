@@ -1,13 +1,13 @@
 /**
- * useEntityListInteractions — Convenience hook that wires together:
- * - useRovingTabIndex (keyboard navigation)
- * - useMultiSelect (pure selection state)
- * - Optional search filtering
+ * useEntityListInteractions — 便捷 hook，把以下能力串起来：
+ * - useRovingTabIndex（键盘导航）
+ * - useMultiSelect（纯选择状态）
+ * - 可选的搜索过滤
  *
- * Returns props to spread onto EntityList and EntityRow.
+ * 返回可展开到 EntityList 与 EntityRow 上的 props。
  *
- * NOTE: Does NOT include useFocusZone — that requires app-level FocusContext.
- * Consumers who need zone integration compose it externally (see SessionList).
+ * 注意：不包含 useFocusZone —— 那需要应用级 FocusContext。
+ * 需要焦点区域集成的使用者请在外部组合（见 SessionList）。
  */
 
 import { useState, useCallback, useMemo, useRef } from 'react'
@@ -15,42 +15,42 @@ import { useRovingTabIndex } from '@/hooks/keyboard'
 import * as MultiSelect from '@/hooks/useMultiSelect'
 
 // ============================================================================
-// Types
+// 类型
 // ============================================================================
 
 export interface UseEntityListInteractionsOptions<T> {
-  /** List of items (pre-filtering) */
+  /** 列表项（过滤前） */
   items: T[]
-  /** Unique ID extractor */
+  /** 提取唯一 ID */
   getId: (item: T) => string
 
-  /** Keyboard navigation (opt-in) */
+  /** 键盘导航（可选） */
   keyboard?: {
-    /** Called when Enter/Space is pressed on the active item */
+    /** 在激活项上按 Enter/Space 时调用 */
     onActivate?: (item: T, index: number) => void
-    /** Called when arrow keys move to a new item */
+    /** 方向键移动到新项时调用 */
     onNavigate?: (item: T, index: number) => void
-    /** Whether keyboard navigation is enabled (default: true) */
+    /** 是否启用键盘导航（默认 true） */
     enabled?: boolean
-    /** Keep DOM focus elsewhere (e.g. search input) while navigating (default: false) */
+    /** 导航时是否保持 DOM 焦点在别处（例如搜索框）（默认 false） */
     virtualFocus?: boolean
   }
 
-  /** Multi-select (opt-in — set to true to enable) */
+  /** 多选（传入 true 启用） */
   multiSelect?: boolean
 
-  /** Search filtering (opt-in) */
+  /** 搜索过滤（可选） */
   search?: {
-    /** Current search query */
+    /** 当前搜索关键词 */
     query: string
-    /** Filter function — return true to include the item */
+    /** 过滤函数 —— 返回 true 保留该项 */
     fn: (item: T, query: string) => boolean
   }
 
   /**
-   * External selection store (opt-in).
-   * When provided, the hook uses this instead of its own internal useState.
-   * This enables atom-backed selection shared with other components (e.g. Jotai).
+   * 外部选择存储（可选）。
+   * 传入后 hook 使用外部状态代替内部的 useState。
+   * 这样可实现跨组件共享的原子化选择（例如 Jotai）。
    *
    * @example
    * const [state, setState] = useAtom(sessionSelectionAtom)
@@ -62,24 +62,24 @@ export interface UseEntityListInteractionsOptions<T> {
   }
 
   /**
-   * Override which item ID is considered "selected" for highlighting.
-   * When provided, `getRowProps` uses this instead of `selectionState.selected`.
-   * Used by multi-panel focus tracking where the focused panel determines selection.
+   * 覆盖高亮时使用的“已选中”ID。
+   * 传入后 getRowProps 使用此值代替 selectionState.selected。
+   * 用于多面板焦点跟踪场景：由聚焦面板决定哪项被高亮。
    */
   selectedIdOverride?: string | null
 }
 
 export interface EntityListInteractions<T> {
-  /** Filtered items (after search). Use this as EntityList's items prop. */
+  /** 过滤后的列表项（搜索后）。作为 EntityList 的 items prop */
   items: T[]
 
-  /** Props to spread on EntityList */
+  /** 展开到 EntityList 的 props */
   listProps: {
     containerRef?: React.Ref<HTMLDivElement>
     containerProps: Record<string, string>
   }
 
-  /** Get props to spread on each EntityRow */
+  /** 获取每项 EntityRow 的 props */
   getRowProps: (item: T, index: number) => {
     buttonProps: Record<string, unknown>
     isSelected: boolean
@@ -87,19 +87,19 @@ export interface EntityListInteractions<T> {
     onMouseDown: (e: React.MouseEvent) => void
   }
 
-  /** Keyboard state */
+  /** 键盘状态 */
   keyboard: {
     activeIndex: number
     setActiveIndex: (index: number) => void
     focusActiveItem: () => void
   }
 
-  /** Props to spread on a search <input> — forwards ArrowDown/Up to the list */
+  /** 展开到搜索 <input> 的 props —— 把 ArrowDown/Up 转发给列表 */
   searchInputProps: {
     onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void
   }
 
-  /** Selection state (only meaningful when multiSelect is enabled) */
+  /** 选择状态（仅在 multiSelect 启用时有意义） */
   selection: {
     state: MultiSelect.MultiSelectState
     isMultiSelectActive: boolean
@@ -124,14 +124,14 @@ export function useEntityListInteractions<T>({
   selectionStore,
   selectedIdOverride,
 }: UseEntityListInteractionsOptions<T>): EntityListInteractions<T> {
-  // ---- Search filtering ----
+  // ---- 搜索过滤 ----
   const items = useMemo(() => {
     if (!search || !search.query.trim()) return rawItems
     return rawItems.filter(item => search.fn(item, search.query))
   }, [rawItems, search?.query, search?.fn]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ---- Multi-select state ----
-  // Use external store (e.g. Jotai atom) when provided, otherwise local useState
+  // ---- 多选状态 ----
+  // 优先使用外部存储（如 Jotai atom），否则用本地 useState
   const [internalState, setInternalState] = useState<MultiSelect.MultiSelectState>(
     MultiSelect.createInitialState
   )
@@ -158,21 +158,21 @@ export function useEntityListInteractions<T>({
 
   const isMultiSelectActive = MultiSelect.isMultiSelectActive(selectionState)
 
-  // ---- Keyboard navigation ----
+  // ---- 键盘导航 ----
   const handleNavigate = useCallback((item: T, index: number) => {
-    // Scroll into view
+    // 滚动到可视区域
     const id = getId(item)
     requestAnimationFrame(() => {
       const el = document.getElementById(`item-${id}`)
       el?.scrollIntoView({ block: 'nearest', behavior: 'instant' })
     })
 
-    // Exit multi-select on plain arrow navigation, then single-select the navigated item
+    // 普通方向键导航时退出多选，然后单选当前导航到的项
     if (multiSelectEnabled && isMultiSelectActive) {
       clearSelection()
     }
 
-    // Update selection to follow the keyboard cursor
+    // 让选择跟随键盘光标
     setSelectionState(MultiSelect.singleSelect(id, index))
 
     keyboardOpts?.onNavigate?.(item, index)
@@ -180,7 +180,7 @@ export function useEntityListInteractions<T>({
 
   const handleActivate = useCallback((item: T, index: number) => {
     if (multiSelectEnabled && !isMultiSelectActive) {
-      // Single-select on Enter
+      // 按 Enter 时单选
       setSelectionState(MultiSelect.singleSelect(getId(item), index))
     }
     keyboardOpts?.onActivate?.(item, index)
@@ -210,22 +210,22 @@ export function useEntityListInteractions<T>({
     onExtendSelection: multiSelectEnabled ? handleExtendSelection : undefined,
   })
 
-  // ---- Mouse interaction ----
-  // Track last selected index for range select — separate from activeIndex
-  // because activeIndex follows keyboard, this follows clicks.
+  // ---- 鼠标交互 ----
+  // 记录最后一次点击的索引，用于 Shift+点击区间选择 —— 与 activeIndex 分开，
+  // 因为 activeIndex 跟随键盘，而这里跟随鼠标点击。
   const lastClickIndexRef = useRef<number>(-1)
 
   const getRowMouseDown = useCallback((item: T, index: number) => {
     return (e: React.MouseEvent) => {
       const id = getId(item)
 
-      // Right-click: preserve multi-select, let context menu handle batch actions
+      // 右键：保留多选状态，让上下文菜单处理批量操作
       if (e.button === 2) {
         if (multiSelectEnabled && isMultiSelectActive && !selectionState.selectedIds.has(id)) {
-          // Right-clicking an unselected item during multi-select: add it to selection
+          // 多选状态下右键点击未选中项：把它加入选择
           toggle(id, index)
         }
-        // Don't change selection — context menu shows batch or single actions
+        // 不改变选择，上下文菜单展示批量或单条操作
         return
       }
 
@@ -245,20 +245,20 @@ export function useEntityListInteractions<T>({
         return
       }
 
-      // Normal click — single select
+      // 普通点击 —— 单选
       setSelectionState(MultiSelect.singleSelect(id, index))
       lastClickIndexRef.current = index
       setActiveIndex(index)
     }
   }, [getId, multiSelectEnabled, isMultiSelectActive, selectionState.selectedIds, toggle, range, setActiveIndex])
 
-  // ---- Search input keyboard forwarding ----
-  // Forwards ArrowDown/ArrowUp from a search input to the roving tabindex handler.
-  // Matches SessionList pattern (SessionList.tsx:1598).
+  // ---- 搜索输入框键盘转发 ----
+  // 把搜索框的 ArrowDown/ArrowUp 转发给 roving tabindex 容器处理。
+  // 与 SessionList 模式一致（SessionList.tsx:1598）。
   const searchInputOnKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault()
-      // Forward to the roving tabindex container handler
+      // 转发给 roving tabindex 容器处理
       getContainerProps().onKeyDown(e as unknown as React.KeyboardEvent)
       return
     }
@@ -268,14 +268,14 @@ export function useEntityListInteractions<T>({
       return
     }
     if (e.key === 'Enter') {
-      // Forward Enter to activate the focused item
+      // 转发 Enter 以激活聚焦项
       e.preventDefault()
       getContainerProps().onKeyDown(e as unknown as React.KeyboardEvent)
       return
     }
   }, [getContainerProps])
 
-  // ---- Build return values ----
+  // ---- 构建返回值 ----
   const containerProps = getContainerProps()
 
   const listProps = useMemo(() => ({

@@ -1,26 +1,17 @@
 /**
- * CompactSessionMenu
+ * CompactSessionMenu - 紧凑模式下 ChatPage 标题下拉菜单的底部抽屉替代方案。
  *
- * Bottom-sheet replacement for the desktop ChatPage title dropdown
- * (`SessionMenu` wrapped by `PanelHeader`'s Radix DropdownMenu) when
- * `AppShellContext.isCompactMode === true`. Mirrors the same actions but
- * routes Status / Labels / Share / Connect Messaging submenus through
- * an internal view stack instead of nested Radix popovers — Radix submenus
- * get clipped by the panel container query on narrow viewports, and the
- * Status submenu in particular falls off the right edge.
+ * 当 AppShellContext.isCompactMode === true 时，替换桌面端的 SessionMenu（由 PanelHeader 的 Radix DropdownMenu 包裹）。
+ * 操作项与桌面端保持一致，但把 Status / Labels / Share / Connect Messaging 子菜单放到内部视图栈里，
+ * 而不是嵌套 Radix 浮层——在窄视口下面板容器查询会裁剪 Radix 子菜单，尤其是 Status 子菜单会超出右边缘。
  *
- * Pattern matches the other compact pickers (`CompactSessionListFilter`,
- * `CompactWorkspaceSwitcher`, `CompactPermissionModeSelector`) and also
- * follows the iOS-style drill-in behaviour established by `MobileAppMenu`.
+ * 模式与其他紧凑选择器一致（CompactSessionListFilter、CompactWorkspaceSwitcher、CompactPermissionModeSelector），
+ * 并遵循 MobileAppMenu 建立的 iOS 式钻入行为。
  *
- * Side-effect handlers (share / refresh title / copy path / share submenu /
- * label toggle with optimistic state) come from `useSessionMenuActions`,
- * shared with the desktop `SessionMenu` so a new session action only has to
- * be wired through one place.
+ * 副作用处理（分享/刷新标题/复制路径/分享子菜单/带乐观状态的标签切换）来自 useSessionMenuActions，
+ * 与桌面端 SessionMenu 共享，因此新增会话动作只需在一个地方接入。
  *
- * Leaf actions close the drawer on tap. Label toggles do NOT close the
- * drawer so the user can apply multiple labels in one pass — same UX as
- * the desktop submenu.
+ * 叶子操作点击后关闭抽屉；标签切换不关闭抽屉，方便用户一次应用多个标签——和桌面端子菜单 UX 一致。
  */
 
 import * as React from 'react'
@@ -80,21 +71,25 @@ import { useSessionMenuActions } from '@/hooks/useSessionMenuActions'
 
 type View = 'root' | 'status' | 'labels' | 'share' | 'messaging'
 
+/** CompactSessionMenuProps：组件 props 类型定义 */
 export interface CompactSessionMenuProps {
-  /** Title text shown in the trigger button + drawer header. */
+  /**
+   */
   title?: string
-  /** Optional badge element rendered next to the title (e.g. agent badge). */
+  /**
+   */
   badge?: React.ReactNode
-  /** Shimmer animation while the title is being regenerated. */
+  /**
+   */
   isRegeneratingTitle?: boolean
 
-  // Session data — same as SessionMenu
+  // 会话数据——与 SessionMenu 一致
   item: SessionMeta
   sessionStatuses: SessionStatus[]
   labels?: LabelConfig[]
   hasRemoteWorkspaces?: boolean
 
-  // Callbacks — same as SessionMenu
+  // 回调——与 SessionMenu 一致
   onLabelsChange?: (labels: string[]) => void
   onRename: () => void
   onFlag: () => void
@@ -108,21 +103,19 @@ export interface CompactSessionMenuProps {
   onDelete: () => void
 
   // ---------------------------------------------------------------------------
-  // Controlled-component shim — used by EntityRow / SessionItem so a single
-  // drawer instance can be driven from multiple triggers (`…` button + long-
-  // press). When `open` is omitted the component owns its own state (the
-  // chat-header callsite, unchanged). Matches the Radix Dialog convention.
+  // 受控组件 shim：EntityRow / SessionItem 用它让一个抽屉实例能被多个触发器驱动
+  // （“…” 按钮 + 长按）。不传 open 时组件自行管理状态（聊天标题调用点保持原样）。
+  // 与 Radix Dialog 约定一致。
   // ---------------------------------------------------------------------------
-  /** Controlled open state. When omitted, the component owns its own state. */
+  /** 受控的打开状态；省略时组件自行管理 */
   open?: boolean
-  /** Notifies the consumer when the controlled open state should change. */
+  /** 打开状态变化时通知消费方 */
   onOpenChange?: (open: boolean) => void
-  /** Custom trigger node. `null` opts out of rendering ANY trigger (the row
-   *  provides its own). When omitted, renders the title-pill trigger used
-   *  by the chat header. */
+  /** 自定义触发节点。传 null 表示不渲染任何触发器（由行提供）。省略时使用聊天标题 pill 触发器。 */
   trigger?: React.ReactNode | null
 }
 
+/** CompactSessionMenu - 紧凑模式下的会话操作抽屉 */
 export function CompactSessionMenu({
   title,
   badge,
@@ -159,15 +152,13 @@ export function CompactSessionMenu({
   )
   const [view, setView] = React.useState<View>('root')
 
-  // Reset to root pane every time the drawer closes so the next open
-  // doesn't surprise the user with a sub-pane from the previous session.
+  // 每次抽屉关闭后回到根面板，避免下次打开时直接显示上次的子面板。
   React.useEffect(() => {
     if (!open) setView('root')
   }, [open])
 
-  // Close+reset the drawer if the underlying session changes while it's open.
-  // Otherwise action handlers retarget to the new session (e.g. user opens
-  // menu for A, navigation switches to B, "Delete" deletes B).
+  // 抽屉打开时如果底层会话发生变化，则关闭并重置。
+  // 否则操作回调会指向新会话（例如用户打开 A 的菜单，导航切到 B，再点删除会删掉 B）。
   React.useEffect(() => {
     setOpen(false)
     setView('root')
@@ -188,9 +179,7 @@ export function CompactSessionMenu({
     [labels],
   )
 
-  // Wrap a callback so it also closes the drawer. Async callbacks fire
-  // their work in the background — the drawer doesn't need to stay open
-  // for the request to complete.
+  // 包装回调，使其执行后关闭抽屉。异步回调在后台执行即可，抽屉不需要保持打开。
   const closeAfter = React.useCallback(
     <T extends (...args: never[]) => void | Promise<void>>(fn?: T) => {
       if (!fn) return undefined
@@ -209,8 +198,7 @@ export function CompactSessionMenu({
   }
 
   // ---------------------------------------------------------------------------
-  // Drawer header — shared between root + sub-panes. Sub-panes show a back
-  // chevron; the root pane shows the session title.
+  // 抽屉标题：根面板显示会话标题，子面板显示返回箭头 + 对应标题。
   // ---------------------------------------------------------------------------
   const headerTitle = (() => {
     switch (view) {
@@ -224,10 +212,10 @@ export function CompactSessionMenu({
 
   const showBack = view !== 'root'
 
-  // Resolve the trigger node:
-  //   - `trigger === null`  → don't render any trigger (row provides its own).
-  //   - `trigger` provided  → render the consumer's node inside DrawerTrigger.
-  //   - `trigger` omitted   → render the default title-pill button (chat header).
+  // 解析触发节点：
+  //   - trigger === null：不渲染触发器（行提供自己的）
+  //   - trigger 已提供：把消费方节点包在 DrawerTrigger 里
+  //   - trigger 省略：渲染默认的标题 pill 按钮（聊天标题用）
   const triggerNode = trigger === null
     ? null
     : trigger !== undefined
@@ -358,7 +346,7 @@ export function CompactSessionMenu({
 }
 
 // ---------------------------------------------------------------------------
-// Panes
+// 子面板
 // ---------------------------------------------------------------------------
 
 interface RootPaneProps {
@@ -434,7 +422,7 @@ function RootPane({
 
   return (
     <div className="flex flex-col">
-      {/* Share / Shared */}
+      {/* 分享 / 已分享 */}
       {!sharedUrl ? (
         <Row icon={<CloudUpload className="h-4 w-4" />} label={t('sessionMenu.share')} onTap={onShare} />
       ) : (
@@ -560,8 +548,7 @@ function LabelsPane({
   appliedLabelIds: Set<string>
   onToggle: (id: string) => void
 }) {
-  // The Labels row in RootPane is gated on `hasLabels`, so this pane is only
-  // ever entered when items.length > 0 — no empty-state branch needed.
+  // RootPane 里的 Labels 行受 hasLabels 控制，因此进入此面板时 items.length 一定大于 0，不需要空状态。
   return (
     <div className="flex flex-col">
       {items.map((item) => {
@@ -619,7 +606,7 @@ function MessagingPane({ onConnect }: { onConnect: (platform: MessagingPlatform)
 }
 
 // ---------------------------------------------------------------------------
-// Primitives
+// 基础组件
 // ---------------------------------------------------------------------------
 
 interface RowProps {

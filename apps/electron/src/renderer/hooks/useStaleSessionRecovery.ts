@@ -1,16 +1,16 @@
 /**
- * Stale Session Recovery Watchdog
+ * 僵死会话恢复看门狗
  *
- * Safety net for edge cases the reconnect replay protocol cannot catch:
- * - Events lost during React useEffect re-registration
- * - Single dropped event without a full WS disconnect
- * - Server crash mid-stream where disconnect is never signaled cleanly
+ * 用于重连重放协议覆盖不到的边界情况：
+ * - React useEffect 重新注册期间丢失的事件
+ * - 未触发完整 WS 断连的单个丢事件
+ * - 服务器中途崩溃但断连信号未干净发送
  *
- * Periodically checks for sessions stuck in isProcessing=true with no
- * recent events, and refreshes them from server-persisted state.
+ * 定期检查 isProcessing=true 但长时间没有新事件的会话，
+ * 从服务器持久化状态刷新它们。
  *
- * Uses a generous 120s threshold to avoid false positives on long tool
- * executions (some tools legitimately run for 60+ seconds).
+ * 使用宽松的 120 秒阈值，避免把长时间合法工具执行误判为僵死
+ * （有些工具确实会运行 60 秒以上）。
  */
 
 import { useCallback, useEffect, useRef } from 'react'
@@ -19,8 +19,8 @@ import { sessionMetaMapAtom } from '@/atoms/sessions'
 
 type JotaiStore = ReturnType<typeof getDefaultStore>
 
-const STALE_THRESHOLD_MS = 120_000 // 2 minutes — generous to avoid false positives
-const CHECK_INTERVAL_MS = 30_000   // Check every 30s
+const STALE_THRESHOLD_MS = 120_000 // 2 分钟，避免误判
+const CHECK_INTERVAL_MS = 30_000   // 每 30 秒检查一次
 
 interface UseStaleSessionRecoveryOptions {
   store: JotaiStore
@@ -28,15 +28,15 @@ interface UseStaleSessionRecoveryOptions {
 }
 
 /**
- * Tracks the last time any event was received for each session.
- * If a session has isProcessing=true but no events for STALE_THRESHOLD_MS,
- * it is considered stuck and will be refreshed from the server.
+ * 跟踪每个会话最近一次收到事件的时间。
+ * 若某会话 isProcessing=true 但超过 STALE_THRESHOLD_MS 没有事件，
+ * 则视为卡住，从服务器刷新。
  */
 export function useStaleSessionRecovery({
   store,
   refreshSessionFromServer,
 }: UseStaleSessionRecoveryOptions): {
-  /** Call this on every received session event to reset the watchdog timer. */
+  /** 每次收到会话事件时调用，重置看门狗计时器 */
   trackSessionActivity: (sessionId: string) => void
 } {
   const lastEventTimestamps = useRef<Map<string, number>>(new Map())
@@ -53,34 +53,34 @@ export function useStaleSessionRecovery({
 
       for (const [sessionId, meta] of allMeta) {
         if (!meta.isProcessing) {
-          // Not processing — clean up tracking
+          // 不在处理中，清理跟踪
           lastEventTimestamps.current.delete(sessionId)
           continue
         }
 
         const lastEvent = lastEventTimestamps.current.get(sessionId)
         if (!lastEvent) {
-          // Processing but no tracked event yet — start tracking
+          // 正在处理但还没有跟踪到事件，开始跟踪
           lastEventTimestamps.current.set(sessionId, now)
           continue
         }
 
         if (now - lastEvent < STALE_THRESHOLD_MS) {
-          continue // Still within threshold
+          continue // 仍在阈值内
         }
 
         if (refreshingSessionIds.current.has(sessionId)) {
           continue
         }
 
-        // Stale — refresh from server
+        // 判定为僵死，从服务器刷新
         console.warn(`[StaleRecovery] Session ${sessionId} stuck in processing for ${Math.round((now - lastEvent) / 1000)}s — refreshing`)
 
         refreshingSessionIds.current.add(sessionId)
         try {
           const refreshed = await refreshSessionFromServer(sessionId)
           if (refreshed === 'refreshed') {
-            // Remove from tracking after a true fresh reload.
+            // 真正刷新成功后移除跟踪
             lastEventTimestamps.current.delete(sessionId)
           }
         } catch (err) {

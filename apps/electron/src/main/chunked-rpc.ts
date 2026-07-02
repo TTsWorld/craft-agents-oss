@@ -1,12 +1,10 @@
 /**
- * Chunked RPC — send large payloads over WebSocket in small pieces.
+ * chunked-rpc.ts —— 分片 RPC 传输。
  *
- * Splits a single large RPC argument into base64 chunks (~2.7MB each),
- * sends them via the transfer:start/chunk/commit protocol, and the
- * remote server reassembles and executes the original RPC handler.
+ * 把单个大型 RPC 参数拆成 base64 小片（每片约 2.7MB），通过
+ * transfer:start/chunk/commit 协议发送，远端服务器再拼装并执行原始 handler。
  *
- * Each chunk is retried up to 3 times on failure to handle transient
- * connection issues through proxies/tunnels.
+ * 每片失败时最多重试 3 次，以应对代理/隧道等瞬断问题。
  */
 
 import { createHash } from 'node:crypto'
@@ -14,21 +12,22 @@ import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import type { WsRpcClient } from '../transport/client'
 
 /**
- * 2MB raw → ~2.7MB after base64 encoding.
- * Larger chunks = fewer round trips (a 250MB payload = ~125 chunks instead of 651).
- * Still well under common per-message proxy limits.
+ * 原始 2MB → base64 后约 2.7MB。
+ * 片越大往返次数越少（250MB 载荷约 125 片而非 651 片），
+ * 但仍低于常见代理的单消息限制。
  */
 export const CHUNK_SIZE = 2 * 1024 * 1024
 
-/** Threshold above which we switch from direct RPC to chunked transfer. */
+/** 超过此阈值就从直接 RPC 切换到分片传输 */
 export const CHUNKED_TRANSFER_THRESHOLD = 5 * 1024 * 1024
 
-/** Max retries per chunk before giving up. */
+/** 每片最大重试次数 */
 const MAX_CHUNK_RETRIES = 3
 
-/** Delay between chunk retries (ms). */
+/** 分片重试间隔（毫秒） */
 const CHUNK_RETRY_DELAY = 1000
 
+// 预序列化后的分片载荷信息
 export interface PreparedChunkedPayload {
   bytes: Buffer
   checksum: string
@@ -50,15 +49,15 @@ export function prepareChunkedPayload(value: unknown): PreparedChunkedPayload {
 }
 
 /**
- * Send a large RPC call in chunks over the existing WebSocket connection.
+ * 通过已有 WebSocket 连接发送大型 RPC 调用。
  *
- * @param client         Connected WsRpcClient to the remote server
- * @param channel        The original RPC channel (e.g. 'sessions:import')
- * @param args           The original arguments array
- * @param largeArgIndex  Which argument is the large payload (will be chunked)
- * @param onProgress     Optional callback with (sentChunks, totalChunks) for UI progress
- * @param prepared       Optional pre-serialized payload so callers can inspect size without re-serializing
- * @returns              The result from the remote handler (same as a direct invoke)
+ * @param client         已连接到远端服务器的 WsRpcClient
+ * @param channel        原始 RPC channel，例如 'sessions:import'
+ * @param args           原始参数数组
+ * @param largeArgIndex  哪个参数是大载荷（会被分片替换为 null 占位）
+ * @param onProgress     可选进度回调 (sentChunks, totalChunks)
+ * @param prepared       可选预序列化载荷，避免调用方重复序列化
+ * @returns              远端 handler 的执行结果，与直接 invoke 等价
  */
 export async function invokeChunked(
   client: WsRpcClient,
@@ -70,7 +69,7 @@ export async function invokeChunked(
 ): Promise<any> {
   const payload = prepared ?? prepareChunkedPayload(args[largeArgIndex])
 
-  // Build deferred args (replace large arg with null placeholder)
+  // 构造延迟参数：把大参数替换成 null 占位，等大块数据传输后再在服务端还原
   const deferredArgs = [...args]
   deferredArgs[largeArgIndex] = null
 
@@ -136,7 +135,7 @@ export async function invokeChunked(
       try {
         await client.invoke(RPC_CHANNELS.transfer.ABORT, { transferId })
       } catch {
-        // Best effort cleanup — the server may already have cleaned up.
+        // 尽力清理：服务端可能已经清理掉了，忽略错误
       }
     }
     throw error

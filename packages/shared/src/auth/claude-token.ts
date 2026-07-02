@@ -1,7 +1,17 @@
+/**
+ * Claude OAuth token 刷新与过期检查
+ *
+ * 负责用 refresh_token 向 Claude 平台换新的 access_token，
+ * 并提供 token 是否即将过期的工具函数。
+ */
+
 import { CLAUDE_OAUTH_CONFIG } from './claude-oauth-config';
 import { APP_VERSION } from '../version/index.ts';
 import { debug } from '../utils/debug.ts';
 
+/**
+ * 已存储的 Claude OAuth 凭据结构。
+ */
 export interface ClaudeOAuthCredential {
   accessToken: string;
   refreshToken?: string;
@@ -10,15 +20,19 @@ export interface ClaudeOAuthCredential {
 }
 
 /**
- * Refresh Claude OAuth token using refresh token
- * Uses the Claude platform OAuth token endpoint (same as token exchange)
+ * 用 refresh token 刷新 Claude OAuth token。
+ *
+ * 使用 Claude platform OAuth token 端点（和换 token 是同一个端点）。
+ *
+ * @param refreshToken - 上次登录得到的 refresh token
+ * @returns 新的 accessToken/refreshToken/expiresAt
  */
 export async function refreshClaudeToken(refreshToken: string): Promise<{
   accessToken: string;
   refreshToken?: string;
   expiresAt?: number;
 }> {
-  // Use JSON format to match the token exchange endpoint
+  // 和 token exchange 端点保持一致，使用 JSON 格式
   const params = {
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
@@ -61,7 +75,7 @@ export async function refreshClaudeToken(refreshToken: string): Promise<{
     token_type?: string;
   };
 
-  // Log what we received from the API for debugging
+  // 记录 API 返回的过期信息，便于排查问题
   const expiresAt = data.expires_in ? Date.now() + data.expires_in * 1000 : undefined;
   debug(`[claude-token] Refresh response - expires_in: ${data.expires_in ?? 'NOT PROVIDED'}, calculated expiresAt: ${expiresAt ? new Date(expiresAt).toISOString() : 'undefined'}`);
 
@@ -73,14 +87,17 @@ export async function refreshClaudeToken(refreshToken: string): Promise<{
 }
 
 /**
- * Check if a token is expired or will expire soon (within 5 minutes)
+ * 检查 token 是否已经过期或将在 5 分钟内过期。
+ *
+ * @param expiresAt - token 过期时间戳（毫秒）
+ * @returns true 表示已过期或即将过期
  */
 export function isTokenExpired(expiresAt?: number): boolean {
   if (!expiresAt) {
-    // If no expiry, assume token is still valid
+    // 没有过期时间，认为仍然有效
     return false;
   }
-  // Consider expired if less than 5 minutes remaining
+  // 预留 5 分钟缓冲，避免在临界点附近失败
   const bufferMs = 5 * 60 * 1000;
   return Date.now() + bufferMs >= expiresAt;
 }

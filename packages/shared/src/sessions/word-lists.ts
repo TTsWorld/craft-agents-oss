@@ -1,13 +1,13 @@
 /**
- * Word Lists for Human-Readable Session IDs
+ * 可读会话 ID 的单词表
  *
- * Curated lists of adjectives and nouns for generating memorable,
- * URL-safe session identifiers in the format: YYMMDD-adjective-noun
+ * 为 YYMMDD-adjective-noun 这种格式提供形容词和名词，
+ * 目的是生成好记、URL 安全的会话标识符。
  */
 
 /**
- * Adjectives: Short, positive/neutral, easy to spell
- * ~100 words for good variety
+ * 形容词：短、正面/中性、易拼写。
+ * 约 100 个词，保证每天有足够组合。
  */
 export const ADJECTIVES = [
   // Nature/Weather
@@ -38,8 +38,8 @@ export const ADJECTIVES = [
 ] as const;
 
 /**
- * Nouns: Nature-themed, concrete, memorable
- * ~200 words for variety (100 adj × 200 noun = 20,000 combos/day)
+ * 名词：自然主题、具体、好记。
+ * 约 200 个词（100 形容词 × 200 名词 = 每天约 2 万种组合）。
  */
 export const NOUNS = [
   // Landscape
@@ -77,5 +77,15 @@ export const NOUNS = [
   'glacier', 'inlet', 'rapids', 'ripple', 'shoal', 'spray', 'surge', 'tide', 'torrent', 'wave',
 ] as const;
 
+/**
+ * 形容词类型。
+ * typeof ADJECTIVES[number] 会取出数组中所有字面量值的联合类型，
+ * 类似 Go 中从常量枚举得到的类型。
+ */
 export type Adjective = typeof ADJECTIVES[number];
+
+/**
+ * 名词类型。
+ * typeof NOUNS[number] 同理。
+ */
 export type Noun = typeof NOUNS[number];

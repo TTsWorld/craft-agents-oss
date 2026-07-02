@@ -5,6 +5,12 @@ import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 
+// 本文件属于 Skills RPC 模块，负责：Skill（技能）的加载、文件树浏览、删除、打开编辑器/文件夹。
+// Agent 概念：Skill 是给 Agent 追加的“系统提示模板+可用工具集”，通常以 workspace/skills/<slug>/SKILL.md 形式存在。
+// TS 提示：SkillFile 是 protocol 包导出的类型，体现 TypeScript 跨包类型共享；
+// 用 `as const` 做类型断言可获得字面量类型，类似 Golang 里的 iota/枚举。
+
+// 本 handler 负责注册的 skill channel 列表
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.skills.GET,
   RPC_CHANNELS.skills.GET_FILES,
@@ -13,8 +19,10 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.skills.OPEN_FINDER,
 ] as const
 
+// registerSkillsHandlers：注册 skill 相关 RPC 路由。
 export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): void {
-  // Get all skills for a workspace (and optionally project-level skills from workingDirectory)
+  // 加载 workspace 下所有 skill，若提供了 workingDirectory 还会加载项目级 skill。
+  // workingDirectory 校验：瘦客户端可能把本地路径发到远端服务器，远端需确认路径存在才生效。
   server.handle(RPC_CHANNELS.skills.GET, async (_ctx, workspaceId: string, workingDirectory?: string) => {
     deps.platform.logger?.info(`SKILLS_GET: Loading skills for workspace: ${workspaceId}${workingDirectory ? `, workingDirectory: ${workingDirectory}` : ''}`)
     const workspace = getWorkspaceByNameOrId(workspaceId)
@@ -22,8 +30,6 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
       deps.platform.logger?.error(`SKILLS_GET: Workspace not found: ${workspaceId}`)
       return []
     }
-    // Validate workingDirectory exists on this server — a thin client may pass
-    // its local path which doesn't exist on the remote server's filesystem.
     const effectiveWorkingDir = workingDirectory && existsSync(workingDirectory)
       ? workingDirectory
       : undefined
@@ -33,7 +39,7 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
     return skills
   })
 
-  // Get files in a skill directory
+  // 扫描某个 skill 目录下的文件树（供 UI 展示 skill 内部结构）。
   server.handle(RPC_CHANNELS.skills.GET_FILES, async (_ctx, workspaceId: string, skillSlug: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) {
@@ -46,11 +52,12 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
     const skillsDir = getWorkspaceSkillsPath(workspace.rootPath)
     const skillDir = join(skillsDir, skillSlug)
 
+    // 递归扫描目录的辅助函数；返回 SkillFile 树。
     function scanDirectory(dirPath: string): SkillFile[] {
       try {
         const entries = readdirSync(dirPath, { withFileTypes: true })
         return entries
-          .filter(entry => !entry.name.startsWith('.')) // Skip hidden files
+          .filter(entry => !entry.name.startsWith('.')) // 跳过隐藏文件
           .map(entry => {
             const fullPath = join(dirPath, entry.name)
             if (entry.isDirectory()) {
@@ -69,7 +76,7 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
             }
           })
           .sort((a, b) => {
-            // Directories first, then files
+            // 目录排在文件前面，再按名称排序
             if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
             return a.name.localeCompare(b.name)
           })
@@ -82,7 +89,7 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
     return scanDirectory(skillDir)
   })
 
-  // Delete a skill from a workspace
+  // 从 workspace 删除指定 skill
   server.handle(RPC_CHANNELS.skills.DELETE, async (_ctx, workspaceId: string, skillSlug: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error('Workspace not found')
@@ -92,7 +99,7 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
     deps.platform.logger?.info(`Deleted skill: ${skillSlug}`)
   })
 
-  // Open skill SKILL.md in editor
+  // 用系统默认编辑器打开 skill 的 SKILL.md
   server.handle(RPC_CHANNELS.skills.OPEN_EDITOR, async (_ctx, workspaceId: string, skillSlug: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error('Workspace not found')
@@ -105,7 +112,7 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
     await deps.platform.openPath?.(skillFile)
   })
 
-  // Open skill folder in Finder/Explorer
+  // 在 Finder/Explorer 中打开 skill 文件夹
   server.handle(RPC_CHANNELS.skills.OPEN_FINDER, async (_ctx, workspaceId: string, skillSlug: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error('Workspace not found')

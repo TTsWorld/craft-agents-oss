@@ -1,15 +1,15 @@
 /**
  * Config Validators
  *
- * Zod schemas and validation utilities for config files.
- * Used by agents to validate config changes before they take effect.
+ * config 文件的 Zod schema 与验证工具。
+ * Agent 在让配置生效前会先用这些工具验证变更。
  *
- * Validates:
- * - config.json: Main app configuration
- * - preferences.json: User preferences
- * - sources/{slug}/config.json: Workspace-scoped source configs
- * - permissions.json: Permission rules for Explore mode
- * - tool-icons/tool-icons.json: CLI tool icon mappings
+ * 验证范围：
+ * - config.json：主应用配置
+ * - preferences.json：用户偏好
+ * - sources/{slug}/config.json：workspace 级 source 配置
+ * - permissions.json：Explore 模式权限规则
+ * - tool-icons/tool-icons.json：CLI tool 图标映射
  */
 
 import { z } from 'zod';
@@ -34,14 +34,16 @@ const PREFERENCES_FILE = join(CONFIG_DIR, 'preferences.json');
 // Validation Result Types
 // ============================================================
 
+/** 单个验证问题 */
 export interface ValidationIssue {
   file: string;
-  path: string;  // JSON path like "workspaces[0].name"
+  path: string;  // JSON 路径，如 "workspaces[0].name"
   message: string;
   severity: 'error' | 'warning';
   suggestion?: string;
 }
 
+/** 验证结果 */
 export interface ValidationResult {
   valid: boolean;
   errors: ValidationIssue[];
@@ -55,6 +57,7 @@ export interface ValidationResult {
 
 // --- config.json ---
 
+/** Workspace 基础 schema */
 const WorkspaceSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -68,7 +71,7 @@ const WorkspaceSchema = z.object({
 
 const LlmProviderTypeSchema = z.enum([
   'anthropic', 'openai', 'openai_compat', 'pi', 'pi_compat', 'copilot',
-  // Legacy values kept for config parsing tolerance (migrated at runtime):
+  // 保留旧值以容忍磁盘配置（运行时迁移）：
   'anthropic_compat', 'bedrock', 'vertex',
 ]);
 
@@ -93,7 +96,7 @@ const LlmConnectionSchema = z.object({
   modelSelectionMode: z.enum(['automaticallySyncedFromProvider', 'userDefined3Tier']).optional(),
   customEndpoint: CustomEndpointSchema.optional(),
   createdAt: z.number(),
-  // Allow additional fields (codexPath, awsRegion, gcpProjectId, etc.)
+  // 允许额外字段（codexPath、awsRegion、gcpProjectId 等）
 }).passthrough();
 
 export const StoredConfigSchema = z.object({
@@ -103,8 +106,8 @@ export const StoredConfigSchema = z.object({
   llmConnections: z.array(LlmConnectionSchema).optional(),
   defaultLlmConnection: z.string().optional(),
   defaultThinkingLevel: z.enum([...THINKING_LEVEL_IDS, 'think'] as [string, ...string[]]).transform(v => v === 'think' ? 'medium' : v).optional(),
-  // Note: tokenDisplay, showCost, cumulativeUsage, defaultPermissionMode removed
-  // Permission mode and cyclable modes are now per-workspace in workspace config.json
+  // 注意：tokenDisplay、showCost、cumulativeUsage、defaultPermissionMode 已移除
+  // permission mode 和 cyclable modes 现在按 workspace 存在 workspace config.json 中
 });
 
 // --- preferences.json ---
@@ -117,11 +120,11 @@ const LocationSchema = z.object({
 
 export const UserPreferencesSchema = z.object({
   name: z.string().optional(),
-  timezone: z.string().optional(),  // TODO: Could validate against IANA timezone list
+  timezone: z.string().optional(),  // TODO: 可以校验是否为 IANA 时区列表
   location: LocationSchema.optional(),
   notes: z.string().optional(),
-  // Internal: mirrors Appearance → Language. Not user-editable.
-  // Validated against the registry-derived supported set.
+  // 内部字段：与 Appearance → Language 同步，用户不可编辑
+  // 校验范围来自 registry 推导的支持集合
   uiLanguage: z.enum([...SUPPORTED_LANGUAGE_CODES] as [LanguageCode, ...LanguageCode[]]).optional(),
   updatedAt: z.number().int().min(0).optional(),
 }).passthrough();
@@ -131,7 +134,7 @@ export const UserPreferencesSchema = z.object({
 // ============================================================
 
 /**
- * Convert Zod error to ValidationIssues
+ * 把 Zod 错误转成 ValidationIssue 列表。
  */
 function zodErrorToIssues(error: z.ZodError, file: string): ValidationIssue[] {
   return error.issues.map((issue) => ({
@@ -143,13 +146,13 @@ function zodErrorToIssues(error: z.ZodError, file: string): ValidationIssue[] {
 }
 
 /**
- * Validate config.json
+ * 验证 config.json。
  */
 export function validateConfig(): ValidationResult {
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
 
-  // Check if file exists
+  // 检查文件是否存在
   if (!existsSync(CONFIG_FILE)) {
     return {
       valid: false,
@@ -164,7 +167,7 @@ export function validateConfig(): ValidationResult {
     };
   }
 
-  // Parse JSON
+  // 解析 JSON
   let content: unknown;
   try {
     const raw = readFileSync(CONFIG_FILE, 'utf-8');
@@ -182,14 +185,14 @@ export function validateConfig(): ValidationResult {
     };
   }
 
-  // Validate schema
+  // 校验 schema
   const result = StoredConfigSchema.safeParse(content);
   if (!result.success) {
     errors.push(...zodErrorToIssues(result.error, 'config.json'));
   } else {
     const config = result.data;
 
-    // Semantic validations
+    // 语义校验
     if (config.activeWorkspaceId && config.workspaces.length > 0) {
       const activeExists = config.workspaces.some(w => w.id === config.activeWorkspaceId);
       if (!activeExists) {
@@ -203,11 +206,11 @@ export function validateConfig(): ValidationResult {
       }
     }
 
-    // Validate LLM connections
+    // 验证 LLM 连接
     if (config.llmConnections) {
       const seenSlugs = new Set<string>();
       for (const [i, conn] of config.llmConnections.entries()) {
-        // Check for duplicate slugs
+        // 检查重复 slug
         if (seenSlugs.has(conn.slug)) {
           errors.push({
             file: 'config.json',
@@ -219,7 +222,7 @@ export function validateConfig(): ValidationResult {
         }
         seenSlugs.add(conn.slug);
 
-        // Validate provider/auth combination
+        // 验证 provider/auth 组合
         if (!isValidProviderAuthCombination(conn.providerType as any, conn.authType as any)) {
           warnings.push({
             file: 'config.json',
@@ -231,7 +234,7 @@ export function validateConfig(): ValidationResult {
         }
       }
 
-      // Validate defaultLlmConnection references an existing connection
+      // 验证 defaultLlmConnection 引用存在的连接
       if (config.defaultLlmConnection) {
         const exists = config.llmConnections.some(c => c.slug === config.defaultLlmConnection);
         if (!exists) {
@@ -256,13 +259,13 @@ export function validateConfig(): ValidationResult {
 }
 
 /**
- * Validate preferences.json
+ * 验证 preferences.json。
  */
 export function validatePreferences(): ValidationResult {
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
 
-  // Check if file exists (preferences are optional)
+  // 文件不存在（preferences 可选）
   if (!existsSync(PREFERENCES_FILE)) {
     return {
       valid: true,
@@ -276,7 +279,7 @@ export function validatePreferences(): ValidationResult {
     };
   }
 
-  // Parse JSON
+  // 解析 JSON
   let content: unknown;
   try {
     const raw = readFileSync(PREFERENCES_FILE, 'utf-8');
@@ -294,14 +297,14 @@ export function validatePreferences(): ValidationResult {
     };
   }
 
-  // Validate schema
+  // 校验 schema
   const result = UserPreferencesSchema.safeParse(content);
   if (!result.success) {
     errors.push(...zodErrorToIssues(result.error, 'preferences.json'));
   } else {
     const prefs = result.data;
 
-    // Warn about missing recommended fields
+    // 缺少推荐字段时给出警告
     if (!prefs.name) {
       warnings.push({
         file: 'preferences.json',
@@ -331,9 +334,9 @@ export function validatePreferences(): ValidationResult {
 }
 
 /**
- * Validate all config files
- * @param workspaceId - Optional workspace ID for source validation
- * @param workspaceRoot - Optional workspace root path for skill and status validation
+ * 验证所有 config 文件。
+ * @param workspaceId - 可选 workspace ID，用于 source 验证
+ * @param workspaceRoot - 可选 workspace 根路径，用于 skill、status、label、automations、permissions 验证
  */
 export function validateAll(workspaceId?: string, workspaceRoot?: string): ValidationResult {
   const results: ValidationResult[] = [
@@ -342,12 +345,12 @@ export function validateAll(workspaceId?: string, workspaceRoot?: string): Valid
     validateToolIcons(),
   ];
 
-  // Include workspace-scoped validations if workspaceId is provided
+  // 提供 workspaceId 时加入 source 验证
   if (workspaceId) {
     results.push(validateAllSources(workspaceId));
   }
 
-  // Include skill, status, label, automations, and permissions validation if workspaceRoot is provided
+  // 提供 workspaceRoot 时加入 skill、status、label、automations、permissions 验证
   if (workspaceRoot) {
     results.push(validateAllSkills(workspaceRoot));
     results.push(validateStatuses(workspaceRoot));
@@ -376,30 +379,30 @@ import { getWorkspaceSourcesPath } from '../workspaces/storage.ts';
 
 const SourceTypeSchema = z.enum(['mcp', 'api', 'local']);
 
-// MCP source supports two transport types:
-// - HTTP/SSE: requires url and authType
-// - Stdio: requires command (and optional args, env)
+// MCP source 支持两种 transport：
+// - HTTP/SSE：需要 url 和 authType
+// - Stdio：需要 command（可选 args、env）
 const McpSourceConfigSchema = z.object({
   transport: z.enum(['http', 'sse', 'stdio']).optional(),
-  // HTTP/SSE fields
+  // HTTP/SSE 字段
   url: z.string().url().optional(),
   authType: z.enum(['oauth', 'bearer', 'none']).optional(),
   clientId: z.string().optional(),
-  // Stdio fields
+  // Stdio 字段
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
   env: z.record(z.string(), z.string()).optional(),
-  // Custom headers for HTTP/SSE transport (e.g., API keys, custom auth)
+  // HTTP/SSE transport 的自定义 header（如 API key、自定义 auth）
   headers: z.record(z.string(), z.string()).optional(),
-  // Header names for credential-store auth (values stored in credential store as JSON)
+  // 凭据存储认证的 header 名（值以 JSON 形式存在 credential store）
   headerNames: z.array(z.string()).optional(),
 }).refine(
   (data) => {
     if (data.transport === 'stdio') {
-      // Stdio transport requires command
+      // Stdio transport 必须有 command
       return !!data.command;
     } else {
-      // HTTP/SSE transport (default) requires url and authType
+      // HTTP/SSE transport（默认）必须有 url 和 authType
       return !!data.url && !!data.authType;
     }
   },
@@ -468,13 +471,12 @@ export const FolderSourceConfigSchema = z.object({
   brand: SourceBrandSchema.optional(),
   isAuthenticated: z.boolean().optional(),
   lastTestedAt: z.number().int().min(0).optional(),
-  // Timestamps are optional - manually created configs may not have them
-  // Storage functions add these automatically when saving
+  // 时间戳可选：手工创建的配置可能没有，保存时 storage 函数会自动加上
   createdAt: z.number().int().min(0).optional(),
   updatedAt: z.number().int().min(0).optional(),
 }).refine(
   (data) => {
-    // Ensure correct config block exists for type
+    // 确保 type 对应的配置块存在
     switch (data.type) {
       case 'mcp': return !!data.mcp;
       case 'api': return !!data.api;
@@ -485,7 +487,7 @@ export const FolderSourceConfigSchema = z.object({
 );
 
 /**
- * Validate a source config object (in-memory, no disk reads)
+ * 验证内存中的 source config 对象（不读盘）。
  */
 export function validateSourceConfig(config: unknown): ValidationResult {
   const result = FolderSourceConfigSchema.safeParse(config);
@@ -502,8 +504,8 @@ export function validateSourceConfig(config: unknown): ValidationResult {
 }
 
 /**
- * Validate source config from a JSON string.
- * Used by PreToolUse hook to validate before writing to disk.
+ * 从 JSON 字符串验证 source config。
+ * PreToolUse hook 在写入磁盘前用它校验。
  */
 export function validateSourceConfigContent(jsonString: string): ValidationResult {
   let content: unknown;
@@ -526,7 +528,7 @@ export function validateSourceConfigContent(jsonString: string): ValidationResul
 }
 
 /**
- * Validate a source folder (workspace-scoped)
+ * 验证 workspace 中的某个 source 文件夹（读盘）。
  */
 export function validateSource(workspaceId: string, slug: string): ValidationResult {
   const sourcesDir = getWorkspaceSourcesPath(workspaceId);
@@ -579,7 +581,7 @@ export function validateSource(workspaceId: string, slug: string): ValidationRes
 
   const result = validateSourceConfig(content);
 
-  // Add warnings for missing guide.md
+  // 缺 guide.md 时给出警告
   const guidePath = join(sourcesDir, slug, 'guide.md');
   if (!existsSync(guidePath)) {
     result.warnings.push({
@@ -594,7 +596,7 @@ export function validateSource(workspaceId: string, slug: string): ValidationRes
 }
 
 /**
- * Validate all sources in a workspace
+ * 验证 workspace 中的所有 sources。
  */
 export function validateAllSources(workspaceId: string): ValidationResult {
   const sourcesDir = getWorkspaceSourcesPath(workspaceId);
@@ -655,7 +657,7 @@ import { getWorkspaceSkillsPath } from '../workspaces/storage.ts';
 import { basename, extname } from 'path';
 
 /**
- * Schema for skill metadata (SKILL.md frontmatter)
+ * Skill 元数据 schema（SKILL.md frontmatter）。
  */
 export const SkillMetadataSchema = z.object({
   name: z.string().min(1, "Add a 'name' field with a human-readable title (e.g., 'Git Commit Helper')"),
@@ -665,7 +667,7 @@ export const SkillMetadataSchema = z.object({
 });
 
 /**
- * Find icon file in skill directory
+ * 在 skill 目录中查找图标文件。
  */
 function findSkillIconForValidation(skillDir: string): string | null {
   const iconExtensions = ['.svg', '.png', '.jpg', '.jpeg'];
@@ -681,9 +683,9 @@ function findSkillIconForValidation(skillDir: string): string | null {
 }
 
 /**
- * Validate a skill folder
- * @param workspaceRoot - Absolute path to workspace root folder
- * @param slug - Skill directory name
+ * 验证一个 skill 文件夹。
+ * @param workspaceRoot - workspace 根目录绝对路径
+ * @param slug - skill 目录名
  */
 export function validateSkill(workspaceRoot: string, slug: string): ValidationResult {
   const skillsDir = getWorkspaceSkillsPath(workspaceRoot);
@@ -694,7 +696,7 @@ export function validateSkill(workspaceRoot: string, slug: string): ValidationRe
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
 
-  // 1. Check directory exists (slug format is validated by validateSkillContent below)
+  // 1. 检查目录是否存在（slug 格式由 validateSkillContent 校验）
   if (!existsSync(skillDir)) {
     return {
       valid: false,
@@ -708,7 +710,7 @@ export function validateSkill(workspaceRoot: string, slug: string): ValidationRe
     };
   }
 
-  // 3. Check SKILL.md exists
+  // 3. 检查 SKILL.md 是否存在
   if (!existsSync(skillFile)) {
     return {
       valid: false,
@@ -723,7 +725,7 @@ export function validateSkill(workspaceRoot: string, slug: string): ValidationRe
     };
   }
 
-  // 4. Read and validate content using content-based validator
+  // 4. 读取并委托给内容校验器
   let content: string;
   try {
     content = readFileSync(skillFile, 'utf-8');
@@ -740,11 +742,11 @@ export function validateSkill(workspaceRoot: string, slug: string): ValidationRe
     };
   }
 
-  // Delegate content validation (frontmatter schema + body non-empty + slug format)
+  // 委托内容校验（frontmatter schema + 正文非空 + slug 格式）
   const contentResult = validateSkillContent(content, slug);
   errors.push(...contentResult.errors);
 
-  // 5. FS-only checks: icon existence (warnings)
+  // 5. 文件系统层面的检查：图标存在性（仅警告）
   const iconPath = findSkillIconForValidation(skillDir);
   if (iconPath) {
     const ext = extname(iconPath).toLowerCase();
@@ -776,18 +778,18 @@ export function validateSkill(workspaceRoot: string, slug: string): ValidationRe
 }
 
 /**
- * Validate skill SKILL.md content from a string (no disk reads).
- * Used by PreToolUse hook to validate before writing to disk.
- * Checks frontmatter schema and non-empty body. Skips icon/folder checks.
+ * 从字符串验证 SKILL.md 内容（不读盘）。
+ * PreToolUse hook 在写入磁盘前用它校验。
+ * 检查 frontmatter schema 和正文非空。跳过图标/文件夹检查。
  *
- * @param markdownContent - The full SKILL.md file content
- * @param slug - The skill slug (folder name), used for slug format validation
+ * @param markdownContent - 完整的 SKILL.md 文件内容
+ * @param slug - skill slug（目录名），用于 slug 格式校验
  */
 export function validateSkillContent(markdownContent: string, slug: string): ValidationResult {
   const file = `skills/${slug}/SKILL.md`;
   const errors: ValidationIssue[] = [];
 
-  // 1. Validate slug format
+  // 1. 校验 slug 格式
   if (!/^[a-z0-9-]+$/.test(slug)) {
     const suggestedSlug = slug
       .toLowerCase()
@@ -803,7 +805,7 @@ export function validateSkillContent(markdownContent: string, slug: string): Val
     });
   }
 
-  // 2. Parse frontmatter
+  // 2. 解析 frontmatter
   let frontmatter: unknown;
   let body: string;
   try {
@@ -824,13 +826,13 @@ export function validateSkillContent(markdownContent: string, slug: string): Val
     };
   }
 
-  // 3. Validate frontmatter schema
+  // 3. 校验 frontmatter schema
   const metaResult = SkillMetadataSchema.safeParse(frontmatter);
   if (!metaResult.success) {
     errors.push(...zodErrorToIssues(metaResult.error, file));
   }
 
-  // 4. Check content is not empty
+  // 4. 检查正文非空
   if (!body || body.trim().length === 0) {
     errors.push({
       file,
@@ -844,13 +846,13 @@ export function validateSkillContent(markdownContent: string, slug: string): Val
   return {
     valid: errors.length === 0,
     errors,
-    warnings: [],  // Icon/folder warnings skipped in content-only validation
+    warnings: [],  // 仅内容校验，跳过图标/文件夹警告
   };
 }
 
 /**
- * Validate all skills in a workspace
- * @param workspaceRoot - Absolute path to workspace root folder
+ * 验证 workspace 中的所有 skills。
+ * @param workspaceRoot - workspace 根目录绝对路径
  */
 export function validateAllSkills(workspaceRoot: string): ValidationResult {
   const skillsDir = getWorkspaceSkillsPath(workspaceRoot);
@@ -908,19 +910,18 @@ export function validateAllSkills(workspaceRoot: string): ValidationResult {
 
 const STATUS_CONFIG_FILE = 'statuses/config.json';
 
-/** Required fixed statuses that must always exist */
+/** 必须始终存在的固定 status */
 const REQUIRED_FIXED_STATUS_IDS = ['todo', 'done', 'cancelled'] as const;
 
 /**
- * Status icons are simple strings: emoji characters, URLs, or local filenames
- * such as "in-progress.svg" which resolve to statuses/icons/in-progress.svg.
- * When icon is omitted, local icon files (statuses/icons/{id}.svg) are still
- * auto-discovered at runtime.
+ * Status 图标是简单字符串：emoji、URL 或本地文件名（如 "in-progress.svg"），
+ * 运行时会解析为 statuses/icons/in-progress.svg。
+ * 省略 icon 时，运行时仍会从 statuses/icons/{id}.svg 自动发现。
  */
 const StatusIconSchema = z.string();
 
 /**
- * Zod schema for individual status configuration
+ * 单个 status 配置的 Zod schema。
  */
 const StatusConfigSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/, 'Status ID must be lowercase alphanumeric with hyphens'),
@@ -934,7 +935,7 @@ const StatusConfigSchema = z.object({
 });
 
 /**
- * Zod schema for workspace status configuration
+ * workspace status 配置的 Zod schema。
  */
 const WorkspaceStatusConfigSchema = z.object({
   version: z.number().int().min(1),
@@ -943,14 +944,14 @@ const WorkspaceStatusConfigSchema = z.object({
 });
 
 /**
- * Validate statuses configuration for a workspace
- * @param workspaceRoot - Absolute path to workspace root folder
+ * 验证 workspace 的 status 配置。
+ * @param workspaceRoot - workspace 根目录绝对路径
  */
 export function validateStatuses(workspaceRoot: string): ValidationResult {
   const configPath = join(workspaceRoot, STATUS_CONFIG_FILE);
   const file = STATUS_CONFIG_FILE;
 
-  // Check if config file exists (optional - defaults are used if missing)
+  // 文件可选 —— 缺失时使用默认值
   if (!existsSync(configPath)) {
     return {
       valid: true,
@@ -965,7 +966,7 @@ export function validateStatuses(workspaceRoot: string): ValidationResult {
     };
   }
 
-  // Read file and delegate to content-based validator
+  // 读取文件并委托给内容校验器
   let raw: string;
   try {
     raw = readFileSync(configPath, 'utf-8');
@@ -982,22 +983,21 @@ export function validateStatuses(workspaceRoot: string): ValidationResult {
     };
   }
 
-  // Icons are auto-discovered from statuses/icons/{id}.{ext} at runtime,
-  // not referenced in config, so no FS checks needed here.
+  // 图标在运行时从 statuses/icons/{id}.{ext} 自动发现，不写在 config 里，因此这里不做文件检查。
   return validateStatusesContent(raw);
 }
 
 /**
- * Validate statuses config from a JSON string (no disk reads).
- * Used by PreToolUse hook to validate before writing to disk.
- * Runs schema validation and semantic checks. Skips icon file existence checks.
+ * 从 JSON 字符串验证 status 配置（不读盘）。
+ * PreToolUse hook 在写入磁盘前用它校验。
+ * 执行 schema 校验和语义检查。跳过图标文件存在性检查。
  */
 export function validateStatusesContent(jsonString: string): ValidationResult {
   const file = 'statuses/config.json';
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
 
-  // Parse JSON
+  // 解析 JSON
   let content: unknown;
   try {
     content = safeJsonParse(jsonString);
@@ -1014,7 +1014,7 @@ export function validateStatusesContent(jsonString: string): ValidationResult {
     };
   }
 
-  // Validate schema
+  // 校验 schema
   const result = WorkspaceStatusConfigSchema.safeParse(content);
   if (!result.success) {
     errors.push(...zodErrorToIssues(result.error, file));
@@ -1023,9 +1023,9 @@ export function validateStatusesContent(jsonString: string): ValidationResult {
 
   const config = result.data;
 
-  // Semantic validations (same as validateStatuses but without FS checks)
+  // 语义校验（与 validateStatuses 相同，但不包含文件系统检查）
 
-  // 1. Check required fixed statuses exist
+  // 1. 检查必需的固定 status 是否存在
   const statusIds = new Set(config.statuses.map(s => s.id));
   for (const requiredId of REQUIRED_FIXED_STATUS_IDS) {
     if (!statusIds.has(requiredId)) {
@@ -1039,7 +1039,7 @@ export function validateStatusesContent(jsonString: string): ValidationResult {
     }
   }
 
-  // 2. Check for duplicate IDs
+  // 2. 检查重复 ID
   const seenIds = new Set<string>();
   for (const status of config.statuses) {
     if (seenIds.has(status.id)) {
@@ -1054,7 +1054,7 @@ export function validateStatusesContent(jsonString: string): ValidationResult {
     seenIds.add(status.id);
   }
 
-  // 3. Check defaultStatusId references an existing status
+  // 3. 检查 defaultStatusId 引用存在的 status
   if (!statusIds.has(config.defaultStatusId)) {
     errors.push({
       file,
@@ -1065,7 +1065,7 @@ export function validateStatusesContent(jsonString: string): ValidationResult {
     });
   }
 
-  // 4. Check fixed statuses have correct isFixed flag
+  // 4. 检查固定 status 的 isFixed 标志是否正确
   for (const status of config.statuses) {
     const shouldBeFixed = (REQUIRED_FIXED_STATUS_IDS as readonly string[]).includes(status.id);
     if (shouldBeFixed && !status.isFixed) {
@@ -1079,7 +1079,7 @@ export function validateStatusesContent(jsonString: string): ValidationResult {
     }
   }
 
-  // 5. Check that at least one status is in each category
+  // 5. 检查每个 category 至少有一个 status
   const hasOpen = config.statuses.some(s => s.category === 'open');
   const hasClosed = config.statuses.some(s => s.category === 'closed');
   if (!hasOpen) {
@@ -1114,17 +1114,12 @@ import { validateAutoLabelRule } from '../labels/auto/validation.ts';
 
 const LABEL_CONFIG_FILE = 'labels/config.json';
 
-/** Maximum nesting depth for label tree (prevents excessively deep hierarchies) */
+/** 标签树最大嵌套深度（防止过深层级） */
 const MAX_LABEL_DEPTH = 5;
 
 /**
- * Zod schema for individual label configuration.
- * Recursive: each label can have optional children forming a tree.
- * IDs are simple slugs (lowercase alphanumeric + hyphens).
- */
-/**
- * Zod schema for auto-label rules (regex patterns for automatic label application).
- * Validates pattern is non-empty; regex validity is checked semantically below.
+ * 自动标签规则 schema（用于自动应用标签的正则模式）。
+ * 校验 pattern 非空；正则合法性在下面语义校验。
  */
 const AutoLabelRuleSchema = z.object({
   pattern: z.string().min(1, 'Auto-label rule pattern is required'),
@@ -1141,14 +1136,14 @@ const BaseLabelConfigSchema = z.object({
   name: z.string().min(1, 'Label name is required'),
   color: EntityColorSchema.optional(),
   icon: z.string().optional(),
-  /** Optional hint: what type of value this label carries (omit for boolean labels) */
+  /** 可选提示：该标签携带的值类型（布尔标签可省略） */
   valueType: z.enum(['string', 'number', 'date', 'link']).optional(),
-  /** Auto-label rules: regex patterns that scan messages and apply labels automatically */
+  /** 自动标签规则：扫描消息并自动应用标签的正则模式 */
   autoRules: z.array(AutoLabelRuleSchema).optional(),
 });
 
-// Recursive schema: LabelConfig can have children which are also LabelConfigs.
-// Zod supports lazy() for recursive types.
+// 递归 schema：LabelConfig 可以有 children，children 也是 LabelConfig。
+// Zod 用 lazy() 支持递归类型。
 type LabelConfigSchemaType = z.ZodType<{
   id: string;
   name: string;
@@ -1164,7 +1159,7 @@ const LabelConfigSchema: z.ZodType<any> = BaseLabelConfigSchema.extend({
 });
 
 /**
- * Zod schema for workspace label configuration (recursive tree)
+ * workspace 标签配置的 Zod schema（递归树）
  */
 const WorkspaceLabelConfigSchema = z.object({
   version: z.number().int().min(1),
@@ -1172,14 +1167,14 @@ const WorkspaceLabelConfigSchema = z.object({
 });
 
 /**
- * Validate labels configuration for a workspace (reads from disk)
- * @param workspaceRoot - Absolute path to workspace root folder
+ * 验证 workspace 的 labels 配置（读盘）。
+ * @param workspaceRoot - workspace 根目录绝对路径
  */
 export function validateLabels(workspaceRoot: string): ValidationResult {
   const configPath = join(workspaceRoot, LABEL_CONFIG_FILE);
   const file = LABEL_CONFIG_FILE;
 
-  // Labels config is optional — no config means no labels (valid state)
+  // Labels 配置可选 —— 没有即无标签（合法状态）
   if (!existsSync(configPath)) {
     return {
       valid: true,
@@ -1213,16 +1208,16 @@ export function validateLabels(workspaceRoot: string): ValidationResult {
 }
 
 /**
- * Validate labels config from a JSON string (no disk reads).
- * Used by PreToolUse hook to validate before writing to disk.
- * Checks schema validation and semantic rules (unique IDs, max depth).
+ * 从 JSON 字符串验证 labels 配置（不读盘）。
+ * PreToolUse hook 在写入磁盘前用它校验。
+ * 检查 schema 校验和语义规则（唯一 ID、最大深度）。
  */
 export function validateLabelsContent(jsonString: string): ValidationResult {
   const file = 'labels/config.json';
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
 
-  // Parse JSON
+  // 解析 JSON
   let content: unknown;
   try {
     content = safeJsonParse(jsonString);
@@ -1239,7 +1234,7 @@ export function validateLabelsContent(jsonString: string): ValidationResult {
     };
   }
 
-  // Validate schema (recursive, includes EntityColor validation via Zod)
+  // 校验 schema（递归，包含通过 Zod 的 EntityColor 校验）
   const result = WorkspaceLabelConfigSchema.safeParse(content);
   if (!result.success) {
     errors.push(...zodErrorToIssues(result.error, file));
@@ -1248,7 +1243,7 @@ export function validateLabelsContent(jsonString: string): ValidationResult {
 
   const config = result.data;
 
-  // 1. Check for globally unique IDs across the entire tree
+  // 1. 检查整棵树全局唯一 ID
   const seenIds = new Set<string>();
   function checkUniqueIds(labels: any[], path: string): void {
     for (let i = 0; i < labels.length; i++) {
@@ -1270,7 +1265,7 @@ export function validateLabelsContent(jsonString: string): ValidationResult {
   }
   checkUniqueIds(config.labels, 'labels');
 
-  // 2. Check max nesting depth (prevents excessively deep hierarchies)
+  // 2. 检查最大嵌套深度（防止过深层级）
   function checkDepth(labels: any[], depth: number, path: string): void {
     if (depth > MAX_LABEL_DEPTH) {
       errors.push({
@@ -1291,7 +1286,7 @@ export function validateLabelsContent(jsonString: string): ValidationResult {
   }
   checkDepth(config.labels, 1, 'labels');
 
-  // 3. Validate auto-label rules (regex patterns on regular labels)
+  // 3. 校验自动标签规则的正则
   function checkAutoRules(labels: any[], path: string): void {
     for (let i = 0; i < labels.length; i++) {
       const label = labels[i];
@@ -1356,11 +1351,11 @@ import {
 import { validateAutomationsContent, validateAutomations, AUTOMATIONS_CONFIG_FILE } from '../automations/index.ts';
 
 /**
- * Internal: Validate a single permissions.json file
- * Checks JSON syntax, Zod schema, and regex pattern validity.
+ * 内部：验证单个 permissions.json 文件。
+ * 检查 JSON 语法、Zod schema 和正则模式合法性。
  */
 function validatePermissionsFile(filePath: string, displayFile: string): ValidationResult {
-  // File is optional - missing is just a warning
+  // 文件可选 —— 缺失只是警告
   if (!existsSync(filePath)) {
     return {
       valid: true,
@@ -1374,7 +1369,7 @@ function validatePermissionsFile(filePath: string, displayFile: string): Validat
     };
   }
 
-  // Read file and delegate to content-based validator
+  // 读取文件并委托给内容校验器
   let raw: string;
   try {
     raw = readFileSync(filePath, 'utf-8');
@@ -1395,17 +1390,17 @@ function validatePermissionsFile(filePath: string, displayFile: string): Validat
 }
 
 /**
- * Validate permissions config from a JSON string (no disk reads).
- * Used by PreToolUse hook to validate before writing to disk.
- * Runs Zod schema validation and regex pattern compilation checks.
+ * 从 JSON 字符串验证 permissions 配置（不读盘）。
+ * PreToolUse hook 在写入磁盘前用它校验。
+ * 执行 Zod schema 校验和正则编译检查。
  *
- * @param jsonString - The raw JSON content of the permissions file
- * @param displayFile - File name for error messages (e.g., 'permissions.json' or 'sources/github/permissions.json')
+ * @param jsonString - permissions 文件原始 JSON 内容
+ * @param displayFile - 错误消息中的文件名（如 'permissions.json' 或 'sources/github/permissions.json'）
  */
 export function validatePermissionsContent(jsonString: string, displayFile: string = 'permissions.json'): ValidationResult {
   const errors: ValidationIssue[] = [];
 
-  // Parse JSON
+  // 解析 JSON
   let content: unknown;
   try {
     content = safeJsonParse(jsonString);
@@ -1422,14 +1417,14 @@ export function validatePermissionsContent(jsonString: string, displayFile: stri
     };
   }
 
-  // Validate schema
+  // 校验 schema
   const result = PermissionsConfigSchema.safeParse(content);
   if (!result.success) {
     errors.push(...zodErrorToIssues(result.error, displayFile));
     return { valid: false, errors, warnings: [] };
   }
 
-  // Validate regex patterns (semantic validation)
+  // 语义校验：校验正则模式
   const regexErrors = validatePermissionsConfig(result.data);
   for (const regexError of regexErrors) {
     errors.push({
@@ -1448,8 +1443,8 @@ export function validatePermissionsContent(jsonString: string, displayFile: stri
 }
 
 /**
- * Validate workspace-level permissions.json
- * @param workspaceRoot - Absolute path to workspace root folder
+ * 验证 workspace 级 permissions.json。
+ * @param workspaceRoot - workspace 根目录绝对路径
  */
 export function validateWorkspacePermissions(workspaceRoot: string): ValidationResult {
   const permissionsPath = getWorkspacePermissionsPath(workspaceRoot);
@@ -1457,9 +1452,9 @@ export function validateWorkspacePermissions(workspaceRoot: string): ValidationR
 }
 
 /**
- * Validate source-level permissions.json
- * @param workspaceRoot - Absolute path to workspace root folder
- * @param sourceSlug - Source slug
+ * 验证 source 级 permissions.json。
+ * @param workspaceRoot - workspace 根目录绝对路径
+ * @param sourceSlug - source slug
  */
 export function validateSourcePermissions(workspaceRoot: string, sourceSlug: string): ValidationResult {
   const permissionsPath = getSourcePermissionsPath(workspaceRoot, sourceSlug);
@@ -1467,7 +1462,7 @@ export function validateSourcePermissions(workspaceRoot: string, sourceSlug: str
 }
 
 /**
- * Validate app-level default permissions
+ * 验证应用级默认权限。
  */
 export function validateDefaultPermissions(): ValidationResult {
   const permissionsPath = join(getAppPermissionsDir(), 'default.json');
@@ -1475,24 +1470,24 @@ export function validateDefaultPermissions(): ValidationResult {
 }
 
 /**
- * Validate all permissions files in a workspace
- * Includes: app-level default, workspace-level, and all source-level permissions
+ * 验证 workspace 中的所有 permissions 文件。
+ * 包括：应用级默认、workspace 级、所有 source 级 permissions。
  */
 export function validateAllPermissions(workspaceRoot: string): ValidationResult {
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
 
-  // Validate app-level default permissions
+  // 应用级默认权限
   const defaultResult = validateDefaultPermissions();
   errors.push(...defaultResult.errors);
   warnings.push(...defaultResult.warnings);
 
-  // Validate workspace-level permissions
+  // workspace 级权限
   const wsResult = validateWorkspacePermissions(workspaceRoot);
   errors.push(...wsResult.errors);
   warnings.push(...wsResult.warnings);
 
-  // Validate all source-level permissions
+  // 所有 source 级权限
   const sourcesDir = join(workspaceRoot, 'sources');
   if (existsSync(sourcesDir)) {
     const entries = readdirSync(sourcesDir);
@@ -1514,8 +1509,8 @@ export function validateAllPermissions(workspaceRoot: string): ValidationResult 
 }
 
 /**
- * Check if a permissions file at the given path is valid.
- * Returns true if the file exists and passes schema validation.
+ * 检查给定路径的 permissions 文件是否有效。
+ * 文件存在且通过 schema 校验时返回 true。
  */
 export function isValidPermissionsFile(filePath: string): boolean {
   try {
@@ -1548,27 +1543,27 @@ const ThemeDarkOverrideSchema = z.object({
 }).strict();
 
 /**
- * Zod schema for app-level theme override files (~/.craft-agent/theme.json).
- * Allows partial overrides but rejects unknown keys.
+ * 应用级主题覆盖文件（~/.craft-agent/theme.json）的 Zod schema。
+ * 允许部分覆盖，但拒绝未知 key。
  */
 export const ThemeOverrideSchema = z.object({
-  // Semantic colors
+  // 语义色
   background: CSSColorSchema.optional(),
   foreground: CSSColorSchema.optional(),
   accent: CSSColorSchema.optional(),
   info: CSSColorSchema.optional(),
   success: CSSColorSchema.optional(),
   destructive: CSSColorSchema.optional(),
-  // Surface colors
+  // 表面色
   paper: CSSColorSchema.optional(),
   navigator: CSSColorSchema.optional(),
   input: CSSColorSchema.optional(),
   popover: CSSColorSchema.optional(),
   popoverSolid: CSSColorSchema.optional(),
-  // Scenic mode
+  // Scenic 模式
   mode: z.enum(['solid', 'scenic']).optional(),
   backgroundImage: z.string().optional(),
-  // Dark mode overrides
+  // 深色模式覆盖
   dark: ThemeDarkOverrideSchema.optional(),
 }).strict()
   .refine(
@@ -1584,8 +1579,8 @@ export const ThemeOverrideSchema = z.object({
   );
 
 /**
- * Zod schema for preset theme files.
- * Validates theme structure and requires at least one color property.
+ * 预设主题文件的 Zod schema。
+ * 校验主题结构并要求至少有一个颜色属性。
  */
 export const PresetThemeSchema = z.object({
   name: z.string().min(1, 'Theme name is required'),
@@ -1594,25 +1589,25 @@ export const PresetThemeSchema = z.object({
   license: z.string().optional(),
   source: z.string().optional(),
   supportedModes: z.array(z.enum(['light', 'dark'])).optional(),
-  // Semantic colors
+  // 语义色
   background: CSSColorSchema.optional(),
   foreground: CSSColorSchema.optional(),
   accent: CSSColorSchema.optional(),
   info: CSSColorSchema.optional(),
   success: CSSColorSchema.optional(),
   destructive: CSSColorSchema.optional(),
-  // Surface colors
+  // 表面色
   paper: CSSColorSchema.optional(),
   navigator: CSSColorSchema.optional(),
   input: CSSColorSchema.optional(),
   popover: CSSColorSchema.optional(),
   popoverSolid: CSSColorSchema.optional(),
-  // Scenic mode
+  // Scenic 模式
   mode: z.enum(['solid', 'scenic']).optional(),
   backgroundImage: z.string().optional(),
-  // Dark mode overrides
+  // 深色模式覆盖
   dark: z.object({}).passthrough().optional(),
-  // Shiki theme for syntax highlighting
+  // Shiki 语法高亮主题
   shikiTheme: z.object({
     light: z.string().optional(),
     dark: z.string().optional(),
@@ -1626,13 +1621,13 @@ export const PresetThemeSchema = z.object({
 );
 
 /**
- * Validate theme content from a JSON string (no disk reads).
- * Used to check if an existing theme file is valid before deciding to overwrite.
+ * 从 JSON 字符串验证 theme 内容（不读盘）。
+ * 用于在决定覆盖前检查现有主题文件是否有效。
  */
 export function validateThemeContent(jsonString: string, displayFile: string = 'theme.json'): ValidationResult {
   const errors: ValidationIssue[] = [];
 
-  // Parse JSON
+  // 解析 JSON
   let content: unknown;
   try {
     content = safeJsonParse(jsonString);
@@ -1649,7 +1644,7 @@ export function validateThemeContent(jsonString: string, displayFile: string = '
     };
   }
 
-  // Validate schema
+  // 校验 schema
   const result = PresetThemeSchema.safeParse(content);
   if (!result.success) {
     errors.push(...zodErrorToIssues(result.error, displayFile));
@@ -1664,13 +1659,13 @@ export function validateThemeContent(jsonString: string, displayFile: string = '
 }
 
 /**
- * Validate app-level theme override content from a JSON string (no disk reads).
- * Unlike preset validation, this accepts partial ThemeOverrides objects and rejects unknown keys.
+ * 从 JSON 字符串验证应用级主题覆盖内容（不读盘）。
+ * 与预设主题校验不同：接受部分 ThemeOverrides 对象并拒绝未知 key。
  */
 export function validateThemeOverrideContent(jsonString: string, displayFile: string = 'theme.json'): ValidationResult {
   const errors: ValidationIssue[] = [];
 
-  // Parse JSON
+  // 解析 JSON
   let content: unknown;
   try {
     content = safeJsonParse(jsonString);
@@ -1687,7 +1682,7 @@ export function validateThemeOverrideContent(jsonString: string, displayFile: st
     };
   }
 
-  // Validate schema
+  // 校验 schema
   const result = ThemeOverrideSchema.safeParse(content);
   if (!result.success) {
     errors.push(...zodErrorToIssues(result.error, displayFile));
@@ -1702,8 +1697,8 @@ export function validateThemeOverrideContent(jsonString: string, displayFile: st
 }
 
 /**
- * Check if a theme file at the given path is valid.
- * Returns true if the file exists and passes schema validation.
+ * 检查给定路径的主题文件是否有效。
+ * 文件存在且通过 schema 校验时返回 true。
  */
 export function isValidThemeFile(filePath: string): boolean {
   try {
@@ -1722,8 +1717,8 @@ export function isValidThemeFile(filePath: string): boolean {
 import { getToolIconsDir } from './storage.ts';
 
 /**
- * Zod schema for a single tool icon entry in tool-icons.json.
- * Each entry maps CLI commands to an icon file.
+ * tool-icons.json 中单条 tool icon 条目的 Zod schema。
+ * 每条把 CLI 命令映射到一个图标文件。
  */
 const ToolIconEntrySchema = z.object({
   id: z.string().min(1, 'Tool ID is required').regex(
@@ -1736,8 +1731,8 @@ const ToolIconEntrySchema = z.object({
 });
 
 /**
- * Zod schema for the full tool-icons.json config.
- * Contains a version number and array of tool icon mappings.
+ * 完整 tool-icons.json 配置的 Zod schema。
+ * 包含版本号和 tool icon 映射数组。
  */
 const ToolIconsConfigSchema = z.object({
   version: z.number().int().min(1, 'Version must be a positive integer'),
@@ -1745,16 +1740,16 @@ const ToolIconsConfigSchema = z.object({
 });
 
 /**
- * Validate tool-icons config from a JSON string (no disk reads).
- * Used by PreToolUse hook to validate before writing to disk.
- * Checks JSON syntax, Zod schema, duplicate IDs, and duplicate commands.
+ * 从 JSON 字符串验证 tool-icons 配置（不读盘）。
+ * PreToolUse hook 在写入磁盘前用它校验。
+ * 检查 JSON 语法、Zod schema、重复 ID 和重复命令。
  */
 export function validateToolIconsContent(jsonString: string): ValidationResult {
   const file = 'tool-icons/tool-icons.json';
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
 
-  // Parse JSON
+  // 解析 JSON
   let content: unknown;
   try {
     content = safeJsonParse(jsonString);
@@ -1771,7 +1766,7 @@ export function validateToolIconsContent(jsonString: string): ValidationResult {
     };
   }
 
-  // Validate against Zod schema
+  // 校验 Zod schema
   const result = ToolIconsConfigSchema.safeParse(content);
   if (!result.success) {
     errors.push(...zodErrorToIssues(result.error, file));
@@ -1780,7 +1775,7 @@ export function validateToolIconsContent(jsonString: string): ValidationResult {
 
   const config = result.data;
 
-  // Semantic validation: check for duplicate tool IDs
+  // 语义校验：检查重复 tool ID
   const seenIds = new Set<string>();
   for (const tool of config.tools) {
     if (seenIds.has(tool.id)) {
@@ -1795,7 +1790,7 @@ export function validateToolIconsContent(jsonString: string): ValidationResult {
     seenIds.add(tool.id);
   }
 
-  // Semantic validation: warn on duplicate commands across tools
+  // 语义校验：跨 tool 重复命令时警告
   const seenCommands = new Map<string, string>();
   for (const tool of config.tools) {
     for (const cmd of tool.commands) {
@@ -1813,7 +1808,7 @@ export function validateToolIconsContent(jsonString: string): ValidationResult {
     }
   }
 
-  // Validate icon file extensions
+  // 校验图标文件扩展名
   const validIconExtensions = new Set(['.png', '.ico', '.svg', '.jpg', '.jpeg']);
   for (const tool of config.tools) {
     const ext = tool.icon.includes('.') ? '.' + tool.icon.split('.').pop()!.toLowerCase() : '';
@@ -1836,15 +1831,15 @@ export function validateToolIconsContent(jsonString: string): ValidationResult {
 }
 
 /**
- * Validate tool-icons/tool-icons.json from disk.
- * Reads the file, runs content validation, and also checks that referenced icon files exist.
+ * 从磁盘验证 tool-icons/tool-icons.json。
+ * 读取文件、运行内容校验，并检查引用的图标文件是否存在。
  */
 export function validateToolIcons(): ValidationResult {
   const toolIconsDir = getToolIconsDir();
   const configPath = join(toolIconsDir, 'tool-icons.json');
   const file = 'tool-icons/tool-icons.json';
 
-  // File is optional — missing is just a warning
+  // 文件可选 —— 缺失只是警告
   if (!existsSync(configPath)) {
     return {
       valid: true,
@@ -1858,7 +1853,7 @@ export function validateToolIcons(): ValidationResult {
     };
   }
 
-  // Read file and delegate to content validator
+  // 读取文件并委托给内容校验器
   let raw: string;
   try {
     raw = readFileSync(configPath, 'utf-8');
@@ -1877,7 +1872,7 @@ export function validateToolIcons(): ValidationResult {
 
   const result = validateToolIconsContent(raw);
 
-  // Filesystem-specific check: verify referenced icon files exist
+  // 文件系统层面检查：引用的图标文件是否存在
   try {
     const parsed = safeJsonParse(raw) as Record<string, unknown>;
     if (parsed.tools && Array.isArray(parsed.tools)) {
@@ -1897,7 +1892,7 @@ export function validateToolIcons(): ValidationResult {
       }
     }
   } catch {
-    // JSON parse errors already reported by content validator
+    // JSON 解析错误已由内容校验器报告
   }
 
   return result;
@@ -1908,7 +1903,7 @@ export function validateToolIcons(): ValidationResult {
 // ============================================================
 
 /**
- * Format validation result as text for agent response
+ * 把验证结果格式化成给 Agent 回复的文本。
  */
 export function formatValidationResult(result: ValidationResult): string {
   const lines: string[] = [];
@@ -1926,7 +1921,7 @@ export function formatValidationResult(result: ValidationResult): string {
 
   lines.push('');
 
-  // Errors first
+  // 先输出 errors
   if (result.errors.length > 0) {
     lines.push('**Errors:**');
     for (const error of result.errors) {
@@ -1938,7 +1933,7 @@ export function formatValidationResult(result: ValidationResult): string {
     lines.push('');
   }
 
-  // Then warnings
+  // 再输出 warnings
   if (result.warnings.length > 0) {
     lines.push('**Warnings:**');
     for (const warning of result.warnings) {
@@ -1955,78 +1950,78 @@ export function formatValidationResult(result: ValidationResult): string {
 // ============================================================
 // PreToolUse Content Validation
 // ============================================================
-// These utilities are used by the PreToolUse hook to detect config files
-// being written and validate their content before it reaches disk.
+// 这些工具被 PreToolUse hook 用来检测正在写入的配置文件，
+// 在内容到达磁盘前进行验证。
 
 /**
- * Result of detecting what type of config file a path corresponds to.
+ * 检测某路径对应哪种配置文件类型的结果。
  */
 export interface ConfigFileDetection {
   type: 'source' | 'skill' | 'statuses' | 'labels' | 'permissions' | 'tool-icons' | 'automations';
-  /** Slug of the source or skill (if applicable) */
+  /** source 或 skill 的 slug（如适用） */
   slug?: string;
-  /** Display file path for error messages */
+  /** 错误消息中使用的展示文件路径 */
   displayFile: string;
 }
 
 /**
- * Detect if a file path corresponds to a known config file type within a workspace.
- * Returns null if the path is not a recognized config file.
+ * 检测文件路径是否对应 workspace 内的已知配置文件。
+ * 不是已知配置文件时返回 null。
  *
- * Matches patterns:
+ * 匹配模式：
  * - .../sources/{slug}/config.json → source config
  * - .../skills/{slug}/SKILL.md → skill definition
  * - .../statuses/config.json → status workflow config
  * - .../labels/config.json → label config
- * - .../permissions.json (workspace or source-level) → permission rules
+ * - .../permissions.json（workspace 或 source 级）→ permission rules
  */
 export function detectConfigFileType(filePath: string, workspaceRootPath: string): ConfigFileDetection | null {
-  // Normalize to consistent forward slashes and ensure root ends with /
-  // so startsWith doesn't false-match on path prefixes (e.g., /workspace vs /workspacefoo)
+  // 统一为正斜杠，并确保 root 以 / 结尾，
+  // 防止 startsWith 误匹配路径前缀（如 /workspace 与 /workspacefoo）
   const normalizedPath = filePath.replace(/\\/g, '/');
   const normalizedRoot = workspaceRootPath.replace(/\\/g, '/').replace(/\/?$/, '/');
 
-  // Only validate files within the workspace root
+  // 只验证 workspace root 内的文件
   if (!normalizedPath.startsWith(normalizedRoot)) {
     return null;
   }
 
-  // Get the relative path from workspace root (no leading slash since root ends with /)
+  // 取相对路径（root 以 / 结尾，所以没有前导 /）
   const relativePath = normalizedPath.slice(normalizedRoot.length);
 
-  // Match: sources/{slug}/config.json
+  // 匹配：sources/{slug}/config.json
   const sourceMatch = relativePath.match(/^sources\/([^/]+)\/config\.json$/);
   if (sourceMatch) {
     return { type: 'source', slug: sourceMatch[1], displayFile: `sources/${sourceMatch[1]}/config.json` };
   }
 
-  // Match: skills/{slug}/SKILL.md
+  // 匹配：skills/{slug}/SKILL.md
   const skillMatch = relativePath.match(/^skills\/([^/]+)\/SKILL\.md$/);
   if (skillMatch) {
     return { type: 'skill', slug: skillMatch[1], displayFile: `skills/${skillMatch[1]}/SKILL.md` };
   }
 
-  // Match: statuses/config.json
+  // 匹配：statuses/config.json
   if (relativePath === 'statuses/config.json') {
     return { type: 'statuses', displayFile: 'statuses/config.json' };
   }
 
-  // Match: labels/config.json
+  // 匹配：labels/config.json
   if (relativePath === 'labels/config.json') {
     return { type: 'labels', displayFile: 'labels/config.json' };
   }
 
-  // Match: automations config file
+  // 匹配：automations 配置文件
   if (relativePath === AUTOMATIONS_CONFIG_FILE) {
     return { type: 'automations', displayFile: relativePath };
   }
 
-  // Match: permissions.json (workspace-level)
+  // 匹配：workspace 级 permissions.json
   if (relativePath === 'permissions.json') {
     return { type: 'permissions', displayFile: 'permissions.json' };
   }
 
-  // Match: sources/{slug}/permissions.json (source-level)
+  // 匹配：sources/{slug}/permissions.json
   const sourcePermMatch = relativePath.match(/^sources\/([^/]+)\/permissions\.json$/);
   if (sourcePermMatch) {
     return { type: 'permissions', slug: sourcePermMatch[1], displayFile: `sources/${sourcePermMatch[1]}/permissions.json` };
@@ -2036,25 +2031,25 @@ export function detectConfigFileType(filePath: string, workspaceRootPath: string
 }
 
 /**
- * Detect if a file path corresponds to an app-level config file (outside workspace scope).
- * Checks paths relative to CONFIG_DIR (~/.craft-agent/).
- * Returns null if the path is not a recognized app-level config file.
+ * 检测文件路径是否对应应用级配置文件（workspace 范围外）。
+ * 检查相对于 CONFIG_DIR（~/.craft-agent/）的路径。
+ * 不是已知应用级配置文件时返回 null。
  *
- * Matches patterns:
+ * 匹配模式：
  * - ~/.craft-agent/tool-icons/tool-icons.json → tool icon mappings
  */
 export function detectAppConfigFileType(filePath: string): ConfigFileDetection | null {
   const normalizedPath = filePath.replace(/\\/g, '/');
   const normalizedConfigDir = CONFIG_DIR.replace(/\\/g, '/').replace(/\/?$/, '/');
 
-  // Only check files within CONFIG_DIR
+  // 只检查 CONFIG_DIR 内的文件
   if (!normalizedPath.startsWith(normalizedConfigDir)) {
     return null;
   }
 
   const relativePath = normalizedPath.slice(normalizedConfigDir.length);
 
-  // Match: tool-icons/tool-icons.json
+  // 匹配：tool-icons/tool-icons.json
   if (relativePath === 'tool-icons/tool-icons.json') {
     return { type: 'tool-icons', displayFile: 'tool-icons/tool-icons.json' };
   }
@@ -2063,9 +2058,9 @@ export function detectAppConfigFileType(filePath: string): ConfigFileDetection |
 }
 
 /**
- * Validate config file content based on its detected type.
- * Dispatches to the appropriate content-based validator.
- * Returns null if the detection type is unrecognized.
+ * 根据检测到的文件类型校验其内容。
+ * 分派到对应的内容校验器。
+ * 无法识别类型时返回 null。
  */
 export function validateConfigFileContent(
   detection: ConfigFileDetection,

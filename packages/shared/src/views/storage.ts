@@ -1,11 +1,11 @@
 /**
  * Views Storage
  *
- * Filesystem-based storage for workspace view configurations.
- * Views are stored at {workspaceRootPath}/views.json
+ * workspace 视图配置的文件系统存储。
+ * 视图保存在 {workspaceRootPath}/views.json。
  *
- * Views are dynamic, expression-based filters computed at runtime from session state.
- * They are never persisted on sessions — purely runtime-evaluated.
+ * 视图是基于表达式的动态筛选器，运行时从 session 状态计算得出，
+ * 不会被持久化到 session 本身。
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'fs';
@@ -15,28 +15,29 @@ import { getDefaultViews } from './defaults.ts';
 import { debug } from '../utils/debug.ts';
 import { readJsonFileSync } from '../utils/files.ts';
 
+/** 视图配置文件的固定文件名 */
 const VIEWS_FILE = 'views.json';
 
 /**
- * Views configuration file structure.
+ * 视图配置文件的整体结构。
  */
 export interface ViewsConfig {
-  /** Schema version */
+  /** 配置格式版本号 */
   version: number;
-  /** Array of view definitions */
+  /** 视图定义数组 */
   views: ViewConfig[];
 }
 
 /**
- * Load views configuration from workspace.
- * Returns default views if no file exists or parsing fails.
- * Also handles migration from old labels/config.json smartLabels key.
+ * 从 workspace 加载视图配置。
+ * 如果文件不存在或解析失败，返回默认视图。
+ * 还负责从旧的 labels/config.json 里的 smartLabels 迁移数据。
  */
 export function loadViewsConfig(workspaceRootPath: string): ViewsConfig {
   const configPath = join(workspaceRootPath, VIEWS_FILE);
 
-  // If no views.json exists, check for legacy smartLabels in labels/config.json
-  // and migrate them. Otherwise seed with defaults.
+  // 如果没有 views.json，先检查老版本 labels/config.json 里的 smartLabels 并迁移；
+  // 否则用默认视图初始化一份。
   if (!existsSync(configPath)) {
     const migrated = migrateFromSmartLabels(workspaceRootPath);
     if (migrated) {
@@ -44,7 +45,7 @@ export function loadViewsConfig(workspaceRootPath: string): ViewsConfig {
       return migrated;
     }
 
-    // No legacy data — seed with defaults
+    // 没有旧数据 —— 用默认视图生成初始配置
     const defaults: ViewsConfig = { version: 1, views: getDefaultViews() };
     debug('[loadViewsConfig] No config found, seeding with default views');
     saveViewsConfig(workspaceRootPath, defaults);
@@ -61,7 +62,7 @@ export function loadViewsConfig(workspaceRootPath: string): ViewsConfig {
 }
 
 /**
- * Save views configuration to disk.
+ * 把视图配置保存到磁盘。
  */
 export function saveViewsConfig(
   workspaceRootPath: string,
@@ -78,17 +79,18 @@ export function saveViewsConfig(
 }
 
 /**
- * List views for a workspace.
- * Returns the views array from config (seeded with defaults if missing).
+ * 列出某个 workspace 下的所有视图。
+ * 如果配置不存在，会先以默认视图初始化，再返回 views 数组。
  */
 export function listViews(workspaceRootPath: string): ViewConfig[] {
   const config = loadViewsConfig(workspaceRootPath);
+  // `config.views ?? []`：如果 views 是 null/undefined，返回空数组
   return config.views ?? [];
 }
 
 /**
- * Save views to the workspace config.
- * Replaces the entire views array.
+ * 保存视图列表到 workspace 配置。
+ * 会替换整个 views 数组。
  */
 export function saveViews(
   workspaceRootPath: string,
@@ -100,9 +102,9 @@ export function saveViews(
 }
 
 /**
- * Migrate legacy smartLabels from labels/config.json to views.json.
- * Renames IDs from "smart-*" to "view-*" prefix.
- * Returns the migrated config if migration occurred, null otherwise.
+ * 从旧版 labels/config.json 的 smartLabels 迁移到 views.json。
+ * 把 ID 前缀从 "smart-*" 重命名为 "view-*"。
+ * 如果发生迁移则返回迁移后的配置，否则返回 null。
  */
 function migrateFromSmartLabels(workspaceRootPath: string): ViewsConfig | null {
   const labelsConfigPath = join(workspaceRootPath, 'labels', 'config.json');
@@ -112,7 +114,7 @@ function migrateFromSmartLabels(workspaceRootPath: string): ViewsConfig | null {
     const labelsConfig = readJsonFileSync<Record<string, any>>(labelsConfigPath);
     if (!labelsConfig.smartLabels || !Array.isArray(labelsConfig.smartLabels)) return null;
 
-    // Migrate: rename IDs from smart-* to view-*
+    // 迁移：ID 从 smart-* 改为 view-*
     const views: ViewConfig[] = labelsConfig.smartLabels.map((sl: any) => ({
       ...sl,
       id: sl.id?.startsWith('smart-') ? sl.id.replace('smart-', 'view-') : sl.id,
@@ -121,7 +123,7 @@ function migrateFromSmartLabels(workspaceRootPath: string): ViewsConfig | null {
     const config: ViewsConfig = { version: 1, views };
     saveViewsConfig(workspaceRootPath, config);
 
-    // Remove smartLabels from labels config to avoid confusion
+    // 从 labels 配置里删掉 smartLabels，避免两边同时存在造成混淆
     delete labelsConfig.smartLabels;
     writeFileSync(labelsConfigPath, JSON.stringify(labelsConfig, null, 2), 'utf-8');
 

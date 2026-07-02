@@ -1,13 +1,31 @@
 /**
- * Web UI HTTP handler and standalone server.
+ * http-server.ts
  *
- * The core logic lives in `createWebuiHandler()` which returns a web-standard
- * fetch handler `(Request) => Promise<Response>`. This handler can be:
+ * WebUI 的 HTTP 处理核心。设计目标是“一个 handler，两种部署”：
+ * 1. 内嵌模式：通过 `nodeHttpAdapter` 挂到 WsRpcServer 的 HTTPS 服务器上，
+ *    HTTP 和 WSS 共享同一端口；
+ * 2. 独立模式：用 `Bun.serve({ fetch })` 单独跑一个 HTTP 端口。
  *
- * 1. **Embedded** — attached to the WsRpcServer's HTTPS server via the
- *    node-adapter so that HTTP and WSS share a single port.
- * 2. **Standalone** — wrapped in `Bun.serve()` via `startWebuiHttpServer()`
- *    for separate-port deployments or development.
+ * 核心工厂是 `createWebuiHandler()`，返回 web 标准的 `(Request) => Promise<Response>`。
+ * 这种写法不绑定具体运行时，既能在 Bun 跑，也能通过 adapter 在 Node 跑。
+ *
+ * 与 Go 的类比：
+ * - 如果把 `createWebuiHandler` 看作 `http.Handler`，那 `fetch` 就是它的
+ *   `ServeHTTP` 等价物；`WebuiHandler` 接口相当于一个带 Dispose 方法的 handler。
+ * - `Bun.serve()` 类似 `http.ListenAndServe`；`Response.json()`、`new Response(file)`
+ *   类似 `http.Error` / `http.ServeFile`。
+ *
+ * TypeScript 要点：
+ * - `Response` / `Request` / `Headers` 是 Web 标准 API，Bun 和 Node 18+ 都支持。
+ * - `Bun.file(path)` 是 Bun 提供的零拷贝文件读取，返回一个 Blob-like 对象。
+ * - `options?: WebuiHandlerOptions` 里的 `?` 表示可选参数，类似 Go 中不传指针的区别。
+ *
+ * Agent 开发关键点：
+ * - `/health` 不鉴权，供负载均衡 / 容器探针使用；
+ * - `/api/oauth/callback` 用 OAuth state 做 CSRF 保护，而不是 Cookie；
+ * - 静态文件 serve 后 fallback 到 `index.html`，这是单页应用（SPA）的标准行为；
+ * - `trustedProxies` 控制是否信任 `x-forwarded-*` 头，生产环境必须显式配置，
+ *   否则容易被伪造 IP 绕过限流。
  */
 
 import { join, extname } from 'node:path'
@@ -24,9 +42,10 @@ import { generateCallbackPage } from '@craft-agent/shared/auth'
 import type { PlatformServices } from '../runtime/platform'
 
 // ---------------------------------------------------------------------------
-// MIME types for static file serving
+// 静态文件服务的 MIME 类型映射
 // ---------------------------------------------------------------------------
 
+// Record<string, string> 表示“字符串键到字符串值”的字典，类似 Go 的 map[string]string
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -46,30 +65,36 @@ const MIME_TYPES: Record<string, string> = {
   '.map': 'application/json',
 }
 
+/** 根据文件扩展名返回 MIME 类型；找不到则返回二进制流默认类型。 */
 function getMimeType(path: string): string {
   return MIME_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream'
 }
 
+/** 从 RFC 7239 Forwarded 头中解析 proto 或 host。 */
 function getForwardedValue(req: Request, key: 'proto' | 'host'): string | null {
   const forwarded = req.headers.get('forwarded')
   if (!forwarded) return null
 
   const match = forwarded.match(new RegExp(`${key}="?([^;,"]+)"?`, 'i'))
+  // `match?.[1]?.trim()` 是可选链：match 为 null 或没有捕获组时短路返回 undefined
   return match?.[1]?.trim() || null
 }
 
+/** 判断当前请求协议：优先信任 x-forwarded-proto / Forwarded，否则用 URL 自带协议。 */
 function getRequestProto(req: Request): string {
   return req.headers.get('x-forwarded-proto')?.split(',')[0]?.trim()
     || getForwardedValue(req, 'proto')
     || new URL(req.url).protocol.replace(/:$/, '')
 }
 
+/** 获取请求主机名：优先信任 x-forwarded-host / Forwarded，否则用 host 头。 */
 function getRequestHost(req: Request): string | null {
   return req.headers.get('x-forwarded-host')?.split(',')[0]?.trim()
     || getForwardedValue(req, 'host')
     || req.headers.get('host')
 }
 
+/** 把 host 和 WebSocket 端口组合成带端点的地址；支持 IPv6。 */
 function formatHostWithPort(host: string, port: number): string {
   try {
     const parsed = new URL(`http://${host}`)
@@ -81,17 +106,25 @@ function formatHostWithPort(host: string, port: number): string {
   }
 }
 
+/**
+ * 决定是否给 Cookie 加 Secure 标记。
+ * 如果调用方显式传入 secureCookies 则直接采用；否则根据请求协议推断。
+ */
 export function shouldUseSecureCookies(req: Request, secureCookies?: boolean): boolean {
   if (secureCookies != null) return secureCookies
   return getRequestProto(req) === 'https'
 }
 
 export interface ResolveWebSocketUrlOptions {
-  publicWsUrl?: string
-  wsProtocol: 'ws' | 'wss'
-  wsPort: number
+  publicWsUrl?: string // 浏览器侧 WebSocket URL 覆盖值
+  wsProtocol: 'ws' | 'wss' // 回退协议
+  wsPort: number // 回退端口
 }
 
+/**
+ * 解析浏览器应该连接的 WebSocket URL。
+ * 如果有 publicWsUrl 直接用；否则根据请求 host 拼接。
+ */
 export function resolveWebSocketUrl(
   req: Request,
   { publicWsUrl, wsProtocol, wsPort }: ResolveWebSocketUrlOptions,
@@ -107,10 +140,10 @@ export function resolveWebSocketUrl(
 }
 
 // ---------------------------------------------------------------------------
-// Handler options (shared between embedded and standalone modes)
+// Handler 配置（内嵌模式和独立模式共用）
 // ---------------------------------------------------------------------------
 
-/** Dependencies for the /api/oauth/callback HTTP route (server-side OAuth completion). */
+/** /api/oauth/callback 路由的依赖（服务端完成 OAuth 流程所需）。 */
 export interface OAuthCallbackDeps {
   flowStore: { getByState: (state: string) => any; remove: (state: string) => void }
   credManager: { exchangeAndStore: (...args: any[]) => Promise<any> }
@@ -118,53 +151,55 @@ export interface OAuthCallbackDeps {
   pushSourcesChanged: (workspaceId: string) => void
 }
 
+/** createWebuiHandler 的完整配置项。 */
 export interface WebuiHandlerOptions {
-  /** Path to built web UI dist/ directory. */
+  /** 构建后的 Web UI 目录（dist/）路径。 */
   webuiDir: string
-  /** Secret used to sign JWTs — typically CRAFT_SERVER_TOKEN. */
+  /** 签发 JWT 用的密钥，通常就是 CRAFT_SERVER_TOKEN。 */
   secret: string
-  /** Optional separate web UI password. Falls back to `secret` for verification. */
+  /** 可选的独立 Web UI 密码；未设置时回退用 secret 校验。 */
   password?: string
-  /** Explicit Secure-cookie override. When unset, infer from the request / proxy headers. */
+  /** 显式覆盖 Secure Cookie 标记；未设置时根据请求协议/代理头推断。 */
   secureCookies?: boolean
-  /** Optional browser-facing WebSocket URL override for reverse-proxy deployments. */
+  /** 反向代理场景下，可覆盖浏览器看到的 WebSocket URL。 */
   publicWsUrl?: string
-  /** RPC WebSocket protocol used when building a browser-facing fallback URL. */
+  /** 构建浏览器侧回退 URL 时使用的 RPC WebSocket 协议。 */
   wsProtocol: 'ws' | 'wss'
-  /** RPC WebSocket port used when building a browser-facing fallback URL. */
+  /** 构建浏览器侧回退 URL 时使用的 RPC WebSocket 端口。 */
   wsPort: number
-  /** Health check function (injected from existing server handler). */
+  /** 健康检查函数（由上层服务器注入）。 */
   getHealthCheck: () => { status: string }
-  /** Logger. */
+  /** 日志器。 */
   logger: PlatformServices['logger']
-  /** OAuth callback deps — when provided, enables /api/oauth/callback route. */
+  /** OAuth 回调依赖；提供后才会启用 /api/oauth/callback 路由。 */
   oauthCallbackDeps?: OAuthCallbackDeps
   /**
-   * Trusted proxy IPs/CIDRs. When set, proxy headers (x-forwarded-for, x-forwarded-proto)
-   * are only trusted from these sources. When empty/unset, proxy headers are ignored
-   * and 'direct' is used as the rate-limit key.
+   * 可信代理 IP/CIDR 列表。
+   * 设置后，仅当来源在这些范围内时才信任 x-forwarded-* 等代理头；
+   * 为空/未设置时忽略代理头，限流键使用 'direct'。
    */
   trustedProxies?: string[]
 }
 
 // ---------------------------------------------------------------------------
-// Handler factory — the core request handler
+// Handler 工厂 —— 核心请求处理器
 // ---------------------------------------------------------------------------
 
+/** createWebuiHandler 返回的对象：一个 Web 标准 fetch handler + 生命周期方法。 */
 export interface WebuiHandler {
-  /** Web-standard fetch handler. */
+  /** Web 标准 fetch handler。 */
   fetch: (req: Request) => Promise<Response>
-  /** Call on shutdown to release timers. */
+  /** 关闭时调用，释放定时器等资源。 */
   dispose: () => void
-  /** Inject OAuth callback deps after bootstrap (lazy wiring). */
+  /** 启动后延迟注入 OAuth 回调依赖。 */
   setOAuthCallbackDeps: (deps: OAuthCallbackDeps) => void
 }
 
 /**
- * Create a web-standard fetch handler for the WebUI.
+ * 创建 WebUI 的 Web 标准 fetch handler。
  *
- * This handler can be used directly with `Bun.serve({ fetch })`,
- * or adapted for Node's HTTP server via `nodeHttpAdapter()`.
+ * 可直接用于 `Bun.serve({ fetch })`，
+ * 也可通过 `nodeHttpAdapter()` 适配到 Node 的 HTTP 服务器。
  */
 export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
   const {
@@ -181,15 +216,16 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
   } = options
 
   const rateLimiter = new RateLimiter(5, 60_000)
+  // 每 2 分钟清理一次限流器里的过期 IP 记录，防止内存无限增长
   const cleanupTimer = setInterval(() => rateLimiter.cleanup(), 120_000)
 
   const loginPassword = password || secret
   const trustedProxySet = new Set(trustedProxies ?? [])
 
-  // Hash the login password at startup (async, but resolves before first auth attempt in practice)
+  // 启动时异步哈希登录密码；实际在第一次认证前通常已完成
   const passwordReady = initPasswordHash(loginPassword)
 
-  /** Extract client IP — only trusts proxy headers when trustedProxies is configured. */
+  /** 提取客户端 IP —— 仅在配置了 trustedProxies 时才信任代理头。 */
   function getClientIp(req: Request): string {
     if (trustedProxySet.size > 0) {
       return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
@@ -204,7 +240,7 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
     const path = url.pathname
     const useSecureCookies = shouldUseSecureCookies(req, secureCookies)
 
-    // ── Health endpoint (no auth) ──
+    // ── 健康检查端点（无需鉴权）──
     if (path === '/health') {
       const health = getHealthCheck()
       return Response.json(health, {
@@ -212,7 +248,7 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
       })
     }
 
-    // ── Login page (no auth) ──
+    // ── 登录页（无需鉴权）──
     if (path === '/login' || path === '/login/') {
       const loginFile = Bun.file(join(webuiDir, 'login.html'))
       if (await loginFile.exists()) {
@@ -223,7 +259,7 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
       return new Response('Login page not found', { status: 404 })
     }
 
-    // ── Static assets that login page needs (no auth) ──
+    // ── 登录页所需的静态资源（无需鉴权）──
     if (path === '/favicon.ico' || path.startsWith('/login-assets/')) {
       const file = Bun.file(join(webuiDir, path))
       if (await file.exists()) {
@@ -234,7 +270,7 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
       return new Response('Not Found', { status: 404 })
     }
 
-    // ── Auth endpoint ──
+    // ── 认证端点 ──
     if (path === '/api/auth' && req.method === 'POST') {
       await passwordReady
       const ip = getClientIp(req)
@@ -249,6 +285,7 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
 
       let body: { password?: string }
       try {
+        // `as` 是 TS 类型断言：告诉编译器 req.json() 的结构符合预期
         body = await req.json() as { password?: string }
       } catch {
         return Response.json({ error: 'Invalid request body' }, { status: 400 })
@@ -274,7 +311,7 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
       })
     }
 
-    // ── Logout endpoint ──
+    // ── 登出端点 ──
     if (path === '/api/auth/logout' && req.method === 'POST') {
       return new Response(null, {
         status: 204,
@@ -284,9 +321,9 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
       })
     }
 
-    // ── OAuth callback (no cookie auth — state param is CSRF protection) ──
-    // Receives redirect from the relay (or directly from OAuth provider for MCP sources).
-    // Completes the token exchange server-side and renders a success/error page.
+    // ── OAuth 回调（不依赖 Cookie 鉴权 —— state 参数用于防御 CSRF）──
+    // 接收 relay（或 MCP source 直连 OAuth provider）的 redirect，
+    // 在服务端完成 token 交换，并渲染成功/失败页面。
     if (path === '/api/oauth/callback' && req.method === 'GET' && options.oauthCallbackDeps) {
       const code = url.searchParams.get('code')
       const state = url.searchParams.get('state')
@@ -321,7 +358,7 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
           sessionManager: options.oauthCallbackDeps.sessionManager,
           pushSourcesChanged: options.oauthCallbackDeps.pushSourcesChanged,
           logger,
-          // No clientId/workspaceId — HTTP callback skips ownership checks (state is auth)
+          // HTTP 回调不传 clientId/workspaceId，靠 state 做鉴权，跳过所有权检查
         })
 
         if (result.success) {
@@ -345,7 +382,7 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
       }
     }
 
-    // ── Config endpoint (requires session cookie) ──
+    // ── 配置端点（需要会话 Cookie）──
     if (path === '/api/config' && req.method === 'GET') {
       const configSession = await validateSession(req.headers.get('cookie'), secret)
       if (!configSession) {
@@ -356,7 +393,7 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
       })
     }
 
-    // Return the default workspace ID so the webui can include it in the WS handshake
+    // 返回默认 workspace ID，供 webui 在 WS 握手时使用
     if (path === '/api/config/workspaces' && req.method === 'GET') {
       const configSession = await validateSession(req.headers.get('cookie'), secret)
       if (!configSession) {
@@ -365,11 +402,12 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
       const { getActiveWorkspace } = await import('@craft-agent/shared/config/storage')
       const active = getActiveWorkspace()
       return Response.json({
+        // `??` 是空值合并运算符：active?.id 为 null/undefined 时返回 null
         defaultWorkspaceId: active?.id ?? null,
       })
     }
 
-    // ── Everything below requires a valid session cookie ──
+    // ── 以下所有路由都需要有效的会话 Cookie ──
     const cookieHeader = req.headers.get('cookie')
     const session = await validateSession(cookieHeader, secret)
 
@@ -381,7 +419,7 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
       return Response.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // ── Serve SPA static files ──
+    // ── 提供 SPA 静态文件 ──
     if (path !== '/') {
       const file = Bun.file(join(webuiDir, path))
       if (await file.exists()) {
@@ -391,7 +429,7 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
       }
     }
 
-    // SPA fallback — serve index.html for all non-file routes
+    // SPA fallback —— 所有不匹配文件的路由都返回 index.html
     const indexFile = Bun.file(join(webuiDir, 'index.html'))
     if (await indexFile.exists()) {
       return new Response(indexFile, {
@@ -412,14 +450,18 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
 }
 
 // ---------------------------------------------------------------------------
-// Standalone server (backwards-compatible, uses Bun.serve)
+// 独立服务器（向后兼容，使用 Bun.serve）
 // ---------------------------------------------------------------------------
 
 export interface WebuiHttpServerOptions extends WebuiHandlerOptions {
-  /** Port to bind on. Use 0 for an ephemeral port in tests. */
+  /** 绑定的端口；测试时传 0 表示使用临时端口。 */
   port: number
 }
 
+/**
+ * 启动独立的 WebUI HTTP 服务器。
+ * 基于 Bun.serve，适合不依赖已有 WsRpcServer 的场景。
+ */
 export async function startWebuiHttpServer(
   options: WebuiHttpServerOptions,
 ): Promise<{ port: number, stop: () => void }> {

@@ -1,3 +1,10 @@
+/**
+ * RenameDialog —— 通用重命名对话框
+ *
+ * 提供一个带输入框的确认弹窗，打开时自动聚焦输入框。
+ * 通过 ModalContext 注册，使 Cmd+W / 关闭按钮优先关闭当前对话框。
+ */
+
 import { useEffect, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import {
@@ -21,6 +28,7 @@ interface RenameDialogProps {
   placeholder?: string
 }
 
+/** 重命名对话框 */
 export function RenameDialog({
   open,
   onOpenChange,
@@ -34,10 +42,10 @@ export function RenameDialog({
   const effectivePlaceholder = placeholder ?? t("common.enterName")
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Register with modal context so X button / Cmd+W closes this dialog first
+  // 注册到 modal 上下文，让 X 按钮 / Cmd+W 优先关闭本对话框
   useRegisterModal(open, () => onOpenChange(false))
 
-  // Focus input after dialog opens (avoids Radix Dialog focus race condition)
+  // 对话框打开后聚焦输入框（避开 Radix Dialog 的焦点竞争）
   useEffect(() => {
     if (open) {
       const timer = setTimeout(() => {

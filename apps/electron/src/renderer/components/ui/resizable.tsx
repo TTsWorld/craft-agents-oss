@@ -1,3 +1,9 @@
+/**
+ * Resizable —— 可拖拽调整大小的面板组件
+ *
+ * 基于 react-resizable-panels 封装，提供 PanelGroup、Panel、ResizeHandle。
+ * 常用于左右分栏布局，支持垂直/水平方向。
+ */
 import * as React from "react"
 import { GripVertical } from "lucide-react"
 import * as ResizablePrimitive from "react-resizable-panels"

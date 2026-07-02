@@ -1,15 +1,11 @@
 /**
- * Sortable List - Flat list drag-and-drop reordering
- *
- * Uses @dnd-kit for polished DnD with:
- * - SmartPointerSensor (5px activation distance, skips data-no-dnd elements)
- * - KeyboardSensor for accessibility
- * - DragOverlay (position:fixed) for proper z-index layering above all panels
- * - Crossfade drop animation: overlay fades out while ghost fades in
- * - Smooth sibling reflow via CSS transforms
- *
- * Usage:
- *   <SortableList items={items} onReorder={handleReorder} renderItem={renderItem} />
+ * 可拖拽排序列表组件（SortableList）。
+ * 基于 @dnd-kit 实现扁平列表的拖拽重排，特性包括：
+ * - SmartPointerSensor：5px 触发距离，并跳过带 data-no-dnd 的元素
+ * - KeyboardSensor：支持键盘无障碍操作
+ * - DragOverlay 使用 position:fixed，确保层级在所有面板之上
+ * - 释放时交叉淡入淡出动画
+ * - 兄弟节点通过 CSS transform 平滑重排
  */
 
 import * as React from 'react'
@@ -36,9 +32,8 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 
 // ============================================================
-// Custom PointerSensor — skips drag activation on elements with data-no-dnd
-// This allows interactive elements (e.g., chevron toggles) to receive clicks
-// even when nested inside a draggable container.
+// 自定义 PointerSensor：跳过 data-no-dnd 元素
+// 这样可交互元素（如折叠箭头）即便在可拖拽容器内也能正常接收点击。
 // ============================================================
 
 function hasNoDndAncestor(element: HTMLElement | null): boolean {
@@ -49,12 +44,13 @@ function hasNoDndAncestor(element: HTMLElement | null): boolean {
   return false
 }
 
+/** 智能指针传感器。 */
 export class SmartPointerSensor extends PointerSensor {
   static activators = [
     {
       eventName: 'onPointerDown' as const,
       handler: ({ nativeEvent }: { nativeEvent: PointerEvent }) => {
-        // Skip drag activation if click target has data-no-dnd="true" (or any ancestor does)
+        // 如果点击目标或其任意祖先有 data-no-dnd="true"，则不触发拖拽
         if (hasNoDndAncestor(nativeEvent.target as HTMLElement)) {
           return false
         }
@@ -65,9 +61,8 @@ export class SmartPointerSensor extends PointerSensor {
 }
 
 // ============================================================
-// Drop Animation Config
-// Crossfade: overlay fades out at final position while ghost fades in.
-// Creates a smooth "settle into place" feel.
+// 释放动画配置
+// 交叉淡入淡出：overlay 在最终位置淡出，同时 ghost 在新位置淡入。
 // ============================================================
 
 const DROP_DURATION = 250
@@ -82,7 +77,7 @@ const dropAnimationConfig: DropAnimation = {
   duration: DROP_DURATION,
   easing: 'ease',
   sideEffects({ active }) {
-    // Ghost fades in at new position simultaneously
+    // ghost 同时在新位置淡入
     active.node.animate([{ opacity: 0 }, { opacity: 1 }], {
       duration: DROP_DURATION,
       easing: 'ease',
@@ -90,7 +85,7 @@ const dropAnimationConfig: DropAnimation = {
   },
 }
 
-// Measuring config: always re-measure to support animated layouts
+// 测量配置：始终重新测量，以支持带动画的布局
 const measuringConfig: MeasuringConfiguration = {
   droppable: {
     strategy: MeasuringStrategy.Always,
@@ -98,33 +93,34 @@ const measuringConfig: MeasuringConfiguration = {
 }
 
 // ============================================================
-// Types
+// 类型
 // ============================================================
 
+/** 可排序项数据，要求每项都有唯一 id。 */
 export interface SortableItemData {
-  /** Unique ID for this item (used as sortable key) */
   id: string
 }
 
 interface SortableListProps<T extends SortableItemData> {
-  /** Array of items to render (must have unique `id` fields) */
+  /** 要渲染的数据数组，每项必须有唯一 id。 */
   items: T[]
-  /** Called with the new ordered array after a drop */
+  /** 释放后回调，传入新的数组顺序。 */
   onReorder: (items: T[]) => void
-  /** Render function for each item. `isDragging` is true when this item is the ghost. */
+  /** 每项的渲染函数；isDragging 为 true 表示当前项是 ghost。 */
   renderItem: (item: T, isDragging: boolean) => React.ReactNode
-  /** Render the drag overlay content (floating clone). Falls back to renderItem. */
+  /** 拖拽时悬浮克隆内容的渲染函数，默认使用 renderItem。 */
   renderOverlay?: (item: T) => React.ReactNode
-  /** Show DragOverlay clone while dragging (default: true) */
+  /** 拖拽时是否显示 DragOverlay 克隆（默认 true）。 */
   showOverlay?: boolean
-  /** Additional className for the list container */
+  /** 列表容器额外的 className。 */
   className?: string
 }
 
 // ============================================================
-// SortableList Component
+// SortableList 组件
 // ============================================================
 
+/** 可拖拽排序列表。 */
 export function SortableList<T extends SortableItemData>({
   items,
   onReorder,
@@ -135,7 +131,7 @@ export function SortableList<T extends SortableItemData>({
 }: SortableListProps<T>) {
   const [activeId, setActiveId] = React.useState<string | null>(null)
 
-  // Sensors: SmartPointerSensor skips data-no-dnd elements, 5px distance threshold
+  // 传感器：SmartPointerSensor 跳过 data-no-dnd，KeyboardSensor 支持键盘
   const sensors = useSensors(
     useSensor(SmartPointerSensor, {
       activationConstraint: { distance: 5 },
@@ -194,8 +190,8 @@ export function SortableList<T extends SortableItemData>({
         </div>
       </SortableContext>
 
-      {/* DragOverlay uses position:fixed — escapes all stacking contexts and overflow.
-         Inline boxShadow avoids Tailwind CSS variable scoping issues in portals. */}
+      {/* DragOverlay 使用 position:fixed，能脱离所有层叠上下文和 overflow 裁剪。
+         内联 boxShadow 是为了避免 Tailwind CSS 变量在 portal 中的作用域问题。 */}
       {showOverlay && (
         <DragOverlay
           dropAnimation={dropAnimationConfig}
@@ -218,7 +214,7 @@ export function SortableList<T extends SortableItemData>({
 }
 
 // ============================================================
-// SortableItemWrapper - wraps each item with useSortable
+// SortableItemWrapper —— 为每个项提供 useSortable 能力
 // ============================================================
 
 interface SortableItemWrapperProps {
@@ -241,7 +237,7 @@ function SortableItemWrapper({ id, isDragActive, hideWhileDragging, children }: 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    // Hide ghost only when DragOverlay is enabled
+    // 只在启用 DragOverlay 时隐藏 ghost，避免重复显示
     opacity: isDragging && hideWhileDragging ? 0 : 1,
     cursor: isDragActive ? 'grabbing' : 'grab',
   }

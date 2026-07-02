@@ -1,7 +1,8 @@
 /**
- * Banner shown above the platform tile when `accessMode === 'open'`.
- * Action prompts the user to switch to owner-only and seed the owners
- * list with the senders the gateway has already observed.
+ * 当 `accessMode === 'open'` 时，显示在平台卡片顶部的警告横幅。
+ *
+ * 作用是提醒管理员当前任何人都能通过该消息平台与 Agent 交互，
+ * 并提供“一键锁定”按钮切换到 owner-only 模式。
  */
 
 import * as React from 'react'
@@ -11,7 +12,7 @@ import { Button } from '@/components/ui/button'
 
 interface Props {
   onLockDown: () => void
-  /** Optional override of the default copy (e.g. for non-Telegram platforms). */
+  // 可覆盖默认说明文字，例如用于非 Telegram 平台时传入不同文案
   description?: string
 }
 

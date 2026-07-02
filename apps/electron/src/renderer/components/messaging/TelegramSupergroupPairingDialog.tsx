@@ -1,13 +1,13 @@
 /**
- * TelegramSupergroupPairingDialog — workspace-level pairing for a Telegram
- * supergroup ("forum"). Sibling of PairingCodeDialog but with different
- * copy and a polling loop that detects when the user has typed the code
- * inside the group.
+ * TelegramSupergroupPairingDialog —— Telegram 超级群（forum）工作空间级配对。
  *
- * Why polling: there's no dedicated broadcast for "supergroup paired" yet,
- * and adding one adds protocol surface for a flow that runs at most once
- * per workspace setup. We poll `getMessagingSupergroup()` every second
- * while the dialog is open; on first non-null response we close + toast.
+ * 与 PairingCodeDialog 是“兄弟组件”：文案不同，并且内置轮询循环，
+ * 检测用户在群里发送配对码后是否完成绑定。
+ *
+ * 为什么用轮询：目前还没有专门的“超级群已配对”广播事件；
+ * 而这个流程每个工作空间最多只跑一次，为此增加协议事件性价比不高。
+ * 对话框打开期间每 1.5 秒调用 `getMessagingSupergroup()`，
+ * 首次返回非空就关闭对话框并弹出成功提示。
  */
 
 import * as React from 'react'
@@ -25,9 +25,9 @@ import {
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** Bot username (without @) — enables the "Open bot" deep link. */
+  // Bot 用户名（不带 @），用于生成“打开 bot”的 deep link
   botUsername?: string
-  /** Fired once the supergroup has been paired (parent re-fetches state). */
+  // 超级群配对成功后回调，父组件通常会重新拉取状态
   onPaired?: () => void
 }
 
@@ -40,9 +40,8 @@ export function TelegramSupergroupPairingDialog({ open, onOpenChange, botUsernam
   const onPairedRef = React.useRef(onPaired)
   onPairedRef.current = onPaired
 
-  // Generate a fresh code each time the dialog opens. Closing then re-opening
-  // produces a new code rather than recycling — that matches user expectation
-  // and avoids racing the previous code's TTL.
+  // 每次对话框打开时重新生成配对码；关闭再打开会产生新码，
+  // 符合用户预期，也避免与上一个码的 TTL 产生竞态。
   React.useEffect(() => {
     if (!open) {
       setCode(null)
@@ -65,7 +64,7 @@ export function TelegramSupergroupPairingDialog({ open, onOpenChange, botUsernam
     return () => { cancelled = true }
   }, [open, t])
 
-  // Countdown
+  // 倒计时：每秒更新剩余秒数
   React.useEffect(() => {
     if (!expiresAt) return
     const update = () => setSecondsLeft(Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)))
@@ -74,7 +73,7 @@ export function TelegramSupergroupPairingDialog({ open, onOpenChange, botUsernam
     return () => clearInterval(timer)
   }, [expiresAt])
 
-  // Poll for completion. Stop on close, on success, or when the code expires.
+  // 轮询检测是否已完成配对。关闭、成功或配对码过期时停止。
   React.useEffect(() => {
     if (!open || !code) return
     let cancelled = false
@@ -92,7 +91,7 @@ export function TelegramSupergroupPairingDialog({ open, onOpenChange, botUsernam
           onOpenChange(false)
         }
       } catch {
-        // best-effort; keep polling
+        // 尽力而为，继续轮询
       }
     }
     const interval = setInterval(tick, 1500)

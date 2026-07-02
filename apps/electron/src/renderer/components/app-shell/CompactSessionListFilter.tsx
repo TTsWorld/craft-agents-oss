@@ -1,22 +1,15 @@
 /**
- * CompactSessionListFilter
+ * CompactSessionListFilter - 桌面端会话列表筛选下拉菜单的紧凑/移动端底部抽屉替代方案。
  *
- * Bottom-sheet replacement for the desktop session-list filter dropdown,
- * used when AppShell is in compact / mobile mode. Mirrors the behaviour of
- * `CompactPermissionModeSelector` and `CompactWorkspaceSwitcher`: the trigger
- * is the same `HeaderIconButton` users see on desktop, but the picker opens
- * as a vaul `Drawer` so it isn't clipped by the narrow viewport / panel
- * container query the desktop Radix dropdown gets caught on.
+ * 触发器和桌面端一样是 HeaderIconButton，但选择器以 vaul Drawer 打开，
+ * 避免桌面端 Radix 下拉菜单在窄视口/面板容器查询下被裁剪的问题。
  *
- * Behaviour notes vs. the desktop dropdown:
- * - Hierarchical submenus collapse to a single flat list per section
- *   (Statuses, Labels). Tapping a row toggles include; tapping the trailing
- *   mode chip on an active row toggles include ↔ exclude.
- * - Pinned filters (from the route, e.g. flagged / state / label views) are
- *   shown as disabled rows with a check mark, matching the dropdown.
- * - The search input filters statuses + labels into a single combined view,
- *   reusing the same scoring helpers as the desktop dropdown
- *   (`filterSessionStatuses`, `filterItems` from `label-menu-utils`).
+ * 与桌面下拉菜单的行为差异：
+ * - 层级子菜单折叠成每个分类的单一平铺列表（Statuses、Labels）。
+ *   点击行切换 include；点击已激活行尾部 chip 切换 include ↔ exclude。
+ * - 来自路由的固定过滤项（flagged / state / label 视图）显示为带勾选标记的禁用行。
+ * - 搜索输入框把状态和标签过滤到同一个合并视图，复用桌面下拉菜单的评分辅助函数
+ *   （filterSessionStatuses、label-menu-utils 里的 filterItems）。
  */
 
 import * as React from 'react'
@@ -86,6 +79,7 @@ interface CompactSessionListFilterProps {
   onOpenSearch: () => void
 }
 
+/** CompactSessionListFilter - 紧凑模式下的会话列表筛选抽屉 */
 export function CompactSessionListFilter({
   listFilter,
   setListFilter,
@@ -116,6 +110,7 @@ export function CompactSessionListFilter({
   const trimmedQuery = query.trim()
   const isSearching = trimmedQuery !== ''
 
+  // 根据搜索词过滤状态和标签
   const results = React.useMemo(() => {
     return {
       states: isSearching
@@ -297,7 +292,7 @@ export function CompactSessionListFilter({
 
           {isSearching && results.states.length === 0 && results.labels.length === 0 && (
             <div className="px-4 py-6 text-center text-sm text-muted-foreground">
-              No matches
+              无匹配项
             </div>
           )}
 
@@ -377,7 +372,7 @@ function FilterRow({
 }: {
   icon: React.ReactNode
   iconColor?: string
-  /** Status icons render via EntityIcon and accept a `bare` prop to skip their own container. */
+  /** 状态图标通过 EntityIcon 渲染，bare 为 true 时跳过其自带容器 */
   bareIcon?: boolean
   label: React.ReactNode
   mode?: FilterMode

@@ -1,3 +1,8 @@
+/**
+ * SkillsListPanel - 技能列表面板。
+ *
+ * 展示当前工作区已加载的技能，支持打开、删除（仅 workspace 来源）和发送到工作区。
+ */
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Zap } from 'lucide-react'
@@ -13,6 +18,7 @@ import { useActiveWorkspace, useAppShellContext } from '@/context/AppShellContex
 import { getFileManagerName } from '@/lib/platform'
 import type { LoadedSkill } from '../../../shared/types'
 
+/** SkillsListPanelProps：组件 props 类型定义 */
 export interface SkillsListPanelProps {
   skills: LoadedSkill[]
   onDeleteSkill: (skillSlug: string) => void
@@ -23,6 +29,7 @@ export interface SkillsListPanelProps {
   className?: string
 }
 
+/** SkillsListPanel - 技能列表 */
 export function SkillsListPanel({
   skills,
   onDeleteSkill,
@@ -34,11 +41,12 @@ export function SkillsListPanel({
 }: SkillsListPanelProps) {
   const { t } = useTranslation()
   const activeWorkspace = useActiveWorkspace()
+  // 远程工作区无法直接Reveal本地文件路径
   const canRevealLocally = !activeWorkspace?.remoteServer
   const { workspaces, activeWorkspaceId } = useAppShellContext()
   const hasOtherWorkspaces = workspaces.length > 1
 
-  // Send to Workspace dialog state
+  // 发送到工作区对话框状态
   const [sendDialogOpen, setSendDialogOpen] = React.useState(false)
   const [sendResourceSlug, setSendResourceSlug] = React.useState<string | null>(null)
   const [sendResourceLabel, setSendResourceLabel] = React.useState('')
@@ -116,7 +124,7 @@ export function SkillsListPanel({
       })}
     />
 
-    {/* Send to Workspace dialog */}
+    {/* 发送到工作区对话框 */}
     {sendResourceSlug && (
       <SendResourceToWorkspaceDialog
         open={sendDialogOpen}

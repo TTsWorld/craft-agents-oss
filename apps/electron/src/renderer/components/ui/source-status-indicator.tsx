@@ -1,13 +1,14 @@
 /**
- * SourceStatusIndicator - Shows connection status for sources
+ * SourceStatusIndicator — Source 连接状态指示器
  *
- * A small colored dot that indicates the source's connection status:
- * - Green: Connected/tested successfully
- * - Yellow: Requires authentication
- * - Red: Failed to connect
- * - Gray: Untested
+ * Source 是 Agent 可调用的外部能力（MCP 服务器、API、本地文件夹等）。
+ * 这个组件用一个小圆点表示 Source 的连接状态：
+ * - 绿色：已连接/测试成功
+ * - 蓝色：需要认证
+ * - 红色：连接失败
+ * - 灰色：未测试
  *
- * Hovering shows a tooltip with the status description.
+ * 悬停时显示状态描述的 Tooltip。
  */
 
 import * as React from 'react'
@@ -20,17 +21,17 @@ import {
 import type { SourceConnectionStatus } from '../../../shared/types'
 
 export interface SourceStatusIndicatorProps {
-  /** Connection status */
+  /** 连接状态 */
   status?: SourceConnectionStatus
-  /** Error message (shown in tooltip if status is 'failed') */
+  /** 错误信息（status 为 failed 时显示在 tooltip 中） */
   errorMessage?: string
-  /** Size variant */
+  /** 尺寸变体 */
   size?: 'xs' | 'sm' | 'md'
-  /** Additional className */
+  /** 额外 className */
   className?: string
 }
 
-// Status configurations
+// 状态配置
 const STATUS_CONFIG: Record<SourceConnectionStatus, {
   color: string
   pulseColor: string
@@ -69,13 +70,14 @@ const STATUS_CONFIG: Record<SourceConnectionStatus, {
   },
 }
 
-// Size configurations
+// 尺寸配置
 const SIZE_CONFIG: Record<'xs' | 'sm' | 'md', string> = {
   xs: 'h-1.5 w-1.5',
   sm: 'h-2 w-2',
   md: 'h-2.5 w-2.5',
 }
 
+/** Source 连接状态指示器 */
 export function SourceStatusIndicator({
   status = 'untested',
   errorMessage,
@@ -85,7 +87,7 @@ export function SourceStatusIndicator({
   const config = STATUS_CONFIG[status]
   const sizeClass = SIZE_CONFIG[size]
 
-  // Build tooltip description
+  // 组合 tooltip 描述
   const tooltipDescription = status === 'failed' && errorMessage
     ? `${config.description}: ${errorMessage}`
     : config.description
@@ -99,7 +101,7 @@ export function SourceStatusIndicator({
             className
           )}
         >
-          {/* Pulse animation for connected status */}
+          {/* connected 状态显示脉冲动画 */}
           {status === 'connected' && (
             <span
               className={cn(
@@ -110,7 +112,7 @@ export function SourceStatusIndicator({
               style={{ animationDuration: '2s' }}
             />
           )}
-          {/* Status dot */}
+          {/* 状态圆点 */}
           <span
             className={cn(
               'relative inline-flex rounded-full',
@@ -131,11 +133,11 @@ export function SourceStatusIndicator({
 }
 
 /**
- * Derive connection status from source config
- * This is a convenience function to determine status from existing fields
+ * 从 Source 配置推导连接状态
+ * 这是一个便捷函数，根据已有字段判断状态。
  *
- * @param source - The source config
- * @param localMcpEnabled - Whether local MCP servers are enabled (default: true)
+ * @param source - Source 配置
+ * @param localMcpEnabled - 本地 MCP 服务器是否启用（默认 true）
  */
 export function deriveConnectionStatus(source: {
   config: {
@@ -146,18 +148,18 @@ export function deriveConnectionStatus(source: {
     api?: { authType?: string }
   }
 }, localMcpEnabled = true): SourceConnectionStatus {
-  // Check if this is a stdio source and local MCP is disabled
+  // stdio 类型的本地 MCP 被禁用时返回 local_disabled
   const mcp = source.config.mcp
   if (mcp?.transport === 'stdio' && !localMcpEnabled) {
     return 'local_disabled'
   }
 
-  // If explicit status is set, use it
+  // 如果配置显式设置了 connectionStatus，直接使用
   if (source.config.connectionStatus) {
     return source.config.connectionStatus
   }
 
-  // Derive from auth state
+  // 从认证状态推导
   const api = source.config.api
   const authType = mcp?.authType ?? api?.authType
   const isAuthenticated = authType === 'none' || authType === undefined
@@ -172,7 +174,7 @@ export function deriveConnectionStatus(source: {
     return 'connected'
   }
 
-  // Local sources are always connected
+  // 本地 source 默认可用
   if (source.config.type === 'local') {
     return 'connected'
   }

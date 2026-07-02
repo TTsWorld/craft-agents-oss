@@ -1,15 +1,13 @@
 /**
- * History Store — single source of truth for automations-history.jsonl writes
- * and compaction.
+ * History Store - 自动化历史文件写入与压缩的唯一入口
  *
- * Provides:
- * - `appendAutomationHistoryEntry()` — serialized append, triggers compaction at the global cap
- * - `compactAutomationHistory()` — async two-tier retention (runtime, under mutex)
- * - `compactAutomationHistorySync()` — sync two-tier retention (startup, no mutex needed)
+ * 提供：
+ * - appendAutomationHistoryEntry()：串行追加，达到全局上限时触发压缩
+ * - compactAutomationHistory()：异步双层保留（运行时，带互斥锁）
+ * - compactAutomationHistorySync()：同步双层保留（启动时，无需互斥锁）
  *
- * Both sync and async compaction share the same pure algorithm (`compactEntries`).
- * All history writes should go through `appendAutomationHistoryEntry` so the mutex
- * prevents concurrent file corruption.
+ * 同步与异步压缩共享同一个纯函数算法 compactEntries。
+ * 所有历史写入都应走 appendAutomationHistoryEntry，互斥锁可防止并发写坏文件。
  */
 
 import { appendFile, readFile, writeFile } from 'fs/promises';
@@ -25,7 +23,7 @@ import {
 const log = createLogger('history-store');
 
 // ============================================================================
-// Per-workspace mutex — serializes writes to avoid corruption
+// 每个 workspace 的互斥锁 - 串行化写入
 // ============================================================================
 
 const mutexes = new Map<string, Promise<void>>();
@@ -38,21 +36,21 @@ function withMutex<T>(key: string, fn: () => Promise<T>): Promise<T> {
 }
 
 // ============================================================================
-// Append
+// 追加
 // ============================================================================
 
 /**
- * Appends since startup per workspace. Startup compaction guarantees ≤ MAX_ENTRIES,
- * so this counter tells us when the file has grown enough to need compaction again.
+ * 记录自启动以来每个 workspace 的追加次数。
+ * 启动压缩保证条目数 ≤ MAX_ENTRIES，因此该计数用于判断何时需要再次压缩。
  */
 const appendCounters = new Map<string, number>();
 
 /**
- * Append a history entry to the JSONL file.
- * Triggers compaction when appends since startup reach the global cap.
+ * 向 JSONL 历史文件追加一条记录。
+ * 当自启动以来的追加次数达到全局上限时触发压缩。
  *
- * The entry must already be a fully-formed history object (use `createWebhookHistoryEntry`
- * or `createPromptHistoryEntry` from `webhook-utils.ts` to build one).
+ * 传入的 entry 必须是完整的历史对象（可用 webhook-utils.ts 里的
+ * createWebhookHistoryEntry 或 createPromptHistoryEntry 构造）。
  */
 export async function appendAutomationHistoryEntry(
   workspaceRootPath: string,
@@ -74,11 +72,11 @@ export async function appendAutomationHistoryEntry(
 }
 
 // ============================================================================
-// Compaction
+// 压缩
 // ============================================================================
 
 /**
- * Compact the history file asynchronously (runtime path, under mutex).
+ * 异步压缩历史文件（运行时路径，带互斥锁）。
  */
 export async function compactAutomationHistory(
   workspaceRootPath: string,
@@ -91,9 +89,8 @@ export async function compactAutomationHistory(
 }
 
 /**
- * Compact the history file synchronously (startup path).
- * Safe to call without the mutex — startup is single-threaded and runs
- * before any async appends.
+ * 同步压缩历史文件（启动路径）。
+ * 启动阶段是单线程的，且发生在任何异步追加之前，因此不需要互斥锁。
  */
 export function compactAutomationHistorySync(
   workspaceRootPath: string,
@@ -114,7 +111,7 @@ export function compactAutomationHistorySync(
 }
 
 /**
- * Internal async compaction — must be called inside withMutex.
+ * 内部异步压缩函数 - 必须在 withMutex 内部调用。
  */
 async function runCompaction(
   historyPath: string,
@@ -137,17 +134,17 @@ async function runCompaction(
 }
 
 // ============================================================================
-// Pure compaction algorithm — shared by sync and async paths
+// 纯函数压缩算法 - 同步/异步路径共用
 // ============================================================================
 
 /**
- * Apply two-tier retention to JSONL content:
- * 1. Per-automation cap: keep last `maxPerMatcher` entries per automation ID
- * 2. Global cap: keep last `maxTotal` entries overall
+ * 对 JSONL 内容应用双层保留策略：
+ * 1. 每个 automation ID 最多保留最近 maxPerMatcher 条
+ * 2. 如果仍超过全局上限 maxTotal，则丢弃最旧的记录
  *
- * Also drops malformed JSON lines.
+ * 同时丢弃解析失败的 JSON 行。
  *
- * Returns the compacted output string, or `null` if no compaction was needed.
+ * @returns 压缩后的字符串；如果无需压缩则返回 null
  */
 function compactEntries(
   content: string,
@@ -157,21 +154,21 @@ function compactEntries(
   const lines = content.trim().split('\n').filter(Boolean);
   if (lines.length === 0) return null;
 
-  // Parse all lines, dropping malformed ones
+  // 解析所有行，损坏的行直接丢弃
   const entries: Array<{ raw: string; id: string }> = [];
   for (const line of lines) {
     try {
       const parsed = JSON.parse(line);
       entries.push({ raw: line, id: parsed.id ?? '' });
     } catch {
-      // Drop malformed lines
+      // 丢弃损坏行
     }
   }
 
-  // Track original line count (including malformed) for dirty-check
+  // 记录原始行数（含损坏行），用于判断是否真的需要重写
   const originalLineCount = lines.length;
 
-  // 1) Per-automation cap: keep only last N per ID
+  // 1) 每个 ID 保留最近 N 条
   const byId = new Map<string, number[]>();
   for (let i = 0; i < entries.length; i++) {
     const id = entries[i]!.id;
@@ -193,7 +190,7 @@ function compactEntries(
 
   let trimmed = entries.filter((_, i) => keepIndices.has(i));
 
-  // 2) Global cap: if still over limit, drop oldest globally
+  // 2) 全局上限：仍超过则丢弃最旧的
   if (trimmed.length > maxTotal) {
     trimmed = trimmed.slice(-maxTotal);
   }

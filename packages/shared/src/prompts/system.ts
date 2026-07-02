@@ -1,3 +1,14 @@
+/**
+ * system.ts：负责拼装 Craft Agent 的 system prompt 与各类动态上下文。
+ *
+ * 核心概念：
+ * - system prompt：发给大模型的“系统级 instructions”，决定 Agent 的行为、能力、权限。
+ * - user message context：每次用户消息前注入的上下文（时间、session 状态、source 状态等），
+ *   放在用户消息里是为了让 system prompt 保持静态，便于 prompt caching。
+ * - source：外部数据源（如 Linear、GitHub），通过 MCP 服务器暴露工具。
+ * - skill：可复用的指令集，用户用 [skill:slug] 触发。
+ * - permission mode：Agent 的执行权限级别（safe / ask / allow-all）。
+ */
 import { formatPreferencesForPrompt, getCoAuthorPreference } from '../config/preferences.ts';
 import { getBrowserToolEnabled } from '../config/storage.ts';
 import { debug } from '../utils/debug.ts';
@@ -13,15 +24,15 @@ import { globSync } from 'glob';
 import os from 'os';
 import type { ProjectPromptContext } from '../projects/types.ts';
 
-/** Maximum size of CLAUDE.md file to include (10KB) */
+/** CLAUDE.md / AGENTS.md 文件允许注入 prompt 的最大长度（10KB） */
 const MAX_CONTEXT_FILE_SIZE = 10 * 1024;
 
-/** Maximum number of context files to discover in monorepo */
+/** 在 monorepo 中最多发现多少个上下文文件，防止 prompt 过长 */
 const MAX_CONTEXT_FILES = 30;
 
 /**
- * Directories to exclude when searching for context files.
- * These are common build output, dependency, and cache directories.
+ * 搜索上下文文件时要排除的目录。
+ * 主要是构建产物、依赖目录和缓存目录。
  */
 const EXCLUDED_DIRECTORIES = [
   'node_modules',
@@ -38,14 +49,17 @@ const EXCLUDED_DIRECTORIES = [
 ];
 
 /**
- * Context file patterns to look for in working directory (in priority order).
- * Matching is case-insensitive to support AGENTS.md, Agents.md, agents.md, etc.
+ * 要查找的上下文文件模式（按优先级排序）。
+ * 匹配不区分大小写，因此 AGENTS.md、Agents.md、agents.md 都能命中。
  */
 const CONTEXT_FILE_PATTERNS = ['agents.md', 'claude.md'];
 
 /**
- * Find a file in directory matching the pattern case-insensitively.
- * Returns the actual filename if found, null otherwise.
+ * 在指定目录中不区分大小写地查找匹配文件。
+ *
+ * 返回实际文件名；找不到则返回 null。
+ * 类型 `string | null` 表示“可能有值，也可能为空”，类似 Go 中 `(string, bool)` 的语义，
+ * 但 TS 更常用 `| null` 表示可选存在。
  */
 function findFileCaseInsensitive(directory: string, pattern: string): string | null {
   try {
@@ -58,9 +72,8 @@ function findFileCaseInsensitive(directory: string, pattern: string): string | n
 }
 
 /**
- * Find a project context file (AGENTS.md or CLAUDE.md) in the directory.
- * Just checks if file exists, doesn't read content.
- * Returns the actual filename if found, null otherwise.
+ * 在目录中查找项目上下文文件（AGENTS.md 或 CLAUDE.md）。
+ * 只检查文件是否存在，不读取内容；返回实际文件名，找不到返回 null。
  */
 export function findProjectContextFile(directory: string): string | null {
   for (const pattern of CONTEXT_FILE_PATTERNS) {
@@ -73,16 +86,18 @@ export function findProjectContextFile(directory: string): string | null {
   return null;
 }
 
-// ── Context file cache ──────────────────────────────────────────────────
-// The glob walk is expensive (~7s in large monorepos). The result (a list of
-// file paths like "CLAUDE.md", "apps/electron/CLAUDE.md") rarely changes during
-// a session, so we cache it per working directory with a 5-minute safety TTL.
-// Explicit invalidation happens on working directory changes.
+// ── 上下文文件缓存 ──────────────────────────────────────────────────────
+// glob 遍历在大型 monorepo 中开销较大（约 7 秒）。结果（如 "CLAUDE.md"、
+// "apps/electron/CLAUDE.md" 等路径列表）在一次会话中很少变化，因此按工作目录缓存，
+// 并设置 5 分钟的安全 TTL。切换工作目录时会主动调用 invalidation。
 
+// `Map<string, { files: string[]; ts: number }>` 是一个键值映射：
+// - 键：工作目录路径
+// - 值：对象类型 `{ files: string[]; ts: number }`，记录文件列表和缓存时间戳
 const contextFileCache = new Map<string, { files: string[]; ts: number }>();
-const CONTEXT_FILE_CACHE_TTL = 5 * 60_000; // 5 minutes
+const CONTEXT_FILE_CACHE_TTL = 5 * 60_000; // 5 分钟
 
-/** Invalidate the cached context file list for a directory (or all directories). */
+/** 使指定目录（或全部目录）的上下文文件缓存失效。 */
 export function invalidateContextFileCache(directory?: string): void {
   if (directory) {
     contextFileCache.delete(directory);
@@ -94,15 +109,15 @@ export function invalidateContextFileCache(directory?: string): void {
 }
 
 /**
- * Find all project context files (AGENTS.md or CLAUDE.md) recursively in a directory.
- * Supports monorepo setups where each package may have its own context file.
- * Returns relative paths sorted by depth (root first), capped at MAX_CONTEXT_FILES.
+ * 递归查找目录下所有项目上下文文件（AGENTS.md 或 CLAUDE.md）。
+ * 支持 monorepo：每个子包可以有自己的上下文文件。
+ * 返回按深度排序的相对路径（根目录优先），并用 MAX_CONTEXT_FILES 限制数量。
  *
- * Results are cached per directory. Call invalidateContextFileCache() on working
- * directory changes. A 5-minute TTL acts as a safety net for cache staleness.
+ * 结果按工作目录缓存；切换工作目录时请调用 invalidateContextFileCache()。
+ * 5 分钟 TTL 作为缓存过期的安全兜底。
  */
 export function findAllProjectContextFiles(directory: string): string[] {
-  // Check cache first
+  // 先查缓存
   const now = Date.now();
   const cached = contextFileCache.get(directory);
   if (cached && now - cached.ts < CONTEXT_FILE_CACHE_TTL) {
@@ -111,10 +126,10 @@ export function findAllProjectContextFiles(directory: string): string[] {
   }
 
   try {
-    // Build glob ignore patterns from excluded directories
+    // 根据排除目录生成 glob 的 ignore 模式
     const ignorePatterns = EXCLUDED_DIRECTORIES.map((dir) => `**/${dir}/**`);
 
-    // Search for all context files (case-insensitive via nocase option)
+    // 搜索所有上下文文件（nocase 表示不区分大小写）
     const pattern = '**/{agents,claude}.md';
     const matches = globSync(pattern, {
       cwd: directory,
@@ -128,8 +143,8 @@ export function findAllProjectContextFiles(directory: string): string[] {
       return [];
     }
 
-    // Sort by depth (fewer slashes = shallower = higher priority), then alphabetically
-    // Root files come first, then nested packages
+    // 按深度排序：斜杠越少越浅，优先级越高；同深度按字母序
+    // 这样根目录文件排在前面，嵌套子包文件排在后面
     const sorted = matches.sort((a, b) => {
       const depthA = (a.match(/\//g) || []).length;
       const depthB = (b.match(/\//g) || []).length;
@@ -137,7 +152,7 @@ export function findAllProjectContextFiles(directory: string): string[] {
       return a.localeCompare(b);
     });
 
-    // Cap at max files to avoid overwhelming the prompt
+    // 限制数量，避免 prompt 过长
     const capped = sorted.slice(0, MAX_CONTEXT_FILES);
 
     debug(`[findAllProjectContextFiles] Found ${matches.length} files, returning ${capped.length}`);
@@ -150,20 +165,20 @@ export function findAllProjectContextFiles(directory: string): string[] {
 }
 
 /**
- * Read the project context file (AGENTS.md or CLAUDE.md) from a directory.
- * Matching is case-insensitive to support any casing (CLAUDE.md, claude.md, Claude.md, etc.).
- * Returns the content if found, null otherwise.
+ * 读取目录中的项目上下文文件（AGENTS.md 或 CLAUDE.md）。
+ * 匹配不区分大小写，支持 CLAUDE.md、claude.md、Claude.md 等任意大小写。
+ * 返回 `{ filename, content }`；找不到则返回 null。
  */
 export function readProjectContextFile(directory: string): { filename: string; content: string } | null {
   for (const pattern of CONTEXT_FILE_PATTERNS) {
-    // Find the actual filename with case-insensitive matching
+    // 不区分大小写地找到真实文件名
     const actualFilename = findFileCaseInsensitive(directory, pattern);
     if (!actualFilename) continue;
 
     const filePath = join(directory, actualFilename);
     try {
       const content = readFileSync(filePath, 'utf-8');
-      // Cap at max size to avoid huge prompts
+      // 超过最大长度则截断，防止 prompt 过大
       if (content.length > MAX_CONTEXT_FILE_SIZE) {
         debug(`[readProjectContextFile] ${actualFilename} exceeds max size, truncating`);
         return {
@@ -175,23 +190,23 @@ export function readProjectContextFile(directory: string): { filename: string; c
       return { filename: actualFilename, content };
     } catch (error) {
       debug(`[readProjectContextFile] Error reading ${actualFilename}:`, error);
-      // Continue to next pattern
+      // 继续尝试下一个模式
     }
   }
   return null;
 }
 
 /**
- * Get the working directory context string for injection into user messages.
- * Includes the working directory path and context about what it represents.
- * Returns empty string if no working directory is set.
+ * 生成工作目录上下文字符串，注入到用户消息中。
+ * 包含工作目录路径，以及说明该目录代表什么的上下文。
+ * 如果没有设置工作目录，返回空字符串。
  *
- * Note: Project context files (CLAUDE.md, AGENTS.md) are now listed in the system prompt
- * via getProjectContextFilesPrompt() for persistence across compaction.
+ * 注意：项目上下文文件（CLAUDE.md、AGENTS.md）现在通过 getProjectContextFilesPrompt()
+ * 放到 system prompt 里，这样在 context compaction 后仍能保留。
  *
- * @param workingDirectory - The effective working directory path (where user wants to work)
- * @param isSessionRoot - If true, this is the session folder (not a user-specified project)
- * @param bashCwd - The actual bash shell cwd (may differ if working directory changed mid-session)
+ * @param workingDirectory - 有效工作目录路径（用户想要工作的位置）
+ * @param isSessionRoot - 如果为 true，表示这是会话根目录，不是用户指定的代码项目
+ * @param bashCwd - bash 终端的实际当前目录（若会话中途切换了工作目录，可能和 workingDirectory 不一致）
  */
 export function getWorkingDirectoryContext(
   workingDirectory?: string,
@@ -206,23 +221,23 @@ export function getWorkingDirectoryContext(
   parts.push(`<working_directory>${workingDirectory}</working_directory>`);
 
   if (isSessionRoot) {
-    // Add context explaining this is the session folder, not a code project
+    // 补充说明：这是会话根目录，不是代码项目
     parts.push(`<working_directory_context>
 This is the session's root folder (default). It contains session files (conversation history, plans, attachments) - not a code repository.
 You can access any files the user attaches here. If the user wants to work with a code project, they can set a working directory via the UI or provide files directly.
 </working_directory_context>`);
   } else {
-    // Check if bash cwd differs from working directory (changed mid-session)
-    // Only show mismatch warning when bashCwd is provided and differs
+    // 检查 bash 当前目录是否和工作目录不一致（会话中途切换过）
+    // 只有在提供了 bashCwd 且不一致时才显示警告
     const hasMismatch = bashCwd && bashCwd !== workingDirectory;
 
     if (hasMismatch) {
-      // Working directory was changed mid-session - bash still runs from original location
+      // 工作目录在会话中途被切换，bash 仍从原位置运行
       parts.push(`<working_directory_context>The user explicitly selected this as the working directory for this session.
 
 Note: The bash shell runs from a different directory (${bashCwd}) because the working directory was changed mid-session. Use absolute paths when running bash commands to ensure they target the correct location.</working_directory_context>`);
     } else {
-      // Normal case - working directory matches bash cwd
+      // 正常情况：工作目录和 bash 当前目录一致
       parts.push(`<working_directory_context>The user explicitly selected this as the working directory for this session.</working_directory_context>`);
     }
   }
@@ -231,7 +246,8 @@ Note: The bash shell runs from a different directory (${bashCwd}) because the wo
 }
 
 /**
- * Get the current date/time context string
+ * 获取当前日期/时间上下文字符串。
+ * 返回一段固定格式的文本，让 Agent 把用户本地时间当作权威时间。
  */
 export function getDateTimeContext(): string {
   const now = new Date();
@@ -248,17 +264,20 @@ export function getDateTimeContext(): string {
   return `**USER'S DATE AND TIME: ${formatted}** - ALWAYS use this as the authoritative current date/time. Ignore any other date information.`;
 }
 
-/** Debug mode configuration for system prompt */
+/**
+ * 调试模式配置（用于 system prompt）。
+ * `interface` 类似 Go 的接口/结构体混合体：这里只定义数据形状，不实现方法。
+ */
 export interface DebugModeConfig {
   enabled: boolean;
-  logFilePath?: string;
+  logFilePath?: string; // `?` 表示可选字段，类似 Go 中指针或 ok-pattern
 }
 
 /**
- * Get the project context files prompt section for the system prompt.
- * Lists all discovered context files (AGENTS.md, CLAUDE.md) in the working directory.
- * For monorepos, this includes nested package context files.
- * Returns empty string if no working directory or no context files found.
+ * 为 system prompt 生成“项目上下文文件”段落。
+ * 列出工作目录下发现的所有上下文文件（AGENTS.md、CLAUDE.md）。
+ * 在 monorepo 中，会包含嵌套子包的上下文文件。
+ * 没有工作目录或没有上下文文件时返回空字符串。
  */
 export function getProjectContextFilesPrompt(workingDirectory?: string): string {
   if (!workingDirectory) {
@@ -270,7 +289,7 @@ export function getProjectContextFilesPrompt(workingDirectory?: string): string 
     return '';
   }
 
-  // Format file list with (root) annotation for top-level files
+  // 格式化文件列表：顶层文件额外标注 (root)
   const fileList = contextFiles
     .map((file) => {
       const isRoot = !file.includes('/');
@@ -284,29 +303,34 @@ ${fileList}
 </project_context_files>`;
 }
 
-/** Options for getSystemPrompt */
+/**
+ * getSystemPrompt 的选项集合。
+ * `interface` 定义结构：类似 Go struct，但字段可以标 `?` 表示可选。
+ */
 export interface SystemPromptOptions {
   pinnedPreferencesPrompt?: string;
   debugMode?: DebugModeConfig;
   workspaceRootPath?: string;
-  /** Working directory for context file discovery (monorepo support) */
+  /** 用于发现上下文文件的工作目录（支持 monorepo） */
   workingDirectory?: string;
-  /** Backend name for "powered by X" text (default: 'Claude Code') */
+  /** 后端名称，用于 "powered by X" 文案（默认 'Claude Code'） */
   backendName?: string;
 }
 
 /**
- * System prompt preset types for different agent contexts.
- * - 'default': Full Craft Agent system prompt
- * - 'mini': Focused prompt for quick configuration edits
+ * system prompt 预设类型，用于不同 Agent 场景。
+ * - 'default'：完整的 Craft Agent system prompt
+ * - 'mini'：面向快速配置修改的精简 prompt
+ *
+ * `type` 在这里是给字符串字面量取别名，类似 Go 的 `type Mode string`。
  */
 export type SystemPromptPreset = 'default' | 'mini';
 
 /**
- * Get a focused system prompt for mini agents (quick edit tasks).
- * Optimized for configuration edits with minimal context.
+ * 获取 mini agent 的精简 system prompt。
+ * 用于快速配置编辑类任务，上下文尽可能少。
  *
- * @param workspaceRootPath - Root path of the workspace for config file locations
+ * @param workspaceRootPath - 工作区根路径，用于告诉模型配置文件位置
  */
 export function getMiniAgentSystemPrompt(workspaceRootPath?: string): string {
   const workspaceContext = workspaceRootPath
@@ -333,17 +357,19 @@ Use config_validate to verify changes match the expected schema.
 }
 
 /**
- * Get the full system prompt with current date/time and user preferences
+ * 组装完整的 system prompt。
+ * 可整合用户偏好、调试模式上下文、项目上下文文件等。
  *
- * Note: Safe Mode context is injected via user messages instead of system prompt
- * to preserve prompt caching.
+ * 注意：Safe Mode 的上下文是注入到用户消息中，而不是 system prompt 中，
+ * 这是为了让 system prompt 保持静态，便于 prompt caching。
  *
- * @param pinnedPreferencesPrompt - Pre-formatted preferences (for session consistency)
- * @param debugMode - Debug mode configuration
- * @param workspaceRootPath - Root path of the workspace
- * @param workingDirectory - Working directory for context file discovery
- * @param preset - System prompt preset ('default' | 'mini' | custom string)
- * @param backendName - Backend name for "powered by X" text (default: 'Claude Code')
+ * @param pinnedPreferencesPrompt - 已格式化的用户偏好（用于 compaction 后保持会话一致）
+ * @param debugMode - 调试模式配置
+ * @param workspaceRootPath - 工作区根路径
+ * @param workingDirectory - 用于发现上下文文件的工作目录
+ * @param preset - system prompt 预设（'default' | 'mini' 或自定义字符串）
+ * @param backendName - 后端名称，用于 "powered by X" 文案（默认 'Claude Code'）
+ * @param includeCoAuthoredBy - 是否在 git commit 中加入 Co-Authored-By 尾注
  */
 export function getSystemPrompt(
   pinnedPreferencesPrompt?: string,
@@ -355,29 +381,31 @@ export function getSystemPrompt(
   includeCoAuthoredBy?: boolean,
   projectContext?: ProjectPromptContext,
 ): string {
-  // Use mini agent prompt for quick edits (pass workspace root for config paths)
+  // mini 预设：生成精简 prompt，用于快速配置编辑
   if (preset === 'mini') {
     debug('[getSystemPrompt] 🤖 Generating MINI agent system prompt for workspace:', workspaceRootPath);
     return getMiniAgentSystemPrompt(workspaceRootPath);
   }
 
-  // Use pinned preferences if provided (for session consistency after compaction)
+  // 如果调用方提供了固定的用户偏好则使用它，否则读取当前偏好
+  // pinned 的作用：context compaction 后仍能保持一致
   const preferences = pinnedPreferencesPrompt ?? formatPreferencesForPrompt();
+
+  // `debugMode?.enabled` 是可选链：只有 debugMode 存在且 enabled 为 true 时才生成调试上下文
   const debugContext = debugMode?.enabled ? formatDebugModeContext(debugMode.logFilePath) : '';
 
-  // Get project context files for monorepo support (lives in system prompt for persistence across compaction)
+  // 为 monorepo 获取项目上下文文件列表；放在 system prompt 中可在 compaction 后保留
   const projectContextFiles = getProjectContextFilesPrompt(workingDirectory);
 
-  // Optional workspace-project context (injected after preferences, before debug+context-files)
+  // 可选的 workspace-project 上下文（注入在 preferences 之后、debug+context-files 之前）
   const projectBlock = projectContext ? formatProjectContextForPrompt(projectContext) : '';
 
-  // Fall back to the user's current preference when callers don't pin/pass a value,
-  // so forgetting the argument can't silently re-enable the co-author trailer (see #576).
+  // 调用方没传 includeCoAuthoredBy 时，回退到用户的当前偏好。
+  // 避免忘记传参就静默重新启用 co-author 尾注（见 #576）。
   const resolvedIncludeCoAuthoredBy = includeCoAuthoredBy ?? getCoAuthorPreference();
 
-  // Note: Date/time context is now added to user messages instead of system prompt
-  // to enable prompt caching. The system prompt stays static and cacheable.
-  // Safe Mode context is also in user messages for the same reason.
+  // 日期/时间上下文现在放到用户消息里，使 system prompt 保持静态、可被缓存。
+  // Safe Mode 上下文也出于同样原因放在用户消息中。
   const basePrompt = getCraftAssistantPrompt(workspaceRootPath, backendName, resolvedIncludeCoAuthoredBy);
   const fullPrompt = `${basePrompt}${preferences}${projectBlock}${debugContext}${projectContextFiles}`;
 
@@ -387,51 +415,47 @@ export function getSystemPrompt(
 }
 
 /**
- * Format the project-context block injected into the system prompt.
+ * 格式化注入到 system prompt 中的 project-context 块。
  *
- * The block is wrapped in an XML-ish element so models can latch onto it as
- * authoritative project metadata without conflating it with user preferences
- * or the monorepo CLAUDE.md context.
+ * 该块用类 XML 元素包裹，让模型可以把它当作权威的项目元数据，
+ * 而不会与用户偏好或 monorepo 的 CLAUDE.md 上下文混淆。
  */
-/** Block tags whose closing form must not appear inside injected body content. */
+/** 其闭合形式不能出现在注入的正文内容中的块标签。 */
 const PROJECT_BLOCK_TAGS = ['project_context', 'project_memory', 'project_assets'] as const;
 
 /**
- * Neutralize a literal closing tag inside injected body content so user- or
- * asset-authored text can't terminate the surrounding prompt block early.
- * Surgical: only the specific `</tagName>` sequence is escaped (case- and
- * whitespace-insensitive), leaving markdown and code in the body intact.
+ * 中和注入正文内容中的字面闭合标签，防止用户或 asset 编写的文本提前终止外层 prompt 块。
+ * 精准处理：只转义特定的 `</tagName>` 序列（大小写和空白不敏感），保留正文中的 markdown 和代码原样不动。
  */
 function defangBlockTag(content: string, tagName: string): string {
   const re = new RegExp(`<\\s*/\\s*${tagName}\\s*>`, 'gi');
   return content.replace(re, `&lt;/${tagName}&gt;`);
 }
 
-/** Defang every project block's closing tag within a body field. */
+/** 对正文字段中每个 project 块的闭合标签进行转义。 */
 function defangProjectBlockTags(content: string): string {
   return PROJECT_BLOCK_TAGS.reduce((acc, tag) => defangBlockTag(acc, tag), content);
 }
 
 /**
- * Strip control characters that could truncate or corrupt injected prompt text (NUL, etc.).
- * Preserves tab/newline/CR so multi-line markdown body fields keep their formatting.
+ * 剥离可能截断或损坏注入 prompt 文本的控制字符（NUL 等）。
+ * 保留制表符/换行符/回车符，使多行 markdown 正文字段保持格式。
  */
 function stripDangerousControlChars(content: string): string {
   // eslint-disable-next-line no-control-regex
   return content.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
 }
 
-/** Sanitize a multi-line body field (description/details/memory) before prompt injection. */
+/** 在注入 prompt 前对多行正文字段（description/details/memory）做净化。 */
 function sanitizeProjectBodyText(content: string): string {
   return defangProjectBlockTags(stripDangerousControlChars(content));
 }
 
 /**
- * Sanitize a single-line label (an asset filename) before prompt injection: strip ALL control
- * chars — including newlines/tabs, which have no place in a filename and could forge extra
- * `<project_assets>` list items — and defang block-closing tags so a crafted name can't break
- * out of the surrounding block. `listProjectAssets` reads real dirents, so a bad name can reach
- * the prompt regardless of upload-time sanitizing; this is the robust, last-line defense.
+ * 在注入 prompt 前对单行标签（asset 文件名）做净化：剥离所有控制字符
+ * ——包括换行符/制表符（它们不该出现在文件名中，且可能伪造额外的 `<project_assets>` 列表项）
+ * ——并转义块闭合标签，防止构造的名称突破外层块。`listProjectAssets` 读取真实的 dirents，
+ * 因此无论上传时如何净化，坏名称都可能到达 prompt；这是稳健的最后一道防线。
  */
 function sanitizeProjectFilename(name: string): string {
   // eslint-disable-next-line no-control-regex
@@ -439,7 +463,7 @@ function sanitizeProjectFilename(name: string): string {
 }
 
 export function formatProjectContextForPrompt(ctx: ProjectPromptContext): string {
-  // Attribute-safe escape for the project name (it sits inside a quoted attribute).
+  // 项目名的属性安全转义（它位于引号属性内）。
   const escapeAttr = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -488,8 +512,8 @@ export function formatProjectContextForPrompt(ctx: ProjectPromptContext): string
 }
 
 /**
- * Format debug mode context for the system prompt.
- * Only included when running in development mode.
+ * 为 system prompt 格式化调试模式上下文。
+ * 仅在开发模式/调试模式开启时注入。
  */
 function formatDebugModeContext(logFilePath?: string): string {
   if (!logFilePath) {
@@ -535,39 +559,37 @@ rg -n "session|OAuth|\"level\":\"error\"" "${logFilePath}" | tail -n 50
 }
 
 /**
- * Get the Craft Agent environment marker for SDK JSONL detection.
- * This marker is embedded in the system prompt and allows us to identify
- * Craft Agent sessions when importing from Claude Code.
+ * 生成 Craft Agent 环境标记，用于 SDK 的 JSONL 检测。
+ * 该标记嵌入 system prompt 中，让我们从 Claude Code 导入时能识别出 Craft Agent 会话。
  */
 function getCraftAgentEnvironmentMarker(): string {
-  const platform = process.platform; // 'darwin', 'win32', 'linux'
-  const arch = process.arch; // 'arm64', 'x64'
-  const osVersion = os.release(); // OS kernel version
+  const platform = process.platform; // 平台：'darwin'、'win32'、'linux'
+  const arch = process.arch; // 架构：'arm64'、'x64'
+  const osVersion = os.release(); // 操作系统内核版本
 
   return `<craft_agent_environment version="${APP_VERSION}" platform="${platform}" arch="${arch}" os_version="${osVersion}" />`;
 }
 
 /**
- * Get the Craft Assistant system prompt with workspace-specific paths.
+ * 获取 Craft Assistant 的核心 system prompt，包含工作区相关路径。
  *
- * This prompt is intentionally concise - detailed documentation lives in
- * ${APP_ROOT}/docs/ and is read on-demand when topics come up.
+ * 这个 prompt 有意保持精简：详细文档放在 ${APP_ROOT}/docs/ 下，需要时再读取。
  *
- * @param workspaceRootPath - Root path of the workspace
- * @param backendName - Backend name for "powered by X" text (default: 'Claude Code')
- * @param includeCoAuthoredBy - Whether to include the Co-Authored-By git trailer instruction (default: true)
+ * @param workspaceRootPath - 工作区根路径
+ * @param backendName - 后端名称，用于 "powered by X" 文案（默认 'Claude Code'）
+ * @param includeCoAuthoredBy - 是否包含 Co-Authored-By git 尾注说明（默认 true）
  */
 function getCraftAssistantPrompt(workspaceRootPath?: string, backendName: string = 'Claude Code', includeCoAuthoredBy: boolean = true): string {
-  // Default to ${APP_ROOT}/workspaces/{id} if no path provided
+  // 没传路径时，使用占位符路径
   const workspacePath = workspaceRootPath || `${APP_ROOT}/workspaces/{id}`;
 
-  // Read the SDK plugin name from .claude-plugin/plugin.json — this is what the SDK
-  // uses to resolve skills. Falls back to basename for backwards compatibility.
+  // 从 .claude-plugin/plugin.json 读取 SDK 插件名；SDK 用它解析 skill。
+  // 读不到时依次回退到路径 basename、占位符，保证向后兼容。
   const workspaceId = (workspaceRootPath && readPluginName(workspaceRootPath))
     || basename(workspacePath)
     || '{workspaceId}';
 
-  // Environment marker for SDK JSONL detection
+  // SDK JSONL 检测用的环境标记
   const environmentMarker = getCraftAgentEnvironmentMarker();
 
   const browserToolsSection = getBrowserToolEnabled() ? `

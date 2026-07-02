@@ -1,14 +1,12 @@
 /**
  * SourceServerBuilder
  *
- * Builds MCP and API server configurations from LoadedSource objects.
- * This module handles URL normalization and server config creation,
- * but does NOT fetch credentials - credentials are passed in.
+ * 根据 LoadedSource 对象构建 MCP/API server 配置。
+ * 本模块负责 URL 规范和 server 配置创建，**不**负责获取凭证 —— 凭证由调用方传入。
  *
- * This replaces SourceService's server building logic with a cleaner
- * separation of concerns:
- * - SourceCredentialManager: handles credentials
- * - SourceServerBuilder: handles server configuration
+ * 这是把 SourceService 里的 server 构建逻辑拆出来后的结果：
+ * - SourceCredentialManager：负责凭证
+ * - SourceServerBuilder：负责 server 配置
  */
 
 import type { LoadedSource, ApiConfig } from './types.ts';
@@ -19,8 +17,8 @@ import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { debug } from '../utils/debug.ts';
 
 /**
- * Standard error messages for server build failures.
- * Use these constants instead of string literals to ensure consistent matching.
+ * server 构建失败时的标准错误信息。
+ * 用常量代替硬编码字符串，方便统一匹配。
  */
 export const SERVER_BUILD_ERRORS = {
   AUTH_REQUIRED: 'Authentication required',
@@ -29,46 +27,46 @@ export const SERVER_BUILD_ERRORS = {
 } as const;
 
 /**
- * MCP server configuration compatible with Claude Agent SDK
- * Supports HTTP/SSE (remote) and stdio (local subprocess) transports.
+ * 与 Claude Agent SDK 兼容的 MCP server 配置。
+ * 支持 HTTP/SSE（远程）和 stdio（本地子进程）两种传输。
  */
 export type McpServerConfig =
   | { type: 'http' | 'sse'; url: string; headers?: Record<string, string> }
   | { type: 'stdio'; command: string; args?: string[]; env?: Record<string, string> };
 
 /**
- * Source with its credential pre-loaded
+ * 已预加载凭证的 source
  */
 export interface SourceWithCredential {
   source: LoadedSource;
-  /** Token for MCP sources, or ApiCredential for API sources */
+  /** MCP source 的 token，或 API source 的 ApiCredential */
   token?: string | null;
   credential?: ApiCredential | null;
 }
 
 /**
- * Result of building servers from sources
+ * 从 source 构建 server 的结果
  */
 export interface BuiltServers {
-  /** MCP server configs keyed by source slug */
+  /** 以 source slug 为 key 的 MCP server 配置 */
   mcpServers: Record<string, McpServerConfig>;
-  /** In-process API servers keyed by source slug */
+  /** 以 source slug 为 key 的进程内 API server */
   apiServers: Record<string, ReturnType<typeof createSdkMcpServer>>;
-  /** Sources that failed to build (missing auth, etc.) */
+  /** 构建失败的 source（缺少认证等） */
   errors: Array<{ sourceSlug: string; error: string }>;
 }
 
 /**
- * SourceServerBuilder - builds server configs from sources
+ * SourceServerBuilder - 从 source 构建 server 配置
  *
- * Usage:
+ * 用法示例：
  * ```typescript
  * const builder = new SourceServerBuilder();
  *
- * // Build MCP server config
+ * // 构建单个 MCP server 配置
  * const mcpConfig = builder.buildMcpServer(source, token);
  *
- * // Build all servers from sources with credentials
+ * // 从多个带凭证的 source 构建全部 server
  * const { mcpServers, apiServers, errors } = await builder.buildAll([
  *   { source, token: 'abc123' },
  *   { source: apiSource, credential: 'api-key' },
@@ -77,11 +75,11 @@ export interface BuiltServers {
  */
 export class SourceServerBuilder {
   /**
-   * Build MCP server config from a source
+   * 从 source 构建 MCP server 配置
    *
-   * @param source - The source configuration
-   * @param token - Authentication token (null for public/stdio sources)
-   * @param credential - Multi-header credential from credential store (null if not set)
+   * @param source - source 配置
+   * @param token - 认证 token（公开/stdio source 为 null）
+   * @param credential - 来自凭证库的多 header 凭证（未设置时为 null）
    */
   buildMcpServer(source: LoadedSource, token: string | null, credential?: ApiCredential | null): McpServerConfig | null {
     if (source.config.type !== 'mcp' || !source.config.mcp) {
@@ -90,7 +88,7 @@ export class SourceServerBuilder {
 
     const mcp = source.config.mcp;
 
-    // Handle stdio transport (local subprocess servers)
+    // stdio 传输（本地子进程 server）
     if (mcp.transport === 'stdio') {
       if (!mcp.command) {
         debug(`[SourceServerBuilder] Stdio source ${source.config.slug} missing command`);
@@ -104,7 +102,7 @@ export class SourceServerBuilder {
       };
     }
 
-    // Handle HTTP/SSE transport (remote servers)
+    // HTTP/SSE 传输（远程 server）
     if (!mcp.url) {
       debug(`[SourceServerBuilder] HTTP/SSE source ${source.config.slug} missing URL`);
       return null;
@@ -117,28 +115,28 @@ export class SourceServerBuilder {
       url,
     };
 
-    // Layer headers with increasing precedence:
-    // 1. Static headers from config (non-secret)
-    // 2. Credential-store headers (secret API keys via headerNames)
-    // 3. Authorization bearer token (OAuth/bearer auth — highest priority)
+    // 分层合并请求头，优先级递增：
+    // 1. config 里的静态 headers（非密钥）
+    // 2. 凭证库里的 headerNames（密钥类 API key）
+    // 3. Authorization bearer token（OAuth/bearer 认证，最高优先级）
     let mergedHeaders: Record<string, string> = {};
 
-    // 1. Static headers from config (e.g., X-Custom-Header: value)
+    // 1. 静态 headers（例如 X-Custom-Header: value）
     if (mcp.headers) {
       mergedHeaders = { ...mcp.headers };
     }
 
-    // 2. Credential-store headers (e.g., X-API-Key from credential store)
+    // 2. 凭证库 headers（例如凭证库里的 X-API-Key）
     if (credential && isMultiHeaderCredential(credential)) {
       mergedHeaders = { ...mergedHeaders, ...credential };
     }
 
-    // 3. Auth token (highest priority — OAuth/bearer overrides everything)
+    // 3. 认证 token（最高优先级 —— OAuth/bearer 覆盖其他头）
     if (mcp.authType !== 'none') {
       if (token) {
         mergedHeaders = { ...mergedHeaders, Authorization: `Bearer ${token}` };
       } else if (source.config.isAuthenticated) {
-        // Source claims to be authenticated but token is missing - needs re-auth
+        // source 声称已认证但 token 缺失，需要重新认证
         debug(`[SourceServerBuilder] Source ${source.config.slug} needs re-authentication`);
         return null;
       }
@@ -152,12 +150,13 @@ export class SourceServerBuilder {
   }
 
   /**
-   * Build API server from a source
+   * 从 source 构建 API server
    *
-   * @param source - The source configuration
-   * @param credential - API credential (null for public APIs)
-   * @param getToken - Token getter for OAuth APIs (Google, etc.) - supports auto-refresh
-   * @param sessionPath - Optional path to session folder for saving large responses
+   * @param source - source 配置
+   * @param credential - API 凭证（公开 API 为 null）
+   * @param getToken - OAuth API 的 token getter（支持自动刷新）
+   * @param sessionPath - 可选：用于保存大响应的会话文件夹路径
+   * @param getCredential - 非 OAuth API source 的每次请求凭证 getter
    */
   async buildApiServer(
     source: LoadedSource,
@@ -177,8 +176,8 @@ export class SourceServerBuilder {
     const authType = apiConfig.authType;
     const provider = source.config.provider;
 
-    // Google APIs - use token getter with auto-refresh
-    // Note: Direct isAuthenticated check is safe - Google OAuth always requires auth
+    // Google API：用支持自动刷新的 token getter
+    // 直接检查 isAuthenticated 是安全的 —— Google OAuth 必须认证
     if (provider === 'google') {
       if (!source.config.isAuthenticated || !getToken) {
         debug(`[SourceServerBuilder] Google API source ${source.config.slug} not authenticated`);
@@ -186,13 +185,11 @@ export class SourceServerBuilder {
       }
       debug(`[SourceServerBuilder] Building Google API server for ${source.config.slug}`);
       const config = this.buildApiConfig(source);
-      // Pass the token getter function - it will be called before each request
-      // to get a fresh token (with auto-refresh if expired)
+      // 传入 token getter：每次请求前调用，获取最新 token（过期会自动刷新）
       return createApiServer(config, getToken, sessionPath, summarize);
     }
 
-    // Slack APIs - use token getter with auto-refresh
-    // Note: Direct isAuthenticated check is safe - Slack OAuth always requires auth
+    // Slack API：用支持自动刷新的 token getter
     if (provider === 'slack') {
       if (!source.config.isAuthenticated || !getToken) {
         debug(`[SourceServerBuilder] Slack API source ${source.config.slug} not authenticated`);
@@ -200,13 +197,11 @@ export class SourceServerBuilder {
       }
       debug(`[SourceServerBuilder] Building Slack API server for ${source.config.slug}`);
       const config = this.buildApiConfig(source);
-      // Pass the token getter function - it will be called before each request
-      // to get a fresh token (with auto-refresh if expired)
       return createApiServer(config, getToken, sessionPath, summarize);
     }
 
-    // Generic OAuth APIs — use token getter with auto-refresh
-    // Order matters: provider-specific checks (google, slack) come first
+    // 通用 OAuth API：用支持自动刷新的 token getter
+    // 顺序注意：provider-specific 检查（google、slack）在前面
     if (authType === 'oauth') {
       if (!source.config.isAuthenticated || !getToken) {
         debug(`[SourceServerBuilder] Generic OAuth source ${source.config.slug} not authenticated`);
@@ -217,38 +212,36 @@ export class SourceServerBuilder {
       return createApiServer(config, getToken, sessionPath, summarize);
     }
 
-    // Public APIs (no auth) can be used immediately
+    // 公开 API（无需认证）可直接使用
     if (authType === 'none') {
       debug(`[SourceServerBuilder] Building public API server for ${source.config.slug}`);
       const config = this.buildApiConfig(source);
       return createApiServer(config, '', sessionPath, summarize);
     }
 
-    // Renew-endpoint sources use a token getter for auto-refresh instead of a static credential
+    // renew-endpoint source 用 token getter 自动续期，而不是静态凭证
     if (getToken && apiConfig.renewEndpoint) {
       debug(`[SourceServerBuilder] Building API server for ${source.config.slug} (auth: ${authType}, renew-endpoint)`);
       const config = this.buildApiConfig(source);
       return createApiServer(config, getToken, sessionPath, summarize);
     }
 
-    // API key/bearer/header/query/basic auth.
+    // API key/bearer/header/query/basic 认证。
     //
-    // Use a per-request credential getter when available so that credential
-    // updates (e.g. user pasting a fresh JWT via source_credential_prompt)
-    // are picked up by the next tool call WITHOUT a session restart.
+    // 如果提供了每次请求的凭证 getter，就用它，这样用户在会话中更新凭证
+    //（例如通过 source_credential_prompt 粘贴了新 JWT）后，下一次 tool 调用就能生效，
+    // 不需要重启会话。
     //
-    // The closure captured by createApiTool used to be a static string snapshot
-    // of the credential at build time, which meant the in-process tool kept
-    // using a stale token indefinitely. With a getter, the latest value is
-    // read from the vault on every request.
+    // 之前 createApiTool 捕获的是构建时刻的静态字符串快照，导致进程内 tool 一直用旧 token；
+    // 改用 getter 后每次请求都会从凭证库读最新值。
     if (getCredential) {
       debug(`[SourceServerBuilder] Building API server for ${source.config.slug} (auth: ${authType}, per-request credential)`);
       const config = this.buildApiConfig(source);
       return createApiServer(config, getCredential, sessionPath, summarize);
     }
 
-    // Fallback: no getter provided — preserve legacy static-credential behavior
-    // (still used by tests and callers that don't pass a getter).
+    // 兜底：没有 getter —— 保持老的静态凭证行为
+    //（测试和不传 getter 的调用方仍在用）
     if (!credential) {
       debug(`[SourceServerBuilder] API source ${source.config.slug} needs credentials`);
       return null;
@@ -260,7 +253,7 @@ export class SourceServerBuilder {
   }
 
   /**
-   * Build ApiConfig from a LoadedSource
+   * 从 LoadedSource 构建 ApiConfig
    */
   buildApiConfig(source: LoadedSource): ApiConfig {
     const api = source.config.api!;
@@ -268,13 +261,12 @@ export class SourceServerBuilder {
     const config: ApiConfig = {
       name: source.config.slug,
       baseUrl: api.baseUrl,
-      // documentation is no longer inlined into the tool description (see #683
-      // and api-tools.ts:buildToolDescription). The model reads guide.md via
-      // the prerequisite-manager-enforced Read instead.
+      // documentation 不再内联到 tool 描述里（见 #683 和 api-tools.ts:buildToolDescription）。
+      // 模型通过 prerequisite-manager 强制 Read guide.md 来获取端点细节。
       defaultHeaders: api.defaultHeaders,
     };
 
-    // Map auth type
+    // 映射认证类型
     switch (api.authType) {
       case 'bearer':
         config.auth = { type: 'bearer', authScheme: api.authScheme ?? 'Bearer' };
@@ -289,7 +281,7 @@ export class SourceServerBuilder {
         config.auth = { type: 'basic' };
         break;
       case 'oauth':
-        // Generic OAuth tokens are sent as Bearer tokens
+        // 通用 OAuth token 以 Bearer 形式发送
         config.auth = { type: 'bearer', authScheme: api.authScheme ?? 'Bearer' };
         break;
       case 'none':
@@ -301,16 +293,15 @@ export class SourceServerBuilder {
   }
 
   /**
-   * Build all MCP and API servers for enabled sources
+   * 为所有已启用的 source 构建 MCP/API server
    *
-   * @param sourcesWithCredentials - Sources with their pre-loaded credentials
-   * @param getTokenForSource - Function to get token getter for OAuth / renew-endpoint sources
-   * @param sessionPath - Optional path to session folder for saving large API responses
-   * @param summarize - Optional summarize callback for large API responses
-   * @param getCredentialForSource - Function to get a per-request credential getter for
-   *   non-OAuth API sources (bearer/header/query/basic). When provided, the in-process
-   *   tool reads the credential from the vault on every call instead of caching a
-   *   stale snapshot — required for mid-session credential updates to take effect.
+   * @param sourcesWithCredentials - 带预加载凭证的 source 列表
+   * @param getTokenForSource - 为 OAuth / renew-endpoint source 提供 token getter 的函数
+   * @param sessionPath - 可选：用于保存大 API 响应的会话文件夹路径
+   * @param summarize - 可选：大响应摘要回调
+   * @param getCredentialForSource - 为非 OAuth API source 提供每次请求凭证 getter 的函数。
+   *   传入后，进程内 tool 每次调用都会从凭证库读最新凭证，而不是缓存旧快照 ——
+   *   这是会话中更新凭证能生效的关键。
    */
   async buildAll(
     sourcesWithCredentials: SourceWithCredential[],
@@ -333,8 +324,8 @@ export class SourceServerBuilder {
             debug(`[SourceServerBuilder] Built MCP server for ${source.config.slug}`);
             mcpServers[source.config.slug] = config;
           } else if (source.config.mcp?.transport !== 'stdio' && source.config.mcp?.authType !== 'none') {
-            // Only report auth error for HTTP/SSE sources that need auth
-            // Stdio sources don't need auth
+            // 只对需要认证的 HTTP/SSE source 报告认证错误
+            // stdio source 不需要认证
             debug(`[SourceServerBuilder] MCP server ${source.config.slug} needs auth`);
             errors.push({
               sourceSlug: source.config.slug,
@@ -368,19 +359,19 @@ export class SourceServerBuilder {
 }
 
 /**
- * Normalize MCP URL to standard format
- * - Removes trailing slashes
- * - Preserves the user-configured path as-is (no /mcp suffix appended)
+ * 规范化 MCP URL
+ * - 去掉末尾的斜杠
+ * - 保留用户配置的路径，不自动追加 /mcp
  */
 export function normalizeMcpUrl(url: string): string {
   return url.replace(/\/+$/, '');
 }
 
-// Singleton instance
+// 单例实例
 let instance: SourceServerBuilder | null = null;
 
 /**
- * Get shared SourceServerBuilder instance
+ * 获取共享的 SourceServerBuilder 实例
  */
 export function getSourceServerBuilder(): SourceServerBuilder {
   if (!instance) {

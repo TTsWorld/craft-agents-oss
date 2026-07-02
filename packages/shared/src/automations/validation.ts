@@ -1,8 +1,8 @@
 /**
- * Automation System Validation
+ * 自动化系统校验
  *
- * Validators for automations.json configuration files.
- * Used by PreToolUse automations and workspace validators.
+ * 用于校验 automations.json 配置文件的验证器。
+ * PreToolUse 自动化和工作区校验器都会使用。
  */
 
 import { readFileSync, existsSync } from 'node:fs';
@@ -21,7 +21,7 @@ import type { AutomationsConfig, AutomationsValidationResult } from './types.ts'
 import { MAX_CONDITION_DEPTH_EXCLUSIVE, CONDITION_DEPTH_WARNING_THRESHOLD } from './conditions-constants.ts';
 
 /**
- * Validate automations config (internal - returns parsed config)
+ * 校验自动化配置（内部版本 - 返回解析后的配置）
  */
 export function validateAutomationsConfig(content: unknown): AutomationsValidationResult {
   const result = AutomationsConfigSchema.safeParse(content);
@@ -47,8 +47,8 @@ export function validateAutomationsConfig(content: unknown): AutomationsValidati
 }
 
 /**
- * Run semantic validation checks for matcher definitions.
- * Shared by both object-based runtime validation and JSON-content validation.
+ * 对 matcher 定义做语义校验。
+ * 同时用于基于对象的运行时校验和 JSON 内容校验。
  */
 function runMatcherSemanticValidations(
   config: AutomationsConfig,
@@ -61,7 +61,7 @@ function runMatcherSemanticValidations(
     for (let i = 0; i < matchers.length; i++) {
       const matcher = matchers[i];
       if (!matcher) continue;
-      // Warn about allow-all permission mode
+      // 警告 allow-all 权限模式
       if (matcher.permissionMode === 'allow-all') {
         warnings.push({
           file,
@@ -73,7 +73,7 @@ function runMatcherSemanticValidations(
       }
 
       if (matcher.matcher) {
-        // ReDoS prevention: limit regex complexity
+        // ReDoS 防护：限制正则长度
         const MAX_REGEX_LENGTH = 500;
         if (matcher.matcher.length > MAX_REGEX_LENGTH) {
           errors.push({
@@ -85,13 +85,13 @@ function runMatcherSemanticValidations(
           });
         } else {
           try {
-            // Validate regex syntax
+            // 校验正则语法
             new RegExp(matcher.matcher);
 
-            // Reject catastrophic backtracking (ReDoS) patterns
-            // Detect nested quantifiers: a group containing a quantifier that itself has a quantifier
+            // 拒绝可能导致灾难性回溯（ReDoS）的模式：
+            // 嵌套量词：一个组内包含量词，且该组本身又被量词修饰
             const nestedQuantifiers = /\([^)]*[+*][^)]*\)[+*{]/;
-            // Also detect repeated alternation like (a|a)+ and adjacent greedy quantifiers like .*.*
+            // 重复交替（如 (a|a)+）或相邻贪婪量词（如 .*.*）
             const riskyPatterns = /(\.\*){2,}|(\.\+){2,}|\([^)]*\|[^)]*\)[+*{]/;
             if (nestedQuantifiers.test(matcher.matcher) || riskyPatterns.test(matcher.matcher)) {
               errors.push({
@@ -114,7 +114,7 @@ function runMatcherSemanticValidations(
         }
       }
 
-      // Validate cron expressions
+      // 校验 cron 表达式
       if (matcher.cron) {
         try {
           new Cron(matcher.cron);
@@ -129,7 +129,7 @@ function runMatcherSemanticValidations(
         }
       }
 
-      // Validate timezone
+      // 校验时区
       if (matcher.timezone) {
         try {
           Intl.DateTimeFormat(undefined, { timeZone: matcher.timezone });
@@ -144,7 +144,7 @@ function runMatcherSemanticValidations(
         }
       }
 
-      // Warn about webhook URLs with $VAR templates (can't validate until runtime)
+      // 警告包含 $VAR 模板的 webhook URL（运行时展开后才能校验）
       if (matcher.actions) {
         for (let j = 0; j < matcher.actions.length; j++) {
           const action = matcher.actions[j];
@@ -160,7 +160,7 @@ function runMatcherSemanticValidations(
         }
       }
 
-      // Warn if cron is used on non-SchedulerTick event
+      // 警告在非 SchedulerTick 事件上使用 cron
       if (matcher.cron && event !== 'SchedulerTick') {
         warnings.push({
           file,
@@ -171,7 +171,7 @@ function runMatcherSemanticValidations(
         });
       }
 
-      // Validate conditions
+      // 校验 conditions
       if (matcher.conditions && Array.isArray(matcher.conditions)) {
         validateConditionsArray(matcher.conditions, `automations.${event}[${i}].conditions`, event, file, errors, warnings, 0);
       }
@@ -180,16 +180,16 @@ function runMatcherSemanticValidations(
 }
 
 /**
- * Validate automations config from a JSON string (no disk reads).
- * Used by PreToolUse automation to validate before writing to disk.
- * Follows the same pattern as other config validators in validators.ts.
+ * 从 JSON 字符串校验自动化配置（不读盘）。
+ * PreToolUse 自动化在写入磁盘前用它做校验。
+ * 模式与 validators.ts 中的其他校验器保持一致。
  */
 export function validateAutomationsContent(jsonString: string, fileName?: string): ValidationResult {
   const file = fileName ?? AUTOMATIONS_CONFIG_FILE;
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
 
-  // Parse JSON
+  // 解析 JSON
   let content: unknown;
   try {
     content = JSON.parse(jsonString);
@@ -206,17 +206,17 @@ export function validateAutomationsContent(jsonString: string, fileName?: string
     };
   }
 
-  // Validate schema
+  // Schema 校验
   const result = AutomationsConfigSchema.safeParse(content);
   if (!result.success) {
     errors.push(...zodErrorToIssues(result.error, file));
     return { valid: false, errors, warnings };
   }
 
-  // Semantic validations
+  // 语义校验
   const config = result.data;
 
-  // Check for empty automations
+  // 检查是否为空配置
   const matcherCount = Object.values(config.automations).reduce(
     (sum, matchers) => sum + (matchers?.length ?? 0),
     0
@@ -231,7 +231,7 @@ export function validateAutomationsContent(jsonString: string, fileName?: string
     });
   }
 
-  // Check for deprecated event aliases in the raw JSON (before transform rewrites them)
+  // 在 transform 重写前检查原始 JSON 中的废弃别名
   try {
     const rawConfig = JSON.parse(jsonString) as { automations?: Record<string, unknown> };
     if (rawConfig.automations) {
@@ -249,7 +249,7 @@ export function validateAutomationsContent(jsonString: string, fileName?: string
       }
     }
   } catch {
-    // JSON already validated above, this shouldn't happen
+    // 上面的 JSON 解析已经通过，这里不应该失败
   }
 
   runMatcherSemanticValidations(config, file, errors, warnings);
@@ -262,14 +262,14 @@ export function validateAutomationsContent(jsonString: string, fileName?: string
 }
 
 /**
- * Validate automations.json from workspace path (reads from disk).
- * Follows the same pattern as other validators in validators.ts.
+ * 从 workspace 路径校验 automations.json（读盘）。
+ * 模式与 validators.ts 中的其他校验器保持一致。
  */
 export function validateAutomations(workspaceRoot: string): ValidationResult {
   const configPath = resolveAutomationsConfigPath(workspaceRoot);
   const file = 'automations.json';
 
-  // Automations config is optional - no config means no automations (valid state)
+  // 自动化配置是可选的 - 没有配置也是合法状态
   if (!existsSync(configPath)) {
     return {
       valid: true,
@@ -299,8 +299,7 @@ export function validateAutomations(workspaceRoot: string): ValidationResult {
     };
   }
 
-  // Parse JSON once — validateAutomationsContent also parses, but we need the
-  // parsed object for workspace-aware validations below
+  // 只解析一次 - validateAutomationsContent 内部也会解析，但下面 workspace 相关校验需要解析后的对象
   let content: unknown;
   try {
     content = JSON.parse(raw);
@@ -317,17 +316,17 @@ export function validateAutomations(workspaceRoot: string): ValidationResult {
     };
   }
 
-  // Validate content (schema + semantic checks)
+  // 校验内容（schema + 语义）
   const contentResult = validateAutomationsContent(raw);
   if (!contentResult.valid) {
     return contentResult;
   }
 
-  // Additional workspace-aware validations
+  // 额外 workspace 相关校验
   const errors: ValidationIssue[] = [];
   const warnings = [...contentResult.warnings];
 
-  // Validate labels, llmConnection slugs, and model compatibility
+  // 校验 label、llmConnection slug 和模型兼容性
   try {
     const config = content as { automations?: Record<string, Array<{ labels?: string[]; actions?: Array<{ type: string; llmConnection?: string; model?: string }> }>> };
     const labelEntries = config.automations;
@@ -338,7 +337,7 @@ export function validateAutomations(workspaceRoot: string): ValidationResult {
           const matcher = matchers[i];
           if (matcher?.labels) {
             for (const label of matcher.labels) {
-              // Extract label ID (handles "priority::3" -> "priority")
+              // 提取 label ID（处理 "priority::3" -> "priority"）
               const labelId = extractLabelId(label);
               if (!isValidLabelId(workspaceRoot, labelId)) {
                 warnings.push({
@@ -351,7 +350,7 @@ export function validateAutomations(workspaceRoot: string): ValidationResult {
               }
             }
           }
-          // Validate llmConnection slugs and model compatibility in prompt actions
+          // 在 prompt 动作中校验 llmConnection slug 和模型兼容性
           const actions = matcher?.actions;
           if (actions) {
             for (const action of actions) {
@@ -360,8 +359,8 @@ export function validateAutomations(workspaceRoot: string): ValidationResult {
               if (action.llmConnection) {
                 const connection = getLlmConnection(action.llmConnection);
                 if (!connection) {
-                  // Missing connection is an error — the automation will fail at runtime
-                  // (falls back to default connection, which likely doesn't support the model)
+                  // 缺少 connection 是错误 - 运行时会失败
+                  //（会回退默认 connection，但默认 connection 很可能不支持该模型）
                   errors.push({
                     file,
                     path: `automations.${event}[${i}].actions`,
@@ -370,14 +369,14 @@ export function validateAutomations(workspaceRoot: string): ValidationResult {
                     suggestion: 'Check the connection slug in AI Settings or config.json',
                   });
                 } else if (action.model) {
-                  // Validate model is available for this connection
+                  // 校验模型是否在该 connection 上可用
                   const availableModels = connection.models ?? getDefaultModelsForConnection(connection.providerType, connection.piAuthProvider);
                   const modelIds = availableModels.map(m => typeof m === 'string' ? m : (m as ModelDefinition).id);
-                  // Check exact match or suffix match (e.g. "haiku" matches "claude-haiku-4-5-20251001")
+                  // 支持精确匹配或后缀匹配，例如 "haiku" 匹配 "claude-haiku-4-5-20251001"
                   const modelValue = action.model;
                   const isAvailable = modelIds.some(id =>
                     id === modelValue || id.endsWith(`/${modelValue}`) ||
-                    // Also match short aliases: "haiku" → any id containing "haiku", "sonnet" → "sonnet", etc.
+                    // 也支持短别名：如 "haiku" 匹配任何包含 "haiku" 的 id
                     id.toLowerCase().includes(modelValue.toLowerCase())
                   );
                   if (!isAvailable) {
@@ -397,7 +396,7 @@ export function validateAutomations(workspaceRoot: string): ValidationResult {
       }
     }
   } catch {
-    // JSON already validated, this shouldn't happen
+    // JSON 已经校验过，这里不应该失败
   }
 
   const allErrors = [...contentResult.errors, ...errors];
@@ -409,13 +408,13 @@ export function validateAutomations(workspaceRoot: string): ValidationResult {
 }
 
 // ============================================================================
-// Condition Validation Helpers
+// 条件校验辅助函数
 // ============================================================================
 
 const VALID_WEEKDAYS = new Set(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']);
 const HH_MM_RE = /^\d{2}:\d{2}$/;
 
-/** Events that have transition fields (from/to) */
+/** 支持 transition 字段（from/to）的事件 */
 const TRANSITION_EVENTS = new Set(['PermissionModeChange', 'SessionStatusChange']);
 
 function validateConditionsArray(
@@ -427,8 +426,7 @@ function validateConditionsArray(
   warnings: ValidationIssue[],
   depth: number,
 ): void {
-  // Depth starts at 0 for top-level conditions; allowed depth indexes are
-  // 0..MAX_CONDITION_DEPTH_EXCLUSIVE-1.
+  // 顶层深度从 0 开始；允许的最大下标是 MAX_CONDITION_DEPTH_EXCLUSIVE-1
   if (depth > CONDITION_DEPTH_WARNING_THRESHOLD) {
     warnings.push({
       file,
@@ -520,7 +518,7 @@ function validateStateCondition(
   errors: ValidationIssue[],
   warnings: ValidationIssue[],
 ): void {
-  // Check operator exclusivity
+  // 检查操作符互斥性
   const hasValue = cond.value !== undefined;
   const hasFrom = cond.from !== undefined;
   const hasTo = cond.to !== undefined;
@@ -534,7 +532,7 @@ function validateStateCondition(
     errors.push({ file, path, message: 'State condition must use exactly one operator group (value, from/to, contains, or not_value)', severity: 'error' });
   }
 
-  // Warn if from/to used on non-transition events
+  // 警告在非 transition 事件上使用 from/to
   if ((hasFrom || hasTo) && !TRANSITION_EVENTS.has(event)) {
     warnings.push({
       file,

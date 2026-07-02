@@ -1,13 +1,12 @@
 /**
- * SendToWorkspaceDialog — Transfer sessions to remote workspaces.
+ * SendToWorkspaceDialog - 把会话发送到远程工作区的对话框。
  *
- * Shows a workspace picker filtered to remote workspaces only (sending
- * between local workspaces on the same machine is pointless).
- * Disconnected remote workspaces are shown as disabled with a CloudOff icon.
+ * 只显示远程工作区（同一机器上的本地工作区之间发送没有意义）。
+ * 不可达的远程工作区显示为禁用，并带 CloudOff 图标。
  *
- * Uses invokeOnServer for cross-server transfer:
- * 1. Generate a mini-summary handoff payload from the current server
- * 2. Import that summarized payload on the target server via temporary connection
+ * 跨服务器传输流程：
+ * 1. 从当前服务器生成一个迷你摘要 handoff payload
+ * 2. 通过临时连接把摘要导入目标服务器
  */
 
 import * as React from 'react'
@@ -29,19 +28,21 @@ import { useWorkspaceIcons } from '@/hooks/useWorkspaceIcon'
 import { cn } from '@/lib/utils'
 import type { Workspace } from '../../../shared/types'
 
+/** SendToWorkspaceDialogProps：组件 props 类型定义 */
 export interface SendToWorkspaceDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** Session IDs to transfer */
+  /** 要传输的会话 ID 列表 */
   sessionIds: string[]
-  /** All workspaces */
+  /** 所有工作区 */
   workspaces: Workspace[]
-  /** Current workspace ID (excluded from picker) */
+  /** 当前工作区 ID（选择器中排除） */
   activeWorkspaceId: string | null
-  /** Called after successful transfer with target workspace ID and new session IDs */
+  /** 传输成功后回调，返回目标工作区 ID 和新会话 ID 列表 */
   onTransferComplete?: (targetWorkspaceId: string, newSessionIds: string[]) => void
 }
 
+/** SendToWorkspaceDialog - 发送会话到远程工作区 */
 export function SendToWorkspaceDialog({
   open,
   onOpenChange,
@@ -53,19 +54,18 @@ export function SendToWorkspaceDialog({
   const { t } = useTranslation()
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null)
   const [isTransferring, setIsTransferring] = useState(false)
-  // Normalized overall progress (0–1) across all sessions in the batch
+  // 整个批次传输的归一化进度（0–1）
   const [overallProgress, setOverallProgress] = useState(0)
   const workspaceIconMap = useWorkspaceIcons(workspaces)
 
-  // Listen for chunk upload progress from main process and normalize across batch
+  // 监听主进程的 chunk 上传进度，并归一化到整个批次
   useEffect(() => {
     if (!isTransferring) {
       setOverallProgress(0)
       return
     }
     const cleanup = window.electronAPI.onTransferProgress((p) => {
-      // Each session contributes 1/sessionCount to the total.
-      // Within a session, chunkSent/chunkTotal fills that slice.
+      // 每个会话贡献 1/sessionCount 的总进度；会话内按 chunkSent/chunkTotal 填充该片段。
       const sessionSlice = 1 / p.sessionCount
       const withinSession = p.chunkTotal > 0 ? p.chunkSent / p.chunkTotal : 1
       setOverallProgress(p.sessionIndex * sessionSlice + withinSession * sessionSlice)
@@ -73,35 +73,34 @@ export function SendToWorkspaceDialog({
     return cleanup
   }, [isTransferring])
 
-  // Health check results for remote workspaces (checked on dialog open)
+  // 远程工作区健康检查结果（对话框打开时检测）
   const [remoteHealthMap, setRemoteHealthMap] = useState<Map<string, 'ok' | 'error' | 'checking'>>(new Map())
   const healthCheckAbort = useRef<AbortController | null>(null)
 
-  // Only show remote workspaces (local-to-local is pointless)
+  // 只显示远程工作区（本地到本地无意义）
   const remoteWorkspaces = workspaces.filter(w => w.id !== activeWorkspaceId && w.remoteServer)
 
-  // Check connectivity for all remote workspaces when dialog opens
+  // 对话框打开时检测所有远程工作区的连通性
   useEffect(() => {
     if (!open) {
       healthCheckAbort.current?.abort()
       return
     }
 
-    // Cancel any in-flight checks
+    // 取消进行中的检测
     healthCheckAbort.current?.abort()
     const abort = new AbortController()
     healthCheckAbort.current = abort
 
     if (remoteWorkspaces.length === 0) return
 
-    // Mark all as checking
     setRemoteHealthMap(() => {
       const next = new Map<string, 'ok' | 'error' | 'checking'>()
       for (const ws of remoteWorkspaces) next.set(ws.id, 'checking')
       return next
     })
 
-    // Fire parallel checks
+    // 并行检测
     for (const ws of remoteWorkspaces) {
       window.electronAPI.testRemoteConnection(ws.remoteServer!.url, ws.remoteServer!.token)
         .then(result => {
@@ -134,7 +133,7 @@ export function SendToWorkspaceDialog({
 
       for (let i = 0; i < sessionIds.length; i++) {
         const sessionId = sessionIds[i]
-        // Main process handles export + summary + transport (chunked for large bundles)
+        // 主进程处理导出 + 摘要 + 传输（大数据包会分块）
         const result = await window.electronAPI.transferSessionToWorkspace(sessionId, selectedWorkspaceId, i, sessionIds.length)
         newSessionIds.push(result.sessionId)
       }
@@ -180,7 +179,7 @@ export function SendToWorkspaceDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Workspace list — remote only */}
+        {/* 工作区列表——仅远程 */}
         <div className="flex flex-col gap-1 max-h-64 overflow-y-auto py-1">
           {remoteWorkspaces.length === 0 ? (
             <p className="text-sm text-muted-foreground px-2 py-4 text-center">
@@ -248,7 +247,9 @@ export function SendToWorkspaceDialog({
   )
 }
 
-/** Send button with purple LED border that traces around it during transfer */
+/**
+ * TransferButton - 发送按钮，传输时显示紫色 LED 边框围绕按钮转动。
+ */
 function TransferButton({ onClick, disabled, isTransferring, progress }: {
   onClick: () => void
   disabled: boolean

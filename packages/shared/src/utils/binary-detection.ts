@@ -1,44 +1,44 @@
 /**
- * Binary Detection & File Saving Utilities
+ * 二进制检测与文件保存工具
  *
- * Shared binary content detection used by guardLargeResult() to handle
- * binary data across all tool result paths (API tools, MCP tools, Claude SDK).
+ * 共享的二进制内容检测，被 guardLargeResult() 用于处理所有工具结果路径
+ * 中的二进制数据（API 工具、MCP 工具、Claude SDK）。
  *
- * Extracted from api-tools.ts for centralized use.
+ * 从 api-tools.ts 中提取出来，以便集中使用。
  */
 
 import { mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 // ============================================================
-// Constants
+// 常量
 // ============================================================
 
-/** Maximum file size for binary downloads (500MB) — prevents OOM */
+/** 二进制下载的最大文件大小（500MB）——防止 OOM */
 export const MAX_DOWNLOAD_SIZE = 500 * 1024 * 1024;
 
 /**
- * Magic bytes (file signatures) for common binary formats.
- * Used to detect file type when MIME type is unknown or generic.
+ * 常见二进制格式的魔数（文件签名）。
+ * 当 MIME 类型未知或为通用类型时，用于检测文件类型。
  */
 const MAGIC_SIGNATURES: Array<{ bytes: number[]; ext: string }> = [
   { bytes: [0x25, 0x50, 0x44, 0x46], ext: '.pdf' },           // %PDF
   { bytes: [0x89, 0x50, 0x4E, 0x47], ext: '.png' },           // .PNG
   { bytes: [0xFF, 0xD8, 0xFF], ext: '.jpg' },                  // JPEG
   { bytes: [0x47, 0x49, 0x46, 0x38], ext: '.gif' },           // GIF8
-  { bytes: [0x50, 0x4B, 0x03, 0x04], ext: '.zip' },           // PK.. (also docx, xlsx, pptx)
+  { bytes: [0x50, 0x4B, 0x03, 0x04], ext: '.zip' },           // PK..（也含 docx、xlsx、pptx）
   { bytes: [0x52, 0x61, 0x72, 0x21], ext: '.rar' },           // Rar!
   { bytes: [0x1F, 0x8B], ext: '.gz' },                         // gzip
   { bytes: [0x42, 0x4D], ext: '.bmp' },                        // BM
-  { bytes: [0x49, 0x44, 0x33], ext: '.mp3' },                  // ID3 (MP3 with ID3 tag)
-  { bytes: [0xFF, 0xFB], ext: '.mp3' },                        // MP3 frame sync
-  { bytes: [0x52, 0x49, 0x46, 0x46], ext: '.wav' },           // RIFF (WAV container)
+  { bytes: [0x49, 0x44, 0x33], ext: '.mp3' },                  // ID3（带 ID3 标签的 MP3）
+  { bytes: [0xFF, 0xFB], ext: '.mp3' },                        // MP3 帧同步
+  { bytes: [0x52, 0x49, 0x46, 0x46], ext: '.wav' },           // RIFF（WAV 容器）
   { bytes: [0x4F, 0x67, 0x67, 0x53], ext: '.ogg' },           // OggS
   { bytes: [0x66, 0x4C, 0x61, 0x43], ext: '.flac' },          // fLaC
 ];
 
 /**
- * MIME type to file extension mapping for binary downloads.
+ * MIME 类型到文件扩展名的映射，用于二进制下载。
  */
 export const MIME_TO_EXT: Record<string, string> = {
   'application/pdf': '.pdf',
@@ -74,46 +74,45 @@ export const MIME_TO_EXT: Record<string, string> = {
 };
 
 // ============================================================
-// Detection Functions
+// 检测函数
 // ============================================================
 
 /**
- * Inspect buffer contents to detect binary data.
- * Checks for null bytes and high ratio of non-printable characters.
+ * 检查 buffer 内容判断是否为二进制数据。
+ * 检查空字节和不可打印字符的高比例。
  *
- * UTF-8 handling: We skip ALL bytes >= 0x80 (multibyte sequences) to avoid
- * misclassifying international text (accented chars, emojis, CJK) as binary.
- * Only ASCII bytes (0x00-0x7F) are analyzed for printability.
+ * UTF-8 处理：跳过所有 >= 0x80 的字节（多字节序列），避免把国际文本
+ * （带重音符号、emoji、CJK）误判为二进制。只分析 ASCII 字节（0x00-0x7F）的可打印性。
  */
 export function looksLikeBinary(buffer: Buffer): boolean {
-  // Check first 8KB for binary indicators
+  // 只检查前 8KB
   const sample = buffer.slice(0, 8192);
 
-  // Null bytes are a dead giveaway for binary
+  // 空字节是二进制的明显标志
   if (sample.includes(0x00)) return true;
 
-  // Count non-printable ASCII characters (skip UTF-8 multibyte entirely)
+  // 统计不可打印 ASCII 字符数量（完全跳过 UTF-8 多字节）
   let nonPrintable = 0;
   let asciiCount = 0;
   for (const byte of sample) {
-    // Skip UTF-8 multibyte sequences (both leading and continuation bytes)
+    // 跳过 UTF-8 多字节序列（首字节和延续字节都跳过）
     if (byte >= 0x80) continue;
 
     asciiCount++;
-    // Check if ASCII byte is non-printable (excluding common whitespace)
+    // 判断 ASCII 字节是否不可打印（排除常见空白）
     if (byte < 0x09 || (byte > 0x0D && byte < 0x20)) {
       nonPrintable++;
     }
   }
 
-  // If >10% of ASCII bytes are non-printable, likely binary
+  // 若 ASCII 字节中超过 10% 不可打印，则可能是二进制
   return asciiCount > 0 && (nonPrintable / asciiCount) > 0.10;
 }
 
 /**
- * Detect file extension from magic bytes (file signature).
- * Inspects first bytes of buffer to identify common file formats.
- * Returns extension with dot (e.g., '.pdf') or empty string if unknown.
+ * 根据魔数（文件签名）检测文件扩展名。
+ * 检查 buffer 前几个字节来识别常见文件格式。
+ * 返回带点号的扩展名（如 '.pdf'），未知返回空字符串。
  */
 export function detectExtensionFromMagic(buffer: Buffer): string {
   if (buffer.length < 8) return '';
@@ -127,7 +126,7 @@ export function detectExtensionFromMagic(buffer: Buffer): string {
 }
 
 /**
- * Get file extension from MIME type, with optional magic byte fallback.
+ * 根据 MIME 类型获取文件扩展名，可选魔数回退。
  */
 export function getMimeExtension(mimeType: string | null, buffer?: Buffer): string {
   if (mimeType) {
@@ -144,34 +143,34 @@ export function getMimeExtension(mimeType: string | null, buffer?: Buffer): stri
 }
 
 // ============================================================
-// Inline Base64 Detection
+// 内联 Base64 检测
 // ============================================================
 
-/** Minimum base64 payload length to consider (avoids short tokens, API keys, JWTs) */
+/** 视为有意义二进制所需的最小 base64 载荷长度（避免短 token、API key、JWT） */
 const MIN_BASE64_LENGTH = 256;
 
-/** Minimum decoded size in bytes to consider as meaningful binary */
+/** 视为有意义内容所需的最小解码后字节数 */
 const MIN_DECODED_SIZE = 128;
 
-/** MIME types that are inherently binary (skip looksLikeBinary verification on decoded bytes) */
+/**  inherently 二进制的 MIME 类型（解码后跳过 looksLikeBinary 校验） */
 const BINARY_MIME_PREFIXES = ['image/', 'audio/', 'video/', 'application/pdf', 'application/zip', 'application/gzip', 'application/octet-stream'];
 
-/** Data URL regex: data:<mime>;base64,<payload> */
+/** Data URL 正则：data:<mime>;base64,<payload> */
 const DATA_URL_RE = /^data:([^;,]+);base64,(.+)$/s;
 
 /**
- * Result of extracting base64-encoded binary from a string.
+ * 从字符串中提取 base64 编码二进制的结果。
  */
 export interface Base64ExtractionResult {
   buffer: Buffer;
   mimeType: string | null;
-  /** File extension (with dot) derived from MIME or magic bytes */
+  /** 从 MIME 或魔数推导出的文件扩展名（含点号） */
   ext: string;
   source: 'data-url' | 'raw-base64';
 }
 
 /**
- * Check if a MIME type is inherently binary (no need to verify decoded bytes).
+ * 判断 MIME 类型是否本质上是二进制（无需再校验解码后的字节）。
  */
 function isBinaryMime(mime: string): boolean {
   const normalized = mime.toLowerCase().trim();
@@ -179,22 +178,22 @@ function isBinaryMime(mime: string): boolean {
 }
 
 /**
- * Try to extract base64-encoded binary content from a text string.
+ * 尝试从文本字符串中提取 base64 编码的二进制内容。
  *
- * Handles two forms:
- * 1. Data URLs: `data:<mime>;base64,<payload>`
- * 2. Raw base64 blobs: long strings of base64 characters
+ * 处理两种形式：
+ * 1. Data URL：`data:<mime>;base64,<payload>`
+ * 2. 原始 base64 块：长串 base64 字符
  *
- * Two-step verification to minimize false positives:
- * - Charset + structure check (is it plausibly base64?)
- * - Decode + binary verification (are the decoded bytes actually binary?)
+ * 两步校验以降低误报：
+ * - 字符集 + 结构检查（是否可能是 base64？）
+ * - 解码 + 二进制校验（解码后的字节是否真是二进制？）
  *
- * Returns null if the string doesn't contain extractable base64 binary.
+ * 返回 null 表示不包含可提取的 base64 二进制。
  */
 export function extractBase64Binary(text: string): Base64ExtractionResult | null {
   const trimmed = text.trim();
 
-  // --- Path A: Data URL ---
+  // --- 路径 A：Data URL ---
   const dataUrlMatch = trimmed.match(DATA_URL_RE);
   if (dataUrlMatch) {
     const mime = dataUrlMatch[1]!;
@@ -205,7 +204,7 @@ export function extractBase64Binary(text: string): Base64ExtractionResult | null
       const decoded = Buffer.from(payload, 'base64');
       if (decoded.length < MIN_DECODED_SIZE) return null;
 
-      // For known binary MIME types, trust the MIME — skip looksLikeBinary check
+      // 已知二进制 MIME 直接信任，跳过 looksLikeBinary
       if (!isBinaryMime(mime) && !looksLikeBinary(decoded)) return null;
 
       const ext = getMimeExtension(mime, decoded) || '.bin';
@@ -215,37 +214,37 @@ export function extractBase64Binary(text: string): Base64ExtractionResult | null
     }
   }
 
-  // --- Path B: Raw base64 blob ---
-  // Strict canonicalization pipeline — rejects anything that isn't structurally
-  // valid base64. Eliminates false positives from Node's lenient Buffer.from().
+  // --- 路径 B：原始 base64 块 ---
+  // 严格规范化管线——拒绝结构上不是标准 base64 的输入，
+  // 消除 Node 宽松 Buffer.from() 带来的误报。
   if (trimmed.length < MIN_BASE64_LENGTH) return null;
 
-  // Quick reject: structured data delimiters
+  // 快速拒绝：结构化数据分隔符
   const firstChar = trimmed.charCodeAt(0);
   if (firstChar === 0x7B || firstChar === 0x5B || firstChar === 0x3C) return null; // { [ <
 
-  // Step 1: Strip only CR/LF (standard base64 line wrapping per RFC 2045).
-  // Spaces are NOT stripped — real base64 never contains spaces.
+  // 步骤 1：只剥离 CR/LF（RFC 2045 标准 base64 行换行）。
+  // 空格不剥离——真正的 base64 不会包含空格。
   const stripped = trimmed.replace(/[\r\n]/g, '');
 
-  // Step 2: Strict charset — detect alphabet variant.
-  // Standard: [A-Za-z0-9+/] with optional = padding
-  // URL-safe: [A-Za-z0-9\-_] with optional = padding
+  // 步骤 2：严格字符集——检测字母表变体。
+  // 标准：[A-Za-z0-9+/]，可选 = 填充
+  // URL-safe：[A-Za-z0-9\-_]，可选 = 填充
   const isStandard = /^[A-Za-z0-9+/]+=*$/.test(stripped);
   const isUrlSafe = !isStandard && /^[A-Za-z0-9\-_]+=*$/.test(stripped);
   if (!isStandard && !isUrlSafe) return null;
 
-  // Step 3: Normalize to standard alphabet for decoding
+  // 步骤 3：规范化为标准字母表以便解码
   const normalized = isUrlSafe
     ? stripped.replace(/-/g, '+').replace(/_/g, '/')
     : stripped;
 
-  // Step 4: Auto-pad to make length divisible by 4
+  // 步骤 4：自动填充，使长度能被 4 整除
   const padded = normalized.length % 4 === 0
     ? normalized
     : normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
 
-  // Step 5: Decode
+  // 步骤 5：解码
   let decoded: Buffer;
   try {
     decoded = Buffer.from(padded, 'base64');
@@ -254,11 +253,11 @@ export function extractBase64Binary(text: string): Base64ExtractionResult | null
   }
   if (decoded.length < MIN_DECODED_SIZE) return null;
 
-  // Step 6: Canonical roundtrip — re-encode and compare to padded input.
-  // Catches any input that Node's lenient decoder silently mangled.
+  // 步骤 6：规范往返——重新编码并与填充后的输入比较。
+  // 捕获任何被 Node 宽松解码器静默篡改的输入。
   if (decoded.toString('base64') !== padded) return null;
 
-  // Step 7: Binary-likeness check (unchanged)
+  // 步骤 7：二进制相似性检查
   if (!looksLikeBinary(decoded)) return null;
 
   const ext = detectExtensionFromMagic(decoded) || '.bin';
@@ -266,10 +265,10 @@ export function extractBase64Binary(text: string): Base64ExtractionResult | null
 }
 
 // ============================================================
-// File Saving
+// 文件保存
 // ============================================================
 
-/** Format bytes to human-readable string. */
+/** 将字节数格式化为可读字符串。 */
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
   const k = 1024;
@@ -279,7 +278,7 @@ export function formatBytes(bytes: number): string {
   return `${size.toFixed(i > 0 ? 1 : 0)} ${sizes[i]}`;
 }
 
-/** Sanitize filename by removing unsafe characters. */
+/** 清理文件名，移除不安全字符。 */
 export function sanitizeFilename(filename: string): string {
   return filename
     .replace(/[/\\:*?"<>|]/g, '_')
@@ -290,7 +289,7 @@ export function sanitizeFilename(filename: string): string {
 }
 
 /**
- * Binary download result returned to the agent.
+ * 返回给 Agent 的二进制下载结果。
  */
 export interface BinaryDownloadResult {
   type: 'file_download';
@@ -302,7 +301,7 @@ export interface BinaryDownloadResult {
 }
 
 /**
- * Error result returned when binary save fails.
+ * 二进制保存失败时返回的错误结果。
  */
 export interface BinaryDownloadError {
   type: 'file_download_error';
@@ -310,8 +309,8 @@ export interface BinaryDownloadError {
 }
 
 /**
- * Save binary response to session's downloads folder.
- * Uses atomic file creation (O_EXCL) to prevent TOCTOU race conditions.
+ * 将二进制响应保存到会话的 downloads 文件夹。
+ * 使用原子文件创建（O_EXCL）防止 TOCTOU 竞态条件。
  */
 export function saveBinaryResponse(
   sessionPath: string,

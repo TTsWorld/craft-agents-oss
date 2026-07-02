@@ -2,11 +2,16 @@ import type { SessionToolContext } from '../context.ts';
 import type { ToolResult } from '../types.ts';
 import { successResponse, errorResponse } from '../response.ts';
 
+// set_session_status 参数：不传 sessionId 表示操作当前会话
 export interface SetSessionStatusArgs {
   sessionId?: string;
   status: string;
 }
 
+/**
+ * 处理 set_session_status tool 调用。
+ * 修改会话状态；如果上下文支持 resolveStatus，会先把显示名解析为内部状态 ID。
+ */
 export async function handleSetSessionStatus(
   ctx: SessionToolContext,
   args: SetSessionStatusArgs
@@ -18,7 +23,7 @@ export async function handleSetSessionStatus(
   try {
     let status = args.status;
 
-    // Resolve display name → ID, reject unknown statuses
+    // 把状态显示名解析为内部 ID；未知状态直接报错
     if (ctx.resolveStatus) {
       const { resolved, available, category } = ctx.resolveStatus(status);
       if (!resolved) {

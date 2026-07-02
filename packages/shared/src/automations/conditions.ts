@@ -1,58 +1,57 @@
 /**
- * Automation Condition Evaluator
+ * 自动化条件求值器
  *
- * Pure synchronous evaluation engine for automation conditions.
- * Inspired by Home Assistant's condition system.
+ * 纯同步的条件求值引擎，灵感来自 Home Assistant 的条件系统。
  *
- * Supports:
- * - time: Time-of-day and day-of-week checks
- * - state: Event payload field checks with HA-style from/to for transitions
- * - and/or/not: Logical composition with short-circuit evaluation
+ * 支持：
+ * - time：时间范围和星期检查
+ * - state：事件 payload 字段检查，支持 from/to transition 写法
+ * - and/or/not：逻辑组合，短路求值
  */
 
 import type { AutomationCondition, TimeCondition, StateCondition, LogicalCondition } from './types.ts';
 import { MAX_CONDITION_DEPTH_EXCLUSIVE } from './conditions-constants.ts';
 
 // ============================================================================
-// Constants
+// 常量
 // ============================================================================
 
 /**
- * Maps user-facing field names to internal payload field pairs for transition events.
- * When a user writes `field: "permissionMode"` with `from`/`to`, we resolve to the
- * actual payload keys (e.g. `oldMode`/`newMode`).
+ * 把用户友好的字段名映射到 transition 事件内部 payload 的字段对。
+ * 当用户写 `field: "permissionMode"` 并带 from/to 时，实际比较的是
+ * payload 里的 oldMode/newMode。
  */
 const TRANSITION_FIELDS: Record<string, { to: string; from: string }> = {
   permissionMode: { to: 'newMode', from: 'oldMode' },
   sessionStatus: { to: 'newState', from: 'oldState' },
 };
 
-/** Map 3-letter weekday names to JS Date.getDay() / Intl weekday numbers (1=Mon..7=Sun) */
+/** 星期缩写到 JS Date.getDay()/Intl 星期编号（1=周一..7=周日）的映射 */
 const WEEKDAY_MAP: Record<string, number> = {
   mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 7,
 };
 
 // ============================================================================
-// Context
+// 上下文
 // ============================================================================
 
-/** Context passed to condition evaluators */
+/** 传给条件求值的上下文 */
 export interface ConditionContext {
-  /** Event payload fields */
+  /** 事件 payload 字段 */
   payload: Record<string, unknown>;
-  /** Injectable current time (for testing) */
+  /** 可注入的当前时间（方便测试） */
   now?: Date;
-  /** Fallback timezone from the matcher */
+  /** matcher 提供的候选时区 */
   matcherTimezone?: string;
 }
 
 // ============================================================================
-// Public API
+// 公共 API
 // ============================================================================
 
 /**
- * Evaluate an array of conditions (top-level AND).
- * Returns true if all conditions pass, or if the array is empty/undefined.
+ * 对一组条件做顶层 AND 求值。
+ * 如果数组为空或 undefined，直接返回 true。
  */
 export function evaluateConditions(conditions: AutomationCondition[], context: ConditionContext): boolean {
   if (conditions.length === 0) return true;
@@ -63,11 +62,11 @@ export function evaluateConditions(conditions: AutomationCondition[], context: C
 }
 
 // ============================================================================
-// Internal Dispatch
+// 内部分发
 // ============================================================================
 
 function evaluateCondition(condition: AutomationCondition, context: ConditionContext, depth: number): boolean {
-  // Depth starts at 0 at top-level; allowed depth indexes are 0..MAX_CONDITION_DEPTH_EXCLUSIVE-1.
+  // 深度从 0 开始；允许的最大下标是 MAX_CONDITION_DEPTH_EXCLUSIVE - 1
   if (depth >= MAX_CONDITION_DEPTH_EXCLUSIVE) return false;
 
   switch (condition.condition) {
@@ -80,29 +79,29 @@ function evaluateCondition(condition: AutomationCondition, context: ConditionCon
     case 'not':
       return evaluateLogicalCondition(condition, context, depth);
     default:
-      // Unknown condition type — fail closed
+      // 未知条件类型 - 安全失败（fail closed）
       return false;
   }
 }
 
 // ============================================================================
-// Time Condition
+// 时间条件
 // ============================================================================
 
 function evaluateTimeCondition(condition: TimeCondition, context: ConditionContext): boolean {
   const now = context.now ?? new Date();
   const tz = condition.timezone ?? context.matcherTimezone;
 
-  // Get current time in the target timezone
+  // 获取目标时区的当前时间
   const { hours, minutes, weekdayNum } = getTimeInTimezone(now, tz);
 
-  // Check weekday filter
+  // 检查星期过滤
   if (condition.weekday && condition.weekday.length > 0) {
     const allowed = new Set(condition.weekday.map(d => WEEKDAY_MAP[d]));
     if (!allowed.has(weekdayNum)) return false;
   }
 
-  // Check time range
+  // 检查时间范围
   const hasAfter = condition.after !== undefined;
   const hasBefore = condition.before !== undefined;
 
@@ -114,30 +113,30 @@ function evaluateTimeCondition(condition: TimeCondition, context: ConditionConte
 
   if (hasAfter && hasBefore) {
     if (afterMinutes <= beforeMinutes) {
-      // Normal range: after <= current < before
+      // 普通区间：after <= current < before
       return currentMinutes >= afterMinutes && currentMinutes < beforeMinutes;
     } else {
-      // Overnight wrap: current >= after OR current < before
+      // 跨午夜区间：current >= after 或 current < before
       return currentMinutes >= afterMinutes || currentMinutes < beforeMinutes;
     }
   }
 
   if (hasAfter) return currentMinutes >= afterMinutes;
-  // hasBefore only
+  // 只有 before
   return currentMinutes < beforeMinutes;
 }
 
-/** Parse "HH:MM" to total minutes since midnight */
+/** 把 "HH:MM" 解析为从 0 点开始的分钟数 */
 function parseTimeToMinutes(time: string): number {
   const [h, m] = time.split(':').map(Number);
   return (h ?? 0) * 60 + (m ?? 0);
 }
 
-/** Get hours, minutes, and weekday number in a timezone */
+/** 获取某时区的小时、分钟和星期编号 */
 function getTimeInTimezone(date: Date, timezone?: string): { hours: number; minutes: number; weekdayNum: number } {
   if (timezone) {
     try {
-      // Use Intl to convert to target timezone
+      // 用 Intl 转换到目标时区
       const formatter = new Intl.DateTimeFormat('en-US', {
         timeZone: timezone,
         hour: 'numeric',
@@ -152,28 +151,28 @@ function getTimeInTimezone(date: Date, timezone?: string): { hours: number; minu
       const weekdayNum = WEEKDAY_MAP[weekdayStr] ?? 0;
       return { hours, minutes, weekdayNum };
     } catch {
-      // Invalid timezone — fall through to local
+      // 时区非法，回落到本地时间
     }
   }
 
-  // Local time fallback
+  // 本地时间兜底
   const hours = date.getHours();
   const minutes = date.getMinutes();
-  // JS getDay(): 0=Sun, 1=Mon... → convert to our 1=Mon..7=Sun
+  // JS getDay(): 0=周日, 1=周一... 转为我们约定的 1=周一..7=周日
   const jsDay = date.getDay();
   const weekdayNum = jsDay === 0 ? 7 : jsDay;
   return { hours, minutes, weekdayNum };
 }
 
 // ============================================================================
-// State Condition
+// 状态条件
 // ============================================================================
 
 function evaluateStateCondition(condition: StateCondition, context: ConditionContext): boolean {
-  const { field } = condition;
-  const { payload } = context;
+  const { field } = condition;       // 解构取出 field
+  const { payload } = context;       // 解构取出 payload
 
-  // Handle from/to (transition fields)
+  // 处理 from/to（transition 字段）
   const hasFrom = condition.from !== undefined;
   const hasTo = condition.to !== undefined;
 
@@ -187,35 +186,35 @@ function evaluateStateCondition(condition: StateCondition, context: ConditionCon
     return true;
   }
 
-  // Handle contains (array membership)
+  // 处理 contains（数组包含）
   if (condition.contains !== undefined) {
     const arr = payload[field];
     if (!Array.isArray(arr)) return false;
     return arr.includes(condition.contains);
   }
 
-  // Handle not_value (negation)
+  // 处理 not_value（取反）
   if (condition.not_value !== undefined) {
     const fieldValue = payload[field];
     if (fieldValue === undefined) return false;
     return fieldValue !== condition.not_value;
   }
 
-  // Handle value (exact match)
+  // 处理 value（精确匹配）
   if (condition.value !== undefined) {
     return payload[field] === condition.value;
   }
 
-  // No operator specified — fail closed
+  // 没有指定操作符 - 安全失败
   return false;
 }
 
 // ============================================================================
-// Logical Conditions
+// 逻辑条件
 // ============================================================================
 
 function evaluateLogicalCondition(condition: LogicalCondition, context: ConditionContext, depth: number): boolean {
-  const { conditions } = condition;
+  const { conditions } = condition; // 解构取出子条件数组
 
   switch (condition.condition) {
     case 'and':

@@ -1,30 +1,40 @@
-// Export ClaudeAgent (renamed from CraftAgent) and backward-compatible aliases
+/**
+ * Agent 模块统一导出入口。
+ *
+ * 这个文件是 @craft-agent/shared/agent 的 barrel file，
+ * 把 ClaudeAgent、PiAgent、BaseAgent、core 工具、权限模式、计划、思考级别等集中导出。
+ *
+ * 对后端工程师来说，可以把这里理解为一个包的 `package.go`：
+ * 它本身没有实现，只是重新组织子模块的导出，方便外部按一个路径 import。
+ */
+
+// ClaudeAgent（原名 CraftAgent）及兼容别名
 export * from './claude-agent.ts';
 export * from './conversation-summary.ts';
 
-// Export PiAgent for direct use
+// PiAgent 直接导出
 export { PiAgent, PiBackend } from './pi-agent.ts';
 export * from './errors.ts';
 export * from './options.ts';
 
-// Export session-scoped-tools - tools scoped to a specific session
+// Session-scoped tools — 限定在某个 session 内使用的工具
 export {
-  // Session-scoped tools provider
+  // Session-scoped tools 提供者
   getSessionScopedTools,
   cleanupSessionScopedTools,
-  // Plan file management
+  // Plan 文件管理
   getSessionPlansDir,
   getLastPlanFilePath,
   clearPlanFileState,
   isPathInPlansDir,
-  // Callback registry for session-scoped tool notifications
+  // Session-scoped tool 通知的回调注册表
   registerSessionScopedToolCallbacks,
   unregisterSessionScopedToolCallbacks,
   mergeSessionScopedToolCallbacks,
-  // Types
+  // 类型
   type SessionScopedToolCallbacks,
   type BrowserPaneFns,
-  // Auth request types (unified auth flow)
+  // 认证请求类型（统一认证流）
   type AuthRequest,
   type AuthRequestType,
   type AuthResult,
@@ -36,9 +46,9 @@ export {
   type CredentialInputMode,
 } from './session-scoped-tools.ts';
 
-// Export mode-manager - Centralized mode management
+// mode-manager — 集中式权限模式管理
 export {
-  // Permission Mode API (primary)
+  // Permission Mode API（主要）
   getPermissionMode,
   setPermissionMode,
   cyclePermissionMode,
@@ -51,28 +61,28 @@ export {
   getPermissionModeDiagnostics,
   initializeModeState,
   cleanupModeState,
-  // Tool blocking (centralized)
+  // Tool 阻断（集中式）
   shouldAllowToolInMode,
   blockWithReason,
-  // Session state (lightweight per-message injection)
+  // Session state（轻量级每消息注入）
   getSessionState,
   formatSessionState,
-  // Mode manager singleton (for advanced use cases)
+  // Mode manager 单例（高级用例）
   modeManager,
-  // Default Explore mode patterns (for UI display)
+  // Explore 模式默认规则（供 UI 展示）
   SAFE_MODE_CONFIG,
-  // Types
+  // 类型
   type ModeState,
   type ModeCallbacks,
   type ModeConfig,
   type PermissionModeChangedBy,
 } from './mode-manager.ts';
 
-// Export plan types and permission mode messages
+// Plan 类型与权限模式消息
 export type { Plan, PlanStep, PlanState, PlanReviewRequest, PlanReviewResult } from './plan-types.ts';
 export { PERMISSION_MODE_MESSAGES, PERMISSION_MODE_PROMPTS } from './plan-types.ts';
 
-// Export thinking-levels - extended reasoning configuration
+// thinking-levels — 扩展推理配置
 export {
   type ThinkingLevel,
   type ThinkingLevelDefinition,
@@ -83,31 +93,31 @@ export {
   isValidThinkingLevel,
 } from './thinking-levels.ts';
 
-// Export permissions-config - customizable permissions per workspace/source (permissions.json)
+// permissions-config — workspace/source 级别可定制权限（permissions.json）
 export {
-  // Parser and validation
+  // 解析与校验
   parsePermissionsJson,
   validatePermissionsConfig,
   PermissionsConfigSchema,
-  // API endpoint checking
+  // API endpoint 检查
   isApiEndpointAllowed,
-  // Storage functions
+  // 存储函数
   loadWorkspacePermissionsConfig,
   loadSourcePermissionsConfig,
   getWorkspacePermissionsPath,
   getSourcePermissionsPath,
-  // Raw load/save (for CLI CRUD)
+  // 原始 load/save（CLI CRUD 用）
   loadRawWorkspacePermissions,
   loadRawSourcePermissions,
   saveWorkspacePermissions,
   saveSourcePermissions,
-  // App-level default permissions (at ~/.craft-agent/permissions/)
+  // 应用级默认权限（~/.craft-agent/permissions/）
   getAppPermissionsDir,
   ensureDefaultPermissions,
   loadDefaultPermissions,
-  // Cache singleton
+  // 缓存单例
   permissionsConfigCache,
-  // Types
+  // 类型
   type ApiEndpointRule,
   type CompiledApiEndpointRule,
   type PermissionsCustomConfig,
@@ -116,24 +126,23 @@ export {
   type PermissionsContext,
 } from './permissions-config.ts';
 
-// Export BaseAgent - shared abstract class for all agent backends
+// BaseAgent — 所有 agent 后端的共享抽象类
 export {
   BaseAgent,
-  // Mini agent configuration (centralized for all backends)
+  // Mini agent 配置（所有后端集中管理）
   type MiniAgentConfig,
   MINI_AGENT_TOOLS,
   MINI_AGENT_MCP_KEYS,
 } from './base-agent.ts';
 
-// Export backend abstraction - unified interface for AI agents
-// This module enables switching between Claude (Anthropic) and Pi agents
+// backend abstraction — AI agent 统一接口，支持 Claude 和 Pi 切换
 export {
-  // Factory (createAgent is the preferred name, createBackend is kept for backward compat)
+  // Factory（createAgent 是推荐名，createBackend 保留兼容）
   createBackend,
   createAgent,
   detectProvider,
   getAvailableProviders,
-  // Types
+  // 类型
   type AgentBackend,
   type AgentProvider,
   type BackendConfig,
@@ -145,14 +154,14 @@ export {
   type ChatOptions,
   type RecoveryMessage,
   type SdkMcpServerConfig as BackendMcpServerConfig,
-  // Enums
+  // 枚举
   AbortReason as BackendAbortReason,
 } from './backend/index.ts';
 
-// Export core utilities for shared agent logic
+// core utilities — 所有 agent 后端共享的工具
 export * from './core/index.ts';
 
-// Export browser tool name normalization helpers
+// 浏览器工具名规范化辅助函数
 export {
   LEGACY_BROWSER_TOOL_ALIASES,
   normalizeCanonicalBrowserToolName,
@@ -161,7 +170,7 @@ export {
   isBrowserToolNameOrAlias,
 } from './browser-tool-names.ts';
 
-// Export PowerShell validator root setter (for Electron startup on Windows)
+// PowerShell validator root setter（Windows Electron 启动时用）
 export { setPowerShellValidatorRoot } from './powershell-validator.ts';
 
 // WS2 keep-alive: shared flag resolver + pushable streaming-input utility.

@@ -1,8 +1,10 @@
 import { getNetworkProxySettings } from './storage.ts';
 
 /**
- * Convert stored proxy settings into environment variables for subprocesses.
- * Returns an empty object when proxy is disabled or not configured.
+ * 把存储的代理设置转换成子进程用的环境变量。
+ *
+ * 如果代理未启用或未配置，返回空对象。命名同时给出大写和小写形式，
+ * 兼容大多数 HTTP 库（类似 curl / wget 的惯例）。
  */
 export function getProxyEnvVars(): Record<string, string> {
   const settings = getNetworkProxySettings();

@@ -1,13 +1,14 @@
 import type { SVGProps } from "react"
 
 /**
- * Todo State Icons - SF Symbols / Linear inspired
- * Used for todo filter dropdown in session list
+ * TodoStateIcons —— 待办状态图标集合。
+ *
+ * 风格参考 SF Symbols / Linear，用于 Session 列表里的待办筛选下拉框。
  */
 
 /**
- * CircleDashed - Empty circle with dashed stroke (Todo/Not started)
- * Inspired by SF Symbol "circle.dashed"
+ * 未开始状态：虚线空心圆。
+ * 对应 SF Symbol "circle.dashed"。
  */
 export function CircleDashed(props: SVGProps<SVGSVGElement>) {
   return (
@@ -29,8 +30,8 @@ export function CircleDashed(props: SVGProps<SVGSVGElement>) {
 }
 
 /**
- * CalendarClock - Calendar with clock indicator (Planned/Scheduled)
- * Inspired by SF Symbol "calendar.badge.clock"
+ * 计划中状态：日历上加一个时钟徽标。
+ * 对应 SF Symbol "calendar.badge.clock"。
  */
 export function CalendarClock(props: SVGProps<SVGSVGElement>) {
   return (
@@ -46,12 +47,12 @@ export function CalendarClock(props: SVGProps<SVGSVGElement>) {
       strokeLinejoin="round"
       {...props}
     >
-      {/* Calendar base */}
+      {/* 日历主体 */}
       <rect x="3" y="4" width="14" height="16" rx="2" />
       <path d="M7 2v4" />
       <path d="M13 2v4" />
       <path d="M3 9h14" />
-      {/* Clock badge */}
+      {/* 时钟徽标 */}
       <circle cx="18" cy="17" r="4" fill="currentColor" stroke="none" />
       <path d="M18 15v2l1 1" stroke="var(--background, white)" strokeWidth="1.5" />
     </svg>
@@ -59,8 +60,8 @@ export function CalendarClock(props: SVGProps<SVGSVGElement>) {
 }
 
 /**
- * CircleDot - Circle with dot in center (Needs Review)
- * Inspired by SF Symbol "circle.circle" / target icon
+ * 待 review 状态：圆环中心带一个实心点。
+ * 对应 SF Symbol "circle.circle" / target 图标。
  */
 export function CircleEye(props: SVGProps<SVGSVGElement>) {
   return (
@@ -77,15 +78,15 @@ export function CircleEye(props: SVGProps<SVGSVGElement>) {
       {...props}
     >
       <circle cx="12" cy="12" r="9" />
-      {/* Center dot */}
+      {/* 中心点 */}
       <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" />
     </svg>
   )
 }
 
 /**
- * CircleHalfFilled - Half-filled circle (In Progress)
- * Inspired by SF Symbol "circle.lefthalf.filled" and Linear's in-progress icon
+ * 进行中状态：左半边填充的圆。
+ * 对应 SF Symbol "circle.lefthalf.filled" 和 Linear 的 in-progress 图标。
  */
 export function CircleProgress(props: SVGProps<SVGSVGElement>) {
   return (
@@ -102,7 +103,7 @@ export function CircleProgress(props: SVGProps<SVGSVGElement>) {
       {...props}
     >
       <circle cx="12" cy="12" r="9" />
-      {/* Half fill on the left side */}
+      {/* 左半边填充 */}
       <path
         d="M12 3a9 9 0 0 0 0 18"
         fill="currentColor"
@@ -113,8 +114,8 @@ export function CircleProgress(props: SVGProps<SVGSVGElement>) {
 }
 
 /**
- * CircleCheck - Filled circle with checkmark (Completed)
- * Inspired by SF Symbol "checkmark.circle.fill" and Linear's done icon
+ * 已完成状态：实心圆加对勾。
+ * 对应 SF Symbol "checkmark.circle.fill" 和 Linear 的 done 图标。
  */
 export function CircleCheckFilled(props: SVGProps<SVGSVGElement>) {
   return (
@@ -141,8 +142,8 @@ export function CircleCheckFilled(props: SVGProps<SVGSVGElement>) {
 }
 
 /**
- * CircleXFilled - Filled circle with X mark (Cancelled)
- * Inspired by SF Symbol "xmark.circle.fill" and Linear's cancelled icon
+ * 已取消状态：实心圆加叉号。
+ * 对应 SF Symbol "xmark.circle.fill" 和 Linear 的 cancelled 图标。
  */
 export function CircleXFilled(props: SVGProps<SVGSVGElement>) {
   return (
@@ -169,8 +170,8 @@ export function CircleXFilled(props: SVGProps<SVGSVGElement>) {
 }
 
 /**
- * FilterLines - Horizontal filter lines icon (for "All" state)
- * Inspired by SF Symbol "line.3.horizontal.decrease"
+ * 全部状态：三条横向筛选线。
+ * 对应 SF Symbol "line.3.horizontal.decrease"。
  */
 export function FilterLines(props: SVGProps<SVGSVGElement>) {
   return (

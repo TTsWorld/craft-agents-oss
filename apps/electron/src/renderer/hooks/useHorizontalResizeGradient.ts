@@ -1,14 +1,14 @@
 import * as React from "react"
 
 /**
- * Creates the gradient style for a horizontal resize indicator.
- * The gradient follows the cursor along the X-axis of the handle.
+ * 生成水平方向拖动指示器的渐变样式。
+ * 渐变中心跟随鼠标在拖动条上的 X 坐标。
  */
 export function getHorizontalResizeGradientStyle(mouseX: number | null): React.CSSProperties {
   return {
     transition: 'opacity 150ms ease-out',
     opacity: mouseX !== null ? 1 : 0,
-    // Horizontal gradient that follows cursor along the X-axis
+    // 水平径向渐变，中心点跟随鼠标 X 坐标
     background: `radial-gradient(
       circle 66vw at ${mouseX ?? 0}px 50%,
       color-mix(in oklch, var(--foreground) 25%, transparent) 0%,
@@ -19,16 +19,16 @@ export function getHorizontalResizeGradientStyle(mouseX: number | null): React.C
 }
 
 /**
- * useHorizontalResizeGradient - Hook for horizontal resize handle gradient that follows cursor
+ * useHorizontalResizeGradient - 水平拖动条的鼠标跟随渐变 hook
  *
- * Similar to useResizeGradient but tracks X position for horizontal (row) resizing.
+ * 与 useResizeGradient 类似，但跟踪 X 坐标，用于水平（行）调整尺寸。
  *
- * Returns:
- * - ref: Attach to the touch area element
- * - mouseX: Current X position (null when not hovering)
- * - isDragging: Whether currently dragging
- * - handlers: onMouseMove, onMouseLeave, onMouseDown for the touch area
- * - gradientStyle: CSS style object for the visual indicator
+ * 返回：
+ * - ref: 绑定到可响应鼠标事件的触摸区域元素
+ * - mouseX: 当前 X 坐标（未悬停时为 null）
+ * - isDragging: 是否正在拖动
+ * - handlers: 触摸区域需要的 onMouseMove、onMouseLeave、onMouseDown
+ * - gradientStyle: 视觉指示器的 CSS 样式对象
  */
 export function useHorizontalResizeGradient() {
   const [mouseX, setMouseX] = React.useState<number | null>(null)
@@ -52,7 +52,7 @@ export function useHorizontalResizeGradient() {
     setIsDragging(true)
   }, [])
 
-  // Track mouse position during drag and cleanup on mouseup
+  // 拖动期间持续跟踪鼠标位置，并在 mouseup 时清理
   React.useEffect(() => {
     if (!isDragging) return
 

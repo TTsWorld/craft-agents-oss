@@ -1,15 +1,15 @@
 /**
- * Shared automation utilities.
+ * 自动化共享工具函数。
  *
- * Cron helpers used by CronBuilder (visual editor) and AutomationInfoPage (info display).
- * Time formatting shared by AutomationsListPanel and AutomationEventTimeline.
+ * Cron 辅助函数供 CronBuilder（可视化编辑器）和 AutomationInfoPage（信息展示）使用。
+ * 时间格式化函数供 AutomationsListPanel 和 AutomationEventTimeline 共享。
  */
 
 import { Cron } from 'croner'
 
 /**
- * Format a timestamp as a compact relative time string (e.g. "3m", "2h", "5d").
- * Used by both AutomationsListPanel (trailing timestamp) and AutomationEventTimeline.
+ * 把时间戳格式化为紧凑的相对时间（如 "3m"、"2h"、"5d"）。
+ * AutomationsListPanel（尾部时间）和 AutomationEventTimeline 都会用到。
  */
 export function formatShortRelativeTime(timestamp: number): string {
   const diff = Date.now() - timestamp
@@ -25,7 +25,7 @@ export function formatShortRelativeTime(timestamp: number): string {
 }
 
 /**
- * Describe a cron expression in human-readable form.
+ * 把 cron 表达式转换为人类可读的文字描述。
  */
 export function describeCron(cron: string): string {
   const parts = cron.trim().split(/\s+/)
@@ -51,7 +51,7 @@ export function describeCron(cron: string): string {
 }
 
 /**
- * Compute the next N run times for a cron expression using croner.
+ * 使用 croner 库计算 cron 表达式的接下来 N 次运行时间。
  */
 export function computeNextRuns(cron: string, count: number = 3): Date[] {
   try {

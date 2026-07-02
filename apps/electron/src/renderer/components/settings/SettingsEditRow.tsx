@@ -1,9 +1,9 @@
 /**
  * SettingsEditRow
  *
- * A settings row with an Edit button that opens an EditPopover.
- * When the user submits their edit request, a new focused chat window
- * opens with context pre-filled for fast execution.
+ * 带 "Edit" 按钮的设置行，点击后弹出 EditPopover。
+ * 用户提交编辑请求后，会打开一个新的、已聚焦的聊天窗口，
+ * 并把当前设置项的上下文预填进去，方便 Agent 快速执行修改。
  */
 
 import { Button } from '@/components/ui/button'
@@ -11,19 +11,19 @@ import { EditPopover, type EditContext } from '@/components/ui/EditPopover'
 import { SettingsRow } from './SettingsRow'
 
 export interface SettingsEditRowProps {
-  /** Row label */
+  /** 行标签 */
   label: string
-  /** Optional description below label */
+  /** 标签下方的描述说明 */
   description?: string
-  /** Current value display (shown on the right side) */
+  /** 当前值的展示内容（显示在右侧） */
   value?: React.ReactNode
-  /** Context for the edit popover - tells the agent what's being edited */
+  /** 编辑上下文：告诉 Agent 当前在修改什么 */
   editContext: EditContext
-  /** Example text for the edit placeholder (e.g., "Change the API endpoint") */
+  /** 编辑输入框的示例占位文本（例如 "Change the API endpoint"） */
   editExample?: string
-  /** Whether the row is inside a card (affects padding) */
+  /** 是否在卡片内部 */
   inCard?: boolean
-  /** Additional className */
+  /** 额外 className */
   className?: string
 }
 

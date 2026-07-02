@@ -6,14 +6,16 @@ import {
   type SettingsMenuItem,
 } from '../../../shared/menu-schema'
 
-/** Identifies one of the mobile menu pages. */
+/** 根据共享 menu-schema 构建移动端菜单页面数据。 */
+
+/** 移动端菜单页面的 ID。 */
 export type MobileMenuPageId = 'root' | 'settings' | 'help' | 'debug'
 
 /**
- * What a mobile menu row does on tap.
+ * 点击某一行后的动作类型。
  *
- * The renderer maps these to concrete callbacks/effects. Keeping the data
- * declarative means one schema feeds desktop, mobile, and any future shapes.
+ * 渲染器会把这些声明式描述映射成具体的回调/副作用。
+ * 用一份数据同时喂给桌面端和移动端，未来若要新增菜单形态也能复用。
  */
 export type MobileMenuAction =
   | { kind: 'navigate'; to: MobileMenuPageId }
@@ -32,7 +34,7 @@ export interface MobileMenuRow {
 
 export interface MobileMenuPage {
   id: MobileMenuPageId
-  /** i18n key for the page title shown in the header. */
+  /** 页面标题对应的 i18n key，渲染时通过 t(titleKey) 取得实际文本。 */
   titleKey: string
   rows: MobileMenuRow[]
 }
@@ -43,16 +45,16 @@ interface BuildOptions {
 }
 
 /**
- * Build the mobile menu page graph from the shared schema.
+ * 根据共享的 menu-schema 构造移动端菜单页面图。
  *
- * The Edit/View/Window submenus are intentionally omitted on mobile:
- * - Edit (Undo/Redo/Cut/Copy/Paste/Select All) — handled by the OS-native edit menu on touch.
- * - View (Zoom, sidebar/focus toggles) — browser-native zoom; sidebar/focus are no-ops in compact.
- * - Window (Minimize/Maximize) — meaningless in a browser tab.
- * - Quit — also meaningless in a browser tab.
+ * 桌面端的 Edit/View/Window 子菜单在移动端被有意省略：
+ * - Edit（撤销/重做/剪切/复制/粘贴/全选）：触摸屏由系统原生编辑菜单处理。
+ * - View（缩放、侧边栏/专注模式切换）：缩放由浏览器原生手势；紧凑布局下侧边栏/专注模式无意义。
+ * - Window（最小化/最大化）：浏览器标签页里不存在这一语义。
+ * - Quit：在浏览器标签页里同样无意义。
  *
- * Adding a new help link requires only an addition to `HELP_LINKS`. Adding a new
- * settings page requires only an addition to `SETTINGS_PAGES`. Both fan out here.
+ * 新增帮助链接只需往 HELP_LINKS 里加数据；新增设置子页面只需往 SETTINGS_ITEMS 里加数据。
+ * 这里会自动把它们展开成对应的页面行。
  */
 export function buildMobileMenuPages({ hasNewWindow, isDebugMode }: BuildOptions): MobileMenuPage[] {
   const rootRows: MobileMenuRow[] = [
@@ -71,8 +73,7 @@ export function buildMobileMenuPages({ hasNewWindow, isDebugMode }: BuildOptions
       action: { kind: 'callback', key: 'newWindow' },
     })
   }
-  // Touch users have no keyboard, so the Keyboard Shortcuts leaf is omitted
-  // on mobile — the page would render but be useless.
+  // 触摸设备没有实体键盘，Keyboard Shortcuts 页在移动端没有意义，因此不显示。
   rootRows.push(
     {
       id: 'settings',
@@ -122,7 +123,7 @@ export function buildMobileMenuPages({ hasNewWindow, isDebugMode }: BuildOptions
   const debugRows: MobileMenuRow[] = DEBUG_MENU.items
     .filter((item) => item.type === 'action')
     .map<MobileMenuRow>((item) => {
-      // Narrowed by the filter above.
+      // 经过上面 filter，这里 item 已经被收窄为 action 类型。
       const action = item as Extract<typeof item, { type: 'action' }>
       return {
         id: action.id,

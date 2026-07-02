@@ -1,24 +1,22 @@
 /**
- * Helpers for persisting and hydrating session-input attachments.
+ * 会话输入附件的持久化/恢复辅助函数。
  *
- * Two tracks, chosen per attachment at save time:
- *   - Track P (path-backed): absolute OS path captured via webUtils.getPathForFile.
- *     Persist just `{path, name}`. Re-read on hydrate via the readUserAttachment RPC.
- *   - Track C (content-backed): no real path exists (paste, web-drag). Persist the
- *     bytes inline in `ref.content`. Hydrate reconstructs the FileAttachment from
- *     the stored bytes, no disk read.
+ * 保存时根据附件是否有真实操作系统路径，走两条不同的轨道：
+ *   - 路径轨道 P：通过 webUtils.getPathForFile 拿到绝对路径，只存 {path, name}；
+ *     恢复时通过 readUserAttachment RPC 重新读取磁盘。
+ *   - 内容轨道 C：没有真实路径（粘贴、网页拖拽），把字节内联存在 `ref.content` 里；
+ *     恢复时直接从内存数据重建 FileAttachment，不读磁盘。
  *
- * The detection criterion is `isAbsolutePath(a.path)`. File-picker and OS-drag go
- * through `webUtils.getPathForFile` (exposed on `electronAPI.getFilePath`) which
- * returns the absolute path. Paste/web-drag keep the filename-only synthetic path.
+ * 判定依据是 `isAbsolutePath(a.path)`。文件选择器和系统拖拽会经过
+ * `webUtils.getPathForFile`（暴露在 `electronAPI.getFilePath` 上）返回绝对路径；
+ * 粘贴/网页拖拽得到的只是带文件名的合成路径。
  */
 
 import type { FileAttachment } from '@craft-agent/shared/protocol'
 import type { DraftAttachmentContent, DraftAttachmentRef } from '@craft-agent/shared/config'
 
-/** Per-attachment cap on inlined draft content. Huge pastes are dropped from the draft
- *  (with a warn) rather than bloating drafts.json. Tuned to the same 20 MB limit the
- *  shared readFileAttachment helper uses for file reads. */
+/** 单个附件内联内容的上限。超大粘贴内容会被丢弃（并打印 warn），避免 drafts.json 膨胀。
+ *  取值与 shared readFileAttachment 读取文件时的 20 MB 上限保持一致。 */
 export const CONTENT_PERSIST_CAP = 20 * 1024 * 1024
 
 export function isAbsolutePath(p: string): boolean {
@@ -29,8 +27,7 @@ export function isAbsolutePath(p: string): boolean {
 }
 
 /**
- * Estimate the persisted byte cost of an attachment. base64 inflates ~33% over raw.
- * Used for the 20 MB cap check before we commit it to drafts.json.
+ * 估算附件持久化后的字节开销。base64 编码会比原始内容膨胀约 33%，用于写入 draft 前做 20 MB 上限检查。
  */
 function estimateContentBytes(a: FileAttachment): number {
   const base64Bytes = a.base64 ? Math.floor(a.base64.length * 0.75) : 0
@@ -50,11 +47,9 @@ function buildContent(a: FileAttachment): DraftAttachmentContent {
 }
 
 /**
- * Turn a live `FileAttachment` into the persisted `DraftAttachmentRef`, picking
- * Track P or Track C based on whether the attachment has a real OS path.
+ * 把运行时的 FileAttachment 转存为 DraftAttachmentRef，根据是否有真实 OS 路径选择路径轨道或内容轨道。
  *
- * Returns `null` for Track C attachments whose content exceeds the per-attachment
- * cap — the caller drops it from the draft with a console warn.
+ * 内容轨道附件若超过单附件上限，则返回 null，由调用方在 draft 中丢弃并提示用户。
  */
 export function toDraftRef(a: FileAttachment): DraftAttachmentRef | null {
   if (isAbsolutePath(a.path)) {
@@ -67,8 +62,7 @@ export function toDraftRef(a: FileAttachment): DraftAttachmentRef | null {
 }
 
 /**
- * Reconstruct a `FileAttachment` from a content-backed draft ref. Pure data
- * transformation — no disk read, no RPC.
+ * 从内容轨道的 draft ref 重建 FileAttachment。纯数据转换，不读磁盘、不发 RPC。
  */
 export function attachmentFromContentRef(ref: DraftAttachmentRef): FileAttachment | null {
   if (!ref.content) return null

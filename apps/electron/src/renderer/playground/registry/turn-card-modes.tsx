@@ -1,3 +1,9 @@
+/**
+ * turn-card-modes 注册项
+ *
+ * 演示 TurnCard 的两种显示模式：Informative（简洁，只显示来源+意图）和 Detailed（完整工具名、参数、元数据）。
+ * 同时提供 Play/Reset 回放，模拟工具逐个执行的过程。
+ */
 import type { ComponentEntry } from './types'
 import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
 import { Play, RotateCcw } from 'lucide-react'
@@ -31,7 +37,7 @@ function PaddedWrapper({ children }: { children: ReactNode }) {
 }
 
 // ============================================================================
-// Simple Sample Data (for quick demos)
+// 简单示例数据（用于快速演示）
 // ============================================================================
 
 const now = Date.now()
@@ -135,11 +141,12 @@ const shortResponse: ResponseContent = {
 }
 
 // ============================================================================
-// Playground Component with Mode Toggle
+// 带模式切换的 playground 组件
 // ============================================================================
 
 type DisplayMode = 'informative' | 'detailed'
 
+// 主演示组件：可以在 Informative / Detailed 两种模式间切换，并播放工具执行过程。
 function TurnCardModesDemo({
   activities,
   response,
@@ -306,9 +313,10 @@ function TurnCardModesDemo({
 }
 
 // ============================================================================
-// Component Registry
+// 组件注册表条目（Component Registry Entries）
 // ============================================================================
 
+/** turn-card-modes 组件注册列表。 */
 export const turnCardModesComponents: ComponentEntry[] = [
   {
     id: 'turn-card-modes-all',

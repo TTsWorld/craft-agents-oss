@@ -1,22 +1,22 @@
 /**
- * Mode Types and Constants
+ * 权限模式（Permission Mode）的类型与常量定义
  *
- * Pure types and UI configuration for permission modes.
- * This file has NO runtime dependencies - safe for browser bundling.
+ * 本文件只包含纯类型与 UI 配置常量，没有任何运行时依赖，
+ * 因此可以安全地被打包进浏览器端 bundle（不会拖入 Node 专有模块）。
  *
- * For runtime mode management functions, use './mode-manager.ts'
+ * 运行时的模式管理函数（getState/setMode 等）请改用 './mode-manager.ts'。
  */
 
 import { z } from 'zod';
 
 // ============================================================
-// Permission Mode Types
+// 权限模式类型
 // ============================================================
 
 /**
- * Available permission modes (internal storage keys).
+ * 权限模式的内部存储键名。
  *
- * UI-facing canonical names are:
+ * 对外展示给用户/写入 session 状态时使用的是 canonical（规范）名称：
  * - explore  -> safe
  * - ask      -> ask
  * - execute  -> allow-all
@@ -24,17 +24,17 @@ import { z } from 'zod';
 export type PermissionMode = 'safe' | 'ask' | 'allow-all';
 
 /**
- * Canonical mode names used in user-facing/session-state surfaces.
+ * 对外规范名（用户、session 状态、UI 上看到的就是这些）
  */
 export type PermissionModeCanonical = 'explore' | 'ask' | 'execute';
 
 /**
- * Order of modes for cycling with SHIFT+TAB
+ * 用 SHIFT+TAB 循环切换模式时的顺序
  */
 export const PERMISSION_MODE_ORDER: PermissionMode[] = ['safe', 'ask', 'allow-all'];
 
 /**
- * Internal -> canonical mapping.
+ * 内部键名 → 对外规范名的映射
  */
 export const PERMISSION_MODE_TO_CANONICAL: Record<PermissionMode, PermissionModeCanonical> = {
   safe: 'explore',
@@ -43,7 +43,7 @@ export const PERMISSION_MODE_TO_CANONICAL: Record<PermissionMode, PermissionMode
 };
 
 /**
- * Canonical -> internal mapping.
+ * 对外规范名 → 内部键名的映射
  */
 export const CANONICAL_TO_PERMISSION_MODE: Record<PermissionModeCanonical, PermissionMode> = {
   explore: 'safe',
@@ -52,17 +52,17 @@ export const CANONICAL_TO_PERMISSION_MODE: Record<PermissionModeCanonical, Permi
 };
 
 /**
- * Convert internal mode key to canonical user-facing mode name.
+ * 把内部键名转成对外规范名
  */
 export function toCanonicalPermissionMode(mode: PermissionMode): PermissionModeCanonical {
   return PERMISSION_MODE_TO_CANONICAL[mode];
 }
 
 /**
- * Parse user-facing mode names into internal mode keys.
+ * 把用户传入的字符串解析为内部键名。
  *
- * Accepts canonical values (explore/ask/execute) and legacy aliases
- * (safe/allow-all, ask-to-edit) for backward compatibility.
+ * 同时接受规范值（explore/ask/execute）和旧版别名
+ * （safe/allow-all、ask-to-edit），以便向后兼容历史配置/老 session。
  */
 export function parsePermissionMode(mode: string): PermissionMode | null {
   const normalized = mode.trim().toLowerCase();
@@ -79,11 +79,11 @@ export function parsePermissionMode(mode: string): PermissionMode | null {
 }
 
 // ============================================================
-// Permissions Config Types (Browser-safe Zod schemas)
+// Permissions 配置类型（浏览器友好的 Zod schema）
 // ============================================================
 
 /**
- * API endpoint rule - method + path pattern
+ * API 端点规则：HTTP 方法 + 路径正则
  */
 const ApiEndpointRuleSchema = z.object({
   method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']),
@@ -94,7 +94,7 @@ const ApiEndpointRuleSchema = z.object({
 export type ApiEndpointRule = z.infer<typeof ApiEndpointRuleSchema>;
 
 /**
- * Pattern with optional comment
+ * 模式字符串，可附带可选 comment（用于给用户/Agent 看的注释）
  */
 const PatternSchema = z.union([
   z.string(),
@@ -105,57 +105,58 @@ const PatternSchema = z.union([
 ]);
 
 /**
- * Command-specific block hint for clearer Explore-mode rejection messages.
+ * 针对特定 Bash 命令的"拦截提示"，用来在 Explore 模式拒绝该命令时
+ * 给出更清晰的提示信息。
  */
 const BlockedCommandHintSchema = z.object({
-  /** Command name (normalized lowercase base command, e.g. "printf") */
+  /** 规范化后的小写基础命令名，如 "printf" */
   command: z.string(),
-  /** Primary reason shown when command is blocked */
+  /** 命令被拒绝时的主要原因 */
   reason: z.string(),
-  /** Additional policy/risk context */
+  /** 额外的策略/风险说明 */
   context: z.string().optional(),
-  /** Suggested alternatives or next actions */
+  /** 建议的替代操作或下一步动作 */
   tryInstead: z.array(z.string()).optional(),
-  /** Concrete example command */
+  /** 一个具体的示例命令 */
   example: z.string().optional(),
-  /** Apply this hint only when the command does NOT match this regex */
+  /** 仅当命令"不匹配"该正则时才应用本提示 */
   whenNotMatching: z.string().optional(),
 });
 
 export type BlockedCommandHintRule = z.infer<typeof BlockedCommandHintSchema>;
 
 /**
- * Permissions JSON configuration schema
+ * permissions.json 的 Zod 校验 schema
  *
- * Note: Core write tools (Write, Edit, MultiEdit, NotebookEdit) are hardcoded in
- * SAFE_MODE_CONFIG and always blocked in Explore mode. The blockedTools field
- * allows users to block additional tools beyond these defaults.
+ * 注意：核心写入工具（Write/Edit/MultiEdit/NotebookEdit）在 SAFE_MODE_CONFIG 中
+ * 被硬编码，在 Explore 模式下永远禁用；blockedTools 字段只能"额外"屏蔽更多工具，
+ * 不能解除这些硬编码禁令。
  */
 export const PermissionsConfigSchema = z.object({
-  /** Version date for migration (ISO format: "2026-02-07") */
+  /** 用于迁移的版本日期（ISO 格式："2026-02-07"） */
   version: z.string().optional(),
-  /** Bash command patterns to allow (regex strings) */
+  /** 允许执行的 Bash 命令正则列表 */
   allowedBashPatterns: z.array(PatternSchema).optional(),
-  /** MCP tool patterns to allow (regex strings) */
+  /** 允许调用的 MCP 工具正则列表 */
   allowedMcpPatterns: z.array(PatternSchema).optional(),
-  /** API endpoint rules - method + path pattern */
+  /** API 端点规则：方法 + 路径正则 */
   allowedApiEndpoints: z.array(ApiEndpointRuleSchema).optional(),
-  /** File paths to allow writes in Explore mode (glob patterns) */
+  /** Explore 模式下允许写入的文件路径（glob 模式） */
   allowedWritePaths: z.array(PatternSchema).optional(),
-  /** Additional tools to block (extends the hardcoded defaults) */
+  /** 额外要屏蔽的工具（在硬编码默认项之上扩展） */
   blockedTools: z.array(PatternSchema).optional(),
-  /** Command-specific hint messages for blocked Bash commands */
+  /** 针对 Bash 命令的提示文案列表 */
   blockedCommandHints: z.array(BlockedCommandHintSchema).optional(),
 });
 
 export type PermissionsConfigFile = z.infer<typeof PermissionsConfigSchema>;
 
 // ============================================================
-// Mode Config Types
+// 模式配置类型
 // ============================================================
 
 /**
- * Compiled API endpoint rule for runtime checking
+ * 编译后的 API 端点规则（运行时使用）
  */
 export interface CompiledApiEndpointRule {
   method: string;
@@ -163,117 +164,117 @@ export interface CompiledApiEndpointRule {
 }
 
 /**
- * Compiled bash pattern with metadata for error messages.
- * Stores the original pattern string and comment alongside the compiled RegExp
- * so we can provide helpful error messages when commands don't match.
+ * 编译后的 Bash 正则模式，附带用于错误提示的元信息。
+ * 把原始 pattern 字符串和 comment 与编译后的 RegExp 一起保存，
+ * 是为了在命令没匹配上时给出有用的错误信息。
  */
 export interface CompiledBashPattern {
-  /** Compiled regex for matching */
+  /** 编译后的正则 */
   regex: RegExp;
-  /** Original pattern string (for error messages) */
+  /** 原始 pattern 字符串（错误提示时展示） */
   source: string;
-  /** Human-readable comment explaining what this pattern allows */
+  /** 给人看的、说明这条 pattern 允许什么的注释 */
   comment?: string;
 }
 
 /**
- * Runtime command-specific hint for blocked Bash commands.
+ * 运行时使用的、针对特定 Bash 命令的拦截提示
  */
 export interface CompiledBlockedCommandHint {
-  /** Base command token (lowercase), e.g. "printf" */
+  /** 基础命令 token（小写），如 "printf" */
   command: string;
   reason: string;
   context?: string;
   tryInstead?: string[];
   example?: string;
-  /** Optional condition: hint applies only when command does NOT match this regex */
+  /** 可选条件：仅当命令"不匹配"该正则时才应用本提示 */
   whenNotMatching?: string;
   whenNotMatchingRegex?: RegExp;
-}
+};
 
 /**
- * Analysis of why a command didn't match a pattern.
- * Used by incr-regex-package to provide detailed diagnostics showing
- * exactly WHERE matching failed and what was expected.
+ * "为什么命令没匹配上"的诊断结果。
+ *
+ * 配合 incr-regex-package 使用：它能逐字符地匹配，告诉我们
+ * 究竟匹配到哪儿失败了、期望的是什么，从而给出非常具体的提示。
  */
 export interface MismatchAnalysis {
-  /** How much of the command matched before failure */
+  /** 失败前已经匹配上的前缀 */
   matchedPrefix: string;
-  /** Character position where matching stopped */
+  /** 匹配在哪个字符位置停下来 */
   failedAtPosition: number;
-  /** The token/word that caused the mismatch */
+  /** 导致失败的 token/单词 */
   failedToken: string;
-  /** The pattern that got closest to matching */
+  /** "最接近匹配成功"的那条 pattern */
   bestMatchPattern?: {
     source: string;
     comment?: string;
   };
-  /** Actionable suggestion for the user/agent */
+  /** 给用户/Agent 的可执行建议 */
   suggestion?: string;
 }
 
 /**
- * Paths to permissions configuration files.
- * Used in error messages to guide the agent on how to customize permissions.
+ * permissions 配置文件的路径集合，会出现在错误提示里，
+ * 告诉 Agent 应该去哪里自定义权限。
  */
 export interface PermissionPaths {
-  /** Path to workspace-level permissions.json */
+  /** workspace 级 permissions.json 的路径 */
   workspacePath: string;
-  /** Path to app-level default.json */
+  /** 应用级 default.json 的路径 */
   appDefaultPath: string;
-  /** Path to permissions documentation */
+  /** 权限文档路径 */
   docsPath: string;
 }
 
 /**
- * Safe mode configuration - defines behavior for read-only mode
+ * Safe 模式（只读）的配置结构
  */
 export interface ModeConfig {
-  /** Tools that are always blocked in safe mode (Write, Edit, etc.) - hardcoded, not configurable */
+  /** Safe 模式下永远禁用的工具（Write/Edit 等）—— 硬编码，不可配置 */
   blockedTools: Set<string>;
-  /** Read-only Bash command patterns with metadata for helpful error messages */
+  /** 只读 Bash 命令 pattern（带元信息，便于友好的错误提示） */
   readOnlyBashPatterns: CompiledBashPattern[];
-  /** Command-specific hints shown when blocked Bash commands are rejected */
+  /** 针对特定 Bash 命令的拦截提示 */
   blockedCommandHints?: CompiledBlockedCommandHint[];
-  /** Read-only MCP patterns (tools matching these are allowed) */
+  /** 只读 MCP pattern（匹配上的工具允许调用） */
   readOnlyMcpPatterns: RegExp[];
-  /** Fine-grained API endpoint rules (method + path pattern) */
+  /** 细粒度的 API 端点规则（方法 + 路径正则） */
   allowedApiEndpoints: CompiledApiEndpointRule[];
-  /** File paths allowed for writes in Explore mode (glob patterns) */
+  /** Explore 模式下允许写入的文件路径（glob 模式） */
   allowedWritePaths?: string[];
-  /** User-friendly name */
+  /** 给用户看的显示名 */
   displayName: string;
-  /** Keyboard shortcut hint */
+  /** 快捷键提示 */
   shortcutHint: string;
-  /** Paths to permission files for actionable error messages */
+  /** permissions 相关文件路径（用于错误提示） */
   permissionPaths?: PermissionPaths;
 }
 
 // ============================================================
-// Safe Mode Configuration (Browser-safe - pure data)
+// Safe 模式默认配置（浏览器友好 —— 全是纯数据）
 // ============================================================
 
 /**
- * Minimal fallback configuration for safe mode.
+ * Safe 模式的最小兜底配置。
  *
- * The actual patterns are loaded from ~/.craft-agent/permissions/default.json
- * at runtime by PermissionsConfigCache. This fallback ensures the app works
- * even if the JSON file is missing or invalid.
+ * 真正的 pattern 集合在运行时由 PermissionsConfigCache 从
+ * ~/.craft-agent/permissions/default.json 加载；这份兜底配置的作用是：
+ * 即便 JSON 文件缺失或损坏，应用也能正常工作。
  *
- * To customize allowed commands, edit ~/.craft-agent/permissions/default.json
+ * 想自定义允许的命令，请编辑 ~/.craft-agent/permissions/default.json
  */
 export const SAFE_MODE_CONFIG: ModeConfig = {
-  // Tools that are always blocked (no read-only variant) - these are hardcoded
-  // as they represent fundamental write operations that should never be allowed
-  // in Explore mode regardless of user configuration
+  // 永远禁用的工具（没有只读变体）—— 这些是基础写入操作，
+  // 在 Explore 模式下无论用户如何配置都不允许。
   blockedTools: new Set([
     'Write',
     'Edit',
     'MultiEdit',
     'NotebookEdit',
   ]),
-  // Empty fallbacks - actual patterns loaded from default.json
-  // If default.json is missing, no bash commands will be auto-allowed in Explore mode
+  // 空的兜底 —— 真实 pattern 从 default.json 加载。
+  // 如果 default.json 缺失，Explore 模式下不会有任何 Bash 命令被自动放行。
   readOnlyBashPatterns: [],
   blockedCommandHints: [],
   readOnlyMcpPatterns: [],
@@ -283,21 +284,21 @@ export const SAFE_MODE_CONFIG: ModeConfig = {
 };
 
 /**
- * Display configuration for each mode
+ * 每种权限模式的展示配置（图标、颜色、文案等）
  */
 export const PERMISSION_MODE_CONFIG: Record<PermissionMode, {
   displayName: string;
   shortName: string;
   description: string;
-  /** SVG path data for the icon (viewBox 0 0 24 24, stroke-based) */
+  /** 图标的 SVG path 数据（viewBox 0 0 24 24，stroke 风格） */
   svgPath: string;
-  /** Tailwind color classes for consistent theming */
+  /** Tailwind 颜色类名，统一主题 */
   colorClass: {
-    /** Text color class (e.g., 'text-info') */
+    /** 文本颜色，如 'text-info' */
     text: string;
-    /** Background color class (e.g., 'bg-info') */
+    /** 背景颜色，如 'bg-info' */
     bg: string;
-    /** Border color class (e.g., 'border-info') */
+    /** 边框颜色，如 'border-info' */
     border: string;
   };
 }> = {
@@ -305,7 +306,7 @@ export const PERMISSION_MODE_CONFIG: Record<PermissionMode, {
     displayName: 'Explore',
     shortName: 'Explore',
     description: 'Read-only exploration. Blocks writes, never prompts.',
-    // Compass icon from Lucide
+    // 指南针图标（Lucide）
     svgPath: 'M16.24 7.76l-1.804 5.411a2 2 0 0 1-1.265 1.265L7.76 16.24l1.804-5.411a2 2 0 0 1 1.265-1.265z M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z',
     colorClass: {
       text: 'text-foreground/60',
@@ -317,7 +318,7 @@ export const PERMISSION_MODE_CONFIG: Record<PermissionMode, {
     displayName: 'Ask to Edit',
     shortName: 'Ask',
     description: 'Prompts before making edits.',
-    // Info icon from Lucide
+    // 信息图标（Lucide）
     svgPath: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 8v4m0 4h.01',
     colorClass: {
       text: 'text-info',
@@ -329,7 +330,7 @@ export const PERMISSION_MODE_CONFIG: Record<PermissionMode, {
     displayName: 'Execute',
     shortName: 'Execute',
     description: 'Automatic execution, no prompts.',
-    // Repeat icon from Lucide (loop)
+    // 循环图标（Lucide loop）
     svgPath: 'm17 1 4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3',
     colorClass: {
       text: 'text-accent',

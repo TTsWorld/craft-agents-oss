@@ -1,11 +1,11 @@
 /**
- * Utilities for parsing [bracket] mentions from chat messages
+ * 解析消息中的 [方括号] mention。
  *
- * Mention types:
- * - Skills:  [skill:slug]
- * - Sources: [source:slug]
+ * Mention 类型：
+ * - Skill：  [skill:slug]
+ * - Source： [source:slug]
  *
- * Bracket syntax allows mentions anywhere in text without word boundaries.
+ * 方括号语法允许在不依赖词边界的情况下，把 mention 放在文本任意位置。
  */
 
 import type { ContentBadge } from '@craft-agent/core'
@@ -14,42 +14,42 @@ import type { LoadedSkill, LoadedSource } from '../../shared/types'
 import { AGENTS_PLUGIN_NAME } from '@craft-agent/shared/skills/types'
 import { getSourceIconSync, getSkillIconSync } from './icon-cache'
 
-// Import and re-export parsing functions from shared (pure string operations, no renderer deps)
+// 从 shared 导入纯字符串解析函数（不依赖渲染进程上下文）并重新导出
 import { parseMentions, stripAllMentions, resolveSkillMentions, resolveSourceMentions, type ParsedMentions } from '@craft-agent/shared/mentions'
 export { parseMentions, stripAllMentions, resolveSkillMentions, resolveSourceMentions, type ParsedMentions }
 
 // ============================================================================
-// Constants
+// 常量
 // ============================================================================
 
-// Workspace ID character class for regex: word chars, spaces (NOT newlines), hyphens, dots
-// Using literal space instead of \s to avoid matching newlines which would break parsing
+// 工作区 ID 可用字符：单词字符、空格（不含换行）、连字符、点号
+// 用字面空格替代 \s，避免匹配换行导致解析异常
 const WS_ID_CHARS = '[\\w .-]'
 
 // ============================================================================
-// Types
+// 类型
 // ============================================================================
 
 export interface MentionMatch {
   type: MentionItemType
   id: string
-  /** Full match text including @ prefix */
+  /** 包含 @ 前缀的完整匹配文本 */
   fullMatch: string
-  /** Start index in the original text */
+  /** 在原始文本中的起始索引 */
   startIndex: number
 }
 
 // ============================================================================
-// Matching Functions (renderer-specific, use MentionItemType)
+// 匹配函数（渲染进程专用，使用 MentionItemType）
 // ============================================================================
 
 /**
- * Find all mention matches in text with their positions
+ * 在文本中查找所有 mention 及其位置。
  *
- * @param text - The message text to search
- * @param availableSkillSlugs - Valid skill slugs
- * @param availableSourceSlugs - Valid source slugs
- * @returns Array of mention matches with positions
+ * @param text - 要搜索的消息文本
+ * @param availableSkillSlugs - 有效的 skill slug 列表
+ * @param availableSourceSlugs - 有效的 source slug 列表
+ * @returns 带位置的 mention 匹配数组
  */
 export function findMentionMatches(
   text: string,
@@ -58,7 +58,7 @@ export function findMentionMatches(
 ): MentionMatch[] {
   const matches: MentionMatch[] = []
 
-  // Match source mentions: [source:slug]
+  // 匹配 source mention：[source:slug]
   const sourcePattern = /(\[source:([\w-]+)\])/g
   let match
   while ((match = sourcePattern.exec(text)) !== null) {
@@ -73,9 +73,9 @@ export function findMentionMatches(
     }
   }
 
-  // Match skill mentions: [skill:slug] or [skill:workspaceId:slug]
-  // The pattern captures the full match and extracts the slug (last component)
-  // Workspace IDs can contain spaces, hyphens, underscores, and dots
+  // 匹配 skill mention：[skill:slug] 或 [skill:workspaceId:slug]
+  // 捕获完整匹配文本，并提取最后一个冒号后的 slug
+  // 工作区 ID 可包含空格、连字符、下划线和点号
   const skillPattern = new RegExp(`(\\[skill:(?:${WS_ID_CHARS}+:)?([\\w-]+)\\])`, 'g')
   while ((match = skillPattern.exec(text)) !== null) {
     const slug = match[2]
@@ -89,7 +89,7 @@ export function findMentionMatches(
     }
   }
 
-  // Match file mentions: [file:path]
+  // 匹配 file mention：[file:path]
   const filePattern = /(\[file:([^\]]+)\])/g
   while ((match = filePattern.exec(text)) !== null) {
     matches.push({
@@ -100,7 +100,7 @@ export function findMentionMatches(
     })
   }
 
-  // Match folder mentions: [folder:path]
+  // 匹配 folder mention：[folder:path]
   const folderPattern = /(\[folder:([^\]]+)\])/g
   while ((match = folderPattern.exec(text)) !== null) {
     matches.push({
@@ -111,17 +111,17 @@ export function findMentionMatches(
     })
   }
 
-  // Sort by position
+  // 按位置排序
   return matches.sort((a, b) => a.startIndex - b.startIndex)
 }
 
 /**
- * Remove a specific mention from text
+ * 从文本中移除指定的 mention。
  *
- * @param text - The message text
- * @param type - Type of mention to remove
- * @param id - ID of the mention (slug or path)
- * @returns Text with the mention removed
+ * @param text - 消息文本
+ * @param type - 要移除的 mention 类型
+ * @param id - mention 的 ID（slug 或路径）
+ * @returns 移除后的文本
  */
 export function removeMention(text: string, type: MentionItemType, id: string): string {
   let pattern: RegExp
@@ -138,8 +138,7 @@ export function removeMention(text: string, type: MentionItemType, id: string): 
       break
     case 'skill':
     default:
-      // Match both [skill:slug] and [skill:workspaceId:slug]
-      // Workspace IDs can contain spaces, hyphens, underscores, and dots
+      // 同时匹配 [skill:slug] 和 [skill:workspaceId:slug]
       pattern = new RegExp(`\\[skill:(?:${WS_ID_CHARS}+:)?${escapeRegExp(id)}\\]`, 'g')
       break
   }
@@ -151,7 +150,7 @@ export function removeMention(text: string, type: MentionItemType, id: string): 
 }
 
 /**
- * Check if text contains any valid mentions
+ * 检查文本中是否包含任何有效 mention。
  */
 export function hasMentions(
   text: string,
@@ -163,42 +162,42 @@ export function hasMentions(
 }
 
 // ============================================================================
-// Legacy compatibility - parseSkillMentions
+// 旧版兼容 - parseSkillMentions
 // ============================================================================
 
 /**
- * Extract valid [skill:...] mentions from message text (legacy API)
+ * 从消息文本中提取有效的 [skill:...] mention（旧版 API）。
  *
- * @deprecated Use parseMentions() instead
+ * @deprecated 请改用 parseMentions()
  */
 export function parseSkillMentions(text: string, availableSlugs: string[]): string[] {
   return parseMentions(text, availableSlugs, []).skills
 }
 
 /**
- * Remove [bracket] mentions from message text (legacy API)
+ * 从消息文本中移除 [方括号] mention（旧版 API）。
  *
- * @deprecated Use stripAllMentions() instead
+ * @deprecated 请改用 stripAllMentions()
  */
 export function stripSkillMentions(text: string): string {
   return stripAllMentions(text)
 }
 
 // ============================================================================
-// Badge Extraction
+// Badge 提取
 // ============================================================================
 
 /**
- * Extract ContentBadge array from message text.
- * Used when sending messages to store badge metadata for display.
+ * 从消息文本中提取 ContentBadge 数组。
+ * 发送消息时调用，用于把 badge 的展示元数据附带出去。
  *
- * Each badge is self-contained with label, icon (base64), and position.
+ * 每个 badge 自包含 label、icon（base64）和位置信息。
  *
- * @param text - Message text with mentions
- * @param skills - Available skills (for label lookup)
- * @param sources - Available sources (for label lookup)
- * @param workspaceId - Workspace ID (for icon lookup)
- * @returns Array of ContentBadge objects
+ * @param text - 带 mention 的消息文本
+ * @param skills - 可用 skills（用于查 label）
+ * @param sources - 可用 sources（用于查 label）
+ * @param workspaceId - 工作区 ID（用于查 icon）
+ * @returns ContentBadge 数组
  */
 export function extractBadges(
   text: string,
@@ -210,7 +209,7 @@ export function extractBadges(
   const sourceSlugs = sources.map(s => s.config.slug)
   const matches = findMentionMatches(text, skillSlugs, sourceSlugs)
 
-  // Build lookup maps to avoid linear scans per match
+  // 构建查找映射，避免每条 match 都线性扫描
   const skillsBySlug = new Map(skills.map(s => [s.slug, s]))
   const sourcesBySlug = new Map(sources.map(s => [s.config.slug, s]))
 
@@ -223,27 +222,27 @@ export function extractBadges(
       const skill = skillsBySlug.get(match.id)
       label = skill?.metadata.name || match.id
 
-      // Get cached icon as data URL (preserves mime type for SVG, PNG, etc.)
+      // 从缓存取 data URL 形式的 icon（保留 SVG/PNG 等 mime 类型）
       iconDataUrl = getSkillIconSync(workspaceId, match.id) ?? undefined
     } else if (match.type === 'source') {
       const source = sourcesBySlug.get(match.id)
       label = source?.config.name || match.id
 
-      // Get cached icon as data URL (preserves mime type for SVG, PNG, etc.)
+      // 从缓存取 data URL 形式的 icon
       iconDataUrl = getSourceIconSync(workspaceId, match.id) ?? undefined
     } else if (match.type === 'file') {
-      // Show filename as label, full relative path stored for tooltip
+      // label 显示文件名，filePath 存完整相对路径用于 tooltip
       label = match.id.split('/').pop() || match.id
       filePath = match.id
     } else if (match.type === 'folder') {
-      // Show folder name as label, full relative path stored for tooltip
+      // label 显示文件夹名，filePath 存完整相对路径用于 tooltip
       label = match.id.split('/').pop() || match.id
       filePath = match.id
     }
 
-    // For skills, create fully-qualified rawText (pluginName:slug) so the agent
-    // receives the correct format for the SDK's Skill tool. Plugin name depends
-    // on which tier the skill came from: workspace → workspaceId, project/global → AGENTS_PLUGIN_NAME
+    // 对 skill 生成完全限定的 rawText（pluginName:slug），
+    // 这样 agent 收到的是 SDK Skill 工具需要的格式。
+    // pluginName 取决于 skill 来源：workspace → workspaceId；project/global → AGENTS_PLUGIN_NAME
     let rawText = match.fullMatch
     if (match.type === 'skill') {
       const skill = skillsBySlug.get(match.id)
@@ -264,7 +263,7 @@ export function extractBadges(
 }
 
 // ============================================================================
-// Helpers
+// 辅助函数
 // ============================================================================
 
 function escapeRegExp(string: string): string {

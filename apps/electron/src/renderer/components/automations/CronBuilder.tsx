@@ -1,12 +1,12 @@
 /**
  * CronBuilder
  *
- * Visual cron expression builder with three synchronized layers:
- * 1. Preset buttons — common schedules
- * 2. Visual fields — 5 interactive fields with dropdowns
- * 3. Raw expression — editable text input
+ * 可视化的 cron 表达式编辑器，包含三层同步的输入方式：
+ * 1. 预设按钮：常见调度周期
+ * 2. 可视化字段：5 个可交互字段（分/时/日/月/周几）
+ * 3. 原始表达式：可直接编辑的文本输入
  *
- * Plus human-readable summary and next-run preview.
+ * 同时提供人类可读的摘要文字和下次运行时间预览。
  */
 
 import * as React from 'react'
@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils'
 import { describeCron as describeCronExpression, computeNextRuns } from './utils'
 
 // ============================================================================
-// Presets
+// 预设调度
 // ============================================================================
 
 interface CronPreset {
@@ -37,7 +37,7 @@ const PRESETS: CronPreset[] = [
 ]
 
 // ============================================================================
-// Cron Field Definitions
+// Cron 字段定义
 // ============================================================================
 
 interface FieldDef {
@@ -65,13 +65,14 @@ const FIELDS: FieldDef[] = [
 ]
 
 // ============================================================================
-// Helpers
+// 辅助函数
 // ============================================================================
 
+// 校验 cron 字符串格式：必须是 5 段，且每段符合基本规则
 function validateCron(cron: string): string | null {
   const parts = cron.trim().split(/\s+/)
   if (parts.length !== 5) return 'Schedule needs 5 parts: minute, hour, day, month, and weekday'
-  // Basic validation per field
+  // 对每个字段做基础校验
   const ranges = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]]
   for (let i = 0; i < 5; i++) {
     const part = parts[i]
@@ -84,7 +85,7 @@ function validateCron(cron: string): string | null {
 }
 
 // ============================================================================
-// Field Editor
+// 单个 Cron 字段编辑器
 // ============================================================================
 
 interface CronFieldProps {
@@ -114,7 +115,7 @@ function CronField({ field, value, onChange }: CronFieldProps) {
 }
 
 // ============================================================================
-// Component
+// 组件
 // ============================================================================
 
 export interface CronBuilderProps {
@@ -136,13 +137,13 @@ export function CronBuilder({
   const [rawInput, setRawInput] = useState(value)
   const [fields, setFields] = useState<string[]>(value.split(/\s+/))
 
-  // Sync raw input and fields
+  // 当外部 value 变化时，同步原始输入和字段值
   useEffect(() => {
     setRawInput(value)
     setFields(value.split(/\s+/))
   }, [value])
 
-  // Update from raw input
+  // 从原始表达式输入更新
   const handleRawChange = useCallback((raw: string) => {
     setRawInput(raw)
     const parts = raw.trim().split(/\s+/)
@@ -152,7 +153,7 @@ export function CronBuilder({
     }
   }, [onChange])
 
-  // Update from field editor
+  // 从单个字段编辑器更新
   const handleFieldChange = useCallback((index: number, val: string) => {
     const newFields = [...fields]
     newFields[index] = val || '*'
@@ -162,7 +163,7 @@ export function CronBuilder({
     onChange?.(cron)
   }, [fields, onChange])
 
-  // Apply preset
+  // 应用预设
   const handlePreset = useCallback((cron: string) => {
     setRawInput(cron)
     setFields(cron.split(/\s+/))
@@ -175,7 +176,7 @@ export function CronBuilder({
 
   return (
     <div className={cn('space-y-5', className)}>
-      {/* Layer 1: Common Schedules */}
+      {/* 第一层：常用调度预设 */}
       <div className="space-y-2">
         <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">
           Common Schedules
@@ -198,7 +199,7 @@ export function CronBuilder({
         </div>
       </div>
 
-      {/* Layer 2: Custom Schedule */}
+      {/* 第二层：自定义调度字段 */}
       <div className="space-y-2">
         <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">
           Custom Schedule
@@ -215,7 +216,7 @@ export function CronBuilder({
         </div>
       </div>
 
-      {/* Layer 3: Advanced */}
+      {/* 第三层：高级原始输入 */}
       <div className="space-y-2">
         <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">
           Advanced
@@ -241,15 +242,15 @@ export function CronBuilder({
         )}
       </div>
 
-      {/* Summary */}
+      {/* 摘要信息 */}
       <div className="bg-background shadow-minimal rounded-[8px] p-4 space-y-3">
-        {/* Human-readable description */}
+        {/* 人类可读的描述 */}
         <div className="flex items-center gap-2">
           <Clock className="h-4 w-4 text-muted-foreground" />
           <span className="text-sm font-medium">{description}</span>
         </div>
 
-        {/* Next runs */}
+        {/* 下次运行时间 */}
         {nextRuns.length > 0 && !validationError && (
           <div className="space-y-1">
             <span className="text-xs text-muted-foreground">Next runs:</span>
@@ -275,7 +276,7 @@ export function CronBuilder({
           </div>
         )}
 
-        {/* Timezone */}
+        {/* 时区显示 */}
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span>{t('automations.labelTimezone')}:</span>
           <span className="font-medium text-foreground/70">{timezone || t('automations.systemDefault')}</span>

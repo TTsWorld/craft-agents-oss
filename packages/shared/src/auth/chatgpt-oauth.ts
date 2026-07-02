@@ -1,49 +1,52 @@
 /**
  * ChatGPT OAuth with PKCE
  *
- * Implements PKCE-based OAuth for authenticating with ChatGPT Plus accounts
- * via the Codex app-server OAuth endpoint.
+ * 实现通过 Codex app-server OAuth 端点登录 ChatGPT Plus 账号的 PKCE 流程。
  *
- * Architecture: server-owned flow.
- *   - prepareChatGptOAuth() — server generates PKCE + auth URL
- *   - Client opens browser + runs callback server (port 1455)
- *   - exchangeChatGptTokens() — server exchanges code for tokens
- *   - refreshChatGptTokens() — server refreshes expired tokens
- *   - exchangeIdTokenForApiKey() — converts idToken to OpenAI API key
+ * 架构：服务端主导流程（server-owned flow）。
+ *   - prepareChatGptOAuth()：服务端生成 PKCE + 授权 URL
+ *   - 客户端打开浏览器并运行本地回调服务器（端口 1455）
+ *   - exchangeChatGptTokens()：服务端用 code 换 token
+ *   - refreshChatGptTokens()：服务端刷新过期 token
+ *   - exchangeIdTokenForApiKey()：把 idToken 转成 OpenAI API key
  */
+
 import { randomBytes, createHash } from 'node:crypto';
 import { CHATGPT_OAUTH_CONFIG } from './chatgpt-oauth-config.ts';
 
-// OAuth configuration from shared config
+// 从共享配置里取出常量，方便本文件使用
 const CLIENT_ID = CHATGPT_OAUTH_CONFIG.CLIENT_ID;
 const AUTH_URL = CHATGPT_OAUTH_CONFIG.AUTH_URL;
 const TOKEN_URL = CHATGPT_OAUTH_CONFIG.TOKEN_URL;
 const REDIRECT_URI = CHATGPT_OAUTH_CONFIG.REDIRECT_URI;
 const OAUTH_SCOPES = CHATGPT_OAUTH_CONFIG.SCOPES;
 
+/**
+ * ChatGPT OAuth 换到的 token 集合。
+ */
 export interface ChatGptTokens {
-  /** JWT id_token containing user identity claims */
+  /** JWT id_token，包含用户身份声明 */
   idToken: string;
-  /** Access token for API calls */
+  /** 用于调用 API 的 access token */
   accessToken: string;
-  /** Refresh token for getting new tokens */
+  /** 用于刷新 token 的 refresh token */
   refreshToken?: string;
-  /** Token expiration timestamp (Unix ms) */
+  /** token 过期时间戳（Unix 毫秒） */
   expiresAt?: number;
 }
 
 /**
- * Generate a secure random state parameter
+ * 生成一个密码学安全的 state 参数，防止 CSRF。
  */
 function generateState(): string {
   return randomBytes(32).toString('hex');
 }
 
 /**
- * Generate PKCE code verifier and challenge
+ * 生成 PKCE verifier 和 challenge。
  */
 function generatePKCE(): { codeVerifier: string; codeChallenge: string } {
-  // Use URL-safe base64 encoding for PKCE (43-128 characters)
+  // 使用 URL-safe base64（base64url），长度 43-128 字符
   const codeVerifier = randomBytes(32).toString('base64url');
   const codeChallenge = createHash('sha256')
     .update(codeVerifier)
@@ -52,9 +55,12 @@ function generatePKCE(): { codeVerifier: string; codeChallenge: string } {
 }
 
 // ---------------------------------------------------------------------------
-// Prepare / Exchange (server-owned flow)
+// Prepare / Exchange（服务端主导流程）
 // ---------------------------------------------------------------------------
 
+/**
+ * prepare 阶段返回的数据：授权 URL、state、PKCE verifier。
+ */
 export interface ChatGptPreparedFlow {
   authUrl: string;
   state: string;
@@ -62,9 +68,10 @@ export interface ChatGptPreparedFlow {
 }
 
 /**
- * Prepare a ChatGPT OAuth flow without side effects.
- * Returns PKCE parameters and auth URL — no callback server, no browser open.
- * Used by the server-owned flow where the client handles browser + callback.
+ * 准备 ChatGPT OAuth 流程，无副作用。
+ * 只返回 PKCE 参数和授权 URL；不会打开浏览器或启动回调服务器。
+ *
+ * 用于服务端主导流程：服务端生成参数，客户端负责打开浏览器和处理回调。
  */
 export function prepareChatGptOAuth(): ChatGptPreparedFlow {
   const state = generateState();
@@ -90,8 +97,8 @@ export function prepareChatGptOAuth(): ChatGptPreparedFlow {
 }
 
 /**
- * Exchange an authorization code for ChatGPT tokens (stateless).
- * Accepts the codeVerifier directly — does not rely on module-level state.
+ * 用授权码换 ChatGPT token（无状态）。
+ * 直接传入 codeVerifier，不依赖模块级状态。
  */
 export async function exchangeChatGptTokens(
   code: string,
@@ -126,6 +133,8 @@ export async function exchangeChatGptTokens(
     throw new Error(`Token exchange failed: ${response.status} - ${errorMessage}`);
   }
 
+  // `as {...}` 是 TS 类型断言：告诉编译器 response.json() 的结构。
+  // 类似 Go 里的类型断言 `x.(SomeType)`，但这里是编译期行为。
   const data = (await response.json()) as {
     id_token: string;
     access_token: string;
@@ -142,11 +151,11 @@ export async function exchangeChatGptTokens(
 }
 
 /**
- * Refresh ChatGPT tokens using a refresh token
+ * 用 refresh token 刷新 ChatGPT token。
  *
- * @param refreshToken - The refresh token from a previous authentication
- * @param onStatus - Optional callback for status messages
- * @returns New ChatGptTokens
+ * @param refreshToken - 上次登录得到的 refresh token
+ * @param onStatus - 可选的状态回调函数
+ * @returns 新的 ChatGptTokens
  */
 export async function refreshChatGptTokens(
   refreshToken: string,
@@ -194,7 +203,7 @@ export async function refreshChatGptTokens(
     return {
       idToken: data.id_token,
       accessToken: data.access_token,
-      // Use new refresh token if provided, otherwise keep the old one
+      // 如果服务商返回了新 refresh token 就用新的，否则保留旧的
       refreshToken: data.refresh_token || refreshToken,
       expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
     };
@@ -207,13 +216,13 @@ export async function refreshChatGptTokens(
 }
 
 /**
- * Exchange an idToken for an OpenAI API key using the token-exchange grant.
+ * 用 idToken 通过 token-exchange grant 换取 OpenAI API key。
  *
- * This implements RFC 8693 Token Exchange to convert a ChatGPT OAuth idToken
- * into a first-class OpenAI API key that can be used with the standard OpenAI SDK.
+ * 实现 RFC 8693 Token Exchange：把 ChatGPT OAuth 的 idToken 转换成
+ * 可以直接用于标准 OpenAI SDK 的 API key。
  *
- * @param idToken - The JWT id_token from ChatGPT OAuth
- * @returns An OpenAI API key string
+ * @param idToken - ChatGPT OAuth 返回的 JWT id_token
+ * @returns OpenAI API key 字符串
  */
 export async function exchangeIdTokenForApiKey(idToken: string): Promise<string> {
   const params = new URLSearchParams({
@@ -238,7 +247,7 @@ export async function exchangeIdTokenForApiKey(idToken: string): Promise<string>
     let errorMessage: string;
     try {
       const errorJson = JSON.parse(errorText);
-      // Handle both string and object error formats
+      // 兼容 error 是字符串或对象的情况
       const errorDesc = errorJson.error_description;
       const errorCode = typeof errorJson.error === 'string' ? errorJson.error : JSON.stringify(errorJson.error);
       errorMessage = errorDesc || errorCode || errorText;

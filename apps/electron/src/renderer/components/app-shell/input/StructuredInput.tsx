@@ -1,3 +1,11 @@
+/**
+ * StructuredInput - 结构化输入路由组件。
+ *
+ * 根据输入类型分发到对应的具体组件：
+ * - permission：PermissionRequest（bash 命令审批）
+ * - credential：CredentialRequest（安全认证输入）
+ * - admin_approval：AdminApprovalRequest（管理员权限审批）
+ */
 import type { PermissionRequest as PermissionRequestType, CredentialRequest as CredentialRequestType } from '../../../../shared/types'
 import { PermissionRequest } from './structured/PermissionRequest'
 import { CredentialRequest } from './structured/CredentialRequest'
@@ -7,16 +15,14 @@ import type { StructuredInputState, StructuredResponse } from './structured/type
 interface StructuredInputProps {
   state: StructuredInputState
   onResponse: (response: StructuredResponse) => void
-  /** When true, removes container styling (shadow, bg, rounded) - used when wrapped by InputContainer */
+  /** 为 true 时移除容器样式（阴影、背景、圆角），用于被 InputContainer 包裹时 */
   unstyled?: boolean
 }
 
 /**
- * StructuredInput - Router component for structured input UIs
+ * StructuredInput - 结构化输入 UI 的路由组件。
  *
- * Routes to the appropriate component based on the input type:
- * - permission: PermissionRequest (bash command approval)
- * - credential: CredentialRequest (secure auth input)
+ * 根据类型分发到具体组件。
  */
 export function StructuredInput({ state, onResponse, unstyled = false }: StructuredInputProps) {
   switch (state.type) {

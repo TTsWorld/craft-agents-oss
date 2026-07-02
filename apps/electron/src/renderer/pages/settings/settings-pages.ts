@@ -1,14 +1,14 @@
 /**
- * Settings Page Components Registry
+ * 设置页面组件注册表
  *
- * Maps settings subpage IDs to their React components.
- * TypeScript enforces that all pages defined in settings-registry have a component here.
+ * 把设置子页面 ID（来自 shared/settings-registry）映射到对应的 React 组件。
+ * TypeScript 会保证 SETTINGS_PAGES 中定义的每个页面都在这里存在对应组件。
  *
- * To add a new settings page:
- * 1. Add to SETTINGS_PAGES in shared/settings-registry.ts
- * 2. Create the page component (e.g., NewSettingsPage.tsx)
- * 3. Add to SETTINGS_PAGE_COMPONENTS below
- * 4. Add icon to SETTINGS_ICONS in components/icons/SettingsIcons.tsx
+ * 新增设置页面的步骤：
+ * 1. 在 shared/settings-registry.ts 的 SETTINGS_PAGES 中添加
+ * 2. 创建页面组件（如 NewSettingsPage.tsx）
+ * 3. 在下方的 SETTINGS_PAGE_COMPONENTS 中注册
+ * 4. 在 components/icons/SettingsIcons.tsx 中添加图标
  */
 
 import type { ComponentType } from 'react'
@@ -27,8 +27,8 @@ import ShortcutsPage from './ShortcutsPage'
 import PreferencesPage from './PreferencesPage'
 
 /**
- * Map of settings subpage IDs to their page components.
- * TypeScript will error if a page from SETTINGS_PAGES is missing here.
+ * 子页面 ID 到 React 组件的映射。
+ * 如果 shared 中新增了一个 ID 但没有在这里写对应组件，TypeScript 会报错。
  */
 export const SETTINGS_PAGE_COMPONENTS: Record<SettingsSubpage, ComponentType> = {
   app: AppSettingsPage,
@@ -45,7 +45,7 @@ export const SETTINGS_PAGE_COMPONENTS: Record<SettingsSubpage, ComponentType> = 
 }
 
 /**
- * Get the component for a settings subpage
+ * 根据子页面 ID 获取对应组件
  */
 export function getSettingsPageComponent(subpage: SettingsSubpage): ComponentType {
   return SETTINGS_PAGE_COMPONENTS[subpage]

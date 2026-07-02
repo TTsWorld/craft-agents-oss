@@ -1,3 +1,8 @@
+/**
+ * FreeFormInput — React 组件
+ * 
+ * 所属目录：input
+ */
 import * as React from 'react'
 import { useTranslation } from "react-i18next"
 import { AnimatePresence, motion } from 'motion/react'
@@ -102,12 +107,12 @@ function formatFollowUpChipText(text: string, fallback: string, maxLength = 50):
 }
 
 
-/** Platform-specific modifier key for keyboard shortcuts */
+/** 键盘快捷键的平台相关修饰键（macOS 用 ⌘，其他用 Ctrl） */
 const cmdKey = isMac ? '⌘' : 'Ctrl'
 
-/** Default rotating placeholders are now generated inside FreeFormInput via useMemo + t() */
+/** 默认轮播占位文案在 FreeFormInput 内通过 useMemo + t() 生成 */
 
-/** Fisher-Yates shuffle — returns a new array in random order */
+/** Fisher-Yates 洗牌算法：返回随机排序的新数组 */
 function shuffleArray<T>(array: T[]): T[] {
   const shuffled = [...array]
   for (let i = shuffled.length - 1; i > 0; i--) {
@@ -117,6 +122,7 @@ function shuffleArray<T>(array: T[]): T[] {
   return shuffled
 }
 
+/** FollowUpInputItem：类型定义 */
 export interface FollowUpInputItem {
   id: string
   messageId: string
@@ -127,136 +133,137 @@ export interface FollowUpInputItem {
   color?: string
 }
 
+/** FreeFormInputProps：组件 props 类型定义 */
 export interface FreeFormInputProps {
-  /** Placeholder text(s) for the textarea - can be array for rotation */
+  /** 文本域占位文案；可传数组实现轮播 */
   placeholder?: string | string[]
-  /** Whether input is disabled */
+  /** 是否禁用输入 */
   disabled?: boolean
-  /** Whether the session is currently processing */
+  /** 当前会话是否正在处理中 */
   isProcessing?: boolean
-  /** Callback when message is submitted (skillSlugs from @mentions) */
+  /** 消息提交回调（skillSlugs 来自 @mentions） */
   onSubmit: (message: string, attachments?: FileAttachment[], skillSlugs?: string[]) => void
-  /** Callback to stop processing. Pass silent=true to skip "Response interrupted" message */
+  /** 停止处理回调；silent=true 时跳过“响应已中断”提示 */
   onStop?: (silent?: boolean) => void
-  /** External ref for the input */
+  /** 输入框的外部 ref */
   inputRef?: React.RefObject<RichTextInputHandle>
-  /** Current model ID */
+  /** 当前模型 ID */
   currentModel: string
-  /** Callback when model changes (includes connection slug for proper persistence) */
+  /** 模型变化回调（同时传入连接 slug，保证持久化正确） */
   onModelChange: (model: string, connection?: string) => void
-  // Thinking level (session-level setting)
-  /** Current thinking level ('off', 'think', 'max') */
+  // 思考等级（会话级设置）
+  /** 当前思考等级（'off'、'think'、'max'） */
   thinkingLevel?: ThinkingLevel
-  /** Callback when thinking level changes */
+  /** 思考等级变化回调 */
   onThinkingLevelChange?: (level: ThinkingLevel) => void
-  // Advanced options
+  // 高级选项
   permissionMode?: PermissionMode
   onPermissionModeChange?: (mode: PermissionMode) => void
-  /** Enabled permission modes for Shift+Tab cycling (min 2 modes) */
+  /** Shift+Tab 循环时可用的权限模式（至少 2 个） */
   enabledModes?: PermissionMode[]
-  // Controlled input value (for persisting across mode switches and conversation changes)
-  /** Current input value - if provided, component becomes controlled */
+  // 受控输入值：跨模式切换和会话变更时持久化草稿
+  /** 当前输入值；提供后组件变为受控组件 */
   inputValue?: string
-  /** Callback when input value changes */
+  /** 输入值变化回调 */
   onInputChange?: (value: string) => void
-  /** Persisted attachment draft for this session (seeds local state on session switch) */
+  /** 本会话的持久化附件草稿（切换会话时用于初始化本地状态） */
   attachmentsValue?: FileAttachment[]
-  /** Callback when attachment list changes (add, remove, clear on send) */
+  /** 附件列表变化回调（添加、移除、发送后清空） */
   onAttachmentsChange?: (attachments: FileAttachment[]) => void
-  /** When true, removes container styling (shadow, bg, rounded) - used when wrapped by InputContainer */
+  /** 为 true 时移除容器样式（阴影、背景、圆角），被 InputContainer 包裹时使用 */
   unstyled?: boolean
-  /** Callback when component height changes (for external animation sync) */
+  /** 组件高度变化回调（用于外部动画同步） */
   onHeightChange?: (height: number) => void
-  /** Callback when focus state changes */
+  /** 聚焦状态变化回调 */
   onFocusChange?: (focused: boolean) => void
-  // Source selection
-  /** Available sources (enabled only) */
+  // Source 选择
+  /** 可用 sources（仅已启用） */
   sources?: LoadedSource[]
-  /** Currently enabled source slugs for this session */
+  /** 当前会话已启用的 source slugs */
   enabledSourceSlugs?: string[]
-  /** Callback when source selection changes */
+  /** source 选择变化回调 */
   onSourcesChange?: (slugs: string[]) => void
-  // Skill selection (for @mentions)
-  /** Available skills for @mention autocomplete */
+  // Skill 选择（用于 @mentions）
+  /** @mention 自动补全可用的 skills */
   skills?: LoadedSkill[]
-  // Label selection (for #labels)
-  /** Available labels for #label autocomplete */
+  // Label 选择（用于 #labels）
+  /** #label 自动补全可用的 labels */
   labels?: LabelConfig[]
-  /** Currently applied session labels */
+  /** 当前会话已应用的 labels */
   sessionLabels?: string[]
-  /** Callback when a label is added via # menu */
+  /** 通过 # 菜单添加 label 时的回调 */
   onLabelAdd?: (labelId: string) => void
-  /** Workspace ID for loading skill icons */
+  /** 加载 skill 图标用的工作区 ID */
   workspaceId?: string
-  /** Current working directory path */
+  /** 当前工作目录路径 */
   workingDirectory?: string
-  /** Callback when working directory changes */
+  /** 工作目录变化回调 */
   onWorkingDirectoryChange?: (path: string) => void
-  /** Session folder path (for "Reset to Session Root" option) */
+  /** 会话文件夹路径（用于“重置为会话根目录”选项） */
   sessionFolderPath?: string
-  /** Session ID for scoping events like approve-plan */
+  /** 会话 ID，用于限定 approve-plan 等事件的作用域 */
   sessionId?: string
-  /** Current session status of the session (for # menu state selection) */
+  /** 当前会话状态（用于 # 菜单状态选择） */
   currentSessionStatus?: string
-  /** Disable send action (for tutorial guidance) */
+  /** 禁用发送操作（用于教程引导） */
   disableSend?: boolean
-  /** Whether the session is empty (no messages yet) - affects context badge prominence */
+  /** 会话是否为空（还没有消息）；影响上下文徽章的显隐 */
   isEmptySession?: boolean
-  /** Context status for showing compaction indicator and token usage */
+  /** 上下文状态，用于显示压缩指示器和 token 用量 */
   contextStatus?: {
-    /** True when SDK is actively compacting the conversation */
+    /** SDK 正在压缩对话时为 true */
     isCompacting?: boolean
-    /** Input tokens used so far in this session */
+    /** 本会话至今已使用的输入 tokens */
     inputTokens?: number
-    /** Model's context window size in tokens */
+    /** 模型上下文窗口大小（tokens） */
     contextWindow?: number
   }
-  /** Follow-up annotations shown as context chips above the input */
+  /** 显示在输入框上方的跟进注解上下文芯片 */
   followUpItems?: FollowUpInputItem[]
-  /** Callback when user clicks a follow-up chip body */
+  /** 用户点击跟进芯片主体时的回调 */
   onFollowUpClick?: (item: FollowUpInputItem, anchor?: { x: number; y: number }) => void
-  /** Callback when user clicks the follow-up index badge */
+  /** 用户点击跟进芯片序号徽标时的回调 */
   onFollowUpIndexClick?: (item: FollowUpInputItem) => void
   /**
-   * Compact-footer layout. Used by EditPopover (popover embedding) and by
-   * ChatPage in auto-compact / WebUI mobile mode. The popover case hides the
-   * model picker; the auto-compact case opts the compact picker in via
-   * `enableCompactModelPicker`.
+   * 紧凑底部布局。EditPopover（弹出框嵌入）和 ChatPage 的自动紧凑/WebUI 移动端都会用到。
+   * 弹出框场景会隐藏模型选择器；自动紧凑场景通过 `enableCompactModelPicker` 启用紧凑选择器。
+
+
    */
   compactMode?: boolean
   /**
-   * When `compactMode` is true, render the compact (drawer-based) model
-   * selector next to the permission-mode pill. Defaults to false so that
-   * EditPopover (which has no use for a model picker) keeps its current
-   * behavior.
+   * 当 `compactMode` 为 true 时，在权限模式 pill 旁渲染紧凑（抽屉式）模型选择器。
+   * 默认 false，因为 EditPopover 不需要模型选择器，保持其原有行为。
+
+
    */
   enableCompactModelPicker?: boolean
-  // Connection selection (hierarchical connection → model selector)
-  /** Current LLM connection slug (locked after first message) */
+  // 连接选择（层级：连接 → 模型选择器）
+  /** 当前 LLM 连接 slug（第一条消息后锁定） */
   currentConnection?: string
-  /** Callback when connection changes (only works when session is empty) */
+  /** 连接变化回调（仅在会话为空时有效） */
   onConnectionChange?: (connectionSlug: string) => void
-  /** When true, the session's locked connection has been removed */
+  /** 为 true 表示会话锁定的连接已被删除 */
   connectionUnavailable?: boolean
   /**
-   * True when the input is collapsed because the agent is processing in
-   * compact mode and the user hasn't expanded it yet. Owned by
-   * `InputContainer`; toggle back via `onRequestExpand`.
+   * 当 agent 正在 compact 模式下处理且用户尚未展开输入栏时为 true。
+   * 该状态由 `InputContainer` 持有，通过 `onRequestExpand` 切换回来。
+
    */
   isCollapsedInCompact?: boolean
-  /** Callback fired when the user clicks or hovers the collapsed-input strip. */
+  /** 用户点击或悬停折叠输入条时触发。 */
   onRequestExpand?: () => void
 }
 
 /**
- * FreeFormInput - Self-contained textarea input with attachments and controls
+ * FreeFormInput - 自包含的文本域输入组件，支持附件和控制按钮
  *
- * Features:
- * - Auto-growing textarea
- * - File attachments via button or drag-drop
- * - Slash commands menu
- * - Model selector
- * - Active option badges
+ * 功能：
+ * - 自动增高文本域
+ * - 通过按钮或拖拽添加文件附件
+ * - 斜杠命令菜单
+ * - 模型选择器
+ * - 活动选项徽章
  */
 export function FreeFormInput({
   placeholder,
@@ -308,7 +315,7 @@ export function FreeFormInput({
 }: FreeFormInputProps) {
   const { t } = useTranslation()
 
-  // Default rotating placeholders for onboarding/empty state (i18n-aware)
+  // 默认轮播占位文案，用于引导/空状态（已做国际化处理）
   const defaultPlaceholders = React.useMemo(() => [
     t("chatInput.placeholder.workOn"),
     t("chatInput.placeholder.shiftTab"),
@@ -321,28 +328,28 @@ export function FreeFormInput({
 
   const effectivePlaceholderProp = placeholder ?? defaultPlaceholders
 
-  // Read connection default model, connections, and workspace info from context.
-  // Uses optional variant so playground (no provider) doesn't crash.
+  // 从上下文读取连接默认模型、连接列表和工作区信息。
+  // 使用可选上下文，避免 playground（无 provider）崩溃。
   const appShellCtx = useOptionalAppShellContext()
   const llmConnections = appShellCtx?.llmConnections ?? []
   const workspaceDefaultConnection = appShellCtx?.workspaceDefaultLlmConnection
 
-  // Derive connectionDefaultModel per-session from the effective connection.
-  // Only non-null for compat providers (custom endpoints with fixed models).
-  // Standard providers (anthropic, pi) → null → normal model picker.
+  // 根据实际生效的连接推导每个会话的 connectionDefaultModel。
+  // 仅在 compat provider（固定模型的自定义端点）下非空。
+  // 标准 provider（anthropic、pi）返回 null，使用普通模型选择器。
   const connectionDefaultModel = React.useMemo(() => {
     const effectiveSlug = resolveEffectiveConnectionSlug(currentConnection, workspaceDefaultConnection, llmConnections)
     const conn = llmConnections.find(c => c.slug === effectiveSlug)
     if (!conn) return null
     if (!isCompatProvider(conn.providerType)) return null
-    // Allow model switching when connection has multiple models
+    // 当连接配置了多个模型时允许切换模型
     if (conn.models && conn.models.length > 1) return null
     return conn.defaultModel ?? null
   }, [currentConnection, workspaceDefaultConnection, llmConnections])
 
-  // Decide which of the four picker UIs to render. The `switcher` branch
-  // wins over `locked-single` so users with a single-model pi_compat default
-  // can still reach the connection list on a fresh session (#727).
+  // 决定渲染四种选择器 UI 中的哪一种。`switcher` 分支优先级高于 `locked-single`，
+  // 这样默认使用单模型 pi_compat 连接的新会话也能打开连接切换器（修复 #727）。
+
   const pickerMode = derivePickerMode({
     connectionUnavailable,
     connectionDefaultModel,
@@ -350,13 +357,13 @@ export function FreeFormInput({
     connectionCount: llmConnections.length,
   })
 
-  // Compute available models from the effective connection.
-  // All connections have models populated by backfillAllConnectionModels().
+  // 从实际生效的连接计算可用模型列表。
+  // 所有连接的模型列表都由 backfillAllConnectionModels() 填充。
   const availableModels = React.useMemo(() => {
-    // Connection removed — don't fall through to another connection's models
+    // 当前连接已被移除，不要回退到其他连接的模型列表
     if (connectionUnavailable) return []
 
-    // Determine effective connection using the canonical fallback chain
+    // 使用规范回退链确定实际生效的连接
     const effectiveSlug = resolveEffectiveConnectionSlug(currentConnection, workspaceDefaultConnection, llmConnections)
     const connection = llmConnections.find(c => c.slug === effectiveSlug)
 
@@ -369,77 +376,77 @@ export function FreeFormInput({
 
   const availableThinkingLevels = THINKING_LEVELS
 
-  // Disable thinking selector when the current model explicitly doesn't support it
+  // 当前模型明确不支持思考时禁用思考选择器
   const thinkingDisabled = React.useMemo(() => {
     const model = availableModels.find(m => typeof m !== 'string' && m.id === currentModel)
     return typeof model !== 'string' && model?.supportsThinking === false
   }, [availableModels, currentModel])
 
-  // Get display name for current model (full name, not short name)
+  // 获取当前模型的显示名称（完整名，不是短名）
   const currentModelDisplayName = React.useMemo(() => {
     const modelToDisplay = connectionDefaultModel ?? currentModel
     const model = availableModels.find(m =>
       typeof m === 'string' ? m === modelToDisplay : m.id === modelToDisplay
     )
     if (!model) {
-      // Fallback: use helper function to format unknown model IDs nicely
+      // 兜底：用辅助函数把未知模型 ID 格式化成友好的显示名
       return stripPiPrefixForDisplay(getModelDisplayName(modelToDisplay))
     }
     if (typeof model === 'string') return stripPiPrefixForDisplay(model)
-    // Defensive: partial entries (custom-endpoint user-config or vision-toggle
-    // promotions) may lack `name`. Fall back to the id so the trigger button
-    // never goes blank.
+    // 防御性处理：自定义端点用户配置或图片开关升级产生的条目可能缺少 `name`，
+    // 回退到 id，避免触发按钮空白。
+
     return model.name ?? stripPiPrefixForDisplay(model.id)
   }, [availableModels, currentModel, connectionDefaultModel])
 
-  // Group connections by provider type for hierarchical dropdown.
-  // Each provider (Anthropic, Pi) can have multiple connections (API Key, OAuth, etc.)
+  // 按提供商类型对连接分组，用于层级下拉菜单。
+  // 每个提供商（Anthropic、Pi）下可以有多个连接（API Key、OAuth 等）。
   const connectionsByProvider = React.useMemo(
     () => groupConnectionsByProvider(llmConnections),
     [llmConnections],
   )
 
-  // Find current connection details for display
+  // 查找当前连接详情用于展示
   const currentConnectionDetails = React.useMemo(() => {
     if (!currentConnection) return null
     return llmConnections.find(c => c.slug === currentConnection) ?? null
   }, [llmConnections, currentConnection])
 
-  // Effective connection: canonical fallback chain (session → workspace default → global default → first)
+  // 实际生效连接：规范回退链（会话 → 工作区默认 → 全局默认 → 首个连接）
   const effectiveConnection = resolveEffectiveConnectionSlug(currentConnection, workspaceDefaultConnection, llmConnections)
 
-  // Effective connection details (with fallbacks) for model list
-  // Unlike currentConnectionDetails which is null when no explicit connection is set,
-  // this resolves to the actual connection being used (including workspace default)
+  // 实际生效连接详情（含回退），用于获取模型列表
+  // 与 currentConnectionDetails 不同：未显式设置连接时后者为 null，
+  // 这里会解析到真正在用的连接（包括工作区默认连接）。
   const effectiveConnectionDetails = React.useMemo(() => {
     if (!effectiveConnection) return null
     return llmConnections.find(c => c.slug === effectiveConnection) ?? null
   }, [llmConnections, effectiveConnection])
 
 
-  // Access sessionStatuses and onSessionStatusChange from context for the # menu state picker
+  // 从上下文读取 sessionStatuses 和 onSessionStatusChange，用于 # 菜单的状态选择器
   const sessionStatuses = appShellCtx?.sessionStatuses ?? []
   const onSessionStatusChange = appShellCtx?.onSessionStatusChange
-  // Resolve workspace rootPath for "Add New Label" deep link
+  // 解析工作区 rootPath，用于“添加新标签”的深链跳转
   const workspaceRootPath = React.useMemo(() => {
     if (!appShellCtx || !workspaceId) return null
     return appShellCtx.workspaces.find(w => w.id === workspaceId)?.rootPath ?? null
   }, [appShellCtx, workspaceId])
 
-  // Workspace slug for SDK skill qualification (server-computed)
-  // SDK expects "workspaceSlug:skillSlug" format, NOT UUID
+  // SDK  skill 识别用的工作区 slug（由服务端计算）
+  // SDK 要求格式为 "workspaceSlug:skillSlug"，而不是 UUID
   const workspaceSlug = React.useMemo(() => {
     if (!appShellCtx || !workspaceId) return workspaceId
     return appShellCtx.workspaces.find(w => w.id === workspaceId)?.slug ?? workspaceId
   }, [appShellCtx, workspaceId])
 
-  // Read panel focus state from context (for multi-panel unfocused styling)
+  // 从上下文读取面板聚焦状态（用于多面板非聚焦态样式）
   const appShellContext = useOptionalAppShellContext()
   const isFocusedPanel = appShellContext?.isFocusedPanel ?? true
 
-  // Shuffle placeholder order once per mount so each session feels fresh.
-  // In compact mode, suppress desktop-keyboard guidance that is noisy or misleading
-  // on narrow/mobile-like layouts.
+  // 每次挂载时打乱占位文案顺序，让不同会话有新鲜感。
+  // compact 模式下隐藏依赖桌面键盘的提示，这些提示在窄屏/移动端会喧宾夺主或产生误导。
+
   const placeholderOptions = React.useMemo(() => {
     if (!Array.isArray(placeholder)) return placeholder
     if (!compactMode) return placeholder
@@ -454,29 +461,29 @@ export function FreeFormInput({
     })
   }, [placeholder, compactMode])
 
-  // Hide placeholder entirely when panel is unfocused in multi-panel layout
+  // 多面板布局中当前面板未聚焦时完全隐藏占位文案
   const shuffledPlaceholder = React.useMemo(
     () => Array.isArray(effectivePlaceholderProp) ? shuffleArray(effectivePlaceholderProp) : effectivePlaceholderProp,
     [] // eslint-disable-line react-hooks/exhaustive-deps -- intentionally shuffle only on mount
   )
   const effectivePlaceholder = isFocusedPanel ? shuffledPlaceholder : ''
 
-  // Performance optimization: Always use internal state for typing to avoid parent re-renders
-  // Sync FROM parent on mount/change (for restoring drafts)
-  // Sync TO parent on blur/submit (debounced persistence)
+  // 性能优化：输入时始终使用内部状态，避免父组件频繁重渲染。
+  // 挂载/变更时从父组件同步（用于恢复草稿）。
+  // 失焦/提交时同步回父组件（带防抖持久化）。
   const [input, setInput] = React.useState(() => coerceInputText(inputValue))
   const [attachments, setAttachments] = React.useState<FileAttachment[]>(attachmentsValue ?? [])
 
-  // Ref to track current attachments for use in event handlers (avoids stale closure issues)
+  // 用 ref 跟踪当前附件，供事件回调使用（避免闭包过时）。
   const attachmentsRef = React.useRef<FileAttachment[]>([])
   React.useEffect(() => {
     attachmentsRef.current = attachments
   }, [attachments])
 
-  // Seed from parent when `attachmentsValue` changes (e.g., switching sessions).
-  // `skipPersistRef` tells the save effect below that the next `attachments` change
-  // is a prop-driven seed, not user intent — otherwise we'd echo the seed back to
-  // the parent and risk persisting A's attachments under B's sessionId.
+  // 当 `attachmentsValue` 变化时从父组件播种（例如切换会话）。
+  // `skipPersistRef` 告诉下方的持久化 effect：下一次 `attachments` 变化来自 prop 播种，
+  // 不是用户操作；否则我们会把播种回写给父组件，导致 A 会话的附件被错写到 B 会话。
+
   const attachmentsRefsKey = React.useMemo(() => {
     if (!attachmentsValue) return ''
     return attachmentsValue.map(a => a.path).join('|')
@@ -491,9 +498,9 @@ export function FreeFormInput({
     setAttachments(attachmentsValue)
   }, [attachmentsValue, attachmentsRefsKey])
 
-  // Persist user-initiated attachment changes back to the parent. The parent stores
-  // refs (path + name) and debounces the disk write, so we fire eagerly on every
-  // change — add/remove/send-clear.
+  // 把用户主动发起的附件变化持久化回父组件。父组件保存的是引用（path + name），
+  // 并防抖落盘，因此每次变化都立即触发。
+
   const onAttachmentsChangeRef = React.useRef(onAttachmentsChange)
   onAttachmentsChangeRef.current = onAttachmentsChange
   React.useEffect(() => {
@@ -504,11 +511,11 @@ export function FreeFormInput({
     onAttachmentsChangeRef.current?.(attachments)
   }, [attachments])
 
-  // Optimistic state for source selection - updates UI immediately before IPC round-trip completes
+  // Source 选择的乐观状态：在 IPC 往返完成前就更新 UI。
   const [optimisticSourceSlugs, setOptimisticSourceSlugs] = React.useState(enabledSourceSlugs)
 
-  // Sync from prop when server state changes (reconciles after IPC or on external updates)
-  // Use content comparison (not reference) to avoid infinite loops with empty arrays
+  // 服务端状态变化时从 prop 同步（在 IPC 完成或外部更新后 reconciliation）。
+  // 用内容比较而非引用比较，避免空数组触发无限循环。
   const prevEnabledSourceSlugsRef = React.useRef(enabledSourceSlugs)
   React.useEffect(() => {
     const prev = prevEnabledSourceSlugsRef.current
@@ -521,7 +528,7 @@ export function FreeFormInput({
     }
   }, [enabledSourceSlugs])
 
-  // Sync from parent when inputValue changes externally (e.g., switching sessions)
+  // 当 inputValue 外部变化时从父组件同步（例如切换会话）。
   const prevInputValueRef = React.useRef(coerceInputText(inputValue))
   React.useEffect(() => {
     if (inputValue === undefined) return
@@ -532,7 +539,7 @@ export function FreeFormInput({
     }
   }, [inputValue])
 
-  // Debounced sync to parent (saves draft without blocking typing)
+  // 防抖同步到父组件（保存草稿而不阻塞输入）。
   const syncTimeoutRef = React.useRef<NodeJS.Timeout | null>(null)
   const syncToParent = React.useCallback((value: string) => {
     if (!onInputChange) return
@@ -543,17 +550,17 @@ export function FreeFormInput({
     }, 300) // Debounce 300ms
   }, [onInputChange])
 
-  // Sync immediately on unmount to preserve input across mode switches
-  // Also cleanup any pending debounced sync
+  // 卸载时立即同步，跨模式切换保留输入内容。
+  // 同时清理待处理的防抖同步。
   const inputRef = React.useRef(input)
   inputRef.current = input // Keep ref in sync with state
 
   React.useEffect(() => {
     return () => {
-      // Cancel pending debounced sync
+      // 取消待处理的防抖同步
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
-      // Immediately sync current value to parent on unmount
-      // This preserves input when switching to structured input (e.g., permission request)
+      // 卸载时立即把当前值同步给父组件
+      // 切换到结构化输入（例如权限请求）时保留输入内容
       if (onInputChange && inputRef.current !== prevInputValueRef.current) {
         onInputChange(inputRef.current)
       }
@@ -567,12 +574,12 @@ export function FreeFormInput({
   const [inputMaxHeight, setInputMaxHeight] = React.useState(540)
   const [modelDropdownOpen, setModelDropdownOpen] = React.useState(false)
 
-  // Input settings (loaded from config)
+  // 输入设置（从配置加载）
   const [autoCapitalisation, setAutoCapitalisation] = React.useState(true)
   const [sendMessageKey, setSendMessageKey] = React.useState<'enter' | 'cmd-enter'>('enter')
   const [spellCheck, setSpellCheck] = React.useState(false)
 
-  // Load input settings on mount
+  // 挂载时加载输入设置
   React.useEffect(() => {
     const loadInputSettings = async () => {
       if (!window.electronAPI) return
@@ -592,10 +599,10 @@ export function FreeFormInput({
     loadInputSettings()
   }, [])
 
-  // Double-Esc interrupt: show warning overlay on first Esc, interrupt on second
+  // 双击 Esc 中断：第一次 Esc 显示警告覆盖层，第二次 Esc 真正中断。
   const { showEscapeOverlay } = useEscapeInterrupt()
 
-  // Calculate max height: min(66% of window height, 540px)
+  // 计算最大高度：取窗口高度的 66% 与 540px 中的较小值
   React.useEffect(() => {
     const updateMaxHeight = () => {
       const maxFromWindow = Math.floor(window.innerHeight * 0.66)
@@ -611,15 +618,15 @@ export function FreeFormInput({
   const sourceButtonRef = React.useRef<HTMLButtonElement>(null)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
 
-  // Merge refs for RichTextInput
+  // 合并外部与内部的 RichTextInput ref
   const internalInputRef = React.useRef<RichTextInputHandle>(null)
   const richInputRef = externalInputRef || internalInputRef
 
-  // Track last caret position for focus restoration (e.g., after permission mode popover closes)
+  // 记录最后光标位置，用于重新聚焦时恢复（例如权限模式弹出框关闭后）。
   const lastCaretPositionRef = React.useRef<number | null>(null)
 
-  // Listen for craft:insert-text events (generic mechanism for inserting text into input)
-  // Used by components that want to pre-fill the input with text
+  // 监听 craft:insert-text 事件：通用的向输入框插入文本机制。
+  // 其他组件可用此事件预填充输入框。
   React.useEffect(() => {
     const handleInsertText = (e: CustomEvent<{ text: string; sessionId?: string }>) => {
       const targetSessionId = e.detail?.sessionId
@@ -628,10 +635,10 @@ export function FreeFormInput({
       const text = coerceInputText(e.detail?.text)
       setInput(text)
       syncToParent(text)
-      // Focus the input after inserting
+      // 插入后聚焦输入框
       setTimeout(() => {
         richInputRef.current?.focus()
-        // Move cursor to end
+        // 光标移到末尾
         richInputRef.current?.setSelectionRange(text.length, text.length)
       }, 0)
     }
@@ -662,12 +669,12 @@ export function FreeFormInput({
     source?: string
   }
 
-  // Listen for craft:approve-plan events (used by ResponseCard's Accept Plan button)
-  // This disables safe mode AND submits the message in one action
-  // Only process events for this session (sessionId must match)
+  // 监听 craft:approve-plan 事件（ResponseCard 的“接受 Plan”按钮使用）。
+  // 一次性退出安全模式并提交批准消息。
+  // 只处理属于当前会话的事件（sessionId 必须匹配）。
   React.useEffect(() => {
     const handleApprovePlan = (e: CustomEvent<PlanApprovalEventDetail>) => {
-      // Only handle if this event is for our session
+      // 仅当事件属于当前会话时才处理
       if (e.detail?.sessionId && e.detail.sessionId !== sessionId) {
         return
       }
@@ -679,8 +686,8 @@ export function FreeFormInput({
         draftInput,
       })
 
-      // Switch to allow-all (Auto) mode if in Explore mode (allow execution without prompts)
-      // Only switch if currently in safe mode - if user is in 'ask' mode, respect their choice
+      // 如果当前是 Explore（safe）模式，则切换到 allow-all（Auto）模式，允许无提示执行。
+      // 仅在 safe 模式下自动切换；若用户处于 ask 模式，则尊重其选择。
       if (permissionMode === 'safe') {
         onPermissionModeChange?.('allow-all')
       }
@@ -692,12 +699,12 @@ export function FreeFormInput({
     return () => window.removeEventListener('craft:approve-plan', handleApprovePlan as EventListener)
   }, [sessionId, permissionMode, onPermissionModeChange, onSubmit, consumeInputDraftSnapshot])
 
-  // Listen for craft:approve-plan-with-compact events (Accept & Compact option)
-  // This compacts the conversation first, then executes the plan.
-  // The pending state is persisted to survive page reloads (CMD+R).
+  // 监听 craft:approve-plan-with-compact 事件（“接受并压缩”选项）。
+  // 先压缩对话，再执行 plan。
+  // 将待执行状态持久化，以在 CMD+R 刷新后恢复。
   React.useEffect(() => {
     const handleApprovePlanWithCompact = async (e: CustomEvent<PlanApprovalEventDetail>) => {
-      // Only handle if this event is for our session
+      // 仅当事件属于当前会话时才处理
       if (e.detail?.sessionId && e.detail.sessionId !== sessionId) {
         return
       }
@@ -706,13 +713,13 @@ export function FreeFormInput({
       const shouldIncludeDraft = e.detail?.includeDraftInput !== false
       const draftInputSnapshot = shouldIncludeDraft ? consumeInputDraftSnapshot() : ''
 
-      // Switch to allow-all (Auto) mode if in Explore mode
+      // 如果当前是 Explore（safe）模式，则切换到 allow-all（Auto）模式
       if (permissionMode === 'safe') {
         onPermissionModeChange?.('allow-all')
       }
 
-      // Persist the pending plan execution state BEFORE sending /compact.
-      // This allows reload recovery if CMD+R happens during compaction.
+      // 在发送 /compact 之前先持久化待执行的 plan 状态。
+      // 这样即使压缩过程中 CMD+R 刷新，也能在恢复后重试。
       if (sessionId) {
         await window.electronAPI.sessionCommand(sessionId, {
           type: 'setPendingPlanExecution',
@@ -721,18 +728,18 @@ export function FreeFormInput({
         })
       }
 
-      // Send /compact to trigger compaction
+      // 发送 /compact 触发压缩
       onSubmit('/compact', undefined)
 
-      // Set up a one-time listener for compaction complete.
-      // This handles the normal case (no reload during compaction).
+      // 设置一次性压缩完成监听器。
+      // 处理正常流程（压缩期间没有刷新）。
       const handleCompactionComplete = async (compactEvent: CustomEvent<{ sessionId?: string }>) => {
-        // Only handle if this is for our session
+        // 仅当属于当前会话时才处理
         if (compactEvent.detail?.sessionId !== sessionId) {
           return
         }
 
-        // Remove the listener (one-time use)
+        // 移除监听器（一次性使用）
         window.removeEventListener('craft:compaction-complete', handleCompactionComplete as unknown as EventListener)
 
         const executionMessage = buildPlanApprovalMessage({
@@ -741,7 +748,7 @@ export function FreeFormInput({
         })
         onSubmit(executionMessage, undefined)
 
-        // Clear the pending state since we just sent the execution message
+        // 已发送执行消息，清除待处理状态
         if (sessionId) {
           await window.electronAPI.sessionCommand(sessionId, {
             type: 'clearPendingPlanExecution',
@@ -756,10 +763,10 @@ export function FreeFormInput({
     return () => window.removeEventListener('craft:approve-plan-with-compact', handleApprovePlanWithCompact as unknown as EventListener)
   }, [sessionId, permissionMode, onPermissionModeChange, onSubmit, consumeInputDraftSnapshot])
 
-  // Reload recovery: Check for pending plan execution on mount.
-  // If the page reloaded after compaction completed (awaitingCompaction = false),
-  // we need to send the plan execution message that was interrupted by the reload.
-  // Also listen for compaction-complete in case CMD+R happened during compaction.
+  // 刷新恢复：挂载时检查是否有待执行的 plan。
+  // 如果页面在压缩完成后刷新（awaitingCompaction = false），
+  // 需要补发因刷新而中断的执行消息。
+  // 同时监听 compaction-complete，以处理压缩过程中 CMD+R 的情况。
   React.useEffect(() => {
     if (!sessionId) return
 
@@ -780,14 +787,14 @@ export function FreeFormInput({
         const pending = await window.electronAPI.getPendingPlanExecution(sessionId)
         if (!pending || pending.awaitingCompaction || pending.executionDispatched) return
 
-        // Mark dispatched before sending so reload recovery does not double-submit
-        // the same plan if onSubmit succeeds but cleanup fails during a reconnect.
+        // 发送前标记为已派发，防止刷新恢复时重复提交
+        // 避免因 onSubmit 成功但重连清理失败导致的同 plan 重复提交。
         await window.electronAPI.sessionCommand(sessionId, {
           type: 'markPendingPlanExecutionDispatched',
         })
 
-        // Compaction completed but we never sent the execution message (page reloaded).
-        // Send it now and clear the pending state.
+        // 压缩已完成，但执行消息未发送（页面刷新了）。
+        // 现在补发并清除待处理状态。
         hasExecuted = true
         const executionMessage = buildPlanApprovalMessage({
           planPath: pending.planPath,
@@ -805,14 +812,14 @@ export function FreeFormInput({
       }
     }
 
-    // Check immediately on mount (handles case where compaction already completed)
+    // 挂载后立即检查（处理压缩已完成的情况）
     executePendingPlan()
 
-    // Also listen for compaction-complete in case CMD+R happened during compaction.
-    // When compaction finishes after reload, this listener will trigger execution.
+    // 同时监听 compaction-complete，处理压缩期间 CMD+R 的场景。
+    // 刷新后压缩完成时，该监听器会触发执行。
     const handleCompactionComplete = async (e: CustomEvent<{ sessionId: string }>) => {
       if (e.detail?.sessionId !== sessionId) return
-      // Small delay to ensure markCompactionComplete has been called
+      // 短暂延迟，确保 markCompactionComplete 已被调用
       await new Promise(resolve => setTimeout(resolve, 100))
       executePendingPlan()
     }
@@ -823,7 +830,7 @@ export function FreeFormInput({
     }
   }, [sessionId, onSubmit])
 
-  // Listen for craft:focus-input events (restore focus after popover/dropdown closes)
+  // 监听 craft:focus-input 事件（弹出框/下拉菜单关闭后恢复焦点）。
   React.useEffect(() => {
     const handleFocusInput = (e: Event) => {
       const detail = (e as CustomEvent<{ sessionId?: string }>).detail
@@ -835,7 +842,7 @@ export function FreeFormInput({
       }
 
       richInputRef.current?.focus()
-      // Restore caret position if saved, then clear it (one-shot)
+      // 如果保存了光标位置则恢复，并清空（一次性）
       if (lastCaretPositionRef.current !== null) {
         richInputRef.current?.setSelectionRange(
           lastCaretPositionRef.current,
@@ -849,7 +856,7 @@ export function FreeFormInput({
     return () => window.removeEventListener('craft:focus-input', handleFocusInput)
   }, [sessionId, isFocusedPanel, richInputRef])
 
-  // Recover queued focus requests after session switch/mount races.
+  // 处理会话切换/挂载竞态中排队的聚焦请求。
   React.useEffect(() => {
     if (!consumePendingFocusForSession(sessionId)) return
 
@@ -858,7 +865,7 @@ export function FreeFormInput({
     }, 0)
   }, [sessionId, richInputRef])
 
-  // Get the next available number for a pasted file prefix (e.g., pasted-image-1, pasted-image-2)
+  // 获取粘贴文件前缀的下一个可用序号（例如 pasted-image-1、pasted-image-2）
   const getNextPastedNumber = (
     prefix: 'image' | 'text' | 'file',
     existingAttachments: FileAttachment[]
@@ -874,7 +881,7 @@ export function FreeFormInput({
     return maxNum + 1
   }
 
-  // Listen for craft:paste-files events (for global paste when input not focused)
+  // 监听 craft:paste-files 事件：在输入框未聚焦时处理全局粘贴。
   React.useEffect(() => {
     const handlePasteFiles = async (e: CustomEvent<{ files: File[]; sessionId?: string }>) => {
       if (disabled) return
@@ -887,7 +894,7 @@ export function FreeFormInput({
 
       setLoadingCount(prev => prev + files.length)
 
-      // Pre-assign sequential names using ref to avoid race conditions
+      // 使用 ref 预分配顺序名称，避免竞态条件
       let nextImageNum = getNextPastedNumber('image', attachmentsRef.current)
       const fileNames: string[] = files.map(file => {
         if (!file.name || file.name === 'image.png' || file.name === 'image.jpg' || file.name === 'blob') {
@@ -909,7 +916,7 @@ export function FreeFormInput({
         setLoadingCount(prev => prev - 1)
       }
 
-      // Focus the input after adding attachments
+      // 添加附件后聚焦输入框
       richInputRef.current?.focus()
     }
 
@@ -917,17 +924,17 @@ export function FreeFormInput({
     return () => window.removeEventListener('craft:paste-files', handlePasteFiles as unknown as EventListener)
   }, [disabled, sessionId, isFocusedPanel, richInputRef])
 
-  // Build active commands list for slash command menu
+  // 构建斜杠命令菜单中的激活命令列表
   const activeCommands = React.useMemo(() => {
     const active: SlashCommandId[] = []
-    // Add the currently active permission mode
+    // 加入当前激活的权限模式
     if (permissionMode === 'safe') active.push('safe')
     else if (permissionMode === 'ask') active.push('ask')
     else if (permissionMode === 'allow-all') active.push('allow-all')
     return active
   }, [permissionMode])
 
-  // Handle slash command selection (mode/feature commands)
+  // 处理斜杠命令选择（模式/功能命令）
   const handleSlashCommand = React.useCallback((commandId: SlashCommandId) => {
     if (commandId === 'safe') onPermissionModeChange?.('safe')
     else if (commandId === 'ask') onPermissionModeChange?.('ask')
@@ -935,7 +942,7 @@ export function FreeFormInput({
     else if (commandId === 'compact' && !isProcessing) onSubmit('/compact', undefined)
   }, [onPermissionModeChange, isProcessing, onSubmit])
 
-  // Handle folder selection from slash command menu
+  // 处理斜杠命令菜单中的文件夹选择
   const handleSlashFolderSelect = React.useCallback((path: string) => {
     if (onWorkingDirectoryChange) {
       setRecentFolders(addRecentWorkingDir(path, workspaceId))
@@ -943,7 +950,7 @@ export function FreeFormInput({
     }
   }, [onWorkingDirectoryChange, workspaceId])
 
-  // Get recent folders and home directory for slash menu and mention menu
+  // 为斜杠菜单和 mention 菜单获取最近文件夹和 home 目录
   const [recentFolders, setRecentFolders] = React.useState<string[]>([])
   const [homeDir, setHomeDir] = React.useState<string>('')
 
@@ -954,7 +961,7 @@ export function FreeFormInput({
     })
   }, [workspaceId])
 
-  // Inline slash command hook (modes, features, and folders)
+  // 内联斜杠命令 hook（模式、功能、文件夹）
   const inlineSlash = useInlineSlashCommand({
     inputRef: richInputRef,
     onSelectCommand: handleSlashCommand,
@@ -964,9 +971,9 @@ export function FreeFormInput({
     homeDir,
   })
 
-  // Handle mention selection (sources, skills, files)
+  // 处理 mention 选择（sources、skills、files）
   const handleMentionSelect = React.useCallback((item: MentionItem) => {
-    // For sources: enable the source immediately
+    // Source：立即启用该 source
     if (item.type === 'source' && item.source && onSourcesChange) {
       const slug = item.source.config.slug
       if (!optimisticSourceSlugs.includes(slug)) {
@@ -976,22 +983,22 @@ export function FreeFormInput({
       }
     }
 
-    // Files via @ mention in text are sufficient context for the agent.
-    // Skills also don't need special handling beyond text insertion.
+    // 文本中的 @ 文件 mention 已足以给 agent 提供上下文。
+    // Skill 也只需要插入文本，无需额外处理。
   }, [optimisticSourceSlugs, onSourcesChange])
 
-  // Inline mention hook (for skills, sources, and files)
+  // 内联 mention hook（skills、sources、files）
   const inlineMention = useInlineMention({
     inputRef: richInputRef,
     skills,
     sources,
     basePath: workingDirectory,
     onSelect: handleMentionSelect,
-    // Use workspace slug (not UUID) for SDK skill qualification
+    // 使用 workspace slug（而非 UUID）供 SDK 识别 skill
     workspaceId: workspaceSlug,
   })
 
-  // Inline label menu hook (for #labels)
+  // 内联 label 菜单 hook（#labels）
   const handleLabelSelect = React.useCallback((labelId: string) => {
     onLabelAdd?.(labelId)
   }, [onLabelAdd])
@@ -1005,34 +1012,34 @@ export function FreeFormInput({
     activeStateId: currentSessionStatus,
   })
 
-  // "Add New Label" handler: cleans up the #trigger text and opens a controlled
-  // EditPopover so the user can describe the label before the agent creates it.
+  // “添加新标签”处理：清理 # 触发文本并打开受控的 EditPopover，
+  // 让用户在 agent 创建标签前先描述它。
   const [addLabelPopoverOpen, setAddLabelPopoverOpen] = React.useState(false)
   const [addLabelPrefill, setAddLabelPrefill] = React.useState('')
   const handleAddLabel = React.useCallback((prefill: string) => {
     if (!workspaceRootPath) return
 
-    // Remove the #trigger text from input
+    // 从输入中移除 # 触发文本
     const cleaned = inlineLabel.handleSelect('')
     setInput(cleaned)
     syncToParent(cleaned)
     inlineLabel.close()
 
-    // Store the prefill text (e.g., "Test" from "#Test") to pre-fill the popover
-    // Format: "Add new label {prefill}" so user can just press enter or modify
+    // 保存预填文本（例如从 "#Test" 得到 "Test"）用于预填充弹出框
+    // 格式为“Add new label {prefill}”，用户可直接回车或修改
     setAddLabelPrefill(prefill ? t('labels.addNewLabel', { prefill }) : '')
 
-    // Open the EditPopover for label creation
+    // 打开创建标签的 EditPopover
     setAddLabelPopoverOpen(true)
   }, [workspaceRootPath, inlineLabel, syncToParent, t])
 
-  // Memoize the add-label config so the EditPopover doesn't recreate on every render
+  // 缓存 add-label 配置，避免每次渲染都重建 EditPopover
   const addLabelEditConfig = React.useMemo(() => {
     if (!workspaceRootPath) return null
     return getEditConfig('add-label', workspaceRootPath)
   }, [workspaceRootPath])
 
-  // Report height changes to parent (for external animation sync)
+  // 向父组件报告高度变化（用于外部动画同步）
   React.useLayoutEffect(() => {
     if (!onHeightChange || !containerRef.current) return
 
@@ -1046,22 +1053,22 @@ export function FreeFormInput({
     return () => observer.disconnect()
   }, [onHeightChange])
 
-  // In compact mode, immediately report collapsed height when the input is
-  // collapsed during processing. This ensures smooth animation timing.
-  // When the user expands (or processing ends), the ResizeObserver takes
-  // over and reports the actual rendered height.
+  // compact 模式下，输入框折叠时立即上报折叠高度，
+  // 保证动画时机的平滑。
+  // 用户展开（或处理结束）后，ResizeObserver 接管并上报实际渲染高度。
+
   React.useEffect(() => {
     if (!onHeightChange) return
     if (isCollapsedInCompact) {
-      // Collapsed state - only bottom bar visible (~44px)
+      // 折叠状态：仅底部工具栏可见（约 44px）
       onHeightChange(44)
     }
   }, [isCollapsedInCompact, onHeightChange])
 
-  // Check if running in Electron environment (has electronAPI)
+  // 检查是否运行在 Electron 环境（存在 electronAPI）
   const hasElectronAPI = typeof window !== 'undefined' && !!window.electronAPI
 
-  // Shared helper: read a File, add as attachment, decrement loading count
+  // 共享辅助函数：读取 File、添加为附件、减少 loading 计数
   const processFileAttachment = async (file: File, overrideName?: string) => {
     try {
       const attachment = await readFileAsAttachment(file, overrideName)
@@ -1074,7 +1081,7 @@ export function FreeFormInput({
     setLoadingCount(prev => prev - 1)
   }
 
-  // File attachment handlers
+  // 文件附件处理函数
   const handleAttachClick = () => {
     if (disabled) return
     fileInputRef.current?.click()
@@ -1091,7 +1098,7 @@ export function FreeFormInput({
       await processFileAttachment(file)
     }
 
-    // Reset input so re-selecting the same file triggers onChange again
+    // 重置 input，以便再次选择同一文件时仍能触发 onChange
     e.target.value = ''
   }
 
@@ -1099,7 +1106,7 @@ export function FreeFormInput({
     setAttachments(prev => prev.filter((_, i) => i !== index))
   }
 
-  // Drag and drop handlers
+  // 拖拽处理函数
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
@@ -1123,19 +1130,19 @@ export function FreeFormInput({
     e.stopPropagation()
   }
 
-  // Helper to read a File using FileReader API
+  // 使用 FileReader API 读取文件的辅助函数
   const readFileAsAttachment = async (file: File, overrideName?: string): Promise<FileAttachment | null> => {
-    // Capture the absolute OS path at attach time. Works for <input type="file"> and
-    // OS drag-drop; returns null for clipboard paste and web-drag (no disk origin).
-    // When null, the draft layer falls back to persisting content inline (Track C).
+    // 在附加时捕获绝对 OS 路径。适用于 <input type="file"> 和 OS 拖拽；
+    // 剪贴板粘贴和网页拖拽返回 null（没有磁盘来源）。
+    // 为 null 时，草稿层会回退到内联保存内容（Track C）。
     const realPath = hasElectronAPI ? window.electronAPI.getFilePath?.(file) ?? null : null
 
     return new Promise((resolve) => {
       const reader = new FileReader()
       reader.onload = async () => {
         const result = reader.result as ArrayBuffer
-        // Chunked base64 encoding — btoa + reduce fails on large files (>1MB)
-        // due to O(n²) string concatenation and browser string-length limits
+        // 分块 base64 编码：btoa + reduce 在大文件（>1MB）下会失败，
+        // 因为字符串拼接是 O(n²) 且浏览器有字符串长度限制。
         const bytes = new Uint8Array(result)
         let binary = ''
         const chunkSize = 8192
@@ -1153,7 +1160,7 @@ export function FreeFormInput({
 
         const mimeType = file.type || 'application/octet-stream'
 
-        // For text files, decode the ArrayBuffer as UTF-8 text
+        // 文本文件：将 ArrayBuffer 解码为 UTF-8 文本
         let text: string | undefined
         if (type === 'text') {
           text = new TextDecoder('utf-8').decode(new Uint8Array(result))
@@ -1165,7 +1172,7 @@ export function FreeFormInput({
             const thumb = await window.electronAPI.generateThumbnail(base64, mimeType)
             if (thumb) thumbnailBase64 = thumb
           } catch {
-            // Thumbnail generation is optional, continue without it
+            // 缩略图生成是可选的，失败则继续
           }
         }
 
@@ -1185,20 +1192,20 @@ export function FreeFormInput({
     })
   }
 
-  // Clipboard paste handler for files/images
+  // 文件/图片的剪贴板粘贴处理
   const handlePaste = async (e: React.ClipboardEvent) => {
     if (disabled) return
 
     const clipboardItems = e.clipboardData?.files
     if (!clipboardItems || clipboardItems.length === 0) return
 
-    // We have files to process - prevent default text paste behavior
+    // 有待处理文件：阻止默认文本粘贴行为
     e.preventDefault()
 
     const files = Array.from(clipboardItems)
     setLoadingCount(prev => prev + files.length)
 
-    // Pre-assign sequential names using ref to avoid race conditions
+    // 使用 ref 预分配顺序名称，避免竞态条件
     let nextImageNum = getNextPastedNumber('image', attachmentsRef.current)
     const fileNames: string[] = files.map(file => {
       if (!file.name || file.name === 'image.png' || file.name === 'image.jpg' || file.name === 'blob') {
@@ -1213,7 +1220,7 @@ export function FreeFormInput({
     }
   }
 
-  // Handle long text paste - convert to file attachment
+  // 处理长文本粘贴：转换为文件附件
   const handleLongTextPaste = React.useCallback((text: string) => {
     const nextNum = getNextPastedNumber('text', attachmentsRef.current)
     const fileName = `pasted-text-${nextNum}.txt`
@@ -1226,7 +1233,7 @@ export function FreeFormInput({
       size: new Blob([text]).size,
     }
     setAttachments(prev => [...prev, attachment])
-    // Focus input after adding attachment
+    // 添加附件后聚焦输入框
     richInputRef.current?.focus()
   }, []) // No deps needed - uses ref
 
@@ -1245,20 +1252,20 @@ export function FreeFormInput({
     }
   }
 
-  // Submit message - backend handles queueing and interruption
+  // 提交消息：后端负责排队和中断
   const submitMessage = React.useCallback(() => {
     const hasContent = input.trim() || attachments.length > 0 || followUpItems.length > 0
     if (!hasContent || disabled) return false
 
-    // Tutorial may disable sending to guide user through specific steps
+    // 教程可能禁用发送，以引导用户完成特定步骤
     if (disableSend) return false
 
-    // Parse all @mentions (skills, sources, folders)
+    // 解析所有 @mentions（skills、sources、folders）
     const skillSlugs = skills.map(s => s.slug)
     const sourceSlugs = sources.map(s => s.config.slug)
     const mentions = parseMentions(input, skillSlugs, sourceSlugs)
 
-    // Enable any mentioned sources that aren't already enabled
+    // 启用输入中提到的、尚未启用的 source
     if (mentions.sources.length > 0 && onSourcesChange) {
       const newSlugs = [...new Set([...optimisticSourceSlugs, ...mentions.sources])]
       if (newSlugs.length > optimisticSourceSlugs.length) {
@@ -1276,13 +1283,13 @@ export function FreeFormInput({
     )
     setInput('')
     setAttachments([])
-    // Clear draft immediately (cancel any pending debounced sync)
+    // 立即清空草稿（取消待处理的防抖同步）
     if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
     onInputChange?.('')
     onAttachmentsChange?.([])
     prevInputValueRef.current = ''
 
-    // Restore focus after state updates
+    // 状态更新后恢复焦点
     requestAnimationFrame(() => {
       richInputRef.current?.focus()
     })
@@ -1290,7 +1297,7 @@ export function FreeFormInput({
     return true
   }, [input, attachments, followUpItems, disabled, disableSend, onInputChange, onAttachmentsChange, onSubmit, skills, sources, optimisticSourceSlugs, onSourcesChange, onWorkingDirectoryChange, homeDir])
 
-  // Listen for craft:submit-input events (simulate pressing the Send button)
+  // 监听 craft:submit-input 事件（模拟点击发送按钮）
   React.useEffect(() => {
     const handleSubmitInput = (e: CustomEvent<{ sessionId?: string }>) => {
       const targetSessionId = e.detail?.sessionId
@@ -1312,17 +1319,17 @@ export function FreeFormInput({
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // During IME composition, ESC should cancel composition, not trigger app/menu ESC behavior.
+    // IME 组合输入期间，ESC 应取消组合，而不是触发应用/菜单的 ESC 行为。
     if (e.key === 'Escape' && e.nativeEvent.isComposing) {
       return
     }
 
-    // Don't submit when mention menu is open AND has visible content
+    // mention 菜单打开且有可见内容时不要提交
     if (inlineMention.isOpen) {
-      // Only intercept navigation/selection keys if menu actually shows items or is loading
+      // 仅当菜单确实展示了项目或正在加载时才拦截导航/选择键
       const hasVisibleContent = inlineMention.sections.some(s => s.items.length > 0) || inlineMention.isSearching
       if (hasVisibleContent && (e.key === 'Enter' || e.key === 'Tab' || e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-        // These keys are handled by the InlineMentionMenu component
+        // 这些按键由 InlineMentionMenu 组件处理
         return
       }
       if (e.key === 'Escape') {
@@ -1332,10 +1339,10 @@ export function FreeFormInput({
       }
     }
 
-    // Don't submit when slash command menu is open - let it handle the Enter key
+    // 斜杠命令菜单打开时不要提交，让菜单处理 Enter 键
     if (inlineSlash.isOpen) {
       if (e.key === 'Enter' || e.key === 'Tab' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-        // These keys are handled by the InlineSlashCommand component
+        // 这些按键由 InlineSlashCommand 组件处理
         return
       }
       if (e.key === 'Escape') {
@@ -1345,7 +1352,7 @@ export function FreeFormInput({
       }
     }
 
-    // Don't submit when label menu is open - let it handle navigation keys
+    // label 菜单打开时不要提交，让菜单处理导航键
     if (inlineLabel.isOpen) {
       if (e.key === 'Enter' || e.key === 'Tab' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         return
@@ -1357,58 +1364,58 @@ export function FreeFormInput({
       }
     }
 
-    // Skip submission during IME composition - user is confirming composed characters, not sending
-    // Handle send key based on user preference:
-    // - 'enter': Enter sends (Shift+Enter for newline)
-    // - 'cmd-enter': ⌘/Ctrl+Enter sends (Enter for newline)
+    // IME 组合期间跳过提交：用户正在确认组合字符，而不是发送消息。
+    // 根据用户偏好处理发送快捷键：
+    // - 'enter'：Enter 发送（Shift+Enter 换行）
+    // - 'cmd-enter'：⌘/Ctrl+Enter 发送（Enter 换行）
     if (sendMessageKey === 'enter') {
-      // Enter sends, Shift+Enter adds newline
+      // Enter 发送，Shift+Enter 换行
       if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.nativeEvent.isComposing) {
         e.preventDefault()
         submitMessage()
       }
-      // Also allow Cmd/Ctrl+Enter to send (power user shortcut)
+      // 同时允许 Cmd/Ctrl+Enter 发送（高级用户快捷键）
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
         e.preventDefault()
         submitMessage()
       }
     } else {
-      // cmd-enter mode: ⌘/Ctrl+Enter sends, plain Enter adds newline
+      // cmd-enter 模式：⌘/Ctrl+Enter 发送，普通 Enter 换行
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
         e.preventDefault()
         submitMessage()
       }
-      // Plain Enter is allowed to pass through (adds newline)
+      // 允许普通 Enter 透传（换行）
     }
     if (e.key === 'Escape') {
-      // Skip blur if a popover/overlay is open — let the overlay handle ESC instead.
-      // This prevents the input from consuming ESC when focus gets pulled back here
-      // while a popover is still visible (portal DOM isolation means the event won't
-      // reach the popover's DismissableLayer otherwise).
+      // 如果弹出框/覆盖层打开，跳过失焦：让覆盖层处理 ESC。
+      // 避免焦点被拉回输入框时输入框消费 ESC，
+      // 而弹出框仍可见（portal DOM 隔离导致事件无法到达弹出框的 DismissableLayer）。
+
       if (!hasOpenOverlay()) {
         richInputRef.current?.blur()
       }
     }
   }
 
-  // Handle input changes from RichTextInput
+  // 处理来自 RichTextInput 的输入变化
   const handleInputChange = React.useCallback((value: string) => {
     const nextValue = coerceInputText(value)
-    // Get previous input value before updating state
+    // 更新状态前先获取之前的输入值
     const prevValue = inputRef.current
 
     setInput(nextValue)
     syncToParent(nextValue) // Debounced sync to parent for draft persistence
 
-    // Sync source selection when mentions are removed from input
+    // 当输入中的 mentions 被删除时同步 source 选择
     if (onSourcesChange) {
       const sourceSlugs = sources.map(s => s.config.slug)
 
-      // Parse mentions from previous and current input
+      // 解析前后两次输入中的 mentions
       const prevMentions = parseMentions(prevValue, [], sourceSlugs)
       const currMentions = parseMentions(nextValue, [], sourceSlugs)
 
-      // Remove sources that were mentioned before but not anymore
+      // 移除之前被提到但现在不再被提到的 source
       const removedSources = prevMentions.sources.filter(slug => !currMentions.sources.includes(slug))
       if (removedSources.length > 0) {
         const newSlugs = optimisticSourceSlugs.filter(slug => !removedSources.includes(slug))
@@ -1418,27 +1425,27 @@ export function FreeFormInput({
     }
   }, [syncToParent, sources, optimisticSourceSlugs, onSourcesChange])
 
-  // Handle input with cursor position (for menu detection)
+  // 处理带光标位置的输入（用于菜单检测）
   const handleRichInput = React.useCallback((value: string, cursorPosition: number) => {
     const nextValue = coerceInputText(value)
 
-    // Update inline slash command state
+    // 更新内联斜杠命令状态
     inlineSlash.handleInputChange(nextValue, cursorPosition)
 
-    // Update inline mention state (for @mentions - skills, sources, folders)
+    // 更新内联 mention 状态（@mentions：skills、sources、folders）
     inlineMention.handleInputChange(nextValue, cursorPosition)
 
-    // Update inline label state (for #labels)
+    // 更新内联 label 状态（#labels）
     inlineLabel.handleInputChange(nextValue, cursorPosition)
 
-    // Auto-capitalize first letter (but not for slash commands, @mentions, or #labels)
-    // Only if autoCapitalisation setting is enabled
+    // 首字母自动大写（斜杠命令、@mentions、#labels 除外）
+    // 仅在 autoCapitalisation 设置开启时生效
     let newValue = nextValue
     if (autoCapitalisation && nextValue.length > 0 && nextValue.charAt(0) !== '/' && nextValue.charAt(0) !== '@' && nextValue.charAt(0) !== '#') {
       const capitalizedFirst = nextValue.charAt(0).toUpperCase()
       if (capitalizedFirst !== nextValue.charAt(0)) {
         newValue = capitalizedFirst + nextValue.slice(1)
-        // Set cursor position BEFORE state update so it's used when useEffect syncs the value
+        // 在状态更新前设置光标位置，以便 useEffect 同步值时使用
         richInputRef.current?.setSelectionRange(cursorPosition, cursorPosition)
         setInput(newValue)
         syncToParent(newValue)
@@ -1446,18 +1453,18 @@ export function FreeFormInput({
       }
     }
 
-    // Apply smart typography (-> to →, etc.)
+    // 应用智能排版（如 -> 转换为 →）
     const typography = applySmartTypography(nextValue, cursorPosition)
     if (typography.replaced) {
       newValue = typography.text
-      // Set cursor position BEFORE state update so it's used when useEffect syncs the value
+      // 在状态更新前设置光标位置，以便 useEffect 同步值时使用
       richInputRef.current?.setSelectionRange(typography.cursor, typography.cursor)
       setInput(newValue)
       syncToParent(newValue)
     }
   }, [inlineSlash, inlineMention, inlineLabel, syncToParent, autoCapitalisation])
 
-  // Handle inline slash command selection (removes the /command text)
+  // 处理内联斜杠命令选择（移除 /command 文本）
   const handleInlineSlashCommandSelect = React.useCallback((commandId: SlashCommandId) => {
     const newValue = inlineSlash.handleSelectCommand(commandId)
     setInput(newValue)
@@ -1465,7 +1472,7 @@ export function FreeFormInput({
     richInputRef.current?.focus()
   }, [inlineSlash, syncToParent])
 
-  // Handle inline slash folder selection (inserts a directory badge)
+  // 处理内联斜杠文件夹选择（插入目录徽章）
   const handleInlineSlashFolderSelect = React.useCallback((path: string) => {
     const newValue = inlineSlash.handleSelectFolder(path)
     setInput(newValue)
@@ -1473,19 +1480,19 @@ export function FreeFormInput({
     richInputRef.current?.focus()
   }, [inlineSlash, syncToParent])
 
-  // Handle inline mention selection (inserts appropriate mention text)
+  // 处理内联 mention 选择（插入合适的 mention 文本）
   const handleInlineMentionSelect = React.useCallback((item: MentionItem) => {
     const { value: newValue, cursorPosition } = inlineMention.handleSelect(item)
     setInput(newValue)
     syncToParent(newValue)
-    // Focus input and restore cursor position after badge renders
+    // 徽章渲染后聚焦输入框并恢复光标位置
     setTimeout(() => {
       richInputRef.current?.focus()
       richInputRef.current?.setSelectionRange(cursorPosition, cursorPosition)
     }, 0)
   }, [inlineMention, syncToParent])
 
-  // Handle inline label selection (removes the #label text from input)
+  // 处理内联 label 选择（从输入中移除 #label 文本）
   const handleInlineLabelSelect = React.useCallback((labelId: string) => {
     const newValue = inlineLabel.handleSelect(labelId)
     setInput(newValue)
@@ -1493,7 +1500,7 @@ export function FreeFormInput({
     richInputRef.current?.focus()
   }, [inlineLabel, syncToParent])
 
-  // Handle inline state selection from # menu (removes #text, changes session state)
+  // 处理 # 菜单中的状态选择（移除 #text，修改会话状态）
   const handleInlineStateSelect = React.useCallback((stateId: string) => {
     const newValue = inlineLabel.handleSelect('')
     setInput(newValue)
@@ -1533,10 +1540,10 @@ export function FreeFormInput({
 
   const hasContent = input.trim() || attachments.length > 0 || followUpItems.length > 0
 
-  // Pre-flight image-support check: warn when staged images would be silently
-  // stripped by Pi SDK because the active custom-endpoint model is text-only.
-  // Gate on pi_compat — built-in catalogs (anthropic/pi) are owned by the SDK
-  // and we can't repair them from the UI here.
+  // 图片支持预检：如果已选图片会被 Pi SDK 静默剥离，则给出警告。
+  // 这发生在当前自定义端点模型仅支持文本时。
+  // 只对 pi_compat 生效：内置模型目录（anthropic/pi）由 SDK 管理，UI 这里无法修复。
+
   const hasStagedImages = attachments.some(a => a.type === 'image' || a.mimeType?.startsWith('image/'))
   const showVisionWarning =
     hasStagedImages
@@ -1550,7 +1557,7 @@ export function FreeFormInput({
         ref={containerRef}
         className={cn(
           'overflow-hidden transition-all',
-          // Container styling - only when not wrapped by InputContainer
+          // 容器样式：仅当不被 InputContainer 包裹时才生效
           !unstyled && 'rounded-[16px] shadow-middle',
           !unstyled && 'bg-background',
           isDraggingOver && 'ring-2 ring-foreground ring-offset-2 ring-offset-background bg-foreground/5'
@@ -1560,7 +1567,7 @@ export function FreeFormInput({
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
-        {/* Inline Slash Command Autocomplete */}
+        {/* 斜杠命令自动补全 */}
         <InlineSlashCommand
           open={inlineSlash.isOpen}
           onOpenChange={(open) => !open && inlineSlash.close()}
@@ -1572,7 +1579,7 @@ export function FreeFormInput({
           position={inlineSlash.position}
         />
 
-        {/* Inline Mention Autocomplete (skills, sources, files) */}
+        {/* Mention 自动补全（skills、sources、files） */}
         <InlineMentionMenu
           open={inlineMention.isOpen}
           onOpenChange={(open) => !open && inlineMention.close()}
@@ -1585,7 +1592,7 @@ export function FreeFormInput({
           isSearching={inlineMention.isSearching}
         />
 
-        {/* Inline Label & State Autocomplete (#labels / #states) */}
+        {/* Label 与状态自动补全（#labels / #states） */}
         <InlineLabelMenu
           open={inlineLabel.isOpen}
           onOpenChange={(open) => !open && inlineLabel.close()}
@@ -1599,14 +1606,14 @@ export function FreeFormInput({
           onSelectState={handleInlineStateSelect}
         />
 
-        {/* Controlled EditPopover for "Add New Label" — opens when user selects
+        {/* 受控的“添加新标签”EditPopover：用户在下拉中选中该选项时打开。
             the option from the # menu with no matches.
             Spread the full config so optional fields like `inlineExecution`,
             `displayLabel`, and `displayLabelKey` reach the popover. The previous
             cherry-pick dropped `inlineExecution: true`, which made the popover
             fall back to the same-window deep-link path; that worked inside
             Electron but launched the desktop app from the WebUI via `craftagents://`.
-            Match the AppShell pattern (which already uses spread). */}
+            与 AppShell 中已使用的展开模式保持一致。 */}
         {addLabelEditConfig && (
           <EditPopover
             trigger={<span className="absolute top-0 left-0 w-0 h-0 overflow-hidden" />}
@@ -1623,9 +1630,9 @@ export function FreeFormInput({
           />
         )}
 
-        {/* Pre-flight image-support warning — only for pi_compat connections
+        {/* 图片支持预检警告：仅针对 pi_compat 连接，
             where the renderer can both detect text-only models and offer to
-            flip the per-model supportsImages override on the spot. */}
+            就地切换该模型 supportsImages 覆盖的入口。 */}
         {showVisionWarning && effectiveConnectionDetails && (
           <ImageSupportWarningBanner
             modelName={currentModelDisplayName}
@@ -1633,7 +1640,7 @@ export function FreeFormInput({
           />
         )}
 
-        {/* Attachment Preview */}
+        {/* 附件预览 */}
         <AttachmentPreview
           attachments={attachments}
           onRemove={handleRemoveAttachment}
@@ -1641,7 +1648,7 @@ export function FreeFormInput({
           loadingCount={loadingCount}
         />
 
-        {/* Follow-up context chips */}
+        {/* 跟进上下文芯片 */}
         <AnimatePresence initial={false}>
           {followUpItems.length > 0 && (
             <motion.div
@@ -1725,9 +1732,9 @@ export function FreeFormInput({
           )}
         </AnimatePresence>
 
-        {/* Rich Text Input with inline mention badges */}
-        {/* In compact mode, hide input while the agent is processing — until the
-            user clicks / hovers the collapsed bar to expand it back. */}
+        {/* 富文本输入框（带内联 mention 徽章） */}
+        {/* compact 模式下，agent 处理期间隐藏输入框，
+            直到用户点击/悬停折叠条将其展开。 */}
         {!isCollapsedInCompact && (
         <RichTextInput
           ref={richInputRef}
@@ -1739,7 +1746,7 @@ export function FreeFormInput({
           onLongTextPaste={handleLongTextPaste}
           onFocus={() => { setIsFocused(true); onFocusChange?.(true) }}
           onBlur={() => {
-            // Save caret position before losing focus (for restoration via craft:focus-input)
+            // 失焦前保存光标位置（以便通过 craft:focus-input 恢复）
             lastCaretPositionRef.current = richInputRef.current?.selectionStart ?? null
             setIsFocused(false)
             onFocusChange?.(false)
@@ -1756,16 +1763,16 @@ export function FreeFormInput({
         />
         )}
 
-        {/* Bottom Row: Controls - wrapped in relative container for status slot overlay */}
+        {/* 底部工具栏：控制按钮，外层 relative 容器用于状态槽覆盖层 */}
         <div className="relative">
-          {/* Status slot overlay - escape interrupt (highest priority), browser status, etc. */}
+          {/* 状态槽覆盖层：Esc 中断提示（最高优先级）、浏览器状态等 */}
           <ToolbarStatusSlot
             showEscapeOverlay={isProcessing && showEscapeOverlay}
             sessionId={sessionId}
           />
 
           <div className={cn("flex items-center gap-1 px-2 py-2", !compactMode && "border-t border-border/50")}>
-          {/* Hidden file input for attach button (shared by compact and desktop) */}
+          {/* 附件按钮的隐藏文件 input（compact 与桌面端共用） */}
           <input
             ref={fileInputRef}
             type="file"
@@ -1774,10 +1781,10 @@ export function FreeFormInput({
             onChange={handleFileInputChange}
           />
 
-          {/* Compact mode: permission mode drawer + standard icon badges for attach/sources/working dir.
+          {/* compact 模式：权限模式抽屉 + attach/sources/working dir 的标准图标徽章。
               Wrapper absorbs all squeeze so the model label truncates first and the send button stays
               anchored to the right (craft-agents-oss#798). overflow-hidden is safe — Radix Drawer /
-              dropdowns inside render via portals, so they aren't clipped. */}
+              内部的下拉通过 portal 渲染，不会被裁剪。 */}
           {compactMode && (
           <div className="flex items-center gap-1 min-w-0 shrink overflow-hidden">
           {onPermissionModeChange && (
@@ -1895,10 +1902,10 @@ export function FreeFormInput({
           </div>
           )}
 
-          {/* Desktop: full badges row with labels and working directory */}
+          {/* 桌面端：完整的徽章行，含 labels 和工作目录 */}
           {!compactMode && (
           <div className="flex items-center gap-1 min-w-32 shrink overflow-hidden">
-          {/* 1. Attach Files Badge */}
+          {/* 1. 附件徽章 */}
           <FreeFormInputContextBadge
             icon={<Paperclip className="h-4 w-4" />}
             label={attachments.length > 0
@@ -1913,7 +1920,7 @@ export function FreeFormInput({
             disabled={disabled}
           />
 
-          {/* 2. Source Selector Badge - only show if onSourcesChange is provided */}
+          {/* 2. Source 选择器徽章 - 仅在提供 onSourcesChange 时显示 */}
           {onSourcesChange && (
             <div className="relative shrink min-w-0 overflow-hidden">
               <FreeFormInputContextBadge
@@ -1990,7 +1997,7 @@ export function FreeFormInput({
             </div>
           )}
 
-          {/* 3. Working Directory Selector Badge */}
+          {/* 3. 工作目录选择器徽章 */}
           {onWorkingDirectoryChange && (
             <WorkingDirectoryBadge
               workingDirectory={workingDirectory}
@@ -2003,9 +2010,9 @@ export function FreeFormInput({
           </div>
           )}
 
-          {/* Spacer — doubles as a tap / hover target while the input is
+          {/* 间隔区：输入框折叠时同时作为点击/悬停目标，
               collapsed during processing in compact mode, so the user can
-              type a follow-up without waiting for the agent to finish. */}
+               */}
           {isCollapsedInCompact ? (
             <button
               type="button"
@@ -2020,9 +2027,9 @@ export function FreeFormInput({
             <div className="flex-1" />
           )}
 
-          {/* Right side: Model + Send - never shrink so they're always visible */}
+          {/* 右侧：模型 + 发送按钮，不允许收缩，始终可见 */}
           <div className="flex items-center shrink-0">
-          {/* 5. Model/Connection Selector - Hidden in compact mode (EditPopover embedding) */}
+          {/* 5. 模型/连接选择器：compact 模式下隐藏（EditPopover 嵌入场景） */}
           {!compactMode && (
           <DropdownMenu open={modelDropdownOpen} onOpenChange={setModelDropdownOpen}>
             <Tooltip>
@@ -2056,7 +2063,7 @@ export function FreeFormInput({
               </TooltipContent>
             </Tooltip>
             <StyledDropdownMenuContent side="top" align="end" sideOffset={8} className="min-w-[260px]">
-              {/* Connection unavailable message */}
+              {/* 连接不可用提示 */}
               {pickerMode === 'unavailable' ? (
                 <div className="flex flex-col items-center justify-center py-6 px-4 text-center">
                   <AlertCircle className="h-8 w-8 text-destructive mb-2" />
@@ -2067,10 +2074,10 @@ export function FreeFormInput({
                 </div>
               ) : pickerMode === 'locked-single' && connectionDefaultModel ? (
                 (() => {
-                  // Single-model pi_compat connection on a non-empty session (or
-                  // when there's only one connection, so no switcher to show).
-                  // Model row is disabled (locked to this session); vision toggle
-                  // remains interactive.
+                  // 非空会话中的单模型 pi_compat 连接（或只有一个连接、无需切换器时）。
+
+                  // 模型行被禁用（会话已锁定）；图片开关仍可交互。
+
                   const showVisionToggle =
                     !!effectiveConnectionDetails && isCompatProvider(effectiveConnectionDetails.providerType)
                   const visionOn = showVisionToggle && modelSupportsImages(effectiveConnectionDetails!, connectionDefaultModel)
@@ -2129,7 +2136,7 @@ export function FreeFormInput({
                 /* Hierarchical view: Provider → Connection → Models (empty session with multiple connections — lets the user switch BEFORE the first message locks the connection) */
                 connectionsByProvider.map(([providerName, connections], index) => (
                   <React.Fragment key={providerName}>
-                    {/* Provider group label */}
+                    {/* 提供商分组标签 */}
                     <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wide select-none">
                       {providerName}
                     </div>
@@ -2158,7 +2165,7 @@ export function FreeFormInput({
                           </StyledDropdownMenuSubTrigger>
                           {isAuthenticated && (
                             <StyledDropdownMenuSubContent className="min-w-[220px]">
-                              {/* Show models for this connection - use provider-specific models as fallback */}
+                              {/* 展示该连接下的模型；回退到提供商默认模型 */}
                               {(conn.models || ANTHROPIC_MODELS).map((model) => {
                                 const modelId = typeof model === 'string' ? model : model.id
                                 const modelName = typeof model === 'string'
@@ -2171,11 +2178,11 @@ export function FreeFormInput({
                                   <StyledDropdownMenuItem
                                     key={modelId}
                                     onSelect={() => {
-                                      // If selecting a different connection, update both connection and model
+                                      // 如果选择了不同连接，同时更新连接和模型
                                       if (!isCurrentConnection && onConnectionChange) {
                                         onConnectionChange(conn.slug)
                                       }
-                                      // Always pass connection with model for proper persistence
+                                      // 始终同时传递连接和模型，保证持久化正确
                                       onModelChange(modelId, conn.slug)
                                     }}
                                     className="flex items-center justify-between px-2 py-2 rounded-lg cursor-pointer"
@@ -2238,7 +2245,7 @@ export function FreeFormInput({
               ) : (
                 /* Flat model list (single connection or session started) */
                 <>
-                  {/* Indicator showing which connection is being used */}
+                  {/* 指示当前正在使用哪个连接 */}
                   {!isEmptySession && currentConnectionDetails && llmConnections.length > 1 && (
                     <>
                       <div className="flex items-center gap-2 px-2 py-1.5 text-xs select-none text-muted-foreground">
@@ -2247,7 +2254,7 @@ export function FreeFormInput({
                       <StyledDropdownMenuSeparator className="my-1" />
                     </>
                   )}
-                  {/* Model options based on effective connection's provider type */}
+                  {/* 根据实际连接提供商类型显示的模型选项 */}
                   {availableModels.map((model) => {
                     const modelId = typeof model === 'string' ? model : model.id
                     const modelName = typeof model === 'string'
@@ -2318,8 +2325,8 @@ export function FreeFormInput({
                 </>
               )}
 
-              {/* Thinking level selector — only shown when thinking levels are available
-                  (Claude supports extended thinking, OpenAI backends may not) */}
+              {/* 思考等级选择器：仅在模型支持思考等级时显示
+                  （Claude 支持扩展思考，OpenAI 后端可能不支持） */}
               {availableThinkingLevels.length > 0 && (
                 <>
                   <StyledDropdownMenuSeparator className="my-1" />
@@ -2355,7 +2362,7 @@ export function FreeFormInput({
                 </>
               )}
 
-              {/* Context usage footer - only show when we have token data */}
+              {/* 上下文用量页脚：只有拿到 token 数据时才显示 */}
               {contextStatus?.inputTokens != null && contextStatus.inputTokens > 0 && (
                 <>
                   <StyledDropdownMenuSeparator className="my-1" />
@@ -2376,12 +2383,12 @@ export function FreeFormInput({
           </DropdownMenu>
           )}
 
-          {/* 5.5 Context Usage Warning Badge - shows when approaching auto-compaction threshold */}
+          {/* 5.5 上下文用量警告徽章：接近自动压缩阈值时显示 */}
           {(() => {
-            // Calculate usage percentage based on compaction threshold (~77.5% of context window),
-            // not the full context window - this gives users meaningful warnings before compaction kicks in.
-            // SDK triggers compaction at ~155k tokens for a 200k context window.
-            // Falls back to known per-model context window when SDK hasn't reported usage yet.
+            // 根据压缩阈值（约上下文窗口的 77.5%）计算使用百分比，
+            // 而不是完整上下文窗口：在触发压缩前给用户有意义的预警。
+            // SDK 在 200k 上下文窗口下约 155k tokens 时触发压缩。
+            // SDK 尚未报告用量时，回退到已知的各模型上下文窗口。
             const effectiveContextWindow = contextStatus?.contextWindow || getModelContextWindow(currentModel)
             const compactionThreshold = effectiveContextWindow
               ? Math.round(effectiveContextWindow * 0.775)
@@ -2389,8 +2396,8 @@ export function FreeFormInput({
             const usagePercent = contextStatus?.inputTokens && compactionThreshold
               ? Math.min(99, Math.round((contextStatus.inputTokens / compactionThreshold) * 100))
               : null
-            // Show badge when >= 80% of compaction threshold AND not currently compacting
-            // Hide for Codex and Copilot models which don't support context compaction
+            // 当用量达到压缩阈值的 80% 且当前未在压缩时显示徽章
+            // Codex 和 Copilot 模型不支持上下文压缩，隐藏徽章
             const showWarning = usagePercent !== null && usagePercent >= 80 && !contextStatus?.isCompacting
 
             if (!showWarning) return null
@@ -2427,7 +2434,7 @@ export function FreeFormInput({
             )
           })()}
 
-          {/* 6. Send/Stop Button - Always show stop when processing */}
+          {/* 6. 发送/停止按钮：处理中始终显示停止 */}
           {isProcessing ? (
             <Button
               type="button"

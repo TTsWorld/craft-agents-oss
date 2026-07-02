@@ -1,3 +1,9 @@
+/**
+ * window-state.ts —— 窗口状态持久化。
+ *
+ * 在应用退出时保存各窗口的位置、大小、工作区、URL 等信息，
+ * 下次启动时恢复。文件存放在 ~/.craft-agent/window-state.json。
+ */
 import { writeFileSync, existsSync, mkdirSync } from 'fs'
 import { readJsonFileSync } from '@craft-agent/shared/utils/files'
 import { mainLog } from './logger'
@@ -16,11 +22,9 @@ export interface SavedWindow {
   workspaceId: string
   bounds: WindowBounds
   focused?: boolean
-  // Full URL captured from webContents.getURL() at quit time.
-  // May be localhost (dev) or file:// (prod) — both are safe to store because
-  // createWindow() never loads this URL directly. It extracts query params
-  // (workspaceId, route, focused, etc.) and rebuilds the URL from __dirname
-  // (prod) or the current dev server (dev). See window-manager.ts restoreUrl.
+  // 退出时从 webContents.getURL() 捕获的完整 URL。
+  // 可能是 dev 的 localhost 或 prod 的 file://，但 createWindow() 不会直接加载它，
+  // 而是提取 query 参数（workspaceId、route、focused 等）后重新构造 URL。
   url?: string
 }
 
@@ -33,11 +37,11 @@ const CONFIG_DIR = join(homedir(), '.craft-agent')
 const WINDOW_STATE_FILE = join(CONFIG_DIR, 'window-state.json')
 
 /**
- * Save the current window state (windows with bounds and type)
+ * 保存当前窗口状态（位置、大小、类型等）
  */
 export function saveWindowState(state: WindowState): void {
   try {
-    // Ensure config directory exists
+    // 确保配置目录存在
     if (!existsSync(CONFIG_DIR)) {
       mkdirSync(CONFIG_DIR, { recursive: true })
     }
@@ -50,7 +54,7 @@ export function saveWindowState(state: WindowState): void {
 }
 
 /**
- * Load the saved window state
+ * 加载保存的窗口状态
  */
 export function loadWindowState(): WindowState | null {
   try {
@@ -60,7 +64,7 @@ export function loadWindowState(): WindowState | null {
 
     const raw = readJsonFileSync(WINDOW_STATE_FILE)
 
-    // Validate format
+    // 简单校验格式
     const state = raw as WindowState
     if (!Array.isArray(state.windows)) {
       mainLog.warn('[WindowState] Invalid window state file, ignoring')
@@ -76,7 +80,7 @@ export function loadWindowState(): WindowState | null {
 }
 
 /**
- * Clear the saved window state
+ * 清空保存的窗口状态
  */
 export function clearWindowState(): void {
   try {

@@ -1,8 +1,8 @@
 /**
  * PhaseBadge
  *
- * Colored badge indicating the phase/timing of an automation trigger event.
- * Derives from getEventCategory() to avoid duplicating event classification.
+ * 彩色徽章，用于标识自动化触发事件的阶段/时机。
+ * 直接复用 getEventCategory() 来避免重复维护事件分类逻辑。
  */
 
 import { getEventCategory, type AutomationTrigger, type EventCategory } from './types'

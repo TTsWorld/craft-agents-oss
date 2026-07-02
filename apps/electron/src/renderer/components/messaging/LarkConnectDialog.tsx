@@ -1,10 +1,10 @@
 /**
- * LarkConnectDialog — App ID + App Secret pairing flow for Lark / Feishu.
+ * LarkConnectDialog —— 输入 App ID + App Secret 完成 Lark / Feishu 配对。
  *
- * Same modal shape as `TelegramConnectDialog`. Differences:
- *   - Two secret fields (App ID + App Secret) instead of one (bot token)
- *   - A region selector — Lark and Feishu are separate Open Platforms;
- *     a bot belongs to one or the other and the choice is permanent.
+ * 与 `TelegramConnectDialog` 是同一套模态框结构，区别：
+ *   - 两个密钥字段（App ID + App Secret），而不是一个 bot token
+ *   - 需要选择区域：Lark（海外版）和 Feishu（国内版）是两个独立的开放平台；
+ *     bot 属于其中一个，选择后不可更改。
  */
 
 import * as React from 'react'
@@ -26,17 +26,19 @@ import { SettingsSecretInput } from '@/components/settings'
 interface LarkConnectDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** When true, treat the flow as "replace existing credentials". */
+  // 为 true 时把流程视为“替换已有凭证”
   reconfigure?: boolean
   onSaved?: () => void
 }
 
+// 测试连接结果状态机
 type TestResult =
   | { state: 'idle' }
   | { state: 'testing' }
   | { state: 'success' }
   | { state: 'error'; error: string }
 
+// Lark 域名联合类型：'lark' 海外版，'feishu' 国内版
 type LarkDomain = 'lark' | 'feishu'
 
 export function LarkConnectDialog({
@@ -52,6 +54,7 @@ export function LarkConnectDialog({
   const [saving, setSaving] = React.useState(false)
   const [test, setTest] = React.useState<TestResult>({ state: 'idle' })
 
+  // 对话框关闭时重置所有本地状态
   React.useEffect(() => {
     if (!open) {
       setAppId('')
@@ -62,8 +65,10 @@ export function LarkConnectDialog({
     }
   }, [open])
 
+  // 两个字段都非空时才允许测试和保存
   const ready = appId.trim().length > 0 && appSecret.trim().length > 0
 
+  // 点击“测试连接”
   const handleTest = async () => {
     if (!ready) return
     setTest({ state: 'testing' })
@@ -83,6 +88,7 @@ export function LarkConnectDialog({
     }
   }
 
+  // 点击“保存”：把验证通过的凭证持久化
   const handleSave = async () => {
     if (!ready) return
     setSaving(true)
@@ -117,7 +123,7 @@ export function LarkConnectDialog({
         </DialogHeader>
 
         <div className="space-y-3 py-2">
-          {/* Region selector */}
+          {/* 区域选择器：Lark 海外版 vs Feishu 国内版 */}
           <div>
             <div className="mb-1.5 text-xs text-muted-foreground">
               {t('settings.messaging.lark.domainLabel')}

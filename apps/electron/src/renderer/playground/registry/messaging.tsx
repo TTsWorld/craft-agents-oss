@@ -1,3 +1,11 @@
+/**
+ * messaging 注册项
+ *
+ * 这个文件把 Messaging（Telegram/WhatsApp 消息网关）相关的演示组件注册到 playground：
+ * Allow-list 访问控制、Telegram 设置页、配对码弹窗、WhatsApp 连接弹窗、会话子菜单等。
+ * 涉及概念：workspace（工作区）、session（会话）、binding（平台与会话的绑定）、
+ * permission mode / access mode（访问控制模式）。
+ */
 import type { ComponentEntry } from './types'
 import { AllowListPreview } from '../demos/messaging/AllowListPreview'
 import { MessagingSettingsPagePreview } from '../demos/messaging/MessagingSettingsPagePreview'
@@ -6,6 +14,7 @@ import { PairingCodeDialogPreview } from '../demos/messaging/PairingCodeDialogPr
 import { WhatsAppConnectDialogPreview } from '../demos/messaging/WhatsAppConnectDialogPreview'
 import { MessagingSubmenuPreview } from '../demos/messaging/MessagingSubmenuPreview'
 
+/** messaging 组件注册列表。 */
 export const messagingComponents: ComponentEntry[] = [
   {
     id: 'messaging-allow-list',

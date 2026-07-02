@@ -16,6 +16,12 @@ import {
   requestClientOpenFileDialog,
 } from '@craft-agent/server-core/transport'
 
+// 本文件属于 System RPC 模块，负责：系统/环境相关功能（主题、版本、home 目录、调试日志、外部 URL/文件打开、Git Bash 配置、deeplink 解析）。
+// 这些 handler 不依赖特定 workspace，属于“系统服务层”。
+// Agent 概念：虽然本模块不直接操作 Agent，但 shell.openUrl 等能力会影响 Agent 对外部链接/文件的交互。
+// TS 提示：interface 可以放在使用之前，TypeScript 的类型检查是结构化的，不强制先定义后使用。
+
+// 本 handler 负责注册的系统级 channel 列表
 export const CORE_HANDLED_CHANNELS = [
   RPC_CHANNELS.theme.GET_SYSTEM_PREFERENCE,
   RPC_CHANNELS.system.VERSIONS,
@@ -33,6 +39,7 @@ export const CORE_HANDLED_CHANNELS = [
   RPC_CHANNELS.gitbash.SET_PATH,
 ] as const
 
+/** 内部 craftagents:// deep link 的解析结果。 */
 interface ParsedInternalDeepLink {
   navigation?: {
     view?: string
@@ -40,12 +47,13 @@ interface ParsedInternalDeepLink {
     actionParams?: Record<string, string>
   }
   workspaceId?: string
-  /** Use client shell.openExternal fallback (e.g. window=focused links). */
+  /** 需要回退到客户端 shell.openExternal 打开（例如 window=focused/full 的链接）。 */
   requiresExternalOpen?: boolean
-  /** True when URL is intentionally consumed without navigation (auth callbacks). */
+  /** URL 被故意消费但不产生导航（例如 OAuth 回调）。 */
   handledNoop?: boolean
 }
 
+// 复合路由前缀集合，用于 craftagents:// 内部 deeplink 解析
 const COMPOUND_ROUTE_PREFIXES = new Set([
   'allSessions',
   'flagged',
@@ -55,6 +63,7 @@ const COMPOUND_ROUTE_PREFIXES = new Set([
   'skills',
 ])
 
+// collectDeepLinkParams：从 URL 搜索参数中收集 deeplink 参数，过滤掉 window/sidebar。
 function collectDeepLinkParams(parsed: URL, pathId?: string): Record<string, string> | undefined {
   const params: Record<string, string> = {}
   if (pathId) params.id = pathId
@@ -67,6 +76,7 @@ function collectDeepLinkParams(parsed: URL, pathId?: string): Record<string, str
   return Object.keys(params).length > 0 ? params : undefined
 }
 
+// parseInternalCraftAgentsDeepLink：解析 craftagents:// 内部 deep link。
 function parseInternalCraftAgentsDeepLink(parsed: URL): ParsedInternalDeepLink | null {
   if (parsed.protocol !== 'craftagents:') return null
 
@@ -74,12 +84,12 @@ function parseInternalCraftAgentsDeepLink(parsed: URL): ParsedInternalDeepLink |
   const pathParts = parsed.pathname.split('/').filter(Boolean)
   const windowMode = parsed.searchParams.get('window')
 
-  // Preserve window-specific behavior via OS protocol path.
+  // window=focused/full 需要由客户端协议处理器打开新窗口
   if (windowMode === 'focused' || windowMode === 'full') {
     return { requiresExternalOpen: true }
   }
 
-  // OAuth callback links are handled by auth flow code paths.
+  // OAuth 回调链接由专门的 auth flow 处理
   if (host === 'auth-callback') {
     return { handledNoop: true }
   }
@@ -133,7 +143,7 @@ function parseInternalCraftAgentsDeepLink(parsed: URL): ParsedInternalDeepLink |
   return null
 }
 
-/** Guard: reject filesystem-path actions on remote workspaces where local paths are meaningless. */
+// assertLocalWorkspace：对远程 workspace 拒绝本地文件系统操作。
 function assertLocalWorkspace(ctx: { workspaceId: string | null }, action: string): void {
   const ws = getWorkspaceByNameOrId(ctx.workspaceId ?? '')
   if (ws?.remoteServer) {
@@ -141,15 +151,16 @@ function assertLocalWorkspace(ctx: { workspaceId: string | null }, action: strin
   }
 }
 
+// registerSystemCoreHandlers：注册系统核心 RPC 路由。
 export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps): void {
   const windowManager = deps.windowManager
 
-  // Get system theme preference (dark = true, light = false)
+  // 获取系统主题偏好（dark=true，light=false）
   server.handle(RPC_CHANNELS.theme.GET_SYSTEM_PREFERENCE, async () => {
     return deps.platform.systemDarkMode?.() ?? false
   })
 
-  // Get runtime versions (previously handled locally in preload via process.versions)
+  // 获取运行时版本（此前在 preload 中通过 process.versions 本地处理）
   server.handle(RPC_CHANNELS.system.VERSIONS, async () => {
     return {
       node: process.versions.node,
@@ -158,28 +169,29 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
     }
   })
 
-  // Get user's home directory
+  // 获取用户 home 目录
   server.handle(RPC_CHANNELS.system.HOME_DIR, async () => {
     return homedir()
   })
 
-  // Check if running in debug mode (from source)
+  // 判断是否处于调试模式（未打包时视为调试模式）
   server.handle(RPC_CHANNELS.system.IS_DEBUG_MODE, async () => {
     return !deps.platform.isPackaged
   })
 
-  // Release notes
+  // 获取合并后的 release notes
   server.handle(RPC_CHANNELS.releaseNotes.GET, async () => {
     const { getCombinedReleaseNotes } = require('@craft-agent/shared/release-notes') as typeof import('@craft-agent/shared/release-notes')
     return getCombinedReleaseNotes()
   })
 
+  // 获取最新发布版本
   server.handle(RPC_CHANNELS.releaseNotes.GET_LATEST_VERSION, async () => {
     const { getLatestReleaseVersion } = require('@craft-agent/shared/release-notes') as typeof import('@craft-agent/shared/release-notes')
     return getLatestReleaseVersion()
   })
 
-  // Get git branch for a directory (returns null if not a git repo or git unavailable)
+  // 获取某目录的 git 分支（非 git 仓库或 git 不可用时返回 null）
   server.handle(RPC_CHANNELS.git.GET_BRANCH, async (_ctx, dirPath: string) => {
     try {
       const branch = execSync('git rev-parse --abbrev-ref HEAD', {
@@ -194,7 +206,7 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
     }
   })
 
-  // Git Bash detection and configuration (Windows only)
+  // Git Bash 检测与配置（仅 Windows）
   server.handle(RPC_CHANNELS.gitbash.CHECK, async () => {
     const platform = process.platform as 'win32' | 'darwin' | 'linux'
 
@@ -239,13 +251,14 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
         return { found: true, path: firstPath, platform }
       }
     } catch {
-      // where command failed
+      // where 命令失败
     }
 
     delete process.env.CLAUDE_CODE_GIT_BASH_PATH
     return { found: false, path: null, platform }
   })
 
+  // 客户端选择 bash.exe 路径
   server.handle(RPC_CHANNELS.gitbash.BROWSE, async (ctx) => {
     const result = await requestClientOpenFileDialog(server, ctx.clientId, {
       title: 'Select bash.exe',
@@ -261,6 +274,7 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
     return result.filePaths[0]
   })
 
+  // 保存并校验 Git Bash 路径
   server.handle(RPC_CHANNELS.gitbash.SET_PATH, async (_ctx, bashPath: string) => {
     const validation = await validateGitBashPath(bashPath)
     if (!validation.valid) {
@@ -272,12 +286,12 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
     return { success: true }
   })
 
-  // Debug logging from renderer -> main log file (fire-and-forget, no response)
+  // 来自 renderer 的调试日志，fire-and-forget 写入主日志文件
   server.handle(RPC_CHANNELS.debug.LOG, async (_ctx, ...args: unknown[]) => {
     deps.platform.logger.info('[renderer]', ...args)
   })
 
-  // Shell operations - open URL in external browser (or handle craftagents:// internally)
+  // 打开外部 URL；对 craftagents:// 内部 deep link 做路由，危险 URL 会被拦截。
   server.handle(RPC_CHANNELS.shell.OPEN_URL, async (ctx, url: string) => {
     deps.platform.logger.info('[OPEN_URL] Received request:', url)
     try {
@@ -306,8 +320,7 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
           return
         }
 
-        // For links requiring window management (e.g. window=focused/full), or
-        // unknown deep-link shapes, fall back to the client protocol handler.
+        // 需要窗口管理的链接回退到客户端协议处理器
         deps.platform.logger.info('[OPEN_URL] Falling back to client openExternal for craftagents:// URL')
         const deepLinkResult = await requestClientOpenExternal(server, ctx.clientId, url)
         if (!deepLinkResult.opened) {
@@ -329,10 +342,11 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
     }
   })
 
+  // 用系统默认应用打开文件（需通过 workspace 路径校验防止穿越）
   server.handle(RPC_CHANNELS.shell.OPEN_FILE, async (ctx, path: string) => {
     assertLocalWorkspace(ctx, 'Open file')
     try {
-      // Expand ~ before resolve() — resolve() treats ~ as a literal path component
+      // 在 resolve() 之前展开 ~，因为 resolve() 会把 ~ 当成普通路径组件
       const expanded = path.startsWith('~') ? path.replace(/^~/, homedir()) : path
       const absolutePath = resolve(expanded)
       const safePath = await validateFilePath(absolutePath, getWorkspaceAllowedDirs(ctx.workspaceId))
@@ -345,6 +359,7 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
     }
   })
 
+  // 在 Finder/Explorer 中显示文件/文件夹
   server.handle(RPC_CHANNELS.shell.SHOW_IN_FOLDER, async (ctx, path: string) => {
     assertLocalWorkspace(ctx, 'Show in folder')
     try {

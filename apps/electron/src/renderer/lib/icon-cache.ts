@@ -1,22 +1,21 @@
 /**
- * Unified Icon Cache
+ * 统一图标缓存
  *
- * Single cache for source, skill, and status icons.
- * Used by EntityIcon, SourceAvatar, SkillAvatar, StatusIcon, and RichTextInput.
+ * 为 source、skill、status 三类实体提供单一缓存。
+ * EntityIcon、SourceAvatar、SkillAvatar、StatusIcon、RichTextInput 都依赖这里。
  *
- * Icons are stored as data URLs for consistent usage across:
- * - React components (img src)
- * - HTML string generation (inline badges)
+ * 图标以 data URL 形式缓存，便于在以下两种场景保持一致：
+ * - React 组件（img src）
+ * - HTML 字符串生成（内联 badge）
  *
- * Cache key format uses type prefixes to avoid collisions:
+ * 缓存键使用类型前缀避免冲突：
  * - source:{workspaceId}:{slug}
  * - skill:{workspaceId}:{slug}
  * - status:{workspaceId}:{relativePath}
  *
- * Note: Labels do NOT use icons — they are color-only (colored circles).
+ * 注意：Label 不使用图标，只使用颜色（彩色圆点）。
  *
- * The useEntityIcon() hook is the single entry point for loading any entity's icon.
- * It handles cache lookup, IPC file loading, SVG theming, and emoji detection.
+ * useEntityIcon() 是加载任意实体图标的单一入口，内部处理缓存查询、IPC 文件读取、SVG 主题化与 emoji 检测。
  */
 
 import { useState, useEffect, useMemo } from 'react'
@@ -24,14 +23,14 @@ import { isEmoji } from '@craft-agent/shared/utils/icon-constants'
 import type { ResolvedEntityIcon } from '@craft-agent/shared/icons'
 
 // ============================================================================
-// Types
+// 类型
 // ============================================================================
 
 interface SourceConfig {
   slug: string
   name: string
   type: string
-  icon?: string  // Emoji or URL (local icon files are auto-discovered separately)
+  icon?: string  // emoji 或 URL（本地图标文件会另外自动发现）
   provider?: string
   mcp?: {
     url?: string
@@ -48,12 +47,12 @@ interface SkillConfig {
 }
 
 // ============================================================================
-// Unified Cache
+// 统一缓存
 // ============================================================================
 
 /**
- * Single unified cache for all icon types.
- * Key format: `{type}:{workspaceId}:{identifier}`
+ * 所有图标类型的统一缓存。
+ * 键格式：`{type}:{workspaceId}:{identifier}`
  * - source:wsId:slug
  * - skill:wsId:slug
  * - status:wsId:relativePath
@@ -61,42 +60,38 @@ interface SkillConfig {
 export const iconCache = new Map<string, string>()
 
 /**
- * Cache for resolved logo URLs (from service URL resolution).
- * Kept separate because it caches URL resolution, not icon data,
- * and uses a different key format: `{serviceUrl}:{provider}`
+ * 解析出的 logo URL 缓存（用于服务 URL 解析）。
+ * 单独维护，因为它缓存的是 URL 解析结果而非图标数据，键格式也不同：`{serviceUrl}:{provider}`
  */
 export const logoUrlCache = new Map<string, string | null>()
 
 // ============================================================================
-// Legacy exports (for backward compatibility during migration)
-// These are views into the unified cache, not separate maps.
+// 兼容旧 API 的导出（迁移期间保持向后兼容）
+// 它们只是统一缓存的代理视图，不是独立的 Map。
 // ============================================================================
 
-// Proxy objects that redirect to the unified cache with appropriate prefixes
-// This allows consumers to continue using the old API while we migrate them
-
-/** @deprecated Use iconCache directly with 'source:' prefix */
+/** @deprecated 请直接使用 iconCache 并加 'source:' 前缀 */
 export const sourceIconCache = {
   get: (key: string) => iconCache.get(`source:${key}`),
   set: (key: string, value: string) => iconCache.set(`source:${key}`, value),
   has: (key: string) => iconCache.has(`source:${key}`),
   delete: (key: string) => iconCache.delete(`source:${key}`),
   clear: () => {
-    // Clear only source entries
+    // 仅清空 source 前缀的条目
     for (const key of iconCache.keys()) {
       if (key.startsWith('source:')) iconCache.delete(key)
     }
   },
 }
 
-/** @deprecated Use iconCache directly with 'skill:' prefix */
+/** @deprecated 请直接使用 iconCache 并加 'skill:' 前缀 */
 export const skillIconCache = {
   get: (key: string) => iconCache.get(`skill:${key}`),
   set: (key: string, value: string) => iconCache.set(`skill:${key}`, value),
   has: (key: string) => iconCache.has(`skill:${key}`),
   delete: (key: string) => iconCache.delete(`skill:${key}`),
   clear: () => {
-    // Clear only skill entries
+    // 仅清空 skill 前缀的条目
     for (const key of iconCache.keys()) {
       if (key.startsWith('skill:')) iconCache.delete(key)
     }
@@ -104,11 +99,11 @@ export const skillIconCache = {
 }
 
 // ============================================================================
-// Cache Management
+// 缓存管理
 // ============================================================================
 
 /**
- * Clear all icon caches (all entity types)
+ * 清空所有图标缓存（所有实体类型）
  */
 export function clearIconCaches(): void {
   iconCache.clear()
@@ -118,13 +113,13 @@ export function clearIconCaches(): void {
 }
 
 /**
- * Clear source icon caches only.
- * @deprecated Will be removed once rich-text-input.tsx is migrated to useEntityIcon.
+ * 仅清空 source 图标缓存。
+ * @deprecated 等 rich-text-input.tsx 迁移到 useEntityIcon 后将移除。
  */
 export function clearSourceIconCaches(): void {
   sourceIconCache.clear()
   logoUrlCache.clear()
-  // Also clear from colorable/rawSvg caches
+  // 同时清理 colorable/rawSvg 缓存中的 source 项
   for (const key of colorableCache) {
     if (key.startsWith('source:')) colorableCache.delete(key)
   }
@@ -134,8 +129,8 @@ export function clearSourceIconCaches(): void {
 }
 
 /**
- * Clear skill icon caches only.
- * @deprecated Will be removed once rich-text-input.tsx is migrated to useEntityIcon.
+ * 仅清空 skill 图标缓存。
+ * @deprecated 等 rich-text-input.tsx 迁移到 useEntityIcon 后将移除。
  */
 export function clearSkillIconCaches(): void {
   skillIconCache.clear()
@@ -148,26 +143,25 @@ export function clearSkillIconCaches(): void {
 }
 
 // ============================================================================
-// Source Icon Loading
+// Source 图标加载
 // ============================================================================
 
-// Special prefix for emoji icons in cache - callers check for this to render emoji
+// 缓存中 emoji 图标的前缀；调用方通过识别此前缀把图标渲染成文字
 export const EMOJI_ICON_PREFIX = 'emoji:'
 
 /**
- * Load a source icon into the cache.
+ * 加载 source 图标到缓存。
  *
- * Resolution priority (config.icon is the source of truth):
- * 1. Emoji in config.icon → Return emoji marker for caller to render as text
- * 2. Local path in config.icon (./icon.svg) → Load from sources/{slug}/icon.svg
- * 3. URL in config.icon → Return URL directly for browser to load
- * 4. config.icon undefined → Auto-discover sources/{slug}/icon.{svg,png}
- * 5. Fallback → Resolve favicon from service URL
+ * 解析优先级（config.icon 是最高权威）：
+ * 1. config.icon 是 emoji → 返回 emoji 标记，由调用方渲染为文字
+ * 2. config.icon 是本地路径（./icon.svg）→ 从 sources/{slug}/icon.svg 加载
+ * 3. config.icon 是 URL → 直接返回 URL，让浏览器加载
+ * 4. config.icon 未定义 → 自动发现 sources/{slug}/icon.{svg,png}
+ * 5. 兜底 → 从服务 URL 解析 favicon
  *
- * Config takes precedence over auto-discovered local files. If config.icon is set
- * (emoji, local path, or URL), auto-discovery is skipped.
+ * 只要 config.icon 已设置（emoji、本地路径或 URL），就会自动跳过自动发现。
  *
- * @returns Promise resolving to icon URL, emoji marker (emoji:{emoji}), or null
+ * @returns 返回图标 URL、emoji 标记（emoji:{emoji}）或 null
  */
 export async function loadSourceIcon(
   source: { config: SourceConfig; workspaceId: string },
@@ -175,22 +169,22 @@ export async function loadSourceIcon(
   const { config, workspaceId } = source
   const cacheKey = `${workspaceId}:${config.slug}`
 
-  // Check cache first
+  // 先查缓存
   const cached = sourceIconCache.get(cacheKey)
   if (cached) return cached
 
   const icon = config.icon
 
-  // Priority 1: Emoji icon - return marker for caller to render as text
+  // 优先级 1：emoji 图标，返回标记供调用方渲染为文字
   if (icon && isEmoji(icon)) {
     const emojiMarker = `${EMOJI_ICON_PREFIX}${icon}`
     sourceIconCache.set(cacheKey, emojiMarker)
     return emojiMarker
   }
 
-  // Priority 2: Explicit local path in config.icon (e.g., "./icon.svg")
+  // 优先级 2：config.icon 中显式写的本地路径，例如 "./icon.svg"
   if (icon?.startsWith('./')) {
-    const iconFilename = icon.slice(2) // Remove './'
+    const iconFilename = icon.slice(2) // 去掉 './'
     const relativePath = `sources/${config.slug}/${iconFilename}`
     const loaded = await loadWorkspaceIcon(workspaceId, relativePath)
     if (loaded) {
@@ -199,15 +193,14 @@ export async function loadSourceIcon(
     }
   }
 
-  // Priority 3: URL in config.icon - return URL directly
-  // Config URL takes precedence over auto-discovered local files
+  // 优先级 3：config.icon 是 URL，直接返回；配置 URL 优先于自动发现的本地文件
   if (icon && (icon.startsWith('http://') || icon.startsWith('https://'))) {
     sourceIconCache.set(cacheKey, icon)
     return icon
   }
 
-  // Priority 4: Auto-discover local icon files (only when config.icon is undefined)
-  // This preserves backward compatibility for sources without explicit config.icon
+  // 优先级 4：config.icon 未定义时自动发现本地图标文件
+  // 保留对未显式配置 icon 的 source 的向后兼容
   if (!icon) {
     const localIconSvg = await loadWorkspaceIcon(workspaceId, `sources/${config.slug}/icon.svg`)
     if (localIconSvg) {
@@ -222,15 +215,15 @@ export async function loadSourceIcon(
     }
   }
 
-  // Priority 5: Resolve favicon from service URL
+  // 优先级 5：从服务 URL 解析 favicon
   const serviceUrl = deriveServiceUrl(config)
   if (!serviceUrl) return null
 
-  // Use slug for favicon resolution - it's more specific than generic provider names
+  // favicon 解析用 slug 更具体，比通用 provider 名更好
   const provider = config.slug ?? config.provider
   const logoCacheKey = `${serviceUrl}:${provider ?? ''}`
 
-  // Check logo URL cache
+  // 查 logo URL 缓存
   const cachedLogoUrl = logoUrlCache.get(logoCacheKey)
   if (cachedLogoUrl !== undefined) {
     if (cachedLogoUrl) {
@@ -247,38 +240,37 @@ export async function loadSourceIcon(
     }
     return logoUrl
   } catch (error) {
-    console.error(`[IconCache] Failed to resolve logo URL:`, error)
+    console.error(`[IconCache] 解析 logo URL 失败：`, error)
     logoUrlCache.set(logoCacheKey, null)
     return null
   }
 }
 
 /**
- * Helper to load a workspace image via IPC.
- * Handles SVG theming and returns data URL or null on failure.
+ * 通过 IPC 加载工作区图片的辅助函数。
+ * 处理 SVG 主题化并返回 data URL；失败时返回 null。
  */
 async function loadWorkspaceIcon(workspaceId: string, relativePath: string): Promise<string | null> {
   try {
     const result = await window.electronAPI.readWorkspaceImage(workspaceId, relativePath)
-    // IPC returns null for missing files (silent fallback)
+    // IPC 对缺失文件返回 null（静默兜底）
     if (!result) {
       return null
     }
-    // For SVG, theme and convert to data URL
-    // This injects foreground color since currentColor doesn't work in background-image
+    // SVG 需要注入前景色再转成 data URL；因为 background-image 不会继承 CSS currentColor
     if (relativePath.endsWith('.svg')) {
       return svgToThemedDataUrl(result)
     }
     return result
   } catch {
-    // Security errors or I/O failures still throw - handle them gracefully
+    // 安全错误或 IO 失败仍优雅兜底
     return null
   }
 }
 
 /**
- * Get a source icon synchronously from cache.
- * Returns null if not cached (use loadSourceIcon to populate).
+ * 从缓存同步获取 source 图标。
+ * 若未命中缓存则返回 null（需调用 loadSourceIcon 加载）。
  */
 export function getSourceIconSync(workspaceId: string, slug: string): string | null {
   const cacheKey = `${workspaceId}:${slug}`
@@ -286,19 +278,19 @@ export function getSourceIconSync(workspaceId: string, slug: string): string | n
 }
 
 // ============================================================================
-// Skill Icon Loading
+// Skill 图标加载
 // ============================================================================
 
 /**
- * Load a skill icon into the cache.
+ * 加载 skill 图标到缓存。
  *
- * Resolution priority (mirrors loadSourceIcon):
- * 1. Emoji in metadata.icon → Return emoji marker
- * 2. URL in metadata.icon → Return URL directly
- * 3. Known iconPath → Load from file
- * 4. Auto-discover skills/{slug}/icon.{svg,png} → Load from file
+ * 解析优先级（与 loadSourceIcon 类似）：
+ * 1. metadata.icon 是 emoji → 返回 emoji 标记
+ * 2. metadata.icon 是 URL → 直接返回 URL
+ * 3. 已知 iconPath → 从文件加载
+ * 4. 自动发现 skills/{slug}/icon.{svg,png} → 从文件加载
  *
- * @returns Promise resolving to icon URL, emoji marker, or null
+ * @returns 返回图标 URL、emoji 标记或 null
  */
 export async function loadSkillIcon(
   skill: SkillConfig,
@@ -306,26 +298,26 @@ export async function loadSkillIcon(
 ): Promise<string | null> {
   const cacheKey = `${workspaceId}:${skill.slug}`
 
-  // Check cache first
+  // 先查缓存
   const cached = skillIconCache.get(cacheKey)
   if (cached) return cached
 
   const iconValue = skill.metadata?.icon
 
-  // Priority 1: Emoji icon - return marker for caller to render as text
+  // 优先级 1：emoji 图标
   if (iconValue && isEmoji(iconValue)) {
     const emojiMarker = `${EMOJI_ICON_PREFIX}${iconValue}`
     skillIconCache.set(cacheKey, emojiMarker)
     return emojiMarker
   }
 
-  // Priority 2: URL in metadata - return URL directly
+  // 优先级 2：metadata 中的 URL
   if (iconValue && (iconValue.startsWith('http://') || iconValue.startsWith('https://'))) {
     skillIconCache.set(cacheKey, iconValue)
     return iconValue
   }
 
-  // Priority 3: Known icon path - load file
+  // 优先级 3：已知的 iconPath 指向的文件
   if (skill.iconPath) {
     const skillsMatch = skill.iconPath.match(/skills\/([^/]+)\/(.+)$/)
     if (skillsMatch) {
@@ -338,7 +330,7 @@ export async function loadSkillIcon(
     }
   }
 
-  // Priority 4: Auto-discover icon files (when no explicit icon configured)
+  // 优先级 4：没有显式配置 icon 时自动发现
   if (!iconValue) {
     const svgIcon = await loadWorkspaceIcon(workspaceId, `skills/${skill.slug}/icon.svg`)
     if (svgIcon) {
@@ -357,8 +349,8 @@ export async function loadSkillIcon(
 }
 
 /**
- * Get a skill icon synchronously from cache.
- * Returns null if not cached (use loadSkillIcon to populate).
+ * 从缓存同步获取 skill 图标。
+ * 若未命中缓存则返回 null（需调用 loadSkillIcon 加载）。
  */
 export function getSkillIconSync(workspaceId: string, slug: string): string | null {
   const cacheKey = `${workspaceId}:${slug}`
@@ -366,16 +358,16 @@ export function getSkillIconSync(workspaceId: string, slug: string): string | nu
 }
 
 // ============================================================================
-// SVG Theming
+// SVG 主题化
 // ============================================================================
 
 /**
- * Get the current foreground color from CSS custom properties.
- * Returns the computed value of --foreground or a fallback.
+ * 从 CSS 自定义属性获取当前前景色。
+ * 返回 --foreground 的计算值或兜底色。
  */
 export function getForegroundColor(): string {
   if (typeof document === 'undefined') {
-    // SSR/Node fallback - dark theme default
+    // SSR/Node 环境的兜底：暗色主题默认色
     return '#e3e2e5'
   }
 
@@ -383,21 +375,19 @@ export function getForegroundColor(): string {
     .getPropertyValue('--foreground')
     .trim()
 
-  // If we got an oklch value, return it as-is (browsers handle it)
-  // If empty, return a sensible default
+  // 如果是 oklch 值就直接返回（浏览器能处理）；为空则返回兜底色
   return computedColor || '#e3e2e5'
 }
 
 /**
- * Process SVG content to inject theme foreground color.
+ * 处理 SVG 内容，注入主题前景色。
  *
- * This fixes SVGs that use currentColor or have no fill specified,
- * which would otherwise render as black when used as background-image
- * (since CSS color inheritance doesn't work for background images).
+ * 修复那些使用 currentColor 或没有 fill 的 SVG：
+ * 当 SVG 作为 background-image 使用时，CSS 颜色继承不会生效，所以需要在这里注入实际颜色。
  *
- * @param svgContent - Raw SVG string content
- * @param foregroundColor - Color to inject (defaults to current theme foreground)
- * @returns Processed SVG string with colors injected
+ * @param svgContent - 原始 SVG 字符串
+ * @param foregroundColor - 要注入的颜色（默认使用当前主题前景色）
+ * @returns 处理后的 SVG 字符串
  */
 export function themeSvgContent(
   svgContent: string,
@@ -407,19 +397,17 @@ export function themeSvgContent(
 
   let processed = svgContent
 
-  // Replace all currentColor references with the actual color
+  // 把所有 currentColor 替换成实际颜色
   processed = processed.replace(/currentColor/gi, color)
 
-  // For SVGs with no fill attribute on the root element, add one
-  // This catches SVGs that rely on default black fill
+  // 如果根元素没有 fill 属性，就补一个；避免依赖默认黑色填充的 SVG 显示异常
   processed = processed.replace(
     /<svg([^>]*)>/i,
     (match, attrs) => {
-      // Don't add fill if already has fill attribute (even fill="none")
+      // 已有 fill 属性（即使是 fill="none"）不再添加
       if (/\bfill\s*=/i.test(attrs)) {
         return match
       }
-      // Add fill attribute to SVG root
       return `<svg${attrs} fill="${color}">`
     }
   )
@@ -428,8 +416,8 @@ export function themeSvgContent(
 }
 
 /**
- * Convert SVG content to a themed data URL.
- * Injects foreground color and encodes as base64.
+ * 把 SVG 内容转成带主题色的 data URL。
+ * 先注入前景色，再做 base64 编码。
  */
 export function svgToThemedDataUrl(svgContent: string, foregroundColor?: string): string {
   const themedSvg = themeSvgContent(svgContent, foregroundColor)
@@ -437,19 +425,19 @@ export function svgToThemedDataUrl(svgContent: string, foregroundColor?: string)
 }
 
 // ============================================================================
-// Helpers
+// 辅助函数
 // ============================================================================
 
 /**
- * Derive service URL from source config (for favicon resolution)
+ * 从 source 配置推导服务 URL（用于 favicon 解析）
  */
 function deriveServiceUrl(config: SourceConfig): string | null {
-  // MCP sources - use mcp.url
+  // MCP source：使用 mcp.url
   if (config.type === 'mcp' && config.mcp?.url) {
     return config.mcp.url
   }
 
-  // API sources - use api.baseUrl
+  // API source：使用 api.baseUrl
   if (config.type === 'api' && config.api?.baseUrl) {
     return config.api.baseUrl
   }
@@ -458,84 +446,82 @@ function deriveServiceUrl(config: SourceConfig): string | null {
 }
 
 // ============================================================================
-// Unified Entity Icon Hook
+// 统一实体图标 Hook
 // ============================================================================
 
-/** Supported icon file extensions for auto-discovery */
+/** 自动发现图标时支持的文件扩展名 */
 const ICON_FILE_EXTENSIONS = ['.svg', '.png', '.jpg', '.jpeg']
 
 /**
- * Pre-compiled regex for extracting workspace-relative icon paths from absolute paths.
- * Matches any known entity directory prefix (skills/, sources/, statuses/)
- * followed by the rest of the path.
+ * 预编译正则：从绝对路径中提取工作区相对图标路径。
+ * 匹配 skills/、sources/、statuses/ 中任意一个目录前缀及其后续路径。
  */
 const ICON_PATH_PATTERN = /(?:skills|sources|statuses)\/.+$/
 
 /**
- * Options for the useEntityIcon hook.
+ * useEntityIcon hook 的选项。
  */
 export interface UseEntityIconOptions {
-  /** Workspace context for IPC calls */
+  /** IPC 调用所需的工作区 ID */
   workspaceId: string
-  /** Cache namespace (e.g. 'source', 'skill', 'status', 'label') */
+  /** 缓存命名空间，例如 'source'、'skill'、'status'、'label' */
   entityType: string
-  /** Unique identifier within the entity type (slug, statusId, etc.) */
+  /** 实体类型内的唯一标识（slug、statusId 等） */
   identifier: string
   /**
-   * Known relative path to icon file (for entities with pre-resolved paths).
-   * e.g. 'skills/my-skill/icon.svg'
-   * If provided, only this exact path is attempted (no auto-discovery).
+   * 已知的相对图标路径（用于已经解析好路径的实体）。
+   * 例如 'skills/my-skill/icon.svg'。
+   * 若提供，则只尝试该路径，不再自动发现。
    */
   iconPath?: string
   /**
-   * Directory to auto-discover icon files in (relative to workspace).
-   * e.g. 'sources/linear' → tries sources/linear/icon.svg, icon.png, etc.
-   * Ignored if iconPath is provided.
+   * 自动发现图标文件的目录（相对于工作区）。
+   * 例如 'sources/linear' 会依次尝试 sources/linear/icon.svg、icon.png 等。
+   * 若提供 iconPath，则忽略本项。
    */
   iconDir?: string
   /**
-   * Icon value from entity config. Can be:
-   * - Emoji string (e.g. "🔧") → resolved as emoji
-   * - URL (ignored here, assumed already downloaded to local file)
-   * - undefined → auto-discover from iconDir
+   * 实体配置中的图标值。可能是：
+   * - emoji 字符串（如 "🔧"）→ 渲染为 emoji
+   * - URL（这里忽略，假设已下载到本地文件）
+   * - undefined → 从 iconDir 自动发现
    */
   iconValue?: string
   /**
-   * Override the filename used for auto-discovery (default: 'icon').
-   * e.g. for statuses, set to the statusId so it discovers '{statusId}.svg'
-   * instead of 'icon.svg'.
+   * 覆盖自动发现时使用的文件名（默认 'icon'）。
+   * 例如 status 实体可设为 statusId，从而发现 '{statusId}.svg' 而非 'icon.svg'。
    */
   iconFileName?: string
 }
 
 /**
- * Unified icon loading hook - single entry point for all entity types.
+ * 统一的图标加载 Hook：所有实体类型的单一入口。
  *
- * Handles cache lookup, IPC file loading, SVG theming, colorability detection,
- * and emoji detection. Returns a ResolvedEntityIcon ready for EntityIcon rendering.
+ * 内部处理缓存查询、IPC 文件加载、SVG 主题化、可着色检测与 emoji 检测，
+ * 返回 ResolvedEntityIcon，可直接交给 EntityIcon 组件渲染。
  *
- * Resolution priority (config iconValue is the source of truth):
- * 1. Emoji in iconValue → { kind: 'emoji', value: emoji, colorable: false }
- * 2. URL in iconValue → { kind: 'file', value: url, colorable: false }
- * 3. Local file (iconPath) → { kind: 'file', value: dataUrl, colorable }
- * 4. Auto-discover in iconDir (only when iconValue is undefined) → { kind: 'file', value: dataUrl, colorable }
- * 5. Fallback → { kind: 'fallback', colorable: false }
+ * 解析优先级（iconValue 是最高权威）：
+ * 1. iconValue 是 emoji → { kind: 'emoji', value: emoji, colorable: false }
+ * 2. iconValue 是 URL → { kind: 'file', value: url, colorable: false }
+ * 3. 本地文件（iconPath）→ { kind: 'file', value: dataUrl, colorable }
+ * 4. 在 iconDir 中自动发现（仅当 iconValue 为 undefined）→ { kind: 'file', value: dataUrl, colorable }
+ * 5. 兜底 → { kind: 'fallback', colorable: false }
  *
- * Config takes precedence over auto-discovered local files.
+ * 只要 iconValue 已配置，就优先于自动发现的本地文件。
  *
- * Usage:
+ * 用法：
  *   const icon = useEntityIcon({ workspaceId, entityType: 'skill', identifier: slug, iconPath })
  *   return <EntityIcon icon={icon} fallbackIcon={Zap} />
  */
 export function useEntityIcon(opts: UseEntityIconOptions): ResolvedEntityIcon {
   const { workspaceId, entityType, identifier, iconPath, iconDir, iconValue, iconFileName } = opts
 
-  // Stable cache key for this entity's icon
+  // 该实体图标的稳定缓存键
   const cacheKey = `${entityType}:${workspaceId}:${identifier}`
 
-  // Check if iconValue is an emoji or URL (synchronous, no loading needed)
+  // 判断 iconValue 是不是 emoji 或 URL（同步判断，无需加载文件）
   const immediateValue = useMemo(() => {
-    // Guard against non-string values (can happen with malformed config data)
+    // 防御非字符串值（配置数据异常时可能出现）
     if (!iconValue || typeof iconValue !== 'string') return null
     if (isEmoji(iconValue)) return { type: 'emoji' as const, value: iconValue }
     if (iconValue.startsWith('http://') || iconValue.startsWith('https://')) {
@@ -544,16 +530,16 @@ export function useEntityIcon(opts: UseEntityIconOptions): ResolvedEntityIcon {
     return null
   }, [iconValue])
 
-  // Initial state: check cache synchronously or return emoji/url/fallback
+  // 初始状态：同步查缓存，或返回 emoji/url/兜底
   const [resolved, setResolved] = useState<ResolvedEntityIcon>(() => {
     if (immediateValue?.type === 'emoji') {
       return { kind: 'emoji', value: immediateValue.value, colorable: false }
     }
     if (immediateValue?.type === 'url') {
-      // URLs are returned directly as 'file' kind (works in img src)
+      // URL 直接作为 'file' 返回（可在 img src 中使用）
       return { kind: 'file', value: immediateValue.value, colorable: false }
     }
-    // Check unified cache for a previously loaded file icon
+    // 查统一缓存里是否已经加载过
     const cached = iconCache.get(cacheKey)
     if (cached) {
       const colorable = colorableCache.has(cacheKey)
@@ -568,20 +554,19 @@ export function useEntityIcon(opts: UseEntityIconOptions): ResolvedEntityIcon {
   })
 
   useEffect(() => {
-    // If emoji, no file loading needed - just update state
+    // emoji 不需要文件加载，直接更新状态
     if (immediateValue?.type === 'emoji') {
       setResolved({ kind: 'emoji', value: immediateValue.value, colorable: false })
       return
     }
 
-    // If URL from config, use it directly (no file loading needed)
-    // Config URL takes precedence over auto-discovered local files
+    // 配置里的 URL 直接使用，不再加载文件
     if (immediateValue?.type === 'url') {
       setResolved({ kind: 'file', value: immediateValue.value, colorable: false })
       return
     }
 
-    // Check cache first
+    // 先查缓存
     const cached = iconCache.get(cacheKey)
     if (cached) {
       const colorable = colorableCache.has(cacheKey)
@@ -594,30 +579,30 @@ export function useEntityIcon(opts: UseEntityIconOptions): ResolvedEntityIcon {
       return
     }
 
-    // No cache hit - load from filesystem via IPC
+    // 缓存未命中，通过 IPC 从文件系统加载
     let cancelled = false
 
     async function loadIcon() {
       let result: { dataUrl: string; colorable: boolean; rawSvg?: string } | null = null
 
       if (iconPath) {
-        // Known path - extract relative portion and load directly
-        // iconPath may be absolute; extract the workspace-relative part
+        // 已知路径：提取工作区相对部分后直接加载
+        // iconPath 可能是绝对路径，需要提取出相对路径
         const relativeMatch = iconPath.match(ICON_PATH_PATTERN)
         const relativePath = relativeMatch ? relativeMatch[0] : iconPath
 
         result = await loadIconFile(workspaceId, relativePath)
       } else if (iconDir && !iconValue) {
-        // Auto-discover icon files in directory
-        // Only do auto-discovery when iconValue is undefined (config takes precedence)
-        // iconFileName overrides the default 'icon' prefix (e.g. statuses use statusId)
+        // 在目录中自动发现图标文件
+        // 仅在 iconValue 为 undefined 时自动发现（配置优先）
+        // iconFileName 覆盖默认 'icon' 前缀，例如 status 使用 statusId
         result = await discoverIconFile(workspaceId, iconDir, iconFileName)
       }
 
       if (cancelled) return
 
       if (result) {
-        // Cache the loaded icon and its colorability/rawSvg
+        // 缓存加载结果及其可着色/原始 SVG 信息
         iconCache.set(cacheKey, result.dataUrl)
         if (result.colorable) {
           colorableCache.add(cacheKey)
@@ -645,27 +630,27 @@ export function useEntityIcon(opts: UseEntityIconOptions): ResolvedEntityIcon {
 }
 
 // ============================================================================
-// useEntityIcon Internal Helpers
+// useEntityIcon 内部辅助函数
 // ============================================================================
 
 /**
- * Tracks which cached icons are colorable (use currentColor).
- * Kept as a Set of cache keys for O(1) lookup.
+ * 记录哪些缓存图标是可着色的（使用 currentColor）。
+ * 用 Set 存缓存键，实现 O(1) 查询。
  */
 const colorableCache = new Set<string>()
 
 /**
- * Stores sanitized raw SVG content for colorable icons.
- * Used for inline rendering so CSS color classes can cascade into SVG fills.
+ * 保存可着色图标的原始 SVG 内容（已清理）。
+ * 用于内联渲染，使 CSS 颜色类能级联到 SVG 的 fill/stroke。
  */
 const rawSvgCache = new Map<string, string>()
 
 /**
- * Load a single icon file by relative path.
- * Handles SVG theming, colorability detection, and sanitization.
+ * 按相对路径加载单个图标文件。
+ * 处理 SVG 主题化、可着色检测与清理。
  *
- * For colorable SVGs (those using currentColor), returns rawSvg for inline rendering
- * so CSS color classes can cascade into SVG fills/strokes.
+ * 对于可着色 SVG（使用 currentColor），返回 rawSvg 用于内联渲染，
+ * 这样 CSS 颜色类才能级联到 SVG 的 fill/stroke。
  */
 async function loadIconFile(
   workspaceId: string,
@@ -673,19 +658,19 @@ async function loadIconFile(
 ): Promise<{ dataUrl: string; colorable: boolean; rawSvg?: string } | null> {
   try {
     const content = await window.electronAPI.readWorkspaceImage(workspaceId, relativePath)
-    // IPC returns null for missing files (silent fallback)
+    // IPC 对缺失文件返回 null（静默兜底）
     if (!content) {
       return null
     }
 
     if (relativePath.endsWith('.svg')) {
-      // Detect if SVG uses currentColor (colorable)
+      // 检测 SVG 是否使用 currentColor（是否可着色）
       const colorable = content.includes('currentColor')
-      // Theme SVG: inject foreground color for data URL usage
+      // 对 data URL 使用场景做主题化：注入前景色
       const dataUrl = svgToThemedDataUrl(content)
 
       if (colorable) {
-        // Sanitize SVG for inline rendering (XSS prevention)
+        // 为内联渲染清理 SVG（防止 XSS）
         const rawSvg = sanitizeSvgForInline(content)
         return { dataUrl, colorable, rawSvg }
       }
@@ -693,18 +678,17 @@ async function loadIconFile(
       return { dataUrl, colorable }
     }
 
-    // Raster image (PNG, JPG) - not colorable
+    // 栅格图片（PNG、JPG）不可着色
     return { dataUrl: content, colorable: false }
   } catch {
-    // File doesn't exist or failed to load
+    // 文件不存在或加载失败
     return null
   }
 }
 
 /**
- * Sanitize SVG content for safe inline rendering via dangerouslySetInnerHTML.
- * Removes script tags, event handlers, and JavaScript URLs.
- * Also strips width/height attributes so SVG fills its container.
+ * 清理 SVG 内容，使其可以安全地通过 dangerouslySetInnerHTML 内联渲染。
+ * 移除 script 标签、事件处理器、javascript: URL，并去掉宽高属性让 SVG 自适应容器。
  */
 function sanitizeSvgForInline(svg: string): string {
   return svg
@@ -717,11 +701,9 @@ function sanitizeSvgForInline(svg: string): string {
 }
 
 /**
- * Auto-discover an icon file in a workspace directory.
- * Probes all extensions (.svg, .png, .jpg, .jpeg) in parallel via IPC,
- * then returns the first successful result by priority order.
- * Default fileName is 'icon' (e.g. icon.svg). Override for entities
- * that use identifier-based naming (e.g. statuses use '{statusId}.svg').
+ * 在工作区目录中自动发现图标文件。
+ * 通过 IPC 并行探测所有扩展名，再按优先级返回第一个成功的结果。
+ * 默认文件名是 'icon'（例如 icon.svg），可覆盖为 identifier-based 命名（如 status 用 '{statusId}.svg'）。
  */
 async function discoverIconFile(
   workspaceId: string,
@@ -730,14 +712,14 @@ async function discoverIconFile(
 ): Promise<{ dataUrl: string; colorable: boolean; rawSvg?: string } | null> {
   const name = fileName ?? 'icon'
 
-  // Probe all extensions in parallel — reduces round-trips from N to 1
+  // 并行探测所有扩展名，把 N 次 IPC 往返降为 1 次
   const results = await Promise.allSettled(
     ICON_FILE_EXTENSIONS.map(ext =>
       loadIconFile(workspaceId, `${iconDir}/${name}${ext}`)
     )
   )
 
-  // Return first successful result in priority order (svg > png > jpg > jpeg)
+  // 按优先级返回第一个成功的结果：svg > png > jpg > jpeg
   for (const result of results) {
     if (result.status === 'fulfilled' && result.value) return result.value
   }

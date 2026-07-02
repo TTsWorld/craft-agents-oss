@@ -1,19 +1,19 @@
 /**
- * Auto-Label Types
+ * 自动标签类型
  *
- * Result types for the auto-label evaluation pipeline.
- * An AutoLabelMatch represents a single extracted label+value from a user message.
+ * 自动标签求值管道的返回类型。
+ * AutoLabelMatch 表示从用户消息中提取出的一个标签+值。
  */
 
 /**
- * A single match from auto-label evaluation.
- * Represents a label that should be applied to the session.
+ * 自动标签求值得到的一次匹配。
+ * 表示应当应用到 session 上的某个标签。
  */
 export interface AutoLabelMatch {
-  /** Label ID to apply */
+  /** 要应用的标签 ID */
   labelId: string
-  /** Normalized value ready for storage (already formatted per valueType) */
+  /** 已按 valueType 格式化、可直接存储的归一化值 */
   value: string
-  /** The original text in the message that triggered this match */
+  /** 消息中触发本次匹配的原始文本 */
   matchedText: string
 }

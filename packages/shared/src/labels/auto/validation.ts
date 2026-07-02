@@ -1,13 +1,16 @@
 /**
- * Auto-Label Rule Validation
+ * 自动标签规则校验
  *
- * Validates auto-label rule patterns at config-save time to catch
- * invalid regex syntax and catastrophic backtracking patterns early.
+ * 在保存配置时校验自动标签规则，提前发现非法正则语法
+ * 和可能导致灾难性回溯的模式。
  *
- * Called from the label config validator (validators.ts) when labels/config.json
- * is being written.
+ * 在 labels/config.json 写入时由标签配置校验器（validators.ts）调用。
  */
 
+/**
+ * 单条自动标签规则的校验结果。
+ * valid 为 true 表示没有错误；errors/warnings 分别存放错误和警告信息。
+ */
 export interface AutoLabelValidationResult {
   valid: boolean
   errors: string[]
@@ -15,30 +18,29 @@ export interface AutoLabelValidationResult {
 }
 
 /**
- * Known catastrophic backtracking patterns (nested quantifiers).
- * These can cause ReDoS (Regular Expression Denial of Service) by making
- * the regex engine take exponential time on non-matching inputs.
+ * 已知的灾难性回溯模式（嵌套量词）。
+ * 这些模式会让正则引擎在处理不匹配输入时耗时指数级增长，造成 ReDoS（正则拒绝服务）。
  *
- * Matches patterns like: (a+)+, (a*)+, (\w+)*, ([a-z]+)+
+ * 例如：(a+)+、(a*)+、(\w+)*、([a-z]+)+
  */
 const CATASTROPHIC_BACKTRACKING_PATTERNS = [
-  /\([^)]*[+*][^)]*\)[+*]/, // (x+)+ or (x*)+ or (x+)* etc.
-  /\([^)]*[+*][^)]*\)\{/,   // (x+){n} quantified groups with inner quantifier
+  /\([^)]*[+*][^)]*\)[+*]/, // (x+)+、(x*)+、(x+)* 等
+  /\([^)]*[+*][^)]*\)\{/,   // 带内部量词的量化组，如 (x+){n}
 ]
 
 /**
- * Validate a single auto-label rule.
- * Checks regex syntax, flags, and known problematic patterns.
+ * 校验单条自动标签规则。
+ * 检查正则语法、flags 和已知危险模式。
  *
- * @param pattern - The regex pattern string
- * @param flags - Optional flags (defaults to 'gi')
- * @returns Validation result with errors/warnings
+ * @param pattern - 正则模式字符串
+ * @param flags - 可选 flags（默认 'gi'）
+ * @returns 包含 errors/warnings 的校验结果
  */
 export function validateAutoLabelRule(pattern: string, flags?: string): AutoLabelValidationResult {
   const errors: string[] = []
   const warnings: string[] = []
 
-  // 1. Check regex compiles without errors
+  // 1. 检查正则能否正常编译
   try {
     const effectiveFlags = flags
       ? (flags.includes('g') ? flags : flags + 'g')
@@ -49,7 +51,7 @@ export function validateAutoLabelRule(pattern: string, flags?: string): AutoLabe
     return { valid: false, errors, warnings }
   }
 
-  // 2. Check for catastrophic backtracking patterns (nested quantifiers)
+  // 2. 检查灾难性回溯模式（嵌套量词）
   for (const badPattern of CATASTROPHIC_BACKTRACKING_PATTERNS) {
     if (badPattern.test(pattern)) {
       errors.push(
@@ -60,7 +62,7 @@ export function validateAutoLabelRule(pattern: string, flags?: string): AutoLabe
     }
   }
 
-  // 3. Warn about missing capture groups when no valueTemplate could use $1
+  // 3. 如果没有捕获组，警告：没有 valueTemplate 可用 $1
   if (!pattern.includes('(') || pattern.replace(/\(\?[:<!=]/g, '').indexOf('(') === -1) {
     warnings.push(
       'Pattern has no capture groups. The entire match will be used as the label value. ' +

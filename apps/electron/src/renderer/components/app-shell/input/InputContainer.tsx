@@ -1,3 +1,11 @@
+/**
+ * InputContainer - 自由输入与结构化输入的容器与动画编排器。
+ *
+ * 负责：
+ * - 在 FreeFormInput 和 StructuredInput 之间切换
+ * - 测量结构化输入高度并做平滑动画
+ * - 处理紧凑模式下 agent 思考时的折叠/展开
+ */
 import * as React from 'react'
 import { motion, AnimatePresence, useMotionValue, useMotionValueEvent, animate } from 'motion/react'
 import { cn } from '@/lib/utils'
@@ -10,37 +18,37 @@ import { getStructuredInputMaxHeight } from './structured-height'
 import { BackgroundFinishedChip } from '../BackgroundFinishedChip'
 
 interface InputContainerProps extends Omit<FreeFormInputProps, 'inputRef'> {
-  /** Structured input state - when present, shows structured UI instead of freeform */
+  /** 结构化输入状态；存在时显示结构化 UI 而不是自由输入 */
   structuredInput?: StructuredInputState
-  /** Callback when user responds to structured input */
+  /** 用户响应结构化输入时的回调 */
   onStructuredResponse?: (response: StructuredResponse) => void
-  /** External ref for the input (for focus control) */
+  /** 外部传入的输入框 ref（用于焦点控制） */
   textareaRef?: React.RefObject<RichTextInputHandle>
-  /** Per-frame callback during height animation (for scroll sync) */
+  /** 高度动画每一帧的回调（用于滚动同步） */
   onAnimatedHeightChange?: (delta: number) => void
 }
 
-// Animation timing - synced across height and opacity
+// 动画时长——高度和透明度共用
 const TRANSITION_DURATION = 0.25
 const TRANSITION_EASE = [0.4, 0, 0.2, 1] as const
 
-// Fallback heights (used on first render before measurement)
+// 首次渲染测量前的回退高度
 const FALLBACK_HEIGHTS: Record<InputMode | string, number> = {
   freeform: 114,
-  'freeform-compact': 70,  // Smaller for compact mode
+  'freeform-compact': 70,  // 紧凑模式更小
   permission: 200,
-  credential: 240,  // Taller for form fields + hint
+  credential: 240,  // 表单字段 + 提示需要更高
   admin_approval: 220,
 }
 
 /**
- * InputContainer - Main orchestrator for FreeFormInput and StructuredInput
+ * InputContainer - FreeFormInput 与 StructuredInput 的主编排容器。
  *
- * Animation approach:
- * - Uses a hidden measuring div to get the natural height of content
- * - Container animates to measured height
- * - Content crossfades inside using AnimatePresence mode="sync"
- * - All visible children use absolute positioning to stack during transition
+ * 动画实现：
+ * - 用隐藏测量 div 获取内容的自然高度
+ * - 容器动画过渡到测量高度
+ * - 内部内容通过 AnimatePresence mode="sync" 交叉淡入淡出
+ * - 所有可见子元素使用绝对定位，在过渡期间堆叠
  */
 export function InputContainer({
   structuredInput,
@@ -55,8 +63,7 @@ export function InputContainer({
   const isFocusedPanel = appShellContext?.isFocusedPanel ?? true
   const mode: InputMode = structuredInput ? 'structured' : 'freeform'
   const measureRef = React.useRef<HTMLDivElement>(null)
-  // Separate height states: freeform uses callback, structured uses measuring div
-  // Use smaller fallback height for compact mode
+  // 自由输入用回调高度，结构化输入用测量 div；紧凑模式用更小的回退高度
   const [freeformHeight, setFreeformHeight] = React.useState<number>(
     compactMode ? FALLBACK_HEIGHTS['freeform-compact'] : FALLBACK_HEIGHTS.freeform
   )
@@ -67,24 +74,24 @@ export function InputContainer({
   const [isFocused, setIsFocused] = React.useState(false)
   const hasInitializedRef = React.useRef(false)
 
-  // Create a stable key for the current content
+  // 当前内容的稳定 key
   const contentKey = mode === 'freeform' ? 'freeform' : `structured-${structuredInput?.type}`
 
-  // Track mode transitions - animate height for a short period after mode change
+  // 跟踪模式切换，在切换后的一段时间内启用高度动画
   const [isAnimating, setIsAnimating] = React.useState(false)
   const prevContentKeyRef = React.useRef(contentKey)
 
-  // Detect transition synchronously during render
+  // 在 render 期间同步检测是否正在过渡
   const isTransitioning = prevContentKeyRef.current !== contentKey
 
-  // Should animate if we're in a transition OR still in the animation window
+  // 处于过渡中或动画窗口期内都应启用高度动画
   const shouldAnimateHeight = isTransitioning || isAnimating
 
   React.useEffect(() => {
     if (isTransitioning) {
       prevContentKeyRef.current = contentKey
       setIsAnimating(true)
-      // Keep animating for the transition duration + a bit extra for measurement settle
+      // 持续动画到过渡时长 + 一点额外时间让测量稳定
       const timer = setTimeout(() => {
         setIsAnimating(false)
       }, TRANSITION_DURATION * 1000 + 100)
@@ -92,10 +99,8 @@ export function InputContainer({
     }
   }, [contentKey, isTransitioning])
 
-  // Compact-mode collapse-during-thinking is escapable: the user can hover or
-  // click the collapsed bar to bring the input back without waiting for the
-  // agent to finish. State resets the moment processing ends so the next
-  // thinking cycle starts collapsed again.
+  // 紧凑模式下 agent 思考时会折叠输入栏，但用户可以悬停或点击展开，
+  // 不需要等 agent 结束。processing 结束时重置，以便下一次思考周期重新折叠。
   const [expandedDuringProcessing, setExpandedDuringProcessing] = React.useState(false)
 
   React.useEffect(() => {
@@ -110,8 +115,7 @@ export function InputContainer({
 
   const isCollapsedInCompact = compactMode && isProcessing && !expandedDuringProcessing
 
-  // Animate height when either isProcessing flips OR the user manually expands
-  // / re-collapses the input during a thinking cycle.
+  // 当 isProcessing 翻转或用户手动展开/收起时触发高度动画
   const prevIsProcessingRef = React.useRef(isProcessing)
   const prevExpandedRef = React.useRef(expandedDuringProcessing)
   React.useEffect(() => {
@@ -128,7 +132,7 @@ export function InputContainer({
     return () => clearTimeout(timer)
   }, [compactMode, isProcessing, expandedDuringProcessing])
 
-  // Handle height changes from FreeFormInput (synchronous, no measuring div needed)
+  // 处理 FreeFormInput 的高度变化（同步回调，不需要测量 div）
   const handleFreeformHeightChange = React.useCallback((height: number) => {
     setFreeformHeight(height)
     if (!hasInitializedRef.current) {
@@ -136,7 +140,7 @@ export function InputContainer({
     }
   }, [])
 
-  // Handle focus changes from FreeFormInput
+  // 处理 FreeFormInput 的焦点变化
   const handleFocusChange = React.useCallback((focused: boolean) => {
     setIsFocused(focused)
   }, [])
@@ -150,9 +154,8 @@ export function InputContainer({
     return () => window.removeEventListener('resize', updateViewportHeight)
   }, [])
 
-  // Use ResizeObserver only for structured inputs (freeform uses onHeightChange callback)
+  // 仅对结构化输入使用 ResizeObserver（自由输入使用 onHeightChange 回调）
   React.useEffect(() => {
-    // Skip for freeform - it uses the onHeightChange callback
     if (mode === 'freeform') return
 
     const measureEl = measureRef.current
@@ -163,7 +166,7 @@ export function InputContainer({
         const height = entry.contentRect.height
         if (height > 0) {
           setStructuredHeight(height)
-          // Mark as initialized after first measurement
+          // 首次测量后标记为已初始化
           if (!hasInitializedRef.current) {
             requestAnimationFrame(() => {
               hasInitializedRef.current = true
@@ -177,8 +180,7 @@ export function InputContainer({
     return () => observer.disconnect()
   }, [contentKey, mode])
 
-  // Use appropriate height source based on mode. Structured prompts are clamped
-  // to viewport-aware bounds; their internals scroll so action buttons stay reachable.
+  // 根据模式选择高度来源。结构化提示受视口感知上限限制，内部可滚动，保证操作按钮可达。
   const rawTargetHeight = mode === 'freeform'
     ? freeformHeight
     : (structuredHeight ?? FALLBACK_HEIGHTS[structuredInput?.type ?? 'freeform'] ?? FALLBACK_HEIGHTS.freeform)
@@ -187,11 +189,11 @@ export function InputContainer({
     ? rawTargetHeight
     : Math.min(rawTargetHeight, structuredMaxHeight)
 
-  // Motion value for frame-synchronized height animation
+  // 用于帧同步高度动画的 motion value
   const heightMotionValue = useMotionValue(targetHeight)
   const prevAnimatedHeightRef = React.useRef(targetHeight)
 
-  // Emit delta on every animation frame for scroll sync
+  // 每帧输出高度变化量，用于外部滚动同步
   useMotionValueEvent(heightMotionValue, "change", (latest) => {
     const delta = latest - prevAnimatedHeightRef.current
     prevAnimatedHeightRef.current = latest
@@ -200,7 +202,7 @@ export function InputContainer({
     }
   })
 
-  // Animate height changes using motion value
+  // 使用 motion value 执行高度动画
   React.useEffect(() => {
     if (shouldAnimateHeight) {
       animate(heightMotionValue, targetHeight, {
@@ -208,7 +210,7 @@ export function InputContainer({
         ease: TRANSITION_EASE
       })
     } else {
-      // Instant update - no animation
+      // 非动画状态直接设置高度
       heightMotionValue.set(targetHeight)
       prevAnimatedHeightRef.current = targetHeight
     }
@@ -218,7 +220,7 @@ export function InputContainer({
     onStructuredResponse?.(response)
   }
 
-  // Render the current content (measuring div only for structured, freeform uses callback)
+  // 渲染当前内容（测量 div 仅用于结构化，自由输入用回调）
   const renderContent = (forMeasuring: boolean) => {
     if (mode === 'freeform') {
       return (
@@ -246,7 +248,7 @@ export function InputContainer({
 
   return (
     <div className="relative">
-      {/* Hidden measuring div - only needed for structured inputs (freeform uses onHeightChange) */}
+      {/* 隐藏测量 div：仅结构化输入需要（自由输入用 onHeightChange） */}
       {mode !== 'freeform' && (
         <div
           ref={measureRef}
@@ -259,7 +261,7 @@ export function InputContainer({
         </div>
       )}
 
-      {/* Visible animated container */}
+      {/* 可见的动画容器 */}
       <motion.div
         className={cn(
           "input-container relative rounded-[12px] overflow-hidden transition-colors",
@@ -271,7 +273,7 @@ export function InputContainer({
           ...(mode !== 'freeform' ? { maxHeight: structuredMaxHeight } : {}),
         }}
       >
-        {/* Crossfading content - freeform anchored to bottom (for auto-grow), others fill */}
+        {/* 交叉淡入淡出内容：自由输入锚定底部（为了自增长），其它填满 */}
         <AnimatePresence mode="sync" initial={false}>
           <motion.div
             key={contentKey}

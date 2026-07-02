@@ -1,6 +1,6 @@
 /**
- * @deprecated This file is deprecated. Use mention-menu.tsx instead.
- * The unified mention menu supports both skills and sources with type badges.
+ * @deprecated 该文件已废弃，请使用 mention-menu.tsx。
+ * 统一的 mention 菜单同时支持 skill 和 source，并带类型徽标。
  */
 
 import * as React from 'react'
@@ -9,22 +9,30 @@ import { SkillAvatar } from '@/components/ui/skill-avatar'
 import type { LoadedSkill } from '../../../shared/types'
 
 // ============================================================================
-// Types
+// 类型
 // ============================================================================
 
 export interface InlineSkillMentionProps {
+  /** 菜单是否打开 */
   open: boolean
+  /** 打开状态变化回调 */
   onOpenChange: (open: boolean) => void
+  /** 可选的 Skill 列表 */
   skills: LoadedSkill[]
+  /** 选择某个 Skill 时调用 */
   onSelect: (slug: string) => void
+  /** 当前过滤文本 */
   filter?: string
+  /** 菜单位置 */
   position: { x: number; y: number }
+  /** Workspace ID */
   workspaceId?: string
+  /** 额外 className */
   className?: string
 }
 
 // ============================================================================
-// Shared Styles (matching slash-command-menu)
+// 共享样式（与 slash-command-menu 保持一致）
 // ============================================================================
 
 const MENU_CONTAINER_STYLE = 'min-w-[240px] overflow-hidden rounded-[8px] bg-background text-foreground shadow-modal-small'
@@ -33,7 +41,7 @@ const MENU_ITEM_STYLE = 'flex cursor-pointer select-none items-center gap-3 roun
 const MENU_ITEM_SELECTED = 'bg-foreground/5'
 
 // ============================================================================
-// Filter skills utility
+// Skill 过滤工具
 // ============================================================================
 
 function filterSkills(skills: LoadedSkill[], filter: string): LoadedSkill[] {
@@ -47,9 +55,10 @@ function filterSkills(skills: LoadedSkill[], filter: string): LoadedSkill[] {
 }
 
 // ============================================================================
-// InlineSkillMention - Autocomplete that follows cursor
+// InlineSkillMention — 跟随光标的 Skill 自动完成菜单
 // ============================================================================
 
+/** 内联 Skill mention 菜单（已废弃） */
 export function InlineSkillMention({
   open,
   onOpenChange,
@@ -64,12 +73,12 @@ export function InlineSkillMention({
   const [selectedIndex, setSelectedIndex] = React.useState(0)
   const filteredSkills = filterSkills(skills, filter)
 
-  // Reset selection when filter changes
+  // filter 变化时重置选中项
   React.useEffect(() => {
     setSelectedIndex(0)
   }, [filter])
 
-  // Keyboard navigation
+  // 键盘导航
   React.useEffect(() => {
     if (!open) return
 
@@ -102,7 +111,7 @@ export function InlineSkillMention({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [open, filteredSkills, selectedIndex, onSelect, onOpenChange])
 
-  // Close on click outside
+  // 点击外部关闭
   React.useEffect(() => {
     if (!open) return
 
@@ -116,10 +125,10 @@ export function InlineSkillMention({
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [open, onOpenChange])
 
-  // Hide if no results or not open
+  // 没结果或未打开时不渲染
   if (!open || filteredSkills.length === 0) return null
 
-  // Calculate bottom position from window height (menu appears above cursor)
+  // 根据窗口高度计算 bottom 位置，菜单显示在光标上方
   const bottomPosition = typeof window !== 'undefined'
     ? window.innerHeight - Math.round(position.y) + 8
     : 0
@@ -166,10 +175,10 @@ export function InlineSkillMention({
 }
 
 // ============================================================================
-// Hook for managing inline skill mention state
+// 管理内联 Skill mention 状态的 Hook
 // ============================================================================
 
-/** Interface for elements that can be used with useInlineSkillMention */
+/** 可与 useInlineSkillMention 配合使用的输入元素接口 */
 export interface SkillMentionInputElement {
   getBoundingClientRect: () => DOMRect
   value: string
@@ -191,6 +200,7 @@ export interface UseInlineSkillMentionReturn {
   handleSelect: (slug: string) => string
 }
 
+/** 管理 @skill 自动完成菜单状态的 Hook（已废弃） */
 export function useInlineSkillMention({
   inputRef,
   skills,
@@ -200,15 +210,14 @@ export function useInlineSkillMention({
   const [filter, setFilter] = React.useState('')
   const [position, setPosition] = React.useState({ x: 0, y: 0 })
   const [atStart, setAtStart] = React.useState(-1)
-  // Store current input state for handleSelect
+  // 为 handleSelect 保存当前输入状态
   const currentInputRef = React.useRef({ value: '', cursorPosition: 0 })
 
   const handleInputChange = React.useCallback((value: string, cursorPosition: number) => {
-    // Store current state for handleSelect
     currentInputRef.current = { value, cursorPosition }
 
     const textBeforeCursor = value.slice(0, cursorPosition)
-    // Match @ at start of text or after whitespace, followed by optional word chars and hyphens
+    // 匹配文本开头或空白后的 @，后跟可选单词字符和连字符
     const atMatch = textBeforeCursor.match(/(?:^|\s)@([\w-]*)$/)
 
     if (atMatch && skills.length > 0) {
@@ -219,13 +228,13 @@ export function useInlineSkillMention({
       if (inputRef.current) {
         const rect = inputRef.current.getBoundingClientRect()
 
-        // Simplified position calculation
+        // 简化位置计算
         const lineHeight = 20
         const charWidth = 8
         const linesBeforeCursor = textBeforeCursor.split('\n').length - 1
         const charsOnCurrentLine = textBeforeCursor.split('\n').pop()?.length || 0
 
-        // Position above the current line (menu appears above cursor)
+        // 菜单位于当前行上方
         setPosition({
           x: rect.left + Math.min(charsOnCurrentLine * charWidth, rect.width - 100),
           y: rect.top + (linesBeforeCursor + 1) * lineHeight,
@@ -241,13 +250,12 @@ export function useInlineSkillMention({
   }, [inputRef, skills.length])
 
   const handleSelect = React.useCallback((slug: string): string => {
-    // Insert @slug at the @ position, replacing the partial text
+    // 在 @ 位置插入 @slug，替换已输入的部分文本
     let result = ''
     if (atStart >= 0) {
       const { value: currentValue, cursorPosition } = currentInputRef.current
       const before = currentValue.slice(0, atStart)
       const after = currentValue.slice(cursorPosition)
-      // Insert @slug with trailing space
       result = before + '@' + slug + ' ' + after
     }
 

@@ -1,21 +1,19 @@
 /**
- * Thumbnail Protocol Handler
+ * thumbnail-protocol.ts —— 缩略图自定义协议处理器。
  *
- * Registers a custom `thumbnail://` protocol that serves thumbnail images
- * for files in the session sidebar. The browser handles all async loading
- * natively via <img src="thumbnail://encoded-path" />.
+ * 注册 `thumbnail://` 协议，为会话侧边栏中的文件提供缩略图。
+ * 浏览器原生通过 <img src="thumbnail://encoded-path" /> 异步加载。
  *
- * Thumbnail generation strategy (cross-platform):
- * - macOS/Windows: nativeImage.createThumbnailFromPath() — uses OS-level
- *   thumbnail cache (Quick Look / Shell API). Fast (~5ms cached), handles
- *   images, PDFs, Office docs automatically.
- * - Linux: nativeImage.createFromPath() + resize() — uses Chromium's Skia
- *   engine. Works for images only. No PDF/Office support.
+ * 缩略图生成策略（跨平台）：
+ * - macOS/Windows：nativeImage.createThumbnailFromPath()，使用系统级缩略图缓存
+ *  （Quick Look / Shell API），速度快，支持图片、PDF、Office 文档。
+ * - Linux：nativeImage.createFromPath() + resize()，使用 Chromium Skia 引擎，
+ *   仅支持图片，不支持 PDF/Office。
  *
- * Caching:
- * - In-memory LRU map keyed on `path + mtime`. Cache miss triggers generation.
- * - Entries auto-invalidate when file mtime changes (e.g. after file watcher fires).
- * - Capped at MAX_CACHE_ENTRIES to bound memory usage.
+ * 缓存：
+ * - 内存 LRU，key 为 path + mtime；缓存未命中时生成。
+ * - 文件 mtime 变化时自动失效。
+ * - 上限 MAX_CACHE_ENTRIES，控制内存占用。
  */
 
 import { protocol, nativeImage } from 'electron'
@@ -23,31 +21,31 @@ import { stat } from 'fs/promises'
 import { isAbsolute } from 'path'
 import { mainLog } from './logger'
 
-/** Thumbnail output size in pixels (width and height) */
+/** 缩略图输出尺寸（宽高相同） */
 const THUMBNAIL_SIZE = 64
 
-/** Maximum entries in the in-memory LRU cache */
+/** 内存 LRU 缓存最大条目数 */
 const MAX_CACHE_ENTRIES = 200
 
-/** File extensions that support thumbnail generation */
+/** 支持缩略图的图片扩展名 */
 const IMAGE_EXTENSIONS = new Set([
   'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tiff', 'tif', 'ico', 'heic', 'heif',
 ])
 
-/** Extensions that only work via OS thumbnail API (macOS/Windows) */
+/** 仅能通过 OS 缩略图 API 处理的扩展名（macOS/Windows） */
 const OS_THUMBNAIL_EXTENSIONS = new Set([
   'pdf', 'svg', 'psd', 'ai',
 ])
 
-/** All extensions we can potentially thumbnail */
+/** 所有可能生成缩略图的扩展名 */
 const ALL_PREVIEWABLE = new Set([...IMAGE_EXTENSIONS, ...OS_THUMBNAIL_EXTENSIONS])
 
-// In-memory LRU cache: path -> { mtime, data }
+// 内存 LRU 缓存：path -> { mtime, data }
 const cache = new Map<string, { mtime: number; data: Buffer }>()
 
 /**
- * Evict oldest entries when cache exceeds max size.
- * Map iterates in insertion order, so first entries are oldest.
+ * 缓存超过上限时淘汰最旧的条目。
+ * Map 按插入顺序迭代，所以第一个条目最旧。
  */
 function evictIfNeeded(): void {
   while (cache.size > MAX_CACHE_ENTRIES) {
@@ -57,17 +55,17 @@ function evictIfNeeded(): void {
 }
 
 /**
- * Check if the current platform supports OS-level thumbnail generation.
- * nativeImage.createThumbnailFromPath() is only available on macOS and Windows.
+ * 当前平台是否支持 OS 级缩略图生成。
+ * nativeImage.createThumbnailFromPath() 只在 macOS 和 Windows 上可用。
  */
 const supportsOSThumbnails = process.platform === 'darwin' || process.platform === 'win32'
 
 /**
- * Generate a thumbnail buffer for the given file path.
- * Returns a PNG buffer or null if generation fails/unsupported.
+ * 为指定文件路径生成缩略图 buffer。
+ * 成功返回 PNG buffer，失败或不支持返回 null。
  */
 async function generateThumbnail(filePath: string, ext: string): Promise<Buffer | null> {
-  // Strategy 1: OS-level thumbnail (macOS/Windows) — handles images + PDFs + more
+  // 策略 1：OS 级缩略图（macOS/Windows），支持图片、PDF 等
   if (supportsOSThumbnails) {
     try {
       const thumbnail = await nativeImage.createThumbnailFromPath(filePath, {
@@ -78,11 +76,11 @@ async function generateThumbnail(filePath: string, ext: string): Promise<Buffer 
         return thumbnail.toPNG()
       }
     } catch {
-      // OS thumbnail failed — fall through to Skia-based fallback for images
+      // OS 缩略图失败，继续走基于 Skia 的图片兜底方案
     }
   }
 
-  // Strategy 2: Skia-based resize (all platforms) — images only
+  // 策略 2：基于 Skia 的 resize（全平台），仅支持图片
   if (IMAGE_EXTENSIONS.has(ext)) {
     try {
       const img = nativeImage.createFromPath(filePath)
@@ -94,27 +92,26 @@ async function generateThumbnail(filePath: string, ext: string): Promise<Buffer 
     }
   }
 
-  // Unsupported file type on this platform
+  // 当前平台不支持该文件类型
   return null
 }
 
 /**
- * Register the thumbnail:// custom protocol scheme.
- * MUST be called before app.whenReady() — Electron requires scheme
- * registration during the earliest phase of app initialization.
+ * 注册 thumbnail:// 自定义协议 scheme。
+ * 必须在 app.whenReady() 之前调用——Electron 要求在应用初始化最早阶段注册 scheme。
  */
 export function registerThumbnailScheme(): void {
   protocol.registerSchemesAsPrivileged([
     {
       scheme: 'thumbnail',
       privileges: {
-        // Allow the renderer to fetch from this scheme
+        // 允许渲染进程从此 scheme 获取资源
         supportFetchAPI: true,
-        // Standard scheme allows normal URL parsing (host, path, etc.)
+        // standard scheme 支持常规 URL 解析（host、path 等）
         standard: true,
-        // Allow cross-origin access from the renderer
+        // 允许渲染进程跨域访问
         corsEnabled: true,
-        // Stream support for efficient response delivery
+        // 流式支持，便于高效返回响应
         stream: true,
       },
     },
@@ -122,46 +119,45 @@ export function registerThumbnailScheme(): void {
 }
 
 /**
- * Register the thumbnail:// protocol handler.
- * Must be called after app.whenReady() — the handler processes
- * incoming requests and returns thumbnail image responses.
+ * 注册 thumbnail:// 协议的实际处理器。
+ * 必须在 app.whenReady() 之后调用——处理请求并返回缩略图响应。
  *
- * URL format: thumbnail://thumb/<encodeURIComponent(absolutePath)>
- * Examples:
+ * URL 格式：thumbnail://thumb/<encodeURIComponent(absolutePath)>
+ * 示例：
  *   macOS:   thumbnail://thumb/%2FUsers%2Ffoo%2Fimage.png
  *   Windows: thumbnail://thumb/C%3A%5CUsers%5Cfoo%5Cimage.png
  */
 export function registerThumbnailHandler(): void {
   protocol.handle('thumbnail', async (request) => {
     try {
-      // Parse the file path from the URL
-      // Format: thumbnail://thumb/<encoded-path>
-      // URL.pathname includes a leading /, so we strip it before decoding
+      // 从 URL 解析文件路径
+      // 格式：thumbnail://thumb/<encoded-path>
+      // URL.pathname 包含前导 /，解码前要先去掉
       const url = new URL(request.url)
       const filePath = decodeURIComponent(url.pathname.slice(1))
 
-      // Basic validation: must be an absolute path (works on all platforms)
+      // 基础校验：必须是绝对路径（所有平台通用）
       if (!filePath || !isAbsolute(filePath)) {
         return new Response(null, { status: 400 })
       }
 
-      // Check file extension is previewable
+      // 检查扩展名是否可预览
       const ext = filePath.split('.').pop()?.toLowerCase() || ''
       if (!ALL_PREVIEWABLE.has(ext)) {
         return new Response(null, { status: 404 })
       }
 
-      // Get file mtime for cache validation
+      // 获取文件 mtime 用于缓存校验
       let mtime: number
       try {
         const fileStat = await stat(filePath)
         mtime = fileStat.mtimeMs
       } catch {
-        // File doesn't exist or is inaccessible
+        // 文件不存在或无法访问
         return new Response(null, { status: 404 })
       }
 
-      // Check cache — hit if path matches AND mtime hasn't changed
+      // 检查缓存：路径匹配且 mtime 未变化才算命中
       const cached = cache.get(filePath)
       if (cached && cached.mtime === mtime) {
         return new Response(new Uint8Array(cached.data), {
@@ -172,13 +168,13 @@ export function registerThumbnailHandler(): void {
         })
       }
 
-      // Cache miss — generate thumbnail
+      // 缓存未命中，生成缩略图
       const data = await generateThumbnail(filePath, ext)
       if (!data) {
         return new Response(null, { status: 404 })
       }
 
-      // Store in cache (move to end for LRU behavior by delete+set)
+      // 存入缓存（delete+set 把项移到末尾，实现 LRU 行为）
       cache.delete(filePath)
       cache.set(filePath, { mtime, data })
       evictIfNeeded()

@@ -1,26 +1,25 @@
 /**
- * Power Manager - Prevents screen sleep while sessions are running
+ * power-manager.ts —— 电源管理器。
  *
- * Uses Electron's powerSaveBlocker API to prevent the display from sleeping
- * when the "Keep screen awake" setting is enabled and at least one session
- * is actively processing.
+ * 当用户开启「保持屏幕唤醒」且有会话正在处理时，
+ * 使用 Electron 的 powerSaveBlocker API 阻止显示器进入睡眠。
  */
 
 import { powerSaveBlocker } from 'electron'
 import { mainLog } from './logger'
 
-// Track the current power blocker ID (null when not blocking)
+// 当前电源阻止器的 ID，未阻止时为 null
 let powerBlockerId: number | null = null
 
-// Track the number of active (processing) sessions
+// 当前正在处理中的会话数量
 let activeSessionCount = 0
 
-// Cache the setting value to avoid repeated config reads
+// 缓存用户设置，避免频繁读配置
 let settingEnabled = false
 
 /**
- * Initialize the power manager by loading the current setting.
- * Call this on app startup.
+ * 初始化电源管理器：加载当前设置。
+ * 在 app 启动时调用。
  */
 export async function initPowerManager(): Promise<void> {
   const { getKeepAwakeWhileRunning } = await import('@craft-agent/shared/config/storage')
@@ -29,20 +28,18 @@ export async function initPowerManager(): Promise<void> {
 }
 
 /**
- * Update the power state based on active sessions and setting.
- * Called when:
- * - A session starts or stops processing
- * - The setting is toggled
+ * 根据活跃会话数和设置更新电源状态。
+ * 在以下情况被调用：会话开始/停止处理、设置被切换。
  */
 function updatePowerState(): void {
   const shouldBlock = settingEnabled && activeSessionCount > 0
 
   if (shouldBlock && powerBlockerId === null) {
-    // Start blocking display sleep
+    // 开始阻止显示器睡眠
     powerBlockerId = powerSaveBlocker.start('prevent-display-sleep')
     mainLog.info('[power] Started power save blocker', { blockerId: powerBlockerId, activeSessionCount })
   } else if (!shouldBlock && powerBlockerId !== null) {
-    // Stop blocking
+    // 停止阻止
     powerSaveBlocker.stop(powerBlockerId)
     mainLog.info('[power] Stopped power save blocker', { blockerId: powerBlockerId })
     powerBlockerId = null
@@ -50,7 +47,7 @@ function updatePowerState(): void {
 }
 
 /**
- * Called when a session starts processing.
+ * 会话开始处理时调用。
  */
 export function onSessionStarted(): void {
   activeSessionCount++
@@ -59,7 +56,7 @@ export function onSessionStarted(): void {
 }
 
 /**
- * Called when a session stops processing (complete, error, or cancelled).
+ * 会话停止处理时调用（完成、出错或取消）。
  */
 export function onSessionStopped(): void {
   if (activeSessionCount > 0) {
@@ -70,8 +67,8 @@ export function onSessionStopped(): void {
 }
 
 /**
- * Update the keep awake setting.
- * Called from IPC handler when user toggles the setting.
+ * 更新「保持唤醒」设置。
+ * 用户切换设置时从 IPC handler 调用。
  */
 export function setKeepAwakeSetting(enabled: boolean): void {
   settingEnabled = enabled
@@ -80,23 +77,22 @@ export function setKeepAwakeSetting(enabled: boolean): void {
 }
 
 /**
- * Get the current keep awake setting value.
+ * 获取当前「保持唤醒」设置值。
  */
 export function getKeepAwakeSetting(): boolean {
   return settingEnabled
 }
 
 /**
- * Check if power blocker is currently active.
- * Useful for debugging.
+ * 检查电源阻止器当前是否生效，便于调试。
  */
 export function isPowerBlockerActive(): boolean {
   return powerBlockerId !== null && powerSaveBlocker.isStarted(powerBlockerId)
 }
 
 /**
- * Clean up power blocker on app quit.
- * Note: Electron automatically releases blockers on quit, but this is explicit.
+ * 应用退出时清理电源阻止器。
+ * Electron 退出时会自动释放，这里显式清理更保险。
  */
 export function cleanup(): void {
   if (powerBlockerId !== null) {

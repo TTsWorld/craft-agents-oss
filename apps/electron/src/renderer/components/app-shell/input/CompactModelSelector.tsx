@@ -1,3 +1,8 @@
+/**
+ * CompactModelSelector - 紧凑/移动端的模型选择抽屉。
+ *
+ * 以底部抽屉形式展示可用连接和模型，支持模型切换、图片支持开关、思考等级选择和上下文用量展示。
+ */
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -60,6 +65,7 @@ interface CompactModelSelectorProps {
   }
 }
 
+/** CompactModelSelector - 紧凑模型选择器 */
 export function CompactModelSelector({
   currentModel,
   currentConnection,
@@ -140,7 +146,7 @@ export function CompactModelSelector({
     llmConnections.length > 1 &&
     storage.get(storage.KEYS.showConnectionIcons, true)
 
-  // Reset accordion state when the drawer closes so re-open shows top-level switcher.
+  // 抽屉关闭时折叠连接手风琴，下次打开回到顶层选择器
   React.useEffect(() => {
     if (!open) setExpandedConnection(null)
   }, [open])
@@ -206,7 +212,7 @@ export function CompactModelSelector({
         </DrawerHeader>
 
         <div className="px-2 pb-4 flex flex-col gap-0.5 max-h-[55vh] overflow-y-auto">
-          {/* === Models section === */}
+          {/* === 模型区域 === */}
           {pickerMode === 'unavailable' ? (
             <div className="flex flex-col items-center justify-center py-6 px-4 text-center">
               <AlertCircle className="h-8 w-8 text-destructive mb-2" />
@@ -330,7 +336,7 @@ export function CompactModelSelector({
               </React.Fragment>
             ))
           ) : (
-            // 'flat' — list models of the active connection
+            // 'flat' 模式：列出当前连接的可用模型
             availableModels.map(model => {
               const modelId = typeof model === 'string' ? model : model.id
               const modelName = typeof model === 'string'
@@ -394,7 +400,7 @@ export function CompactModelSelector({
             })
           )}
 
-          {/* === Thinking section === */}
+          {/* === 思考等级区域 === */}
           {THINKING_LEVELS.length > 0 && pickerMode !== 'unavailable' && (
             <>
               <div className="px-3 pt-4 pb-1 text-xs font-medium text-foreground/60 uppercase tracking-wide select-none">
@@ -431,7 +437,7 @@ export function CompactModelSelector({
             </>
           )}
 
-          {/* === Context section === */}
+          {/* === 上下文用量区域 === */}
           {contextStatus?.inputTokens != null && contextStatus.inputTokens > 0 && (
             <>
               <div className="px-3 pt-4 pb-1 text-xs font-medium text-foreground/60 uppercase tracking-wide select-none">

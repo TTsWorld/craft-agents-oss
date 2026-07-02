@@ -1,8 +1,8 @@
 /**
- * JSONL Session Storage
+ * JSONL 会话存储
  *
- * Helpers for reading/writing sessions in JSONL format.
- * Format: Line 1 = SessionHeader, Lines 2+ = StoredMessage (one per line)
+ * 提供读写 JSONL 格式 session 文件的工具函数。
+ * 文件格式：第 1 行是 SessionHeader，第 2 行起每条 StoredMessage 占一行。
  */
 
 import { openSync, readSync, closeSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'fs';
@@ -17,22 +17,22 @@ import { safeJsonParse } from '../utils/files.ts';
 import { pickSessionFields } from './utils.ts';
 
 // ============================================================
-// Session Path Portability
+// 会话路径可移植性
 // ============================================================
 
 const SESSION_PATH_TOKEN = '{{SESSION_PATH}}';
 
 /**
- * Replace absolute session directory paths with a portable token.
- * Applied after JSON.stringify so paths embedded anywhere in message content
- * (datatable src, planPath, attachment storedPath, etc.) are made portable.
+ * 把绝对会话目录路径替换为可移植的占位符。
+ *
+ * 在 JSON.stringify 之后调用，这样消息内容里嵌入的路径
+ *（datatable src、planPath、附件 storedPath 等）都能随文件迁移。
  */
 export function makeSessionPathPortable(jsonLine: string, sessionDir: string): string {
   if (!sessionDir) return jsonLine;
   const normalized = normalizePath(sessionDir);
   let result = jsonLine.replaceAll(normalized, SESSION_PATH_TOKEN);
-  // On Windows, also replace JSON-escaped backslash paths
-  // (JSON.stringify escapes \ to \\, so C:\foo becomes C:\\foo in JSON strings)
+  // Windows 上 JSON.stringify 会把 \ 转义成 \\，所以也要替换这种形式
   if (sessionDir !== normalized) {
     const jsonEscaped = sessionDir.replaceAll('\\', '\\\\');
     result = result.replaceAll(jsonEscaped, SESSION_PATH_TOKEN);
@@ -41,8 +41,8 @@ export function makeSessionPathPortable(jsonLine: string, sessionDir: string): s
 }
 
 /**
- * Expand the portable session path token back to an absolute path.
- * Applied before JSON.parse so all path references resolve correctly at runtime.
+ * 把可移植占位符展开回绝对路径。
+ * 在 JSON.parse 之前调用，运行时所有路径引用才能正确解析。
  */
 export function expandSessionPath(jsonLine: string, sessionDir: string): string {
   if (!jsonLine.includes(SESSION_PATH_TOKEN)) return jsonLine;
@@ -54,6 +54,10 @@ function normalizePermissionMode(value: unknown): PermissionMode | undefined {
   return parsePermissionMode(value) ?? undefined;
 }
 
+/**
+ * 规范化 header 里的 permissionMode/previousPermissionMode。
+ * 读取旧文件时可能存的是字符串，这里转成内部枚举类型。
+ */
 function normalizeHeaderPermissionModes<T extends SessionHeader>(header: T): T {
   const permissionMode = normalizePermissionMode(header.permissionMode);
   const previousPermissionMode = normalizePermissionMode(header.previousPermissionMode);
@@ -74,13 +78,13 @@ function normalizeHeaderPermissionModes<T extends SessionHeader>(header: T): T {
 }
 
 /**
- * Read only the header (first line) from a session.jsonl file.
- * Uses low-level fs to read minimal bytes for fast list loading.
+ * 只读取 session.jsonl 的第一行（header），用于快速列表加载。
+ * 使用低层 fs 接口，只读最少字节，避免加载整条消息历史。
  */
 export function readSessionHeader(sessionFile: string): SessionHeader | null {
   try {
     const fd = openSync(sessionFile, 'r');
-    const buffer = Buffer.alloc(8192); // 8KB is plenty for metadata header
+    const buffer = Buffer.alloc(8192); // 8KB 对元数据 header 来说足够
     const bytesRead = readSync(fd, buffer, 0, 8192, 0);
     closeSync(fd);
 
@@ -97,8 +101,8 @@ export function readSessionHeader(sessionFile: string): SessionHeader | null {
 }
 
 /**
- * Read full session from JSONL file.
- * Parses header and all message lines.
+ * 读取完整的 JSONL 会话文件。
+ * 解析 header 和所有消息行。
  */
 export function readSessionJsonl(sessionFile: string): StoredSession | null {
   try {
@@ -112,24 +116,24 @@ export function readSessionJsonl(sessionFile: string): StoredSession | null {
     const header = normalizeHeaderPermissionModes(
       safeJsonParse(expandSessionPath(firstLine, sessionDir)) as SessionHeader
     );
-    // Parse messages resiliently: skip lines that fail to parse (e.g. truncated by crash)
-    // rather than losing the entire session's messages.
-    // Expand session path tokens before parsing so embedded paths resolve correctly.
+    // 容灾解析：某一行损坏（比如崩溃导致截断）时跳过该行，
+    // 而不是让整个会话的消息全部丢失。
+    // 先展开路径占位符，再解析，确保嵌入路径正确。
     const expandedMessageLines = lines.slice(1).map(line => expandSessionPath(line, sessionDir));
     const messages = parseMessagesResilient(expandedMessageLines);
 
-    // Migration: For sessions created before sdkCwd was added, use workingDirectory as fallback.
-    // This is correct because the old code used workingDirectory for SDK's cwd parameter.
+    // 兼容旧数据：早期没有 sdkCwd 字段时，用 workingDirectory 兜底。
+    // 因为旧代码就是用 workingDirectory 作为 SDK 的 cwd 参数。
     const workingDir = header.workingDirectory ? expandPath(header.workingDirectory) : undefined;
     const sdkCwd = header.sdkCwd ? expandPath(header.sdkCwd) : workingDir;
 
     return {
       ...pickSessionFields(header),
-      // Path expansion for portable paths
+      // 把可移植路径展开为本地绝对路径
       workspaceRootPath: expandPath(header.workspaceRootPath),
       workingDirectory: workingDir,
       sdkCwd,
-      // Runtime fields
+      // 运行时字段
       messages,
       tokenUsage: header.tokenUsage,
     } as StoredSession;
@@ -140,12 +144,11 @@ export function readSessionJsonl(sessionFile: string): StoredSession | null {
 }
 
 /**
- * Write session to JSONL format using atomic write (write-to-temp-then-rename).
- * Prevents file corruption if the process crashes mid-write: either the old
- * file remains intact or the new file is fully written. Never a partial file.
+ * 把会话写入 JSONL 文件，使用原子写（先写 .tmp 再 rename）。
+ * 即使进程在写入中崩溃，也不会出现半写文件：要么保留旧文件，要么新文件完整。
  *
- * Line 1: Header with pre-computed metadata
- * Lines 2+: Messages (one per line)
+ * 第 1 行：带预计算元数据的 header
+ * 第 2 行起：每条消息一行
  */
 export function writeSessionJsonl(sessionFile: string, session: StoredSession): void {
   const header = createSessionHeader(session);
@@ -158,24 +161,26 @@ export function writeSessionJsonl(sessionFile: string, session: StoredSession): 
 
   const tmpFile = sessionFile + '.tmp';
   writeFileSync(tmpFile, lines.join('\n') + '\n');
-  // On Windows, rename fails if target exists. Delete first for cross-platform compatibility.
-  try { unlinkSync(sessionFile); } catch { /* ignore if doesn't exist */ }
+  // Windows 上 rename 目标存在会失败，先删除以实现跨平台兼容
+  try { unlinkSync(sessionFile); } catch { /* 文件不存在时忽略 */ }
   renameSync(tmpFile, sessionFile);
 }
 
 /**
- * Create a SessionHeader from a StoredSession.
- * Pre-computes messageCount, preview, and lastMessageRole for fast list loading.
- * Uses pickSessionFields() to ensure all persistent fields are included.
+ * 从 StoredSession 创建 SessionHeader。
+ * 预计算 messageCount、preview、lastMessageRole 等字段，
+ * 这样列表加载时不用解析全部消息。
+ *
+ * 使用 pickSessionFields() 保证所有持久化字段都被包含。
  */
 export function createSessionHeader(session: StoredSession): SessionHeader {
   return {
     ...pickSessionFields(session),
-    // Path conversion for portability
+    // 路径转换，便于跨机器迁移
     workspaceRootPath: toPortablePath(session.workspaceRootPath),
-    // Override lastUsedAt with current timestamp (save time, not original)
+    // 更新 lastUsedAt 为保存时间，而不是原始时间
     lastUsedAt: Date.now(),
-    // Pre-computed fields
+    // 预计算字段
     messageCount: session.messages.length,
     lastMessageRole: extractLastMessageRole(session.messages),
     preview: extractPreview(session.messages),
@@ -185,13 +190,13 @@ export function createSessionHeader(session: StoredSession): SessionHeader {
 }
 
 /**
- * Extract the role of the last message for badge display.
- * Only returns roles that are meaningful for UI display (user, assistant, plan, tool, error).
+ * 提取最后一条消息的 role，用于列表上的角标展示。
+ * 只返回 UI 关心的几类：user、assistant、plan、tool、error。
  */
 function extractLastMessageRole(messages: StoredMessage[]): SessionHeader['lastMessageRole'] {
   const lastMessage = messages[messages.length - 1];
   if (!lastMessage) return undefined;
-  // Map message types to the subset we care about for display
+  // 把内部类型映射到展示用的子集
   const role = lastMessage.type;
   if (role === 'user' || role === 'assistant' || role === 'plan' || role === 'tool' || role === 'error') {
     return role;
@@ -200,11 +205,11 @@ function extractLastMessageRole(messages: StoredMessage[]): SessionHeader['lastM
 }
 
 /**
- * Extract the ID of the last final (non-intermediate) assistant message.
- * Used for unread detection in session list without loading all messages.
+ * 提取最后一条非中间态 assistant 消息的 ID。
+ * 列表未读检测用它，避免加载全部消息。
  */
 function extractLastFinalMessageId(messages: StoredMessage[]): string | undefined {
-  // Walk backwards to find the last assistant message that isn't intermediate
+  // 从后往前找第一个非 intermediate 的 assistant 消息
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (msg?.type === 'assistant' && !msg.isIntermediate) {
@@ -215,31 +220,31 @@ function extractLastFinalMessageId(messages: StoredMessage[]): string | undefine
 }
 
 /**
- * Extract preview from first user message.
- * Sanitizes by stripping special blocks and normalizing whitespace.
- * Returns first 150 chars.
+ * 从第一条用户消息提取预览文本。
+ * 会去掉特殊块、标签、方括号提及，并归一化空白。
+ * 最多返回前 150 个字符。
  */
 function extractPreview(messages: StoredMessage[]): string | undefined {
   const firstUserMessage = messages.find(m => m.type === 'user');
   if (!firstUserMessage?.content) return undefined;
 
-  // Sanitize: strip special blocks, tags, and bracket mentions, normalize whitespace
+  // 清理：去掉特殊块、标签、方括号提及，压缩空白
   const sanitized = firstUserMessage.content
-    .replace(/<edit_request>[\s\S]*?<\/edit_request>/g, '') // Strip entire edit_request blocks
-    .replace(/<[^>]+>/g, '')     // Strip remaining XML/HTML tags
-    .replace(/\[skill:(?:[\w-]+:)?[\w-]+\]/g, '')   // Strip [skill:...] mentions
-    .replace(/\[source:[\w-]+\]/g, '')              // Strip [source:...] mentions
-    .replace(/\[file:[^\]]+\]/g, '')                // Strip [file:...] mentions
-    .replace(/\[folder:[^\]]+\]/g, '')              // Strip [folder:...] mentions
-    .replace(/\s+/g, ' ')        // Collapse whitespace (including newlines)
+    .replace(/<edit_request>[\s\S]*?<\/edit_request>/g, '') // 去掉整个 edit_request 块
+    .replace(/<[^>]+>/g, '')     // 去掉剩余 XML/HTML 标签
+    .replace(/\[skill:(?:[\w-]+:)?[\w-]+\]/g, '')   // 去掉 [skill:...] 提及
+    .replace(/\[source:[\w-]+\]/g, '')              // 去掉 [source:...] 提及
+    .replace(/\[file:[^\]]+\]/g, '')                // 去掉 [file:...] 提及
+    .replace(/\[folder:[^\]]+\]/g, '')              // 去掉 [folder:...] 提及
+    .replace(/\s+/g, ' ')        // 合并空白（包括换行）
     .trim();
 
   return sanitized.substring(0, 150) || undefined;
 }
 
 /**
- * Async version of readSessionHeader for parallel I/O.
- * Uses fs/promises for non-blocking reads.
+ * readSessionHeader 的异步版本，支持并行 I/O。
+ * 使用 fs/promises 避免阻塞事件循环。
  */
 export async function readSessionHeaderAsync(sessionFile: string): Promise<SessionHeader | null> {
   try {
@@ -262,15 +267,15 @@ export async function readSessionHeaderAsync(sessionFile: string): Promise<Sessi
 }
 
 /**
- * Read only messages from a JSONL file (skips header).
- * Used for lazy loading when session is selected.
- * Resilient to corrupted/truncated lines (skips them instead of failing entirely).
+ * 只读取 JSONL 文件中的消息（跳过 header）。
+ * 用于选中会话后的懒加载。
+ * 对损坏/截断行有容错：跳过而不是整体失败。
  */
 export function readSessionMessages(sessionFile: string): StoredMessage[] {
   try {
     const content = readFileSync(sessionFile, 'utf-8');
     const lines = content.split('\n').filter(Boolean);
-    // Skip first line (header), expand session path tokens, parse rest as messages resiliently
+    // 跳过第一行 header，展开路径占位符，再容灾解析剩余行
     const sessionDir = dirname(sessionFile);
     const expandedLines = lines.slice(1).map(line => expandSessionPath(line, sessionDir));
     return parseMessagesResilient(expandedLines);
@@ -281,8 +286,8 @@ export function readSessionMessages(sessionFile: string): StoredMessage[] {
 }
 
 /**
- * Parse message lines resiliently: skip lines that fail JSON.parse
- * (e.g. truncated by a crash mid-write) rather than losing all messages.
+ * 容灾解析消息行：JSON.parse 失败时跳过该行。
+ * 例如崩溃导致写入截断时，丢一条消息总比丢全部消息好。
  */
 function parseMessagesResilient(lines: string[]): StoredMessage[] {
   const messages: StoredMessage[] = [];
@@ -290,8 +295,7 @@ function parseMessagesResilient(lines: string[]): StoredMessage[] {
     try {
       messages.push(JSON.parse(line) as StoredMessage);
     } catch {
-      // Corrupted/truncated line (likely from a crash during write).
-      // Skip it and continue — losing one message is better than losing all.
+      // 损坏或截断行（很可能是崩溃时产生的），跳过
       debug('[jsonl] Skipping corrupted message line (truncated?):', line.substring(0, 100));
     }
   }

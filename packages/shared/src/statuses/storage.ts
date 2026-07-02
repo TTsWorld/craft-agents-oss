@@ -1,13 +1,13 @@
 /**
- * Status Storage
+ * 状态存储层
  *
- * Filesystem-based storage for workspace status configurations.
- * Statuses are stored at {workspaceRootPath}/statuses/config.json
+ * 基于文件系统保存 workspace 的状态配置。
+ * 配置文件路径：{workspaceRootPath}/statuses/config.json
  *
- * Icon handling:
- * - Local files: statuses/icons/{id}.svg (auto-discovered)
- * - Emoji: Rendered as text in UI
- * - URL: Auto-downloaded to statuses/icons/{id}.{ext}
+ * 图标处理：
+ * - 本地文件：statuses/icons/{id}.svg（自动发现）
+ * - Emoji：在 UI 中作为文本渲染
+ * - URL：自动下载到 statuses/icons/{id}.{ext}
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
@@ -25,23 +25,26 @@ import {
 import { migrateStatusColors } from '../colors/migrate.ts';
 import { debug } from '../utils/debug.ts';
 
+// 状态配置所在的目录名和文件名
 const STATUS_CONFIG_DIR = 'statuses';
 const STATUS_CONFIG_FILE = 'statuses/config.json';
+// 状态图标存放目录
 const STATUS_ICONS_DIR = 'statuses/icons';
 
 /**
- * Get default status configuration (matches current hardcoded behavior)
- * Note: icon field is omitted - uses auto-discovered files in statuses/icons/{id}.svg
+ * 获取默认状态配置（与当前硬编码行为保持一致）
+ *
+ * 注意：这里没有写 icon 字段，实际会从 statuses/icons/{id}.svg 自动发现图标。
  */
 export function getDefaultStatusConfig(): WorkspaceStatusConfig {
-  // Note: color is omitted - defaults from colors/defaults.ts are applied:
-  // - backlog: foreground/50 (muted, not yet planned)
-  // - todo: foreground/50 (muted, ready to work on)
-  // - needs-review: info (amber, attention needed)
-  // - done: accent (purple, completed)
-  // - cancelled: foreground/50 (muted, inactive)
+  // 注意：color 也被省略，最终由 colors/defaults.ts 应用默认值：
+  // - backlog: foreground/50（不显眼，表示尚未计划）
+  // - todo: foreground/50（不显眼，表示准备开始）
+  // - needs-review: info（琥珀色，表示需要关注）
+  // - done: accent（紫色，表示已完成）
+  // - cancelled: foreground/50（不显眼，表示已取消）
   //
-  // Note: icon is omitted - auto-discovered from statuses/icons/{id}.svg
+  // 注意：icon 被省略，实际会从 statuses/icons/{id}.svg 自动发现
   return {
     version: 1,
     statuses: [
@@ -91,18 +94,18 @@ export function getDefaultStatusConfig(): WorkspaceStatusConfig {
 }
 
 /**
- * Ensure default icon files exist in statuses/icons/
- * Creates missing icon files from embedded SVG strings
+ * 确保 statuses/icons/ 目录下存在默认图标文件
+ * 如果缺失，就使用内置的 SVG 字符串创建文件
  */
 export function ensureDefaultIconFiles(workspaceRootPath: string): void {
   const iconsDir = join(workspaceRootPath, STATUS_ICONS_DIR);
 
-  // Create icons directory if missing
+  // 如果图标目录不存在则创建（recursive: true 表示递归创建父目录）
   if (!existsSync(iconsDir)) {
     mkdirSync(iconsDir, { recursive: true });
   }
 
-  // Write each default icon file if missing
+  // 遍历所有默认图标，缺失时写入文件
   for (const [statusId, svgContent] of Object.entries(DEFAULT_ICON_SVGS)) {
     const iconPath = join(iconsDir, `${statusId}.svg`);
 
@@ -117,7 +120,8 @@ export function ensureDefaultIconFiles(workspaceRootPath: string): void {
 }
 
 /**
- * Validate status configuration has required fixed statuses
+ * 校验状态配置是否包含必需的固定状态
+ * @returns 如果 todo、done、cancelled 都是 fixed 状态则返回 true
  */
 function validateStatusConfig(config: WorkspaceStatusConfig): boolean {
   const requiredFixedStatuses = ['todo', 'done', 'cancelled'];
@@ -128,33 +132,35 @@ function validateStatusConfig(config: WorkspaceStatusConfig): boolean {
 }
 
 /**
- * Load workspace status configuration
- * Returns defaults if no config exists or validation fails.
- * Ensures icon files exist.
- * Auto-migrates old Tailwind color format to EntityColor on first load.
+ * 加载 workspace 的状态配置
+ *
+ * 如果配置文件不存在或校验失败，返回默认配置。
+ * 同时会确保默认图标文件存在。
+ * 首次加载时，还会把旧的 Tailwind 颜色格式自动迁移为 EntityColor。
  */
 export function loadStatusConfig(workspaceRootPath: string): WorkspaceStatusConfig {
-  // Ensure default icon files exist (self-healing)
+  // 先确保默认图标文件存在（自我修复）
   ensureDefaultIconFiles(workspaceRootPath);
 
   const configPath = join(workspaceRootPath, STATUS_CONFIG_FILE);
 
-  // Return defaults if config doesn't exist
+  // 配置文件不存在时直接返回默认配置
   if (!existsSync(configPath)) {
     return getDefaultStatusConfig();
   }
 
   try {
+    // readJsonFileSync<T> 是泛型函数调用，<T> 告诉 TS 期望的返回类型。
     const config = readJsonFileSync<WorkspaceStatusConfig>(configPath);
 
-    // Validate required fixed statuses exist
+    // 校验必需的固定状态是否存在
     if (!validateStatusConfig(config)) {
       console.warn('[loadStatusConfig] Invalid config: missing required fixed statuses, returning defaults');
       return getDefaultStatusConfig();
     }
 
-    // Auto-migrate old Tailwind class colors (e.g., "text-accent") to new EntityColor format.
-    // If migration occurs, write the updated config back to disk.
+    // 自动把旧的 Tailwind 类名颜色（如 "text-accent"）迁移为新的 EntityColor 格式。
+    // 如果发生了迁移，就把更新后的配置写回磁盘。
     const migrated = migrateStatusColors(config);
     if (migrated) {
       debug('[loadStatusConfig] Migrated old color format, writing back');
@@ -169,7 +175,7 @@ export function loadStatusConfig(workspaceRootPath: string): WorkspaceStatusConf
 }
 
 /**
- * Save workspace status configuration to disk
+ * 把 workspace 状态配置保存到磁盘
  */
 export function saveStatusConfig(
   workspaceRootPath: string,
@@ -178,12 +184,12 @@ export function saveStatusConfig(
   const statusDir = join(workspaceRootPath, STATUS_CONFIG_DIR);
   const configPath = join(workspaceRootPath, STATUS_CONFIG_FILE);
 
-  // Create status directory if missing
+  // 目录不存在时创建
   if (!existsSync(statusDir)) {
     mkdirSync(statusDir, { recursive: true });
   }
 
-  // Write config to disk
+  // 以 JSON 格式写入磁盘，缩进 2 个空格便于阅读
   try {
     writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
   } catch (error) {
@@ -193,8 +199,8 @@ export function saveStatusConfig(
 }
 
 /**
- * Get a single status by ID
- * Returns null if not found
+ * 根据 ID 获取单个状态
+ * @returns 状态配置；找不到时返回 null
  */
 export function getStatus(
   workspaceRootPath: string,
@@ -205,7 +211,7 @@ export function getStatus(
 }
 
 /**
- * Get all statuses sorted by order
+ * 获取所有状态，并按 order 字段排序
  */
 export function listStatuses(workspaceRootPath: string): StatusConfig[] {
   const config = loadStatusConfig(workspaceRootPath);
@@ -213,7 +219,7 @@ export function listStatuses(workspaceRootPath: string): StatusConfig[] {
 }
 
 /**
- * Check if a status ID is valid for this workspace
+ * 判断某个状态 ID 在当前 workspace 中是否有效
  */
 export function isValidStatusId(
   workspaceRootPath: string,
@@ -224,25 +230,27 @@ export function isValidStatusId(
 }
 
 /**
- * Get category for a status ID
- * Returns null if status not found
+ * 获取某个状态 ID 对应的分类
+ * @returns 分类字符串；找不到时返回 null
  */
 export function getStatusCategory(
   workspaceRootPath: string,
   statusId: string
 ): StatusCategory | null {
   const status = getStatus(workspaceRootPath, statusId);
+  // ?. 是可选链：如果 status 为 null/undefined，就不会访问 .category，直接返回 undefined。
   return status?.category || null;
 }
 
 // ============================================================
-// Icon Operations (uses shared utilities from utils/icon.ts)
+// 图标相关操作（复用 utils/icon.ts 里的工具函数）
 // ============================================================
 
 /**
- * Find icon file for a status
- * Looks for statuses/icons/{statusId}.{svg,png,jpg,jpeg}
- * Returns absolute path to icon file or undefined
+ * 查找某个状态的图标文件
+ *
+ * 会依次查找 statuses/icons/{statusId}.{svg,png,jpg,jpeg}，
+ * 返回找到的第一个文件的绝对路径，找不到则返回 undefined。
  */
 export function findStatusIcon(
   workspaceRootPath: string,
@@ -260,9 +268,10 @@ export function findStatusIcon(
 }
 
 /**
- * Download an icon from a URL and save it to the status icons directory.
- * Saves as statuses/icons/{statusId}.{ext}
- * Returns the path to the downloaded icon, or null on failure.
+ * 从 URL 下载图标并保存到状态图标目录
+ *
+ * 保存路径为 statuses/icons/{statusId}.{ext}。
+ * 返回下载后的文件路径，失败时返回 null。
  */
 export async function downloadStatusIcon(
   workspaceRootPath: string,
@@ -271,29 +280,29 @@ export async function downloadStatusIcon(
 ): Promise<string | null> {
   const iconsDir = join(workspaceRootPath, STATUS_ICONS_DIR);
 
-  // Ensure icons directory exists
+  // 确保图标目录存在
   if (!existsSync(iconsDir)) {
     mkdirSync(iconsDir, { recursive: true });
   }
 
-  // Download to a temp file first, then rename to {statusId}.{ext}
+  // 先下载到临时文件，再重命名为 {statusId}.{ext}
   const tempPath = await downloadIcon(iconsDir, iconUrl, 'Statuses');
   if (!tempPath) return null;
 
-  // Rename from icon.{ext} to {statusId}.{ext}
+  // 从 icon.{ext} 重命名为 {statusId}.{ext}
   const ext = tempPath.substring(tempPath.lastIndexOf('.'));
   const finalPath = join(iconsDir, `${statusId}${ext}`);
 
   try {
     const { renameSync, unlinkSync } = await import('fs');
-    // Remove any existing icon with different extension
+    // 删除扩展名不同的旧图标文件
     for (const existingExt of ICON_EXTENSIONS) {
       const existingPath = join(iconsDir, `${statusId}${existingExt}`);
       if (existsSync(existingPath) && existingPath !== finalPath) {
         unlinkSync(existingPath);
       }
     }
-    // Rename temp file to final path
+    // 把临时文件重命名为最终路径
     if (tempPath !== finalPath) {
       renameSync(tempPath, finalPath);
     }
@@ -301,13 +310,14 @@ export async function downloadStatusIcon(
     return finalPath;
   } catch (error) {
     debug(`[downloadStatusIcon] Failed to rename icon for ${statusId}:`, error);
-    return tempPath; // Return temp path as fallback
+    return tempPath; // 失败时返回临时路径兜底
   }
 }
 
 /**
- * Check if a status needs its icon downloaded.
- * Returns true if config has a URL icon and no local icon file exists.
+ * 判断某个状态的图标是否需要下载
+ *
+ * 当配置里的 icon 是 URL，且本地还没有对应图标文件时返回 true。
  */
 export function statusNeedsIconDownload(
   workspaceRootPath: string,
@@ -317,5 +327,5 @@ export function statusNeedsIconDownload(
   return needsIconDownload(status.icon, iconPath);
 }
 
-// Re-export icon utilities for convenience
+// 为方便上层调用，重新导出 isIconUrl
 export { isIconUrl } from '../utils/icon.ts';

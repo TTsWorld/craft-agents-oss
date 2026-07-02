@@ -1,3 +1,9 @@
+/**
+ * window-manager.ts —— Electron 窗口管理器。
+ *
+ * 负责创建、聚焦、关闭主窗口，维护 webContents.id → workspaceId 的映射，
+ * 处理窗口关闭前的分层拦截、外部链接打开、系统主题变化通知等。
+ */
 import { BrowserWindow, shell, nativeTheme, Menu, app } from 'electron'
 import { windowLog } from './logger'
 import { join, resolve, sep } from 'path'
@@ -9,19 +15,19 @@ import { classifyExternalUrl, formatBlockedUrlError } from '@craft-agent/shared/
 import { RPC_CHANNELS, type WindowCloseRequestSource } from '../shared/types'
 import type { SavedWindow } from './window-state'
 
-// Vite dev server URL for hot reload
+// Vite 开发服务器地址，用于热重载
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 
 /**
- * Get the appropriate background material for Windows transparency effects
- * - Windows 11 (build 22000+): Mica effect
- * - Windows 10 1809+ (build 17763+): Acrylic effect
- * - Older versions: No transparency
+ * 根据 Windows 版本选择合适的透明背景材质：
+ * - Windows 11 (build 22000+)：Mica
+ * - Windows 10 1809+ (build 17763+)：Acrylic
+ * - 更旧版本：无透明效果
  */
 function getWindowsBackgroundMaterial(): 'mica' | 'acrylic' | undefined {
   if (process.platform !== 'win32') return undefined
 
-  // os.release() returns "10.0.xxxxx" where xxxxx is the build number
+  // os.release() 返回 "10.0.xxxxx"，其中 xxxxx 是 build 号
   const buildNumber = parseInt(release().split('.')[2] || '0', 10)
 
   if (buildNumber >= 22000) {
@@ -37,35 +43,41 @@ function getWindowsBackgroundMaterial(): 'mica' | 'acrylic' | undefined {
 }
 
 
+// WindowManager 内部维护的窗口记录
 interface ManagedWindow {
   window: BrowserWindow
   workspaceId: string
 }
 
 export interface CreateWindowOptions {
-  /** The workspace to open (empty string for onboarding) */
+  /** 要打开的工作区 ID（空字符串表示 onboarding） */
   workspaceId: string
-  /** Whether to open in focused mode (smaller window, no sidebars) */
+  /** 是否以 focused 模式打开（小窗口、无侧边栏） */
   focused?: boolean
-  /** Deep link URL to navigate to after window loads (without ?window= param) */
+  /** 窗口加载后导航到的深链 URL（不带 ?window= 参数） */
   initialDeepLink?: string
-  /** Full URL to restore from saved state (preserves route/query params) */
+  /** 从保存状态恢复用的完整 URL（保留路由和查询参数） */
   restoreUrl?: string
 }
 
+/**
+ * WindowManager：管理所有 Electron 主窗口。
+ *
+ * 每个窗口对应一个工作区；通过 webContents.id 做索引。
+ */
 export class WindowManager {
   private windows: Map<number, ManagedWindow> = new Map()  // webContents.id → ManagedWindow
-  private focusedModeWindows: Set<number> = new Set()  // webContents.id of windows in focused mode
-  private pendingCloseTimeouts: Map<number, NodeJS.Timeout> = new Map()  // Fallback timeouts for window close
+  private focusedModeWindows: Set<number> = new Set()  // focused 模式窗口的 webContents.id 集合
+  private pendingCloseTimeouts: Map<number, NodeJS.Timeout> = new Map()  // 窗口关闭兜底超时
   private eventSink: ((channel: string, target: import('@craft-agent/shared/protocol').PushTarget, ...args: any[]) => void) | null = null
   private clientResolver: ((wcId: number) => string | undefined) | null = null
-  private keyboardCloseIntents: Set<number> = new Set()  // webContents.id flagged by Cmd/Ctrl+W before close
-  private keyboardCloseIntentTimeouts: Map<number, NodeJS.Timeout> = new Map()  // Auto-clear stale keyboard-close intents
-  private isAppQuitting = false  // Skip layered close interception during app quit
+  private keyboardCloseIntents: Set<number> = new Set()  // Cmd/Ctrl+W 触发关闭的窗口标记
+  private keyboardCloseIntentTimeouts: Map<number, NodeJS.Timeout> = new Map()  // 自动清除过期标记
+  private isAppQuitting = false  // 应用退出时跳过分层关闭拦截
 
   /**
-   * Set the event sink and client resolver for pushing events via the RPC server
-   * instead of webContents.send. Called after server creation.
+   * 设置 RPC event sink 和 client 解析器。
+   * server 创建后调用，后续用 WS 推送事件替代 webContents.send。
    */
   setRpcEventSink(
     sink: (channel: string, target: import('@craft-agent/shared/protocol').PushTarget, ...args: any[]) => void,
@@ -75,17 +87,17 @@ export class WindowManager {
     this.clientResolver = resolver
   }
 
-  /** Return current RPC event sink, if transport has been initialized. */
+  /** 返回当前 RPC event sink（如果传输层已初始化）。 */
   getRpcEventSink(): ((channel: string, target: import('@craft-agent/shared/protocol').PushTarget, ...args: any[]) => void) | null {
     return this.eventSink
   }
 
-  /** Resolve a window's current clientId from transport handshake state. */
+  /** 根据 transport 握手状态解析窗口当前的 clientId。 */
   getClientIdForWindow(webContentsId: number): string | undefined {
     return this.clientResolver?.(webContentsId)
   }
 
-  /** Push an event to a specific window via the RPC event sink. Falls back to webContents.send. */
+  /** 向指定窗口推送事件；优先用 RPC event sink，否则回退到 webContents.send。 */
   private pushToWindow(window: BrowserWindow, channel: string, ...args: any[]): void {
     if (this.eventSink && this.clientResolver) {
       const clientId = this.clientResolver(window.webContents.id)
@@ -94,7 +106,7 @@ export class WindowManager {
         return
       }
     }
-    // Fallback: direct webContents.send (used before WS handshake completes)
+    // 回退：直接 webContents.send（WS 握手完成前使用）
     if (!window.isDestroyed() && !window.webContents.isDestroyed() && window.webContents.mainFrame) {
       window.webContents.send(channel, ...args)
     }
@@ -107,7 +119,7 @@ export class WindowManager {
         const devServer = new URL(VITE_DEV_SERVER_URL)
         if (parsed.origin === devServer.origin) return true
       } catch {
-        // Fall through to file:// handling below.
+        // 出错则继续走下面的 file:// 处理
       }
     }
 
@@ -160,15 +172,12 @@ export class WindowManager {
   }
 
   /**
-   * Apply the window-title policy across all managed windows:
-   *   1 window  → app name ("Craft Agents") on the lone window
-   *   ≥2 windows → workspace name on each window, app-name fallback when the
-   *                workspace can't be resolved (e.g. onboarding window).
+   * 刷新所有窗口标题策略：
+   *   1 个窗口 → 显示应用名「Craft Agents」
+   *   ≥2 个窗口 → 显示各自 workspace 名称，无法解析时回退到应用名。
    *
-   * Called after createWindow() registers a new window and after the closed
-   * handler removes one, so titles always reflect the current window count.
-   * Renderer-driven page-title-updated events are suppressed in createWindow
-   * so these setTitle() calls aren't clobbered by the static <title> tag.
+   * createWindow() 注册新窗口和 closed 事件移除窗口后都会调用，
+   * 保证标题随窗口数量变化而更新。
    */
   private refreshWindowTitles(): void {
     const defaultTitle = app.getName()
@@ -189,15 +198,13 @@ export class WindowManager {
   }
 
   /**
-   * Create a new window for a workspace
-   * @param options - Window creation options
+   * 为指定工作区创建一个新窗口。
    */
   createWindow(options: CreateWindowOptions): BrowserWindow {
     const { workspaceId, focused = false, initialDeepLink, restoreUrl } = options
 
-    // Load platform-specific app icon
-    // In packaged app, resources are at dist/resources/ (same level as __dirname)
-    // In dev, resources are at ../resources/ (sibling of dist/)
+    // 加载平台专属应用图标
+    // 打包后资源在 dist/resources/；开发时在 ../resources/
     const getIconPath = () => {
       const iconName = process.platform === 'darwin' ? 'icon.icns'
         : process.platform === 'win32' ? 'icon.ico'
@@ -215,11 +222,11 @@ export class WindowManager {
       windowLog.warn('App icon not found at:', iconPath)
     }
 
-    // Use smaller window size for focused mode (single session view)
+    // focused 模式使用更小窗口（单会话视图）
     const windowWidth = focused ? 900 : 1400
     const windowHeight = focused ? 700 : 900
 
-    // Platform-specific window options
+    // 平台相关窗口选项
     const isMac = process.platform === 'darwin'
     const isWindows = process.platform === 'win32'
     const windowsBackgroundMaterial = getWindowsBackgroundMaterial()
@@ -229,64 +236,60 @@ export class WindowManager {
       height: windowHeight,
       minWidth: 800,
       minHeight: 600,
-      show: false, // Don't show until ready-to-show event (faster perceived startup)
+      show: false, // 等 ready-to-show 再显示，减少启动白屏感
       title: '',
       icon: iconExists ? iconPath : undefined,
-      // macOS-specific: hidden title bar with inset traffic lights
+      // macOS：隐藏标题栏，内嵌交通灯
       ...(isMac && {
         titleBarStyle: 'hiddenInset',
         trafficLightPosition: { x: 18, y: 16 },
         vibrancy: 'under-window',
         visualEffectState: 'active',
       }),
-      // Windows: use native frame with Mica/Acrylic transparency (Windows 10/11)
+      // Windows：保留原生边框，使用 Mica/Acrylic 透明效果
       ...(isWindows && {
-        frame: true, // Keep native frame for better UX
-        autoHideMenuBar: true, // Menu is null on Windows, this is just for safety
-        // Note: Don't use transparent:true with backgroundMaterial - it hides the window frame
+        frame: true,
+        autoHideMenuBar: true,
+        // 注意：backgroundMaterial 不要配合 transparent:true，否则会隐藏窗口边框
         ...(windowsBackgroundMaterial && {
           backgroundMaterial: windowsBackgroundMaterial,
         }),
       }),
-      // Linux: use native frame
+      // Linux：使用原生边框
       ...(!isMac && !isWindows && {
         frame: true,
         autoHideMenuBar: true,
       }),
       webPreferences: {
         preload: join(__dirname, 'bootstrap-preload.cjs'),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: false,
-        webviewTag: false // Browser integration uses WebContentsView, not <webview>
+        contextIsolation: true,    // 启用上下文隔离（安全建议）
+        nodeIntegration: false,    // 渲染进程不直接访问 Node API
+        sandbox: false,            // 需要访问 preload 的一部分能力
+        webviewTag: false          // 浏览器集成用 WebContentsView，不用 <webview>
       }
     })
 
-    // Show window when first paint is ready (faster perceived startup)
+    // 等首次绘制准备好再显示窗口，减少启动白屏感
     window.once('ready-to-show', () => {
       window.show()
     })
 
-    // Open external links in default browser, but never hand known-dangerous
-    // schemes directly to shell.openExternal. Markdown normal-clicks go through
-    // OPEN_URL; middle-clicks/window.open/top-navigation land here.
+    // 拦截 window.open 等外部导航：危险协议被阻止，craftagents:// 走深链，其他用系统浏览器打开
     window.webContents.setWindowOpenHandler((details) => {
       this.openExternalFromRenderer(details.url, 'window-open', window)
       return { action: 'deny' }
     })
 
-    // Handle external navigation attempts from renderer WebContents
+    // 处理渲染进程 WebContents 的外部导航尝试
     window.webContents.on('will-navigate', (event, url) => {
-      // Allow only the actual app shell (file:// in prod, Vite dev server in dev).
-      // Any other navigation is treated as an external URL and goes through the
-      // same URL-safety classifier used by OPEN_URL.
+      // 只允许真正的应用壳（prod 是 file://，dev 是 Vite dev server），其他都当外部 URL 处理
       if (this.isRendererAppUrl(url)) return
 
       event.preventDefault()
       this.openExternalFromRenderer(url, 'will-navigate', window)
     })
 
-    // Enable right-click context menu in development
+    // 开发模式下启用右键上下文菜单
     if (!app.isPackaged) {
       window.webContents.on('context-menu', (_event, params) => {
         Menu.buildFromTemplate([
@@ -299,51 +302,42 @@ export class WindowManager {
       })
     }
 
-    // The renderer's index.html ships with `<title>Craft Agents</title>`, so
-    // without this Electron auto-syncs every window's title back to that on
-    // load — clobbering the workspace-name policy applied below. Suppress the
-    // default sync so setTitle() calls from refreshWindowTitles() stick.
+    // index.html 默认标题是 `<title>Craft Agents</title>`，Electron 会自动同步到窗口标题，
+    // 这会覆盖我们按 workspace 命名的策略。这里阻止默认同步。
     window.on('page-title-updated', (event) => {
       event.preventDefault()
     })
 
-    // Store the window mapping BEFORE loadURL — bootstrap preload uses
-    // __get-workspace-id (via sendSync) which reads this map during eval.
+    // 在 loadURL 之前先注册窗口映射：bootstrap preload 会通过 sendSync 读取 __get-workspace-id
     const webContentsId = window.webContents.id
     this.windows.set(webContentsId, { window, workspaceId })
 
-    // Apply window-title policy now that the map size reflects this window —
-    // covers both the new window and any existing windows that should switch
-    // from app name → workspace name as the count crosses 1 → 2.
+    // 窗口映射已包含新窗口，刷新标题策略：窗口数从 1→2 时现有窗口也要从应用名切到 workspace 名
     this.refreshWindowTitles()
 
-    // Track focused mode state for persistence
+    // 记录 focused 模式状态，用于持久化
     if (focused) {
       this.focusedModeWindows.add(webContentsId)
     }
 
-    // Load the renderer - use restoreUrl if provided, otherwise build from options
+    // 加载渲染进程：优先用 restoreUrl，否则根据 options 构造 URL
     if (restoreUrl) {
-      // Restore from saved URL - need to adapt for dev vs prod
       if (VITE_DEV_SERVER_URL) {
-        // In dev mode, replace the base URL but keep the path and query
+        // dev 模式：保留保存 URL 的路径和查询参数，只替换主机为 dev server
         try {
           const savedUrl = new URL(restoreUrl)
           const devUrl = new URL(VITE_DEV_SERVER_URL)
-          // Preserve pathname and search from saved URL, use dev server host
           devUrl.pathname = savedUrl.pathname
           devUrl.search = savedUrl.search
           window.loadURL(devUrl.toString())
         } catch {
-          // Fallback if URL parsing fails
           windowLog.warn('Failed to parse restoreUrl, using default:', restoreUrl)
           const params = new URLSearchParams({ workspaceId, ...(focused && { focused: 'true' }) }).toString()
           window.loadURL(`${VITE_DEV_SERVER_URL}?${params}`)
         }
       } else {
-        // In prod, always extract query params and load from current __dirname.
-        // Never load file:// URLs directly — the path may be stale (e.g. Linux AppImage
-        // mounts to a different /tmp dir on each launch). See #13.
+        // prod：总是提取查询参数并从当前 __dirname 加载。
+        // 不要直接加载 file:// URL，路径可能已失效（例如 Linux AppImage 每次挂载到不同 /tmp 目录）。参见 #13。
         try {
           const savedUrl = new URL(restoreUrl)
           const query: Record<string, string> = {}
@@ -354,10 +348,9 @@ export class WindowManager {
         }
       }
     } else {
-      // Build URL from options
       const query: Record<string, string> = { workspaceId }
       if (focused) {
-        query.focused = 'true' // Open in focused mode (no sidebars)
+        query.focused = 'true' // focused 模式（无侧边栏）
       }
 
       if (VITE_DEV_SERVER_URL) {
@@ -368,10 +361,8 @@ export class WindowManager {
       }
     }
 
-    // Fallback: if the renderer fails to load (e.g. stale path, disk error),
-    // recover gracefully by loading the default state instead of showing a white screen. See #13.
-    // In dev mode, retry the Vite dev server (it may not be ready yet) instead of falling back
-    // to file:// which doesn't exist during development.
+    // 兜底：渲染进程加载失败时（路径过期、磁盘错误等）优雅恢复为默认状态，避免白屏。参见 #13。
+    // dev 模式下重试 Vite dev server（它可能还没启动好），而不是回退到不存在的 file://。
     let failLoadRetries = 0
     window.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
       windowLog.warn('Failed to load renderer:', errorCode, errorDescription)
@@ -387,14 +378,14 @@ export class WindowManager {
       }
     })
 
-    // If an initial deep link was provided, navigate to it after the window is ready
+    // 如果提供了初始深链，窗口准备好后导航过去
     if (initialDeepLink) {
       window.once('ready-to-show', () => {
-        // Import parseDeepLink dynamically to avoid circular dependency
+        // 动态导入 parseDeepLink，避免循环依赖
         import('./deep-link').then(({ parseDeepLink }) => {
           const target = parseDeepLink(initialDeepLink)
           if (target && (target.view || target.action)) {
-            // Wait a bit for React to mount and register IPC listeners
+            // 稍等片刻让 React 挂载并注册 IPC 监听器
             setTimeout(() => {
               this.pushToWindow(window, RPC_CHANNELS.deeplink.NAVIGATE, {
                 view: target.view,
@@ -407,13 +398,13 @@ export class WindowManager {
       })
     }
 
-    // Listen for system theme changes and notify this window's renderer
+    // 监听系统主题变化并通知该窗口的渲染进程
     const themeHandler = () => {
       this.pushToWindow(window, RPC_CHANNELS.theme.SYSTEM_CHANGED, nativeTheme.shouldUseDarkColors)
     }
     nativeTheme.on('updated', themeHandler)
 
-    // Handle focus/blur to broadcast window focus state
+    // 聚焦/失焦时广播窗口焦点状态
     window.on('focus', () => {
       this.pushToWindow(window, RPC_CHANNELS.window.FOCUS_STATE, true)
     })
@@ -421,8 +412,8 @@ export class WindowManager {
       this.pushToWindow(window, RPC_CHANNELS.window.FOCUS_STATE, false)
     })
 
-    // Detect Cmd/Ctrl+W before close events so renderer can distinguish close source.
-    // Intent is short-lived to avoid stale classification.
+    // 在 close 事件前检测 Cmd/Ctrl+W，让渲染进程区分关闭来源。
+    // 意图标记是短效的，避免过期误分类。
     window.webContents.on('before-input-event', (_event, input) => {
       if (!input || input.type !== 'keyDown') return
       const key = input.key?.toLowerCase?.()
@@ -445,16 +436,16 @@ export class WindowManager {
       }, 500))
     })
 
-    // Handle window close request (traffic-light button, menu close, Cmd/Ctrl+W)
-    // and send source metadata so renderer can decide layered dismiss vs direct close.
+    // 处理窗口关闭请求（交通灯按钮、菜单关闭、Cmd/Ctrl+W）
+    // 把来源元数据发给渲染进程，让它决定是先关闭弹窗/面板还是直接关闭窗口。
     window.on('close', (event) => {
-      // During app quit, bypass layered close behavior and allow native close flow.
-      // This preserves expected Cmd+Q semantics (quit app instead of closing overlays/panels first).
+      // 应用退出期间绕过分层关闭行为，走原生关闭流程。
+      // 这样 Cmd+Q 会退出应用，而不是先关闭覆盖层/面板。
       if (this.isAppQuitting) {
         return
       }
 
-      // Check if renderer is ready (mainFrame exists) - if not, allow close directly
+      // 检查渲染进程是否已准备好（mainFrame 存在）；没准备好就直接关闭
       if (!window.webContents.isDestroyed() && window.webContents.mainFrame) {
         event.preventDefault()
         const wcId = window.webContents.id
@@ -469,11 +460,11 @@ export class WindowManager {
           }
         }
 
-        // Send close request to renderer - it will either close a modal/panel or confirm close.
+        // 发送关闭请求给渲染进程：它会关闭模态框/面板，或确认关闭窗口。
         this.pushToWindow(window, RPC_CHANNELS.window.CLOSE_REQUESTED, { source })
 
-        // Fallback timeout: if IPC fails (e.g., on Hyprland/Wayland), force close after 3s.
-        // Reset timeout on each attempt so active users closing modals aren't interrupted.
+        // 兜底超时：如果 IPC 失败（如 Hyprland/Wayland 上），3 秒后强制关闭。
+        // 每次关闭尝试都重置超时，避免正在关闭弹窗的用户被打断。
         const existingTimeout = this.pendingCloseTimeouts.get(wcId)
         if (existingTimeout) clearTimeout(existingTimeout)
 
@@ -482,19 +473,19 @@ export class WindowManager {
           if (!window.isDestroyed()) window.destroy()
         }, 3000))
       }
-      // If renderer not ready, allow default close behavior
+      // 渲染进程没准备好时允许默认关闭行为
     })
 
-    // Handle window closed - clean up theme listener and internal state
+    // 窗口已关闭：清理主题监听器和内部状态
     window.on('closed', () => {
-      // Clean up any pending close timeout to prevent memory leaks
+      // 清理挂起的关闭超时，防止内存泄漏
       const timeout = this.pendingCloseTimeouts.get(webContentsId)
       if (timeout) {
         clearTimeout(timeout)
         this.pendingCloseTimeouts.delete(webContentsId)
       }
 
-      // Clean up short-lived keyboard-close intent tracking.
+      // 清理短生命周期的键盘关闭意图跟踪
       const keyboardIntentTimeout = this.keyboardCloseIntentTimeouts.get(webContentsId)
       if (keyboardIntentTimeout) {
         clearTimeout(keyboardIntentTimeout)
@@ -505,8 +496,7 @@ export class WindowManager {
       nativeTheme.removeListener('updated', themeHandler)
       this.windows.delete(webContentsId)
       this.focusedModeWindows.delete(webContentsId)
-      // Re-apply window-title policy — surviving windows revert from workspace
-      // name back to app name when the count drops from 2 → 1.
+      // 重新应用窗口标题策略：存活窗口在数量从 2 → 1 时从 workspace 名切回应用名
       this.refreshWindowTitles()
       windowLog.info(`Window closed for workspace ${workspaceId}`)
     })
@@ -546,7 +536,7 @@ export class WindowManager {
         windows.push(managed.window)
       }
     }
-    // Debug: log registered workspaces when lookup fails
+    // 调试：查找失败时打印已注册的 workspace
     if (windows.length === 0 && this.windows.size > 0) {
       const registered = Array.from(this.windows.values()).map(m => m.workspaceId)
       windowLog.warn(`No windows for workspace '${workspaceId}', have: [${registered.join(', ')}]`)
@@ -585,7 +575,7 @@ export class WindowManager {
    * Used when renderer confirms the close action (no modals to close).
    */
   forceCloseWindow(webContentsId: number): void {
-    // Clear any pending close timeout since renderer confirmed
+    // 渲染进程已确认关闭，清除兜底超时
     const timeout = this.pendingCloseTimeouts.get(webContentsId)
     if (timeout) {
       clearTimeout(timeout)
@@ -594,8 +584,7 @@ export class WindowManager {
 
     const managed = this.windows.get(webContentsId)
     if (managed && !managed.window.isDestroyed()) {
-      // Remove close listener temporarily to avoid infinite loop,
-      // then destroy the window directly
+      // 临时移除 close 监听器避免无限循环，然后直接销毁窗口
       managed.window.destroy()
     }
   }
@@ -633,13 +622,13 @@ export class WindowManager {
     if (managed) {
       const oldWorkspaceId = managed.workspaceId
       managed.workspaceId = workspaceId
-      // Re-apply window-title policy so in-window workspace switches update
-      // the titlebar immediately (relevant when ≥2 windows are open).
+      // 重新应用窗口标题策略，使窗口内切换 workspace 时标题栏立即更新
+      //（在打开 ≥2 个窗口时才有可见效果）。
       this.refreshWindowTitles()
       windowLog.info(`Updated window ${webContentsId} from workspace ${oldWorkspaceId} to ${workspaceId}`)
       return true
     }
-    // Window not found - log for debugging
+    // 窗口未找到，打印调试信息
     windowLog.warn(`Cannot update workspace for unknown window ${webContentsId}, registered: [${Array.from(this.windows.keys()).join(', ')}]`)
     return false
   }
@@ -653,7 +642,7 @@ export class WindowManager {
   registerWindow(window: BrowserWindow, workspaceId: string): void {
     const webContentsId = window.webContents.id
     this.windows.set(webContentsId, { window, workspaceId })
-    // Re-apply window-title policy after re-registration (e.g. post-refresh).
+    // 重新注册后重新应用窗口标题策略（例如刷新后重新注册）
     this.refreshWindowTitles()
     windowLog.info(`Registered window ${webContentsId} for workspace ${workspaceId}`)
   }
@@ -722,13 +711,13 @@ export class WindowManager {
    * Falls back to any available window if none focused
    */
   getLastActiveWindow(): BrowserWindow | null {
-    // First try focused window
+    // 先尝试聚焦窗口
     const focused = this.getFocusedWindow()
     if (focused) {
       return focused
     }
 
-    // Fall back to any available window
+    // 回退到任意可用窗口
     const allWindows = this.getAllWindows()
     if (allWindows.length > 0) {
       return allWindows[0].window
@@ -748,10 +737,9 @@ export class WindowManager {
     const managed = this.windows.get(webContentsId)
     if (managed && !managed.window.isDestroyed()) {
       managed.window.setWindowButtonVisibility(visible)
-      // Re-apply custom traffic light position after showing buttons
-      // setWindowButtonVisibility can reset position to default, so we need
-      // to restore the custom position using the modern setWindowButtonPosition API
+      // 显示/隐藏按钮后恢复自定义交通灯位置，因为 setWindowButtonVisibility 可能把它重置为默认
       if (visible) {
+        // 显示按钮后恢复自定义交通灯位置（setWindowButtonVisibility 可能把它重置为默认）
         managed.window.setWindowButtonPosition({ x: 18, y: 19 })
       }
     }

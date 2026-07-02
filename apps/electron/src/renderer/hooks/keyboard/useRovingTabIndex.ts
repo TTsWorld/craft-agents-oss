@@ -1,38 +1,38 @@
 import { useState, useCallback, useRef, useEffect } from "react"
 
 interface UseRovingTabIndexOptions<T> {
-  /** List of items to navigate */
+  /** 要导航的列表项 */
   items: T[]
-  /** Get unique ID for each item (item, index) => id */
+  /** 获取每项唯一 ID：(item, index) => id */
   getId: (item: T, index: number) => string
-  /** Navigation direction (affects arrow key behavior) */
+  /** 导航方向（影响方向键行为） */
   orientation?: 'vertical' | 'horizontal' | 'both'
-  /** Wrap around at ends */
+  /** 是否在两端循环 */
   wrap?: boolean
-  /** Called when user navigates with arrow keys - use for scrolling into view */
+  /** 方向键导航时调用，通常用于滚动到可视区域 */
   onNavigate?: (item: T, index: number) => void
-  /** Called when Enter/Space is pressed on focused item - use for selection */
+  /** 在聚焦项上按 Enter/Space 时调用，通常用于选择 */
   onActivate?: (item: T, index: number) => void
-  /** Called when Delete/Backspace is pressed */
+  /** 按 Delete/Backspace 时调用 */
   onDelete?: (item: T, index: number) => void
-  /** Initial active index */
+  /** 初始激活索引 */
   initialIndex?: number
-  /** Whether navigation is enabled (typically when zone is focused) */
+  /** 是否启用导航（通常在区域获得焦点时为 true） */
   enabled?: boolean
-  /** Called to open context menu on focused item */
+  /** 在聚焦项上打开上下文菜单 */
   onContextMenu?: (item: T, index: number, element: HTMLElement) => void
-  /** Whether to move focus to items on navigation (default: true). Set false to keep focus elsewhere (e.g., search input) */
+  /** 导航时是否移动焦点到列表项（默认 true）。设为 false 可让焦点留在别处（例如搜索框） */
   moveFocus?: boolean
-  /** Called when Shift+Arrow extends selection (for multi-select support) */
+  /** Shift+方向键扩展选择时调用（支持多选） */
   onExtendSelection?: (toIndex: number) => void
 }
 
 interface UseRovingTabIndexReturn<T> {
-  /** Currently active index */
+  /** 当前激活索引 */
   activeIndex: number
-  /** Set active index programmatically */
+  /** 程序化设置激活索引 */
   setActiveIndex: (index: number) => void
-  /** Get props to spread on each item */
+  /** 获取要展开到每项上的 props */
   getItemProps: (item: T, index: number) => {
     id: string
     tabIndex: number
@@ -42,32 +42,32 @@ interface UseRovingTabIndexReturn<T> {
     'aria-selected': boolean
     role: string
   }
-  /** Get props for the container */
+  /** 获取容器 props */
   getContainerProps: () => {
     role: string
     'aria-activedescendant': string | undefined
     onKeyDown: (e: React.KeyboardEvent) => void
   }
-  /** Focus the currently active item */
+  /** 聚焦当前激活项 */
   focusActiveItem: () => void
 }
 
 /**
- * Implements roving tabindex pattern for list navigation.
+ * 实现列表的 roving tabindex 导航模式。
  *
- * Key design: Navigation (focus) is separate from Selection
- * - Arrow keys move focus via onNavigate (use for scrolling into view)
- * - Enter/Space triggers onActivate (use for selection)
- * - Clicks are handled externally by the component
+ * 核心设计：导航（焦点）与选择分离
+ * - 方向键移动焦点并触发 onNavigate（用于滚动到可视区域）
+ * - Enter/Space 触发 onActivate（用于选择）
+ * - 点击由外部组件处理
  *
- * Features:
- * - Only active item has tabIndex=0, others have tabIndex=-1
- * - Arrow keys navigate and call onNavigate
- * - Enter/Space triggers onActivate callback
- * - Tab exits the list to next zone
- * - Home/End jump to first/last item
- * - Shift+Arrow calls onExtendSelection for multi-select
- * - Context menu key (or Shift+F10) opens context menu
+ * 特性：
+ * - 只有激活项 tabIndex=0，其余为 -1
+ * - 方向键导航并调用 onNavigate
+ * - Enter/Space 触发 onActivate
+ * - Tab 离开列表进入下一个焦点区域
+ * - Home/End 跳到首项/末项
+ * - Shift+方向键调用 onExtendSelection 以支持多选
+ * - 上下文菜单键（或 Shift+F10）打开上下文菜单
  */
 export function useRovingTabIndex<T>({
   items,
@@ -88,8 +88,8 @@ export function useRovingTabIndex<T>({
   )
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map())
 
-  // Reset active index if items change and current index is out of bounds
-  // Note: We only sync state here, no callbacks - this is not user-initiated navigation
+  // 当列表项变化导致当前索引越界时，重置激活索引
+  // 注意：这里只同步状态，不触发回调——这不是用户发起的导航
   useEffect(() => {
     if (items.length === 0) {
       setActiveIndexState(0)
@@ -99,8 +99,8 @@ export function useRovingTabIndex<T>({
     }
   }, [items.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Programmatic index setter - only syncs state, no callbacks
-  // Callbacks are only for user-initiated keyboard navigation
+  // 程序化设置索引：只同步状态，不触发回调
+  // 回调只在用户通过键盘导航时触发
   const setActiveIndex = useCallback((index: number) => {
     if (index >= 0 && index < items.length) {
       setActiveIndexState(index)
@@ -120,7 +120,7 @@ export function useRovingTabIndex<T>({
     if (nextIndex >= 0 && nextIndex < items.length && nextIndex !== activeIndex) {
       setActiveIndexState(nextIndex)
       onNavigate?.(items[nextIndex], nextIndex)
-      // Focus new item after state update (unless moveFocus is false)
+      // 状态更新后聚焦到新项（moveFocus 为 false 时除外）
       if (moveFocus) {
         requestAnimationFrame(() => {
           const id = getId(items[nextIndex], nextIndex)
@@ -210,10 +210,10 @@ export function useRovingTabIndex<T>({
         }
         break
 
-      // Context menu via keyboard (F10 or ContextMenu key)
+      // 键盘触发上下文菜单（F10 或 ContextMenu 键）
       case 'ContextMenu':
       case 'F10':
-        if (e.key === 'F10' && !e.shiftKey) break // Only Shift+F10 triggers context menu
+        if (e.key === 'F10' && !e.shiftKey) break // 仅 Shift+F10 触发上下文菜单
         if (onContextMenu) {
           e.preventDefault()
           const item = items[activeIndex]
@@ -232,11 +232,11 @@ export function useRovingTabIndex<T>({
       e.stopPropagation()
       if (nextIndex !== activeIndex) {
         if (isExtendSelection) {
-          // Shift+Arrow: extend selection without calling onNavigate
+          // Shift+方向键：扩展选择，不调用 onNavigate
           onExtendSelection?.(nextIndex)
-          // Update active index for visual feedback
+          // 更新激活索引以提供视觉反馈
           setActiveIndexState(nextIndex)
-          // Focus new item if moveFocus is enabled
+          // moveFocus 开启时聚焦到新项
           if (moveFocus) {
             requestAnimationFrame(() => {
               const id = getId(items[nextIndex], nextIndex)
@@ -244,7 +244,7 @@ export function useRovingTabIndex<T>({
             })
           }
         } else {
-          // Normal navigation
+          // 普通导航
           navigateToIndex(nextIndex)
         }
       }
@@ -266,14 +266,14 @@ export function useRovingTabIndex<T>({
         }
       },
       onKeyDown: handleKeyDown,
-      // onFocus only syncs activeIndex - does NOT trigger selection
-      // This allows components to handle click selection externally
+      // onFocus 只同步 activeIndex，不触发选择
+      // 这样组件可以在外部处理点击选择
       onFocus: () => {
         if (index !== activeIndex) {
           setActiveIndexState(index)
         }
       },
-      // onClick removed - handle selection externally in the component
+      // onClick 已移除，选择逻辑由外部组件处理
       'aria-selected': isActive,
       role: 'option' as const,
     }

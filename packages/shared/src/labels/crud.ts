@@ -1,9 +1,9 @@
 /**
- * Label CRUD Operations
+ * 标签 CRUD 操作
  *
- * Create, Read, Update, Delete, Move, Reorder operations for the label tree.
- * All operations work on the nested JSON tree structure.
- * Delete cascade strips the label (and descendants) from all sessions.
+ * 对标签树进行增删改查、移动、排序。
+ * 所有操作都直接作用于嵌套 JSON 树。
+ * 删除会级联移除该标签及其后代，并从所有引用它们的 session 中剥离。
  */
 
 import { loadLabelConfig, saveLabelConfig, isValidLabelId, isValidLabelIdFormat } from './storage.ts';
@@ -13,7 +13,7 @@ import { findTaskLabel } from './filter.ts';
 import type { LabelConfig, CreateLabelInput, UpdateLabelInput } from './types.ts';
 
 /**
- * Generate URL-safe slug from name
+ * 从名称生成 URL 安全的 slug。
  */
 function generateLabelSlug(name: string): string {
   return name
@@ -24,9 +24,9 @@ function generateLabelSlug(name: string): string {
 }
 
 /**
- * Create a new label.
- * Inserts into the specified parent's children array, or at root level.
- * Generates a globally unique slug from the name.
+ * 创建新标签。
+ * 插入到指定父标签的 children 数组中，或放到根级。
+ * 会在整棵树范围内生成全局唯一的 slug。
  */
 export function createLabel(
   workspaceRootPath: string,
@@ -34,7 +34,7 @@ export function createLabel(
 ): LabelConfig {
   const config = loadLabelConfig(workspaceRootPath);
 
-  // Generate unique ID across the entire tree
+  // 在整棵树中生成唯一 ID
   const existingIds = collectAllIds(config.labels);
   let id = generateLabelSlug(input.name);
   let suffix = 2;
@@ -51,7 +51,7 @@ export function createLabel(
   };
 
   if (input.parentId) {
-    // Insert as child of the specified parent
+    // 作为指定父标签的子节点插入
     const parent = findLabelById(config.labels, input.parentId);
     if (!parent) {
       throw new Error(`Parent label '${input.parentId}' not found`);
@@ -59,7 +59,7 @@ export function createLabel(
     if (!parent.children) parent.children = [];
     parent.children.push(label);
   } else {
-    // Insert at root level
+    // 插入到根级
     config.labels.push(label);
   }
 
@@ -68,14 +68,12 @@ export function createLabel(
 }
 
 /**
- * Resolve the reserved "Task" ROOT label (a plain boolean label), creating it if
- * absent. Matches a root label by id 'task' or case-insensitive name — a user's
- * own root "Task" label is ADOPTED as the parent for task item labels (their
- * children and tagged sessions are untouched). Only a `valueType: 'number'` root
- * — the shape the earlier numbered scheme created — is converged to a plain
- * label; other valueTypes are user-authored and left as-is (item children nest
- * under a valued root just fine). The resolved slug may differ from the literal
- * 'task', so callers MUST use the returned id.
+ * 解析保留的 "Task" 根标签（一个普通布尔标签），不存在时创建它。
+ * 按 id 'task' 或大小写不敏感的名称匹配根标签——用户自有的根 "Task" 标签会被采纳为
+ * 任务项标签的父标签（其子标签和已打标的 session 不受影响）。只有 `valueType: 'number'`
+ * 的根标签（早期编号方案创建的形态）会被收敛为普通标签；其他 valueType 是用户自定义的，
+ * 原样保留（带值根下的子项嵌套完全没问题）。解析出的 slug 可能与字面量 'task' 不同，
+ * 因此调用方必须使用返回的 id。
  */
 export function ensureTaskLabel(workspaceRootPath: string): string {
   const config = loadLabelConfig(workspaceRootPath);
@@ -91,14 +89,13 @@ export function ensureTaskLabel(workspaceRootPath: string): string {
 }
 
 /**
- * Create the per-task ITEM label for a new task: a child of the reserved Task
- * root named `TASK-<short-title-slug>-<N>`, where N is the next counter across
- * the root's existing TASK-named children (max trailing number + 1, so deletions
- * never recycle an id). Only our `TASK-…-<N>` name format feeds the counter — an
- * adopted user root may carry unrelated children (e.g. "Sprint-2026") that must
- * not inflate it. One item label tags the task's entire family (orchestrator +
- * all subtasks), making a single click filter exactly that task. The label's
- * generated slug id may collide-shift, so callers MUST use the returned id.
+ * 为新任务创建每个任务专属的 ITEM 标签：作为保留 Task 根标签的子标签，
+ * 命名为 `TASK-<short-title-slug>-<N>`，其中 N 是该根标签下已有 TASK 命名子标签的
+ * 下一个计数器（最大尾部数字 + 1，因此删除操作永远不会复用 id）。只有我们的
+ * `TASK-…-<N>` 名称格式会喂给计数器——被采纳的用户根标签可能带有无关子标签（如
+ * "Sprint-2026"），绝不能让它们膨胀计数器。一个 item 标签标记整个任务家族
+ *（编排器 + 所有子任务），使得单次点击就能精确过滤该任务。该标签生成的 slug id
+ * 可能因碰撞而偏移，因此调用方必须使用返回的 id。
  */
 export function ensureTaskItemLabel(
   workspaceRootPath: string,
@@ -113,7 +110,7 @@ export function ensureTaskItemLabel(
       const m = /^TASK-.*-(\d+)\s*$/i.exec(child.name.trim());
       return m ? Math.max(max, Number(m[1])) : max;
     }, 0);
-  // "Short name with dashes": the slugified title, capped to its first few words.
+  // "带短横线的短名称"：标题做 slug 化处理，截取前几个单词。
   const slug = generateLabelSlug(title).split('-').slice(0, 4).join('-') || 'task';
   const name = `TASK-${slug}-${next}`;
   const item = createLabel(workspaceRootPath, { name, parentId: rootId, color: 'accent' });
@@ -121,12 +118,11 @@ export function ensureTaskItemLabel(
 }
 
 /**
- * Ensure all label entries reference labels that exist in the workspace config.
- * For each entry, if the label ID doesn't exist, auto-creates it with a
- * titlecased name derived from the slug. Returns resolved entries with the
- * actual created IDs (handles any slug mismatch from createLabel).
+ * 确保所有标签条目引用的标签都存在于 workspace 配置中。
+ * 对于每个条目，如果标签 ID 不存在，会自动创建一个名称由 slug 转为首字母大写的标签。
+ * 返回解析后的条目，使用实际创建的 ID（处理 createLabel 可能带来的 slug 不一致）。
  *
- * Entries with invalid ID format are passed through unchanged.
+ * ID 格式非法的条目会原样保留。
  */
 export function ensureLabelsExist(
   workspaceRootPath: string,
@@ -138,7 +134,7 @@ export function ensureLabelsExist(
     if (isValidLabelId(workspaceRootPath, labelId)) return label
     if (!isValidLabelIdFormat(labelId)) return label
 
-    // getLabelDisplayName with empty tree falls back to titlecased slug
+    // getLabelDisplayName 在空树时会回退到首字母大写的 slug
     const name = getLabelDisplayName([], labelId)
 
     const created = createLabel(workspaceRootPath, {
@@ -146,15 +142,15 @@ export function ensureLabelsExist(
       color: 'foreground/50',
     })
 
-    // Return entry with the actual created ID (handles slug mismatch)
+    // 返回使用实际创建 ID 的条目（处理 slug 不一致）
     return formatLabelEntry(created.id, rawValue)
   })
 }
 
 /**
- * Update an existing label (name, color, valueType).
- * Cannot change the ID or hierarchy position.
- * @throws Error if label not found
+ * 更新已有标签（name、color、valueType）。
+ * 不能修改 ID 和层级位置。
+ * @throws Error 如果标签不存在
  */
 export function updateLabel(
   workspaceRootPath: string,
@@ -170,7 +166,7 @@ export function updateLabel(
 
   if (updates.name !== undefined) label.name = updates.name;
   if (updates.color !== undefined) label.color = updates.color;
-  // valueType: set to new value, or delete to revert to boolean label
+  // valueType：设置新值，或删除以恢复为布尔标签
   if (updates.valueType !== undefined) label.valueType = updates.valueType || undefined;
 
   saveLabelConfig(workspaceRootPath, config);
@@ -178,9 +174,9 @@ export function updateLabel(
 }
 
 /**
- * Delete a label and all its descendants.
- * Strips removed labels from all sessions that reference them.
- * @returns Number of sessions that had labels stripped
+ * 删除标签及其所有后代。
+ * 从所有引用它们的 session 中剥离被删除的标签。
+ * @returns 被剥离的 session 数量
  */
 export function deleteLabel(
   workspaceRootPath: string,
@@ -188,11 +184,11 @@ export function deleteLabel(
 ): { stripped: number } {
   const config = loadLabelConfig(workspaceRootPath);
 
-  // Collect all IDs that will be removed (the label + all descendants)
+  // 收集将要移除的所有 ID（标签自身 + 所有后代）
   const descendantIds = getDescendantIds(config.labels, labelId);
   const removedIds = [labelId, ...descendantIds];
 
-  // Remove the node from its parent's children array (or from root)
+  // 从父标签的 children 数组（或根数组）中移除该节点
   const removed = removeNodeFromTree(config.labels, labelId);
   if (!removed) {
     throw new Error(`Label '${labelId}' not found`);
@@ -200,7 +196,7 @@ export function deleteLabel(
 
   saveLabelConfig(workspaceRootPath, config);
 
-  // Strip all removed IDs from sessions
+  // 从所有 session 中剥离被移除的 ID
   let stripped = 0;
   for (const id of removedIds) {
     stripped += stripLabelFromSessions(workspaceRootPath, id);
@@ -210,10 +206,10 @@ export function deleteLabel(
 }
 
 /**
- * Reorder labels within a parent's children (or root level).
- * Provide the full ordered list of sibling IDs at that level.
- * @param parentId - null for root level, or the parent label's ID
- * @param orderedIds - New order of child IDs at that level
+ * 在父标签 children（或根级）内对标签重新排序。
+ * 传入该层完整的兄弟 ID 有序列表即可。
+ * @param parentId - null 表示根级，否则为父标签 ID
+ * @param orderedIds - 该层兄弟标签的新顺序
  */
 export function reorderLabels(
   workspaceRootPath: string,
@@ -222,7 +218,7 @@ export function reorderLabels(
 ): void {
   const config = loadLabelConfig(workspaceRootPath);
 
-  // Get the target array (root labels or a parent's children)
+  // 获取目标数组（根标签或某个父标签的 children）
   let siblings: LabelConfig[];
   if (parentId) {
     const parent = findLabelById(config.labels, parentId);
@@ -233,7 +229,7 @@ export function reorderLabels(
     siblings = config.labels;
   }
 
-  // Validate that orderedIds match the current siblings
+  // 校验 orderedIds 与当前兄弟列表一致
   const siblingIds = new Set(siblings.map(l => l.id));
   for (const id of orderedIds) {
     if (!siblingIds.has(id)) {
@@ -241,11 +237,11 @@ export function reorderLabels(
     }
   }
 
-  // Build a map for quick lookup, then reorder the array in place
+  // 用 Map 做快速查找，然后原地重排数组
   const map = new Map(siblings.map(l => [l.id, l]));
   const reordered = orderedIds.map(id => map.get(id)!);
 
-  // Replace the array contents (preserving the same reference for root)
+  // 替换数组内容（根级保持同一引用）
   if (parentId) {
     const parent = findLabelById(config.labels, parentId)!;
     parent.children = reordered;
@@ -258,9 +254,9 @@ export function reorderLabels(
 }
 
 /**
- * Move a label to a different parent (or to root level).
- * The label keeps its ID and children intact.
- * @param newParentId - null to move to root, or target parent's ID
+ * 把标签移动到另一个父标签下（或移动到根级）。
+ * 标签保持其 ID 和子树不变。
+ * @param newParentId - null 表示移到根级，否则为目标父标签 ID
  */
 export function moveLabel(
   workspaceRootPath: string,
@@ -269,7 +265,7 @@ export function moveLabel(
 ): void {
   const config = loadLabelConfig(workspaceRootPath);
 
-  // Prevent moving a label into its own descendant (would create a cycle)
+  // 防止把标签移到它自己的后代下（会形成环）
   if (newParentId) {
     const descendants = getDescendantIds(config.labels, labelId);
     if (descendants.includes(newParentId)) {
@@ -277,13 +273,13 @@ export function moveLabel(
     }
   }
 
-  // Remove from current location (preserving the node reference)
+  // 从当前位置移除（保留节点引用）
   const node = removeNodeFromTree(config.labels, labelId);
   if (!node) {
     throw new Error(`Label '${labelId}' not found`);
   }
 
-  // Insert into new location
+  // 插入到新位置
   if (newParentId) {
     const newParent = findLabelById(config.labels, newParentId);
     if (!newParent) throw new Error(`Target parent '${newParentId}' not found`);
@@ -297,21 +293,21 @@ export function moveLabel(
 }
 
 // ============================================================
-// Internal Helpers
+// 内部辅助函数
 // ============================================================
 
 /**
- * Remove a node from the tree by ID. Returns the removed node or null.
- * Mutates the tree in place (removes from parent's children or root array).
+ * 按 ID 从树中移除一个节点。返回被移除的节点，找不到返回 null。
+ * 会原地修改树（从父标签 children 或根数组中移除）。
  */
 function removeNodeFromTree(labels: LabelConfig[], targetId: string): LabelConfig | null {
-  // Check root level
+  // 先看根级
   const rootIndex = labels.findIndex(l => l.id === targetId);
   if (rootIndex !== -1) {
     return labels.splice(rootIndex, 1)[0]!;
   }
 
-  // Recurse into children
+  // 递归查找 children
   for (const node of labels) {
     if (node.children) {
       const childIndex = node.children.findIndex(c => c.id === targetId);
@@ -327,22 +323,22 @@ function removeNodeFromTree(labels: LabelConfig[], targetId: string): LabelConfi
 }
 
 /**
- * Strip a deleted label from all sessions.
- * Removes entries matching the label ID, including valued entries (e.g., "priority::3").
- * Uses extractLabelId to match both "bug" and "priority::3" style entries.
+ * 从所有 session 中剥离已删除的标签。
+ * 移除匹配该标签 ID 的条目，包括带值条目（如 "priority::3"）。
+ * 用 extractLabelId 来同时匹配 "bug" 和 "priority::3" 风格条目。
  */
 function stripLabelFromSessions(
   workspaceRootPath: string,
   deletedLabelId: string
 ): number {
-  // Dynamic import to avoid circular dependency with sessions module
+  // 动态 import（这里用 Node 的 require）避免与 sessions 模块产生循环依赖
   const { listSessions, updateSessionMetadata } = require('../sessions/storage.ts');
 
   const sessions = listSessions(workspaceRootPath);
   let strippedCount = 0;
 
   for (const session of sessions) {
-    // Check if any entry matches the deleted label ID (handles both boolean and valued entries)
+    // 检查是否有任何条目匹配被删除的标签 ID（同时处理布尔标签和带值标签）
     if (session.labels && session.labels.some((entry: string) => extractLabelId(entry) === deletedLabelId)) {
       const updatedLabels = session.labels.filter((entry: string) => extractLabelId(entry) !== deletedLabelId);
       updateSessionMetadata(workspaceRootPath, session.id, { labels: updatedLabels });

@@ -1,54 +1,46 @@
+/**
+ * structured/types.ts - 结构化输入相关类型定义。
+ *
+ * 这些类型用于在 InputContainer 中决定渲染自由输入还是结构化输入，
+ * 以及描述结构化输入的数据与响应形状。
+ */
 import type { PermissionRequest, CredentialRequest, CredentialResponse } from '../../../../../shared/types'
 import type { AdminApprovalRequestData } from './AdminApprovalRequest'
 
-/**
- * Input mode determines which component is rendered in InputContainer
- */
+/** 输入模式：决定 InputContainer 渲染自由输入还是结构化输入 */
 export type InputMode = 'freeform' | 'structured'
 
-/**
- * Types of structured input UIs
- */
+/** 结构化输入 UI 的类型 */
 export type StructuredInputType = 'permission' | 'credential' | 'admin_approval'
 
-/**
- * Union type for structured input data
- */
+/** 结构化输入数据的联合类型 */
 export type StructuredInputData =
   | { type: 'permission'; data: PermissionRequest }
   | { type: 'credential'; data: CredentialRequest }
   | { type: 'admin_approval'; data: AdminApprovalRequestData }
 
-/**
- * State for structured input
- */
+/** 结构化输入状态 */
 export interface StructuredInputState {
   type: StructuredInputType
   data: PermissionRequest | CredentialRequest | AdminApprovalRequestData
 }
 
-/**
- * Response from permission request
- */
+/** 权限请求的响应 */
 export interface PermissionResponse {
   type: 'permission'
   allowed: boolean
   alwaysAllow: boolean
 }
 
-/**
- * Response from admin approval request
- */
+/** 管理员审批请求的响应 */
 export interface AdminApprovalResponse {
   type: 'admin_approval'
   approved: boolean
   rememberForMinutes?: number
 }
 
-/**
- * Union type for all structured responses
- */
+/** 所有结构化响应的联合类型 */
 export type StructuredResponse = PermissionResponse | CredentialResponse | AdminApprovalResponse
 
-// Re-export CredentialResponse for convenience
+// 为方便使用重新导出 CredentialResponse
 export type { CredentialResponse }

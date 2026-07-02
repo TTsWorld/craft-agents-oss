@@ -1,26 +1,34 @@
 /**
- * Spawn Session Tool (spawn_session)
+ * Spawn Session 工具（spawn_session）
  *
- * Session-scoped tool that enables the main agent to create independent sessions
- * with configurable connection, model, sources, and an initial prompt.
+ * Session-scoped tool（会话级工具）：让主 agent 可以创建独立运行的子 session，
+ * 可自定义连接（connection）、模型（model）、source（数据源）以及初始 prompt。
  *
- * Two modes:
- * - help=true: Returns available connections, models, and sources
- * - Default: Creates a session and sends the prompt (fire-and-forget)
+ * 类比 Go：相当于一个"派生 goroutine + 独立上下文"的 RPC handler，子 session 跑在
+ * 后台，主 session 不阻塞等待。
+ *
+ * 两种调用模式：
+ * - help=true：返回可用的 connections / models / sources 元信息（不创建 session）
+ * - 默认：创建 session 并把 prompt 发出去（fire-and-forget，发完即忘）
  */
 
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { SpawnSessionResult, SpawnSessionHelpResult } from './base-agent.ts';
 
+/**
+ * 创建子 session 的回调签名。
+ * 主进程在 SessionManager 里实现并注册到 session 级回调表，工具在执行时通过 lazy getter 拿到。
+ */
 export type SpawnSessionFn = (input: Record<string, unknown>) => Promise<SpawnSessionResult | SpawnSessionHelpResult>;
 
-// Tool result type - matches what the SDK expects
+// 工具返回值类型 —— 与 Claude SDK 期望的 ToolResult 结构对齐
 type ToolResult = {
   content: Array<{ type: 'text'; text: string }>;
   isError?: boolean;
 };
 
+/** 构造一个标准的错误返回（isError=true，content 里写 Error: 前缀） */
 function errorResponse(message: string): ToolResult {
   return {
     content: [{ type: 'text', text: `Error: ${message}` }],
@@ -31,12 +39,19 @@ function errorResponse(message: string): ToolResult {
 export interface SpawnSessionToolOptions {
   sessionId: string;
   /**
-   * Lazy resolver for the spawn session callback.
-   * Called at execution time to get the current callback from the session registry.
+   * 取得 spawn session 回调的 lazy resolver。
+   * 在工具真正被调用时才从 session 级 callback registry 里取最新回调，
+   * 这样后注入或替换回调无需重建工具实例也能立刻生效。
    */
   getSpawnSessionFn: () => SpawnSessionFn | undefined;
 }
 
+/**
+ * 工厂函数：构造一个名为 spawn_session 的 Claude SDK 工具。
+ *
+ * 类比 Go：相当于把一个 handler 注册到 SDK 的 tool table 里，schema 由 z 描述，
+ * 第三参是真正的 async handler。
+ */
 export function createSpawnSessionTool(options: SpawnSessionToolOptions) {
   return tool(
     'spawn_session',

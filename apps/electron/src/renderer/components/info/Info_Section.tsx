@@ -1,21 +1,21 @@
 /**
  * Info_Section
  *
- * Section container with title, optional description, and content card.
- * Matches SettingsSection styling pattern.
+ * 信息页中的「小节」容器：包含标题、可选描述，以及一个带卡片样式的内容区。
+ * 与 SettingsSection 保持一致的视觉风格。
  */
 
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 
 export interface Info_SectionProps {
-  /** Section title */
+  /** 小节标题 */
   title: string
-  /** Optional description below title */
+  /** 标题下方的可选描述 */
   description?: string
-  /** Optional right-aligned header actions */
+  /** 标题右侧的操作区（如按钮、链接） */
   actions?: React.ReactNode
-  /** Section content */
+  /** 小节内容 */
   children: React.ReactNode
   className?: string
 }

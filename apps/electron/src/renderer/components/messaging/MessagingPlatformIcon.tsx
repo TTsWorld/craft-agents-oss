@@ -1,13 +1,12 @@
 /**
  * MessagingPlatformIcon
  *
- * Parallel of ConnectionIcon (for LLM providers) but for messaging platforms.
- * Renders the brand mark for Telegram / WhatsApp. Falls back to a colored
- * platform-initial badge if the SVG import fails at runtime.
+ * 与 LLM provider 用的 ConnectionIcon 类似，但面向消息平台。
+ * 渲染 Telegram / WhatsApp / Lark 的品牌图标；如果 SVG import 在运行时失败，
+ * 则回退到带平台首字母的彩色徽标。
  *
- * SVGs in `assets/messaging-icons/` are shorthand brand marks tuned for a
- * prototype — for production we should swap in the official marks from each
- * platform's press kit.
+ * `assets/messaging-icons/` 里的 SVG 是为原型简化的品牌标识；
+ * 生产环境应替换为各平台官方 press kit 中的标准徽标。
  */
 
 import telegramIcon from '@/assets/messaging-icons/telegram.svg'
@@ -30,7 +29,7 @@ const platformFallback: Record<MessagingPlatform, { bg: string; initial: string 
 
 interface MessagingPlatformIconProps {
   platform: MessagingPlatform
-  /** Size in pixels (default: 16). */
+  // 图标边长，单位像素（默认 16）
   size?: number
   className?: string
 }

@@ -1,4 +1,11 @@
+/**
+ * MobilePlaygroundProviders — React 组件
+ * MobilePlaygroundProviders：为 mobile-webui demo 提供最小上下文栈的 Provider 组合。
+ * 
+ * 所属目录：mobile-webui
+ */
 import * as React from 'react'
+// jotai 的 Provider 与 createStore 用于创建独立的 atom 存储；useSetAtom 用来写入 atom。
 import { Provider as JotaiProvider, createStore, useSetAtom } from 'jotai'
 import { useOptionalAppShellContext, AppShellProvider } from '@/context/AppShellContext'
 import { FocusProvider } from '@/context/FocusContext'
@@ -20,9 +27,11 @@ interface HydrateProps {
 /**
  * Hydrates the isolated jotai store with mock data so atom-driven components
  * (SessionList, ChatDisplay) render against deterministic state.
+ * 把 mock 数据灌入独立的 jotai store，让依赖 atom 的生产组件看到确定性的状态。
  */
 function HydrateAtoms({ sessions, session, children }: HydrateProps & { children: React.ReactNode }) {
   const setMetaMap = useSetAtom(sessionMetaMapAtom)
+  // sessionAtomFamily 是参数化 atom：传入 session.id 拿到该会话的 atom 实例。
   const setSession = useSetAtom(session ? sessionAtomFamily(session.id) : sessionAtomFamily('__noop__'))
 
   React.useEffect(() => {
@@ -50,12 +59,14 @@ interface MobileAppShellOverrideProps {
  * from PlaygroundAppShellProvider, without rebuilding the full mock value.
  * Optionally injects mock `llmConnections` so demos that exercise the model
  * picker can render real provider/connection rows.
+ * 在已有的 AppShell context 基础上覆盖 isCompactMode、workspaceId 和 llmConnections。
  */
 function MobileAppShellOverride({ llmConnections, children }: MobileAppShellOverrideProps) {
   const parent = useOptionalAppShellContext()
   if (!parent) {
     throw new Error('MobilePlaygroundProviders must be rendered inside PlaygroundAppShellProvider')
   }
+  // useMemo 避免每次渲染都创建新的 context value，防止子树不必要的重渲染。
   const value = React.useMemo(
     () => ({
       ...parent,
@@ -69,6 +80,7 @@ function MobileAppShellOverride({ llmConnections, children }: MobileAppShellOver
   return <AppShellProvider value={value}>{children}</AppShellProvider>
 }
 
+/** MobilePlaygroundProvidersProps：组件 props 类型定义 */
 export interface MobilePlaygroundProvidersProps {
   /** Sessions to populate `sessionMetaMapAtom` with. */
   sessions?: SessionMeta[]
@@ -94,8 +106,10 @@ export function MobilePlaygroundProviders({
   children,
 }: MobilePlaygroundProvidersProps) {
   // Fresh store per render — isolates demo state from the playground root.
+  // 每次渲染都创建新的 jotai store，避免不同 demo 之间的 atom 状态互相泄漏。
   const store = React.useMemo(() => createStore(), [])
 
+  // 创建新会话的回调；在 playground 里返回一个 mock stub。
   const onCreateSession = React.useCallback(async (): Promise<Session> => {
     const stub = buildMockSession('mobile-stub-' + Date.now(), { messages: [] })
     return stub

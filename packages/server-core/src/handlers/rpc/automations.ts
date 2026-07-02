@@ -7,21 +7,31 @@ import { AUTOMATION_HISTORY_MAX_RUNS_PER_MATCHER } from '@craft-agent/shared/aut
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 
-// History file name — matches AUTOMATIONS_HISTORY_FILE from @craft-agent/shared/automations/constants
+// 本文件属于 Automations RPC 模块，负责：自动化规则（automation）的读取、测试、启用/禁用、复制、删除、历史查询、重放。
+// Agent 概念：Automation 是“事件触发 -> 条件匹配 -> 执行动作”的代理工作流；
+// 动作可以是 webhook 调用，也可以是向 LLM 发 prompt 创建/继续一个 session。
+// TS 提示：接口可以内联在文件中，也可以从共享包导入；这里 HistoryEntry 是本地辅助类型。
+
+// 历史文件名，与 @craft-agent/shared/automations/constants 中的 AUTOMATIONS_HISTORY_FILE 保持一致
 const HISTORY_FILE = 'automations-history.jsonl'
+
+/** automation 执行历史条目。 */
 interface HistoryEntry { id: string; ts: number; ok: boolean; sessionId?: string; prompt?: string; error?: string; webhook?: { method: string; url: string; statusCode: number; durationMs: number; attempts?: number; error?: string; responseBody?: string } }
 
-// Per-workspace config mutex: serializes read-modify-write cycles on automations.json
-// to prevent concurrent IPC calls from clobbering each other's changes.
+// 每个 workspace 的 config 互斥锁：对 automations.json 的读-改-写串行化，
+// 防止并发 IPC 调用互相覆盖。类似 Golang 里用一个 sync.Mutex 保护文件。
 const configMutexes = new Map<string, Promise<void>>()
 function withConfigMutex<T>(workspaceRoot: string, fn: () => Promise<T>): Promise<T> {
   const prev = configMutexes.get(workspaceRoot) ?? Promise.resolve()
-  const next = prev.then(fn, fn) // run fn regardless of previous result
+  const next = prev.then(fn, fn) // 无论前一个 promise 成功失败都执行 fn
   configMutexes.set(workspaceRoot, next.then(() => {}, () => {}))
   return next
 }
 
-// Shared helper: resolve workspace, read automations.json, validate matcher, mutate, write back
+// withAutomationMatcher：通用辅助函数，解析 workspace、读取 automations.json、定位 matcher、执行 mutate、写回。
+// TS 提示：函数参数中的 mutate 是回调函数类型，类似 Golang 的 func(matchers []map, idx int, config ...)。
+
+/** automations.json 的最小结构。 */
 interface AutomationsConfigJson { automations?: Record<string, Record<string, unknown>[]>; [key: string]: unknown }
 async function withAutomationMatcher(workspaceId: string, eventName: string, matcherIndex: number, mutate: (matchers: Record<string, unknown>[], index: number, config: AutomationsConfigJson, genId: () => string) => void) {
   const workspace = getWorkspaceByNameOrId(workspaceId)
@@ -42,7 +52,7 @@ async function withAutomationMatcher(workspaceId: string, eventName: string, mat
 
     mutate(matchers, matcherIndex, config, generateShortId)
 
-    // Backfill missing IDs on all matchers before writing
+    // 写回前为所有 matcher 补齐 id
     for (const eventMatchers of Object.values(eventMap)) {
       if (!Array.isArray(eventMatchers)) continue
       for (const m of eventMatchers as Record<string, unknown>[]) {
@@ -54,6 +64,7 @@ async function withAutomationMatcher(workspaceId: string, eventName: string, mat
   })
 }
 
+// 本 handler 负责注册的 automation channel 列表
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.automations.GET,
   RPC_CHANNELS.automations.TEST,
@@ -65,10 +76,11 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.automations.REPLAY,
 ] as const
 
+// registerAutomationsHandlers：注册 automation 相关 RPC 路由。
 export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps): void {
   const log = deps.platform.logger
 
-  // Get automations config for a workspace (read-only, resolves path server-side)
+  // 获取 workspace 的 automations 配置（只读，服务端解析路径）
   server.handle(RPC_CHANNELS.automations.GET, async (_ctx, workspaceId: string) => {
     log.info(`AUTOMATIONS_GET: Loading automations for workspace: ${workspaceId}`)
     const workspace = getWorkspaceByNameOrId(workspaceId)
@@ -88,13 +100,15 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
     } catch (error) {
       if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
         log.info(`AUTOMATIONS_GET: No automations.json found for workspace ${workspaceId}`)
-        return null // No automations configured yet
+        return null // 尚未配置 automation
       }
       log.error(`AUTOMATIONS_GET: Error loading automations:`, error)
       throw error
     }
   })
 
+  // 测试 automation：依次执行 actions，返回每个 action 的结果。
+  // Prompt 动作会调用 sessionManager.executePromptAutomation 创建/复用 session。
   server.handle(RPC_CHANNELS.automations.TEST, async (_ctx, payload: import('@craft-agent/shared/protocol').TestAutomationPayload) => {
     const workspace = getWorkspaceByNameOrId(payload.workspaceId)
     if (!workspace) throw new Error('Workspace not found')
@@ -107,8 +121,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
       const start = Date.now()
 
       if (action.type === 'webhook') {
-        // Execute webhook action using shared utility (no env expansion for test — raw URLs)
-        // Cast needed: protocol DTO uses loose `method?: string`, WebhookAction uses strict union
+        // Webhook 动作：用共享工具执行 HTTP 请求；测试时不做环境变量展开
         const result = await executeWebhookRequest(action as import('@craft-agent/shared/automations').WebhookAction)
         const method = action.method ?? 'POST'
 
@@ -117,6 +130,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
           duration: Date.now() - start,
         })
 
+        // 如果指定了 automationId，写入历史记录
         if (payload.automationId) {
           const entry = createWebhookHistoryEntry({
             matcherId: payload.automationId,
@@ -137,8 +151,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
         continue
       }
 
-      // Prompt action
-      // Parse @mentions from the prompt to resolve source/skill references
+      // Prompt 动作：解析 prompt 中的 @mention，解析为 source/skill 引用
       const references = parsePromptReferences(action.prompt)
 
       try {
@@ -166,7 +179,6 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
           duration: Date.now() - start,
         })
 
-        // Write history entry for test runs
         if (payload.automationId) {
           const entry = createPromptHistoryEntry({ matcherId: payload.automationId, ok: true, sessionId, prompt: action.prompt })
           try {
@@ -183,7 +195,6 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
           duration: Date.now() - start,
         })
 
-        // Write failed history entry
         if (payload.automationId) {
           const entry = createPromptHistoryEntry({ matcherId: payload.automationId, ok: false, error: (err as Error).message, prompt: action.prompt })
           try {
@@ -198,7 +209,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
     return { actions: results } satisfies import('@craft-agent/shared/protocol').TestAutomationResult
   })
 
-  // Automation enabled state management (toggle enabled/disabled in automations.json)
+  // 启用/禁用 automation matcher（在 automations.json 中增删 enabled 字段）
   server.handle(RPC_CHANNELS.automations.SET_ENABLED, async (_ctx, workspaceId: string, eventName: string, matcherIndex: number, enabled: boolean) => {
     await withAutomationMatcher(workspaceId, eventName, matcherIndex, (matchers, idx) => {
       if (enabled) {
@@ -209,7 +220,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
     })
   })
 
-  // Duplicate an automation matcher
+  // 复制一个 automation matcher，插入到原 matcher 之后
   server.handle(RPC_CHANNELS.automations.DUPLICATE, async (_ctx, workspaceId: string, eventName: string, matcherIndex: number) => {
     await withAutomationMatcher(workspaceId, eventName, matcherIndex, (matchers, idx, _config, genId) => {
       const clone = JSON.parse(JSON.stringify(matchers[idx]))
@@ -219,7 +230,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
     })
   })
 
-  // Delete an automation matcher
+  // 删除 automation matcher；若某事件下已无 matcher，则删除该事件键
   server.handle(RPC_CHANNELS.automations.DELETE, async (_ctx, workspaceId: string, eventName: string, matcherIndex: number) => {
     await withAutomationMatcher(workspaceId, eventName, matcherIndex, (matchers, idx, config) => {
       matchers.splice(idx, 1)
@@ -230,7 +241,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
     })
   })
 
-  // Read execution history for a specific automation
+  // 读取某个 automation 的执行历史（JSONL 文件，按 id 过滤，限制条数）
   server.handle(RPC_CHANNELS.automations.GET_HISTORY, async (_ctx, workspaceId: string, automationId: string, limit = AUTOMATION_HISTORY_MAX_RUNS_PER_MATCHER) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error('Workspace not found')
@@ -247,11 +258,11 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
         .slice(-clampedLimit)
         .reverse()
     } catch {
-      return [] // File doesn't exist yet
+      return [] // 历史文件尚未创建
     }
   })
 
-  // Replay webhook actions for a specific automation matcher
+  // 重放某个 automation matcher 的所有 webhook actions
   server.handle(RPC_CHANNELS.automations.REPLAY, async (_ctx, workspaceId: string, automationId: string, eventName: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error('Workspace not found')
@@ -273,7 +284,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
       webhookActions.map(a => executeWebhookRequest(a as unknown as import('@craft-agent/shared/automations').WebhookAction))
     )
 
-    // Write history entries for replay — use index to correctly attribute method per action
+    // 为每个重放结果写入历史
     for (let i = 0; i < results.length; i++) {
       const result = results[i]!
       const action = webhookActions[i]!
@@ -296,7 +307,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
     return { results: results.map(r => ({ ...r, duration: r.durationMs ?? 0 })) }
   })
 
-  // Return last execution timestamp for all automations
+  // 返回所有 automation 最近一次执行的时间戳
   server.handle(RPC_CHANNELS.automations.GET_LAST_EXECUTED, async (_ctx, workspaceId: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error('Workspace not found')
@@ -309,7 +320,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
         try {
           const entry = JSON.parse(line)
           if (entry.id && entry.ts) result[entry.id] = entry.ts
-        } catch { /* skip malformed lines */ }
+        } catch { /* 跳过损坏行 */ }
       }
       return result
     } catch {

@@ -1,8 +1,8 @@
 /**
- * HeaderIconButton
+ * HeaderIconButton — 面板头部统一图标按钮。
  *
- * Unified icon button for panel headers (Navigator and Detail panels).
- * Provides consistent styling for all header action buttons.
+ * 用于 Navigator、Detail 等面板顶部的操作按钮，提供一致样式，
+ * 传入 tooltip 时自动包裹 Tooltip。
  */
 
 import * as React from 'react'
@@ -11,12 +11,13 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@craft-agent/ui'
 import { cn } from '@/lib/utils'
 
 interface HeaderIconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  /** Icon as React element - caller controls size/styling */
+  /** 图标 React 元素，调用方控制尺寸和样式 */
   icon: React.ReactNode
-  /** Optional tooltip text */
+  /** 可选的 tooltip 文本 */
   tooltip?: string
 }
 
+/** 面板头部图标按钮 */
 export const HeaderIconButton = forwardRef<HTMLButtonElement, HeaderIconButtonProps>(
   ({ icon, tooltip, className, ...props }, ref) => {
     const button = (

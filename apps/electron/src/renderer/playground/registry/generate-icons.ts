@@ -1,6 +1,9 @@
 /**
- * Script to generate icons.ts with base64 encoded icons
- * Run with: npx tsx apps/electron/src/renderer/playground/registry/generate-icons.ts
+ * 生成 sample-icons.ts 的脚本
+ *
+ * 把 ~/.craft-agent/tool-icons/ 和 workspace sources 里的图标文件转成 base64 Data URL，
+ * 输出到 sample-icons.ts，供 playground 的 TurnCard 示例使用。
+ * 运行方式：npx tsx apps/electron/src/renderer/playground/registry/generate-icons.ts
  */
 
 import * as fs from 'fs'
@@ -17,7 +20,7 @@ const SOURCES_DIR = path.join(
 )
 const OUTPUT_FILE = path.join(__dirname, 'sample-icons.ts')
 
-// Native tools we want to include (mapped to their file names in tool-icons/)
+// 要包含的原生工具图标（映射到 tool-icons/ 目录下的文件名）
 const NATIVE_TOOLS: Record<string, string> = {
   git: 'git.ico',
   npm: 'npm.png',
@@ -36,7 +39,7 @@ const NATIVE_TOOLS: Record<string, string> = {
   prettier: 'prettier.png',
 }
 
-// Sources we want to include (mapped to their icon files)
+// 要包含的数据源图标（映射到 sources 目录下的图标文件）
 const SOURCES: Record<string, string> = {
   slack: 'slack/icon.png',
   gmail: 'gmail/icon.svg',
@@ -47,6 +50,7 @@ const SOURCES: Record<string, string> = {
   exa: 'exa/icon.png',
 }
 
+// 根据文件扩展名返回 MIME 类型。
 function getMimeType(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase()
   switch (ext) {
@@ -64,6 +68,7 @@ function getMimeType(filePath: string): string {
   }
 }
 
+// 读取图标文件并转成 data URL；文件不存在时返回 null。
 function encodeIcon(filePath: string): string | null {
   try {
     if (!fs.existsSync(filePath)) {
@@ -80,11 +85,12 @@ function encodeIcon(filePath: string): string | null {
   }
 }
 
+// 主函数：扫描图标目录，生成 TypeScript 文件。
 function generateIconsFile() {
   const nativeIcons: Record<string, string> = {}
   const sourceIcons: Record<string, string> = {}
 
-  // Encode native tool icons
+  // 编码原生工具图标
   console.log('Encoding native tool icons...')
   for (const [name, fileName] of Object.entries(NATIVE_TOOLS)) {
     const filePath = path.join(TOOL_ICONS_DIR, fileName)

@@ -1,7 +1,8 @@
 /**
- * Info Components
+ * Info 组件统一导出入口
  *
- * Reusable components for Info pages (SourceInfo, SkillInfo, etc.)
+ * 本目录提供用于「信息展示页」（如 SourceInfo、SkillInfo 等）的可复用组件。
+ * 类似 Go 中同一个 package 下多个文件通过 package 名聚合，这里用 index.ts 把子模块暴露给外部导入。
  */
 
 export { Info_Page } from './Info_Page'

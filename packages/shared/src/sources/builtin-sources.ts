@@ -1,40 +1,36 @@
 /**
  * Built-in Sources
  *
- * System-level sources that are always available in every workspace.
- * These sources are not shown in the sources list UI but are available
- * for the agent to use.
+ * 系统级 source，每个 workspace 都默认可用。
+ * 这些 source 不会显示在 sources 列表 UI 中，但 agent 可以使用。
  *
- * NOTE: craft-agents-docs is now an always-available MCP server configured
- * directly in craft-agent.ts, not a source. This file is kept for backwards
- * compatibility but returns empty results.
+ * 注意：craft-agents-docs 现在已直接配置在 craft-agent.ts 里作为一个始终可用的 MCP server，
+ * 不再以 source 形式存在。本文件保留是为了向后兼容，但返回空结果。
  */
 
 import type { LoadedSource, FolderSourceConfig } from './types.ts';
 
 /**
- * Get all built-in sources for a workspace.
+ * 获取某个 workspace 的所有内置 source。
  *
- * Currently returns empty array - craft-agents-docs has been moved to
- * an always-available MCP server in craft-agent.ts.
+ * 目前返回空数组 —— craft-agents-docs 已移到 craft-agent.ts 中作为常驻 MCP server。
  *
- * @param _workspaceId - The workspace ID (unused)
- * @param _workspaceRootPath - Absolute path to workspace root folder (unused)
- * @returns Empty array (no built-in sources)
+ * @param _workspaceId - workspace ID（未使用）
+ * @param _workspaceRootPath - workspace 根目录绝对路径（未使用）
+ * @returns 空数组（没有内置 source）
  */
 export function getBuiltinSources(_workspaceId: string, _workspaceRootPath: string): LoadedSource[] {
   return [];
 }
 
 /**
- * Get the built-in Craft Agents docs source.
+ * 获取内置的 Craft Agents docs source。
  *
- * @deprecated craft-agents-docs is now an always-available MCP server
- * configured directly in craft-agent.ts. This function is kept for
- * backwards compatibility but returns a placeholder.
+ * @deprecated craft-agents-docs 现在直接配置在 craft-agent.ts 中作为常驻 MCP server。
+ * 本函数保留是为了向后兼容，但只返回一个占位对象。
  */
 export function getDocsSource(workspaceId: string, workspaceRootPath: string): LoadedSource {
-  // Return a placeholder - this shouldn't be called anymore
+  // 返回占位对象 —— 正常情况下不应再调用
   const placeholderConfig: FolderSourceConfig = {
     id: 'builtin-craft-agents-docs',
     name: 'Craft Agents Docs',
@@ -64,13 +60,12 @@ export function getDocsSource(workspaceId: string, workspaceRootPath: string): L
 }
 
 /**
- * Check if a source slug is a built-in source.
+ * 判断某个 source slug 是否是内置 source。
  *
- * Returns false - craft-agents-docs is now an always-available MCP server,
- * not a source in the sources system.
+ * 返回 false —— craft-agents-docs 现在是常驻 MCP server，不再属于 sources 系统。
  *
- * @param _slug - Source slug to check (unused)
- * @returns false (no built-in sources)
+ * @param _slug - 要检查的 source slug（未使用）
+ * @returns false（没有内置 source）
  */
 export function isBuiltinSource(_slug: string): boolean {
   return false;

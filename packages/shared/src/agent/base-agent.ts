@@ -1,16 +1,34 @@
 /**
- * BaseAgent Abstract Class
+ * 文件：BaseAgent 抽象基类
  *
- * Shared base class for all AI agent backends (ClaudeAgent, PiAgent).
- * Extracts common functionality including:
- * - Model/thinking configuration
- * - Permission mode management (via PermissionManager)
- * - Source management (via SourceManager)
- * - Planning heuristics (via PlanningAdvisor)
- * - Config watching (via ConfigWatcherManager)
- * - Usage tracking (via UsageTracker)
+ * 在 Agent 架构里的角色：
+ * 类似于 Go 中用一个 interface + base service 封装公共逻辑，BaseAgent 把所有后端
+ *（Claude、Pi 等）都要做的事统一起来：模型/thinking 配置、权限模式、Source 管理、
+ * 规划启发、配置热重载、用量统计。具体聊天/中断/能力由各子类实现。
  *
- * Provider-specific behavior (chat, abort, capabilities) is implemented in subclasses.
+ * 重点概念：
+ * - PermissionManager：每个 session 独立的权限状态，Explore/Ask/Execute 三种模式。
+ * - SourceManager：跟踪 source 的激活/未激活状态，给上下文注入提供信息。
+ * - session-scoped tools：SubmitPlan / auth / call_llm 等工具的回调注册在 BaseAgent
+ *   进程里；外部 MCP 子进程找不到这些回调，所以 PiAgent 检测到完成后要调用这里的
+ *   handleSessionMcpToolCompletion()。
+ * - Source 激活 drain：当 session-scoped source_test 在当前 turn 内激活了新 source，
+ *   因为当前 query 的 MCP server 列表已冻结，需要记录 pendingSourceActivationRestart，
+ *   等本轮 tool_result 流完再自动重发用户原消息并带上 "[{slug} activated]" 后缀。
+ */
+
+/**
+ * BaseAgent 抽象类（英文别名说明）
+ *
+ * 所有 AI agent 后端（ClaudeAgent、PiAgent）共享的基类。提取公共能力：
+ * - 模型 / thinking 配置
+ * - 权限模式管理（通过 PermissionManager）
+ * - Source 管理（通过 SourceManager）
+ * - 规划启发（通过 PlanningAdvisor）
+ * - 配置热重载（通过 ConfigWatcherManager）
+ * - 用量统计（通过 UsageTracker）
+ *
+ * 后端专属行为（chat / abort / capabilities）由子类实现。
  */
 
 import { existsSync } from 'node:fs';
@@ -68,51 +86,60 @@ import { parseMentions, resolveSkillMentions, resolveSourceMentions, resolveFile
 import { loadAllSkills } from '../skills/storage.ts';
 
 // ============================================================
-// Mini Agent Configuration
+// Mini Agent Configuration  // Mini Agent 配置
 // ============================================================
 
 /**
- * Mini agent configuration - shared across all backends.
- * Centralized here to avoid duplication between Claude/Codex agents.
+ * Mini agent 配置 —— 所有后端共用。
+ * 集中放在这里，避免 Claude/Codex agent 各写一份。
+ *
+ * TS 提示：interface 用来描述对象形状（类似 Go 的 struct，但只描述类型不实现）。
+ * readonly 表示只读属性/数组，编译期防止意外修改。
  */
 export interface MiniAgentConfig {
-  /** Whether mini agent mode is enabled */
+  /** 是否启用 mini agent 模式 */
   enabled: boolean;
-  /** Allowed tools for mini agent mode */
+  /** mini agent 模式下允许使用的工具白名单 */
   tools: readonly string[];
-  /** MCP server keys to include (others filtered out) */
+  /** 需要保留的 MCP server key（其余会被过滤掉） */
   mcpServerKeys: readonly string[];
-  /** Thinking/reasoning should be minimized */
+  /** 是否最小化 thinking/reasoning（节省 token） */
   minimizeThinking: boolean;
 }
 
 // ============================================================
-// Spawn Session Types
+// Spawn Session Types  // 派生子 session 的请求/响应类型
 // ============================================================
 
+/**
+ * 创建（spawn）新 session 的请求体。
+ * `?` 表示可选字段（类似 Go 中通过指针/omitempty 表达「可空」）。
+ */
 export interface SpawnSessionRequest {
   prompt: string;
-  name?: string;
-  llmConnection?: string;
-  model?: string;
-  enabledSourceSlugs?: string[];
-  permissionMode?: PermissionMode;
-  thinkingLevel?: ThinkingLevel;
-  labels?: string[];
-  workingDirectory?: string;
-  /** Workspace project id to bind the spawned session to */
+  name?: string;                       // session 名称
+  llmConnection?: string;              // LLM 连接 slug
+  model?: string;                      // 模型 id
+  enabledSourceSlugs?: string[];       // 启用的 source slug 列表
+  permissionMode?: PermissionMode;     // 权限模式（safe/ask/allow-all）
+  thinkingLevel?: ThinkingLevel;       // thinking 等级
+  labels?: string[];                   // 标签
+  workingDirectory?: string;           // 工作目录
+  /** 要把派生 session 绑定到的 workspace project id */
   projectId?: string;
-  attachments?: Array<{ path: string; name?: string }>;
+  attachments?: Array<{ path: string; name?: string }>; // 附件
 }
 
+/** spawn session 的成功返回结果 */
 export interface SpawnSessionResult {
   sessionId: string;
   name: string;
-  status: 'started';
+  status: 'started';                   // 字面量类型：只能是字符串 'started'
   connection?: string;
   model?: string;
 }
 
+/** spawn session 的 help 模式返回：列出可用连接、source、默认值 */
 export interface SpawnSessionHelpResult {
   connections: Array<{
     slug: string;
@@ -129,76 +156,85 @@ export interface SpawnSessionHelpResult {
     enabled: boolean;
   }>;
   defaults: {
-    defaultConnection: string | null;
+    defaultConnection: string | null;  // `| null` 表示可能是 null 或字符串（联合类型）
     permissionMode: string;
   };
 }
 
-/** Tool list for mini agents - quick config edits only */
+/** mini agent 允许使用的工具列表 —— 仅用于快速编辑配置 */
 export const MINI_AGENT_TOOLS = ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash'] as const;
 
-/** MCP servers for mini agents - minimal set (docs tools are now bundled in session) */
+/** mini agent 使用的 MCP server —— 最小集合（docs 工具已内置于 session） */
 export const MINI_AGENT_MCP_KEYS = ['session'] as const;
 
 // ============================================================
-// BaseAgent Abstract Class
+// BaseAgent Abstract Class  // BaseAgent 抽象基类
 // ============================================================
 
 /**
- * Abstract base class for agent backends.
+ * agent 后端的抽象基类。
  *
- * Provides:
- * - Common state management (model, thinking, workspace, session)
- * - Core module delegation (PermissionManager, SourceManager, etc.)
- * - Callback declarations for UI integration
+ * 提供：
+ * - 公共状态管理（model、thinking、workspace、session）
+ * - 核心模块委派（PermissionManager / SourceManager 等）
+ * - 给 UI 接线的回调声明
  *
- * Subclasses must implement:
- * - backendName: Display name for error messages ('Claude', 'Codex', etc.)
- * - chat(): Provider-specific agentic loop
- * - abort(): Provider-specific abort handling
- * - capabilities(): Provider-specific capabilities
- * - respondToPermission(): Provider-specific permission resolution
- * - destroy(): Provider-specific cleanup
- * - runMiniCompletion(): Simple text completion using backend's auth
+ * 子类必须实现（abstract 方法类比 Go 接口中未实现的方法）：
+ * - backendName：错误信息中显示的后端名（'Claude'、'Codex' 等）
+ * - chat()：后端专属的 agent 主循环
+ * - abort()：后端专属的中断处理
+ * - capabilities()：后端能力声明
+ * - respondToPermission()：后端权限响应
+ * - destroy()：后端资源清理
+ * - runMiniCompletion()：用后端 auth 跑一次纯文本补全
+ *
+ * TS 提示：`abstract class` 不能直接 new，只能被子类继承；
+ * `abstract` 方法只声明签名不写实现，等价于 Go interface 的方法签名。
+ * `implements AgentBackend` 表示同时满足 AgentBackend 接口约束。
  */
 export abstract class BaseAgent implements AgentBackend {
   // ============================================================
-  // Backend Identity
+  // Backend Identity  // 后端身份标识
   // ============================================================
+  /** 后端显示名，子类必须赋值（如 'Claude' / 'Codex'）。protected 表示仅本类及子类可见 */
   protected abstract backendName: string;
 
-  /** Whether this backend supports session branching. Subclasses can override. */
+  /** 当前后端是否支持 session 分支（branching）。子类可覆盖 */
   protected _supportsBranching = true;
+  /** getter：读取是否支持分支。类似 Go 的字段访问但走方法 */
   get supportsBranching(): boolean { return this._supportsBranching; }
 
   // ============================================================
-  // Configuration (protected for subclass access)
+  // Configuration  // 配置（protected 让子类可访问）
   // ============================================================
   protected config: BackendConfig;
   protected workingDirectory: string;
   protected _sessionId: string;
 
   // ============================================================
-  // Model Configuration (protected for subclass access)
+  // Model Configuration  // 模型配置（protected 让子类可访问）
   // ============================================================
   protected _model: string;
   protected _thinkingLevel: ThinkingLevel;
 
   // ============================================================
-  // Core Modules (protected for subclass access)
+  // Core Modules  // 核心模块（protected 让子类可访问）
   // ============================================================
   protected permissionManager: PermissionManager;
   protected sourceManager: SourceManager;
   protected promptBuilder: PromptBuilder;
   protected pathProcessor: PathProcessor;
+  /** 配置热重载管理器，仅在非 headless 模式启动；可能为 null */
   protected configWatcherManager: ConfigWatcherManager | null = null;
   protected usageTracker: UsageTracker;
   protected prerequisiteManager: PrerequisiteManager;
+  /** 工作区级别的 automation 系统（可选） */
   protected automationSystem?: AutomationSystem;
 
   // ============================================================
-  // Additional State (protected for subclass access)
+  // Additional State  // 其他状态（protected 让子类可访问）
   // ============================================================
+  /** 临时澄清文本，注入 prompt 但不持久化；可能为 null */
   protected temporaryClarifications: string | null = null;
 
   // ============================================================
@@ -218,13 +254,16 @@ export abstract class BaseAgent implements AgentBackend {
   protected _pendingSourceActivationRestart: { sourceSlug: string; userMessage: string } | null = null;
   protected _currentTurnUserMessage: string | null = null;
 
+  /**
+   * 设置待处理的 source 激活重试描述。
+   *
+   * 在并行调用 `mcp__session__source_test` 时采用「先写者胜」策略。
+   * 覆盖竞态本身无害（每次激活独立执行都会成功），但存活下来的 slug
+   * 会作为 renderer 上自动重发消息 "[{slug} activated]" 后缀展示给用户。
+   * 保留第一个写者能给出稳定的用户可见标签，不必强制所有 source_test 串行化。
+   * 参见 issue #790。
+   */
   setPendingSourceActivationRestart(pending: { sourceSlug: string; userMessage: string }): void {
-    // First-writer-wins under parallel `mcp__session__source_test` calls. The
-    // overwrite race itself is harmless (each activation runs independently and
-    // succeeds), but the surviving slug is what the renderer displays in the
-    // "[{slug} activated]" suffix on the auto-resend. Keeping the first writer
-    // gives a stable user-facing label without forcing all source_tests to
-    // serialize. See #790.
     if (this._pendingSourceActivationRestart) {
       this.debug(
         `source-activation restart already pending (${this._pendingSourceActivationRestart.sourceSlug}); ignoring overlapping activation of "${pending.sourceSlug}"`,
@@ -234,50 +273,76 @@ export abstract class BaseAgent implements AgentBackend {
     this._pendingSourceActivationRestart = pending;
   }
 
+  /** 读取并清空待处理的 source 激活重试描述（一次性消费） */
   consumePendingSourceActivationRestart(): { sourceSlug: string; userMessage: string } | null {
     const pending = this._pendingSourceActivationRestart;
     this._pendingSourceActivationRestart = null;
     return pending;
   }
 
+  /** 获取当前 turn 的用户原始消息（用于 source 激活重试时重发） */
   getCurrentTurnUserMessage(): string | null {
     return this._currentTurnUserMessage;
   }
 
+  /** 设置当前 turn 的用户原始消息（chat() 入口处捕获） */
   protected setCurrentTurnUserMessage(message: string | null): void {
     this._currentTurnUserMessage = message;
   }
 
   // ============================================================
-  // Callbacks (public for facade wiring)
+  // Callbacks  // 给上层 facade 接线的回调（public 以便外部赋值）
+  // TS 提示：`(arg) => void` 是函数类型；`| null` 表示可空。
   // ============================================================
+  /** 权限请求回调：模型要执行需审批的操作时触发 */
   onPermissionRequest: PermissionCallback | null = null;
+  /** 计划提交回调：模型调用 SubmitPlan 时触发 */
   onPlanSubmitted: PlanCallback | null = null;
+  /** 鉴权请求回调：source OAuth/credential 流程触发 */
   onAuthRequest: AuthCallback | null = null;
+  /** 单个 source 配置变更回调（文件热重载） */
   onSourceChange: SourceChangeCallback | null = null;
+  /** source 列表整体变更回调 */
   onSourcesListChange: ((sources: LoadedSource[]) => void) | null = null;
+  /** 配置文件校验错误回调 */
   onConfigValidationError: ((file: string, errors: string[]) => void) | null = null;
+  /** 权限模式变更回调 */
   onPermissionModeChange: ((mode: PermissionMode) => void) | null = null;
+  /** 调试日志回调 */
   onDebug: ((message: string) => void) | null = null;
+  /** source 激活请求回调（auto-activation 用） */
   onSourceActivationRequest: SourceActivationCallback | null = null;
+  /** token 用量更新回调 */
   onUsageUpdate: ((update: UsageUpdate) => void) | null = null;
+  /** 后端需要重新认证时触发 */
   onBackendAuthRequired: ((reason: string) => void) | null = null;
+  /** spawn 子 session 的回调（由 SessionManager 注入实现） */
   onSpawnSession: ((request: SpawnSessionRequest) => Promise<SpawnSessionResult>) | null = null;
 
   // ============================================================
-  // Constructor
+  // Constructor  // 构造函数
   // ============================================================
 
+  /**
+   * 构造函数。
+   *
+   * @param config 后端配置（含 workspace、session、mcpPool 等）
+   * @param defaultModel 默认模型 id（当 config.model 为空时使用）
+   * @param contextWindow 上下文窗口大小（可选，用于 UsageTracker）
+   *
+   * TS 提示：`?.` 是可选链，遇到 null/undefined 短路返回 undefined；
+   * `??` 是空值合并，左侧为 null/undefined 时取右侧；`||` 是逻辑或（假值都走右）。
+   */
   constructor(config: BackendConfig, defaultModel: string, contextWindow?: number) {
     this.config = config;
-    // Use session's workingDirectory if set (user-changeable), fallback to workspace root
+    // 优先用 session 的工作目录（用户可改），其次 workspace 根目录，最后进程 cwd
     this.workingDirectory = config.session?.workingDirectory ?? config.workspace.rootPath ?? process.cwd();
     this._sessionId = config.session?.id || `agent-${Date.now()}`;
     this._model = config.model || defaultModel;
     this._thinkingLevel = normalizeThinkingLevel(config.thinkingLevel) ?? DEFAULT_THINKING_LEVEL;
 
-    // Initialize core modules
-    // PermissionManager: handles permission evaluation, mode management, and command whitelisting
+    // 初始化核心模块
+    // PermissionManager：权限评估、模式管理、命令白名单
     this.permissionManager = new PermissionManager({
       workspaceId: config.workspace.id,
       sessionId: this._sessionId,
@@ -286,12 +351,12 @@ export abstract class BaseAgent implements AgentBackend {
       dataFolderPath: getSessionDataPath(config.workspace.rootPath, this._sessionId),
     });
 
-    // SourceManager: tracks active/inactive sources and formats state for context injection
+    // SourceManager：跟踪 source 激活状态，并格式化给上下文注入用
     this.sourceManager = new SourceManager({
       onDebug: (msg) => this.debug(msg),
     });
 
-    // PromptBuilder: builds context blocks for user messages
+    // PromptBuilder：构造用户消息中的上下文块（日期、工作目录、source 状态等）
     this.promptBuilder = new PromptBuilder({
       workspace: config.workspace,
       session: config.session,
@@ -300,23 +365,23 @@ export abstract class BaseAgent implements AgentBackend {
       isHeadless: config.isHeadless,
     });
 
-    // PathProcessor: expands ~ and normalizes paths
+    // PathProcessor：展开 ~ 与路径规范化
     this.pathProcessor = new PathProcessor();
 
-    // UsageTracker: token usage and context window tracking
+    // UsageTracker：token 用量与上下文窗口跟踪
     this.usageTracker = new UsageTracker({
       contextWindow,
       onUsageUpdate: (update) => this.onUsageUpdate?.(update),
       onDebug: (msg) => this.debug(msg),
     });
 
-    // PrerequisiteManager: blocks source tool calls until guide.md is read
+    // PrerequisiteManager：在模型读完 guide.md 前阻止 source 工具调用
     this.prerequisiteManager = new PrerequisiteManager({
       workspaceRootPath: config.workspace.rootPath,
       onDebug: (msg) => this.debug(msg),
     });
 
-    // AutomationSystem: workspace-level automations from automations.json
+    // AutomationSystem：工作区级 automation（来自 automations.json）
     this.automationSystem = config.automationSystem;
   }
 

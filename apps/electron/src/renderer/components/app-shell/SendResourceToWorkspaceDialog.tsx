@@ -1,12 +1,12 @@
 /**
- * SendResourceToWorkspaceDialog — Copy a source, skill, or automation to another workspace.
+ * SendResourceToWorkspaceDialog - 把来源、技能或自动化复制到另一个工作区。
  *
- * Uses the resources:export → resources:import RPC pipeline.
- * Supports both local and remote target workspaces:
- * - Local: both RPC calls go to the same server
- * - Remote: export runs locally, import runs via invokeOnServer on the target
+ * 使用 resources:export → resources:import 的 RPC 流程。
+ * 同时支持本地和远程目标工作区：
+ * - 本地目标：两次 RPC 都发往同一服务器
+ * - 远程目标：导出在本地执行，导入通过 invokeOnServer 在目标服务器执行
  *
- * Adapted from SendToWorkspaceDialog (session transfer).
+ * 改编自 SendToWorkspaceDialog（会话传输）。
  */
 
 import * as React from 'react'
@@ -27,31 +27,35 @@ import { useWorkspaceIcons } from '@/hooks/useWorkspaceIcon'
 import { cn } from '@/lib/utils'
 import type { Workspace, ExportResourcesOptions, ResourceImportMode } from '../../../shared/types'
 
+/** SendResourceType：联合/字面量类型别名 */
 export type SendResourceType = 'source' | 'skill' | 'automation'
 
+/** SendResourceToWorkspaceDialogProps：组件 props 类型定义 */
 export interface SendResourceToWorkspaceDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** What kind of resource to send */
+  /** 要发送的资源类型 */
   resourceType: SendResourceType
-  /** Slug(s) or ID(s) of resources to send */
+  /** 要发送的资源 slug 或 ID 列表 */
   resourceIds: string[]
-  /** Display label for the dialog description (e.g., "Slack source") */
+  /** 对话框描述中显示的标签，例如 "Slack source" */
   resourceLabel: string
-  /** All workspaces */
+  /** 所有工作区 */
   workspaces: Workspace[]
-  /** Current workspace ID (excluded from picker) */
+  /** 当前工作区 ID（选择器中排除） */
   activeWorkspaceId: string | null
-  /** Called after successful transfer */
+  /** 传输成功后的回调 */
   onTransferComplete?: () => void
 }
 
+// 资源类型的单复数英文标签（用于日志和提示，不翻译）
 const RESOURCE_TYPE_LABELS: Record<SendResourceType, { singular: string; plural: string }> = {
   source: { singular: 'source', plural: 'sources' },
   skill: { singular: 'skill', plural: 'skills' },
   automation: { singular: 'automation', plural: 'automations' },
 }
 
+/** SendResourceToWorkspaceDialog - 发送资源到其它工作区 */
 export function SendResourceToWorkspaceDialog({
   open,
   onOpenChange,
@@ -66,14 +70,14 @@ export function SendResourceToWorkspaceDialog({
   const [isSending, setIsSending] = useState(false)
   const workspaceIconMap = useWorkspaceIcons(workspaces)
 
-  // Health check results for remote workspaces
+  // 远程工作区健康检查结果
   const [remoteHealthMap, setRemoteHealthMap] = useState<Map<string, 'ok' | 'error' | 'checking'>>(new Map())
   const healthCheckAbort = useRef<AbortController | null>(null)
 
-  // All workspaces except current (both local and remote)
+  // 除当前工作区外的所有工作区（本地和远程）
   const targetWorkspaces = workspaces.filter(w => w.id !== activeWorkspaceId)
 
-  // Health-check remote workspaces when dialog opens
+  // 对话框打开时检测远程工作区
   useEffect(() => {
     if (!open) {
       healthCheckAbort.current?.abort()
@@ -87,14 +91,14 @@ export function SendResourceToWorkspaceDialog({
     const remoteTargets = targetWorkspaces.filter(w => w.remoteServer)
     if (remoteTargets.length === 0) return
 
-    // Mark all remote as checking
+    // 先把所有远程目标标记为检测中
     setRemoteHealthMap(() => {
       const next = new Map<string, 'ok' | 'error' | 'checking'>()
       for (const ws of remoteTargets) next.set(ws.id, 'checking')
       return next
     })
 
-    // Fire parallel checks
+    // 并行检测
     for (const ws of remoteTargets) {
       window.electronAPI.testRemoteConnection(ws.remoteServer!.url, ws.remoteServer!.token)
         .then(result => {
@@ -126,7 +130,7 @@ export function SendResourceToWorkspaceDialog({
     const toastId = toast.loading(`Sending ${resourceLabel} to ${targetName}...`)
 
     try {
-      // 1. Export the selected resource(s) from current workspace
+      // 1. 从当前工作区导出选中的资源
       const exportOptions: ExportResourcesOptions = {}
       if (resourceType === 'source') exportOptions.sources = resourceIds
       else if (resourceType === 'skill') exportOptions.skills = resourceIds
@@ -137,10 +141,10 @@ export function SendResourceToWorkspaceDialog({
         exportOptions,
       )
 
-      // 2. Import into target workspace
+      // 2. 导入到目标工作区
       let importResult
       if (targetWorkspace.remoteServer) {
-        // Remote target — use invokeOnServer
+        // 远程目标：通过 invokeOnServer 在目标服务器执行导入
         const { url, token, remoteWorkspaceId } = targetWorkspace.remoteServer
         importResult = await window.electronAPI.invokeOnServer(
           url, token,
@@ -148,7 +152,7 @@ export function SendResourceToWorkspaceDialog({
           remoteWorkspaceId, bundle, mode,
         )
       } else {
-        // Local target — direct RPC
+        // 本地目标：直接 RPC
         importResult = await window.electronAPI.importResources(
           selectedWorkspaceId,
           bundle,
@@ -156,7 +160,7 @@ export function SendResourceToWorkspaceDialog({
         )
       }
 
-      // 3. Report result
+      // 3. 根据导入结果显示提示
       const bucket = importResult[`${resourceType}s`] ?? importResult[resourceType + 's']
       const imported = bucket?.imported?.length ?? 0
       const skipped = bucket?.skipped?.length ?? 0
@@ -210,7 +214,7 @@ export function SendResourceToWorkspaceDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Workspace list */}
+        {/* 工作区列表 */}
         <div className="flex flex-col gap-1 max-h-64 overflow-y-auto py-1">
           {targetWorkspaces.length === 0 ? (
             <p className="text-sm text-muted-foreground px-2 py-4 text-center">

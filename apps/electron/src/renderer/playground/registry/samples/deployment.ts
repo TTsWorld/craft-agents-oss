@@ -295,6 +295,7 @@ const gmailRelease: ActivityItem = {
   timestamp: now - 5000,
 }
 
+/** deploymentActivities：常量 */
 export const deploymentActivities: ActivityItem[] = [
   readSpec,
   gitStatus,
@@ -314,6 +315,7 @@ export const deploymentActivities: ActivityItem[] = [
   gmailRelease,
 ]
 
+/** deploymentResponse：常量 */
 export const deploymentResponse: ResponseContent = {
   text: `## Deployment Complete: v1.2.0
 

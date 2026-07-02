@@ -1,34 +1,48 @@
+/**
+ * 本地 OAuth 回调服务器
+ *
+ * 在 Electron/终端环境里启动一个临时 HTTP 服务器，监听 localhost 端口，
+ * 接收浏览器跳转回来的授权码或错误信息，并返回一个样式化的回调页面。
+ */
+
 import { createServer as createHttpServer, type Server } from 'http';
 import { URL } from 'url';
 import { generateCallbackPage, type AppType } from './callback-page.ts';
 
-// Re-export for backwards compatibility
+// 为了向后兼容，把 callback-page 的导出再导一次
 export { generateCallbackPage, type AppType } from './callback-page.ts';
 
+/** 默认起始端口 */
 const START_PORT = 6477;
+/** 最大端口尝试次数 */
 const MAX_PORT_ATTEMPTS = 100;
 
+/**
+ * 回调请求负载。
+ * 目前只包含 query 参数，未来可以扩展其他请求属性。
+ */
 export interface CallbackPayload {
-  // For now just the query params. In the future we may extend this with other request properties.
   query: Record<string, string>;
 }
 
+/**
+ * 回调服务器对象：包含一个等待回调结果的 Promise、服务器 URL 和关闭函数。
+ */
 export interface CallbackServer {
   promise: Promise<CallbackPayload>;
   url: string;
-  /** Close the callback server. Call this on component unmount to clean up. */
+  /** 关闭回调服务器；组件卸载时调用以释放端口 */
   close: () => void | Promise<void>;
 }
 
 /**
- * Attempt to bind an HTTP server to the given port.
- * Resolves on success, rejects on error (e.g. EADDRINUSE).
+ * 尝试把 HTTP 服务器绑定到指定端口。
+ * 成功时 resolve，失败（如端口被占用）时 reject。
  */
 function tryBind(server: Server, port: number): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    // Use 'localhost' consistently for both the bind address and the URL
-    // that callers construct (avoids subtle mismatches between 127.0.0.1 and localhost).
+    // bind 地址和 URL 里统一用 'localhost'，避免 127.0.0.1 和 localhost 不匹配
     server.listen(port, 'localhost', () => {
       server.removeListener('error', reject);
       resolve();
@@ -36,23 +50,25 @@ function tryBind(server: Server, port: number): Promise<void> {
   });
 }
 
+/**
+ * 创建回调服务器的选项。
+ */
 export interface CreateCallbackServerOptions {
   appType?: AppType;
-  /** Deep link URL to redirect to after successful auth (e.g., craftagents://auth-complete) */
+  /** OAuth 成功后跳转的 deeplink，例如 craftagents://auth-complete */
   deeplinkUrl?: string;
-  /** Fixed port to bind to. If set, only that port is tried (no range scanning). */
+  /** 固定端口；如果设置了，只尝试这个端口，不会扫描范围 */
   port?: number;
-  /** URL paths to accept as callbacks. Default: ['/callback', '/oauth/callback']. */
+  /** 接受的回调路径；默认 ['/callback', '/oauth/callback'] */
   callbackPaths?: string[];
 }
 
 /**
- * Creates an OAuth callback server by binding directly to a port in the range
- * START_PORT .. START_PORT + MAX_PORT_ATTEMPTS - 1.
+ * 创建 OAuth 回调服务器。
  *
- * Unlike a check-then-bind approach, this eliminates the TOCTOU race condition
- * by attempting to bind the real server on each candidate port. If the port is
- * already in use (EADDRINUSE), the server is closed and the next port is tried.
+ * 直接在 START_PORT .. START_PORT + MAX_PORT_ATTEMPTS - 1 范围内尝试绑定真实服务器。
+ * 这种方式消除了“先检查再绑定”的 TOCTOU 竞态：如果端口被占用（EADDRINUSE），
+ * 关闭候选服务器并尝试下一个端口。
  */
 export async function createCallbackServer(options?: CreateCallbackServerOptions): Promise<CallbackServer> {
   const appType = options?.appType ?? 'terminal';
@@ -64,23 +80,25 @@ export async function createCallbackServer(options?: CreateCallbackServerOptions
   let resolveCallback: ((payload: CallbackPayload) => void) | null = null;
   let rejectCallback: ((error: Error) => void) | null = null;
 
+  // 构造一个 pending 的 Promise，等收到回调后 resolve
   const callbackPromise = new Promise<CallbackPayload>((resolve, reject) => {
     resolveCallback = resolve;
     rejectCallback = reject;
   });
 
-  // Build the request handler. It closes over `boundPort` which is set before
-  // any requests can arrive (the browser isn't opened until after we return).
+  // 请求处理器；boundPort 在浏览器打开之前就已经确定，所以这里可以安全闭包使用
   const requestHandler = async (req: import('http').IncomingMessage, res: import('http').ServerResponse) => {
     try {
       const url = new URL(req.url || '/', `http://localhost:${boundPort}`);
 
+      // 只接受指定回调路径，其他返回 404
       if (!allowedPaths.has(url.pathname)) {
         res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end('Not found');
         return;
       }
 
+      // 把 URLSearchParams 转成普通对象，方便后续处理
       const query: Record<string, string> = {};
       url.searchParams.forEach((value, key) => {
         query[key] = value;
@@ -90,11 +108,11 @@ export async function createCallbackServer(options?: CreateCallbackServerOptions
         query,
       };
 
-      // Check if this looks like a successful auth callback
+      // 判断回调是成功还是失败
       const hasCode = !!query.code;
       const hasError = !!query.error;
 
-      // Send a styled success/error page
+      // 返回样式化页面
       const html = generateCallbackPage({
         title: hasError ? 'Authorization Failed' : 'Authorization Complete',
         isSuccess: hasCode && !hasError,
@@ -136,7 +154,7 @@ export async function createCallbackServer(options?: CreateCallbackServerOptions
     }
   };
 
-  // Port selection: fixed port (options.port) or scan default range.
+  // 端口选择：固定端口或扫描默认范围
   const fixedPort = options?.port;
   const portStart = fixedPort ?? START_PORT;
   const portAttempts = fixedPort != null ? 1 : MAX_PORT_ATTEMPTS;
@@ -147,8 +165,7 @@ export async function createCallbackServer(options?: CreateCallbackServerOptions
 
     try {
       await tryBind(candidate, port);
-      // Bind succeeded — wire up the error handler for runtime errors
-      // and propagate them to the callback promise.
+      // 绑定成功：注册运行时错误处理器，并把错误传播给 callback promise
       server = candidate;
       boundPort = port;
       server.on('error', (err) => {
@@ -156,12 +173,12 @@ export async function createCallbackServer(options?: CreateCallbackServerOptions
       });
       break;
     } catch (err: unknown) {
-      // Port in use — close the candidate and try the next one
+      // 端口被占用：关闭候选服务器并尝试下一个
       candidate.close();
       const isAddressInUse =
         err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'EADDRINUSE';
       if (!isAddressInUse) {
-        // Unexpected error (e.g. permission denied) — propagate immediately
+        // 非占用错误（如权限不足）直接抛出
         throw err instanceof Error ? err : new Error(String(err));
       }
     }

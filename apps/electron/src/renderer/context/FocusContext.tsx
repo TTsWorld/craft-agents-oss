@@ -3,39 +3,50 @@ import { createContext, useContext, useState, useCallback, useRef, useEffect } f
 import { setCurrentZone } from '@/actions/keybinding-context'
 
 /**
- * Focus zone identifiers - ordered for Tab navigation
+ * 焦点区域（Focus Zone）上下文
+ *
+ * 把界面分成三个主要区域：sidebar（侧边栏）、navigator（导航器）、chat（聊天区）。
+ * 通过 Tab / Shift+Tab 或快捷键（如 Cmd+1/2/3）在区域间切换焦点。
+ *
+ * 同时记录“焦点意图（intent）”，让组件知道焦点是怎么过来的：
+ * 键盘导航、鼠标点击，还是代码主动设置。不同来源的默认行为不一样。
  */
+
+// 焦点区域 ID，顺序决定 Tab 切换的先后
 export type FocusZoneId = 'sidebar' | 'navigator' | 'chat'
 
 /**
- * Focus intent - describes WHY the focus changed.
- * This allows components to respond appropriately:
- * - 'keyboard': User explicitly navigated via keyboard (Cmd+1/2/3, Tab, Arrow keys)
- * - 'click': User clicked within a zone
- * - 'programmatic': Code triggered the focus change (e.g., search activation)
+ * 焦点意图：描述焦点为什么发生变化
+ * - 'keyboard'：用户用键盘主动导航（Cmd+1/2/3、Tab、方向键）
+ * - 'click'：用户在某个区域内点击
+ * - 'programmatic'：代码主动触发的焦点变化（例如激活搜索）
  */
 export type FocusIntent = 'keyboard' | 'click' | 'programmatic'
 
 /**
- * Options for focusZone calls
+ * focusZone 调用的可选参数
  */
 export interface FocusZoneOptions {
-  /** Why the focus is changing - affects default moveFocus behavior */
+  /** 焦点变化的原因，影响默认的 moveFocus 行为 */
   intent?: FocusIntent
-  /** Whether to move DOM focus to the zone. Defaults: keyboard=true, click=false, programmatic=true */
+  /** 是否把 DOM 焦点真正移到该区域；默认 keyboard=true、click=false、programmatic=true */
   moveFocus?: boolean
 }
 
+// 区域顺序数组：Tab 按这个顺序循环
 const ZONE_ORDER: FocusZoneId[] = ['sidebar', 'navigator', 'chat']
 
 interface FocusZone {
+  /** 区域 ID，决定 Tab 切换顺序 */
   id: FocusZoneId
+  /** 指向区域 DOM 节点的 ref，用于把焦点真正移过去 */
   ref: React.RefObject<HTMLElement>
-  focusFirst?: () => void // Optional: custom focus behavior
+  /** 可选：自定义焦点进入行为（例如选中列表第一项） */
+  focusFirst?: () => void
 }
 
 /**
- * Focus state - tracks both the active zone and the intent behind the change
+ * 焦点状态：同时记录当前激活区域和触发意图
  */
 interface FocusState {
   zone: FocusZoneId | null
@@ -44,21 +55,21 @@ interface FocusState {
 }
 
 interface FocusContextValue {
-  /** Currently focused zone */
+  /** 当前获得焦点的区域 */
   currentZone: FocusZoneId | null
-  /** Current focus state with intent information */
+  /** 包含意图信息的完整焦点状态 */
   focusState: FocusState
-  /** Register a zone (call on mount) */
+  /** 注册一个区域（组件挂载时调用） */
   registerZone: (zone: FocusZone) => void
-  /** Unregister a zone (call on unmount) */
+  /** 注销一个区域（组件卸载时调用） */
   unregisterZone: (id: FocusZoneId) => void
-  /** Focus a specific zone with optional intent/moveFocus control */
+  /** 聚焦指定区域，可控制意图和是否真正移动 DOM 焦点 */
   focusZone: (id: FocusZoneId, options?: FocusZoneOptions) => void
-  /** Focus next zone (Tab) */
+  /** 聚焦下一个区域（Tab） */
   focusNextZone: () => void
-  /** Focus previous zone (Shift+Tab) */
+  /** 聚焦上一个区域（Shift+Tab） */
   focusPreviousZone: () => void
-  /** Check if a zone is focused */
+  /** 判断某个区域当前是否处于聚焦状态 */
   isZoneFocused: (id: FocusZoneId) => boolean
 }
 
@@ -70,6 +81,7 @@ export function FocusProvider({ children }: { children: React.ReactNode }) {
     intent: null,
     shouldMoveDOMFocus: false,
   })
+  // 用 ref 保存所有注册的区域，避免区域注册/注销触发不必要的重渲染
   const zonesRef = useRef<Map<FocusZoneId, FocusZone>>(new Map())
 
   const registerZone = useCallback((zone: FocusZone) => {
@@ -85,7 +97,7 @@ export function FocusProvider({ children }: { children: React.ReactNode }) {
     if (!zone) return
 
     const intent = options?.intent ?? 'programmatic'
-    // Default behavior: keyboard navigation moves focus, clicks don't
+    // 默认行为：键盘导航和代码触发会真正移动焦点，鼠标点击不移动
     const shouldMoveFocus = options?.moveFocus ?? (intent === 'keyboard' || intent === 'programmatic')
 
     setFocusState({
@@ -94,19 +106,18 @@ export function FocusProvider({ children }: { children: React.ReactNode }) {
       shouldMoveDOMFocus: shouldMoveFocus,
     })
 
-    // Sync to keybinding context for when-clause evaluation
+    // 同步到快捷键上下文，这样 when-clause（快捷键条件）能根据当前区域做判断
     setCurrentZone(id)
 
-    // Only move DOM focus if explicitly requested
+    // 只有明确需要移动焦点时才操作 DOM
     if (shouldMoveFocus) {
       if (zone.focusFirst) {
         zone.focusFirst()
       } else if (zone.ref.current) {
         zone.ref.current.focus()
       }
-      // Reset shouldMoveDOMFocus after focus is moved - "consume" the intent
-      // This prevents effects from re-triggering on data changes
-      // Use setTimeout(0) to ensure subscribers see true first, then false
+      // 焦点移动完成后把 shouldMoveDOMFocus 重置为 false，避免 effect 反复触发。
+      // 先用 setTimeout(0) 让订阅者先看到 true，再变回 false。
       setTimeout(() => {
         setFocusState(prev => ({ ...prev, shouldMoveDOMFocus: false }))
       }, 0)
@@ -116,14 +127,14 @@ export function FocusProvider({ children }: { children: React.ReactNode }) {
   const focusNextZone = useCallback(() => {
     const currentIndex = focusState.zone ? ZONE_ORDER.indexOf(focusState.zone) : -1
     const nextIndex = (currentIndex + 1) % ZONE_ORDER.length
-    // Tab navigation is explicit keyboard intent - always move focus
+    // Tab 是明确的键盘意图，总是移动焦点
     focusZone(ZONE_ORDER[nextIndex], { intent: 'keyboard', moveFocus: true })
   }, [focusState.zone, focusZone])
 
   const focusPreviousZone = useCallback(() => {
     const currentIndex = focusState.zone ? ZONE_ORDER.indexOf(focusState.zone) : 0
     const prevIndex = (currentIndex - 1 + ZONE_ORDER.length) % ZONE_ORDER.length
-    // Shift+Tab navigation is explicit keyboard intent - always move focus
+    // Shift+Tab 也是明确的键盘意图，总是移动焦点
     focusZone(ZONE_ORDER[prevIndex], { intent: 'keyboard', moveFocus: true })
   }, [focusState.zone, focusZone])
 
@@ -131,11 +142,9 @@ export function FocusProvider({ children }: { children: React.ReactNode }) {
     return focusState.zone === id
   }, [focusState.zone])
 
-  // NOTE: Removed automatic focusin tracking - it caused cascading re-renders
-  // across all mounted tabs (250-780ms per focus change). Focus state now only
-  // changes via explicit focusZone() calls (keyboard shortcuts Cmd+1/2/3, Tab).
-  // Components that need to focus on session change should use session?.id as
-  // the effect dependency instead of isFocused.
+  // 注意：这里没有监听 focusin 事件来自动跟踪焦点，因为以前它会导致所有打开的标签页级联重渲染
+  //（每次焦点变化 250-780ms）。现在焦点只能通过显式调用 focusZone() 改变（快捷键 Cmd+1/2/3、Tab）。
+  // 如果组件需要在会话变化时自动聚焦，应该把 session?.id 作为 effect 依赖，而不是依赖 isFocused。
 
   const value: FocusContextValue = {
     currentZone: focusState.zone,

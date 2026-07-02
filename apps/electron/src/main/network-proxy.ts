@@ -1,9 +1,9 @@
 /**
- * Network proxy manager — configures both Node.js (undici) and Electron session proxies.
+ * network-proxy.ts —— 网络代理管理器。
  *
- * - Node side: replaces the global undici dispatcher with a ProtocolProxyDispatcher
- *   that routes HTTP/HTTPS through different ProxyAgent instances and respects NO_PROXY.
- * - Electron side: calls session.setProxy() on default + browser-pane sessions.
+ * 同时配置 Node.js（undici）和 Electron session 的代理：
+ * - Node 侧：把全局 undici dispatcher 换成 ProtocolProxyDispatcher，按协议走不同 ProxyAgent，并尊重 NO_PROXY。
+ * - Electron 侧：对默认 session 和 browser-pane 分区调用 session.setProxy()。
  */
 
 import { app, session } from 'electron';
@@ -14,12 +14,11 @@ import type { NetworkProxySettings } from '@craft-agent/shared/config/types';
 import { BROWSER_PANE_SESSION_PARTITION } from './browser-pane-manager';
 import log from './logger';
 
-// Track the current dispatcher so we can close it when reconfiguring
+// 保存当前 dispatcher，重新配置时先关闭，避免资源泄漏
 let currentProxyDispatcher: Dispatcher | null = null;
 
 /**
- * Custom undici Dispatcher that routes requests through proxy agents based on protocol,
- * bypasses proxied destinations listed in NO_PROXY rules, and falls back to a direct Agent.
+ * 自定义 undici Dispatcher：按协议选择 HTTP/HTTPS 代理、遵守 NO_PROXY、无法匹配时直连。
  */
 class ProtocolProxyDispatcher extends Dispatcher {
   private httpProxy: ProxyAgent | null;
@@ -42,12 +41,12 @@ class ProtocolProxyDispatcher extends Dispatcher {
   dispatch(opts: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandler): boolean {
     const url = typeof opts.origin === 'string' ? opts.origin : opts.origin?.toString();
 
-    // If URL matches bypass rules, go direct
+    // 如果 URL 匹配绕过规则，直接连接
     if (url && shouldBypassProxy(url, this.rules)) {
       return this.direct.dispatch(opts, handler);
     }
 
-    // Route based on protocol
+    // 按协议选择代理
     const isHttps = url?.startsWith('https:');
     const proxy = isHttps ? (this.httpsProxy ?? this.httpProxy) : this.httpProxy;
 
@@ -76,17 +75,17 @@ class ProtocolProxyDispatcher extends Dispatcher {
 }
 
 /**
- * Configure the Node.js global undici dispatcher for proxy routing.
+ * 配置 Node.js 全局 undici dispatcher 的代理路由。
  */
 function configureNodeProxy(settings: NetworkProxySettings | undefined): void {
-  // Close previous dispatcher (proxy or direct — both are tracked)
+  // 关闭之前的 dispatcher（代理或直连都会被追踪）
   if (currentProxyDispatcher) {
     currentProxyDispatcher.close().catch(() => {});
     currentProxyDispatcher = null;
   }
 
   if (!settings?.enabled || (!settings.httpProxy && !settings.httpsProxy)) {
-    // Restore a direct dispatcher and track it so next reconfigure can close it
+    // 恢复直连 dispatcher 并追踪，以便下次重新配置时可以关闭
     const direct = new Agent();
     setGlobalDispatcher(direct);
     currentProxyDispatcher = direct;
@@ -104,8 +103,8 @@ function configureNodeProxy(settings: NetworkProxySettings | undefined): void {
 }
 
 /**
- * Configure Electron session proxies (default session + browser-pane partition).
- * Requires app to be ready.
+ * 配置 Electron session 代理（默认 session + browser-pane 分区）。
+ * 需要 app 已 ready。
  */
 async function configureElectronProxy(settings: NetworkProxySettings | undefined): Promise<void> {
   if (!app.isReady()) return;
@@ -146,8 +145,8 @@ function buildElectronProxyConfig(settings: NetworkProxySettings): Electron.Prox
 }
 
 /**
- * Read persisted proxy settings and apply to both Node and Electron.
- * Safe to call before app.whenReady() — Electron session setup is skipped until ready.
+ * 读取持久化的代理设置并同时应用到 Node 和 Electron。
+ * app.whenReady() 之前调用也安全：Electron session 部分会等到 ready 后再执行。
  */
 export async function applyConfiguredProxySettings(): Promise<void> {
   const settings = getNetworkProxySettings();
@@ -166,7 +165,7 @@ export async function applyConfiguredProxySettings(): Promise<void> {
 }
 
 /**
- * Persist new proxy settings and apply immediately.
+ * 持久化新的代理设置并立即应用。
  */
 export async function updateConfiguredProxySettings(settings: NetworkProxySettings): Promise<void> {
   setNetworkProxySettings(settings);

@@ -1,14 +1,11 @@
 /**
- * PanelResizeSash
+ * PanelResizeSash - 分屏视图中相邻内容面板之间的细拖拽分隔条。
  *
- * A thin drag handle between adjacent content panels in the split view.
- * Reuses the existing resize gradient style for visual consistency
- * with the sidebar/navigator sash handles.
- *
- * - Drag to resize the two adjacent panels
- * - Double-click to reset both panels to equal share of their combined proportion
- * - Enforces PANEL_MIN_WIDTH on both sides during drag
- * - Measures sibling panel widths from the DOM on drag start (no width props needed)
+ * 复用了侧边栏/导航器分隔条的渐变样式，保持视觉一致。
+ * - 拖拽调整两个相邻面板的宽度
+ * - 双击恢复为等分（基于它们合并后的 proportion）
+ * - 拖拽时强制两侧都不小于 PANEL_MIN_WIDTH
+ * - 从 DOM 中测量相邻面板的宽度，不需要外部传入 width prop
  */
 
 import { useCallback, useRef } from 'react'
@@ -26,12 +23,13 @@ import {
 export { PANEL_MIN_WIDTH }
 
 interface PanelResizeSashProps {
-  /** Index of the panel to the left of this sash (in panelStack) */
+  /** 分隔条左侧面板在 panelStack 中的下标 */
   leftIndex: number
-  /** Index of the panel to the right of this sash (in panelStack) */
+  /** 分隔条右侧面板在 panelStack 中的下标 */
   rightIndex: number
 }
 
+/** PanelResizeSash - 分屏面板拖拽分隔条 */
 export function PanelResizeSash({
   leftIndex,
   rightIndex,
@@ -51,9 +49,8 @@ export function PanelResizeSash({
     const sashEl = ref.current
     if (!sashEl) return
 
-    // Measure sibling panel widths from the DOM
-    // The sash's previousElementSibling is the left panel div,
-    // and nextElementSibling is the right panel div.
+    // 从 DOM 测量相邻面板的宽度：
+    // sash 的 previousElementSibling 是左层面板 div，nextElementSibling 是右层面板 div。
     const leftPanel = sashEl.previousElementSibling as HTMLElement | null
     const rightPanel = sashEl.nextElementSibling as HTMLElement | null
     if (!leftPanel || !rightPanel) return
@@ -70,7 +67,7 @@ export function PanelResizeSash({
       const delta = e.clientX - startXRef.current
       const combinedWidth = startLeftWidthRef.current + startRightWidthRef.current
 
-      // Compute new widths, clamped to min
+      // 计算新宽度并限制最小值
       let newLeftWidth = startLeftWidthRef.current + delta
       let newRightWidth = startRightWidthRef.current - delta
 
@@ -83,7 +80,7 @@ export function PanelResizeSash({
         newLeftWidth = combinedWidth - PANEL_MIN_WIDTH
       }
 
-      // Convert pixel ratio to proportions, preserving the combined proportion
+      // 把像素比例转换回 proportion，同时保持合并后的 proportion 不变
       const combined = combinedProportionRef.current
       const total = newLeftWidth + newRightWidth
       const leftProportion = (newLeftWidth / total) * combined
@@ -106,7 +103,7 @@ export function PanelResizeSash({
   }, [leftIndex, rightIndex, panelStack, resizePanels, handlers, ref])
 
   const handleDoubleClick = useCallback(() => {
-    // Reset the two adjacent panels to equal share of their combined proportion
+    // 双击：把相邻两个面板恢复为合并 proportion 的等分
     const left = panelStack[leftIndex]
     const right = panelStack[rightIndex]
     if (!left || !right) return
@@ -130,7 +127,7 @@ export function PanelResizeSash({
       onMouseLeave={handlers.onMouseLeave}
       onDoubleClick={handleDoubleClick}
     >
-      {/* Touch area — wider than visible line for easier grabbing */}
+      {/* 触摸/点击热区：比可见线条更宽，方便拖拽 */}
       <div
         className="absolute inset-y-0 flex justify-center cursor-col-resize"
         style={{ left: -PANEL_SASH_HALF_HIT_WIDTH, right: -PANEL_SASH_HALF_HIT_WIDTH }}

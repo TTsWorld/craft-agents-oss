@@ -1,12 +1,12 @@
 /**
- * Label Storage
+ * 标签存储
  *
- * Filesystem-based storage for workspace label configurations.
- * Labels are stored at {workspaceRootPath}/labels/config.json
+ * 基于文件系统的 workspace 标签配置存储。
+ * 标签存储在 {workspaceRootPath}/labels/config.json。
  *
- * Hierarchy: Labels form a nested JSON tree. IDs are simple slugs.
- * New workspaces are seeded with default labels (Development + Content groups).
- * Labels are visual by color only (colored circles in the UI).
+ * 层级：标签是嵌套 JSON 树，ID 为简单 slug。
+ * 新 workspace 会用默认标签做种子（Development + Content 两组）。
+ * 标签在 UI 中只通过颜色（彩色圆点）呈现。
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
@@ -21,13 +21,13 @@ const LABEL_CONFIG_DIR = 'labels';
 const LABEL_CONFIG_FILE = 'labels/config.json';
 
 /**
- * Get default label configuration.
- * Provides a starter set of labels organized into two complementary color families:
- * - Development (blue family): Code, Bug, Automation
- * - Content (purple family): Writing, Research, Design
- * Plus flat valued labels: Priority (number), Project (string)
+ * 获取默认标签配置。
+ * 提供一组入门标签，分为两个互补色系：
+ * - Development（蓝色系）：Code、Bug、Automation
+ * - Content（紫色系）：Writing、Research、Design
+ * 再加两个带值标签：Priority（number）、Project（string）
  *
- * Children use hue-shifted shades of their parent color to show visual hierarchy.
+ * 子标签使用父标签色相偏移后的色调，以展示视觉层级。
  */
 export function getDefaultLabelConfig(): WorkspaceLabelConfig {
   return {
@@ -41,17 +41,17 @@ export function getDefaultLabelConfig(): WorkspaceLabelConfig {
           {
             id: 'code',
             name: 'Code',
-            color: { light: '#4F46E5', dark: '#818CF8' }, // indigo shift
+            color: { light: '#4F46E5', dark: '#818CF8' }, // 靛蓝偏移
           },
           {
             id: 'bug',
             name: 'Bug',
-            color: { light: '#0EA5E9', dark: '#38BDF8' }, // sky shift
+            color: { light: '#0EA5E9', dark: '#38BDF8' }, // 天蓝偏移
           },
           {
             id: 'automation',
             name: 'Automation',
-            color: { light: '#06B6D4', dark: '#22D3EE' }, // cyan shift
+            color: { light: '#06B6D4', dark: '#22D3EE' }, // 青色偏移
           },
         ],
       },
@@ -63,17 +63,17 @@ export function getDefaultLabelConfig(): WorkspaceLabelConfig {
           {
             id: 'writing',
             name: 'Writing',
-            color: { light: '#7C3AED', dark: '#C4B5FD' }, // deeper violet
+            color: { light: '#7C3AED', dark: '#C4B5FD' }, // 深紫罗兰
           },
           {
             id: 'research',
             name: 'Research',
-            color: { light: '#A855F7', dark: '#C084FC' }, // lighter purple
+            color: { light: '#A855F7', dark: '#C084FC' }, // 浅紫色
           },
           {
             id: 'design',
             name: 'Design',
-            color: { light: '#D946EF', dark: '#E879F9' }, // fuchsia shift
+            color: { light: '#D946EF', dark: '#E879F9' }, // 紫红偏移
           },
         ],
       },
@@ -94,15 +94,15 @@ export function getDefaultLabelConfig(): WorkspaceLabelConfig {
 }
 
 /**
- * Load workspace label configuration.
- * Returns empty config if no file exists or parsing fails.
- * Auto-migrates old Tailwind color format to EntityColor on first load.
+ * 加载 workspace 的标签配置。
+ * 若文件不存在或解析失败，返回默认配置。
+ * 首次加载时自动把旧的 Tailwind 颜色格式迁移为 EntityColor。
  */
 export function loadLabelConfig(workspaceRootPath: string): WorkspaceLabelConfig {
   const configPath = join(workspaceRootPath, LABEL_CONFIG_FILE);
 
-  // If no config file exists, seed with defaults and persist to disk.
-  // This ensures existing workspaces (created before default labels existed) get populated.
+  // 如果配置文件不存在，用默认值做种子并落盘。
+  // 这样早期创建的 workspace 也能自动获得默认标签。
   if (!existsSync(configPath)) {
     const defaults = getDefaultLabelConfig();
     debug('[loadLabelConfig] No config found, seeding with default labels');
@@ -111,10 +111,12 @@ export function loadLabelConfig(workspaceRootPath: string): WorkspaceLabelConfig
   }
 
   try {
+    // readJsonFileSync<WorkspaceLabelConfig> 中的 <T> 是 TypeScript 泛型，
+    // 类似 Go 的类型参数，告诉函数返回什么类型。
     const config = readJsonFileSync<WorkspaceLabelConfig>(configPath);
 
-    // Auto-migrate old Tailwind class colors (e.g., "text-accent") to new EntityColor format.
-    // If migration occurs, write the updated config back to disk.
+    // 自动迁移旧 Tailwind 类名颜色（如 "text-accent"）到新 EntityColor 格式。
+    // 如果发生迁移，把更新后的配置写回磁盘。
     const migrated = migrateLabelColors(config);
     if (migrated) {
       debug('[loadLabelConfig] Migrated old color format, writing back');
@@ -129,8 +131,8 @@ export function loadLabelConfig(workspaceRootPath: string): WorkspaceLabelConfig
 }
 
 /**
- * Save workspace label configuration to disk.
- * Creates the labels directory if missing.
+ * 保存 workspace 标签配置到磁盘。
+ * 如果 labels 目录不存在则自动创建。
  */
 export function saveLabelConfig(
   workspaceRootPath: string,
@@ -152,8 +154,8 @@ export function saveLabelConfig(
 }
 
 /**
- * Get the label tree (root-level labels with nested children).
- * Primary accessor for the UI — returns the tree structure as-is from config.
+ * 获取标签树（含嵌套 children 的顶层标签）。
+ * UI 主要使用这个访问器，直接返回配置中的树结构。
  */
 export function listLabels(workspaceRootPath: string): LabelConfig[] {
   const config = loadLabelConfig(workspaceRootPath);
@@ -161,8 +163,8 @@ export function listLabels(workspaceRootPath: string): LabelConfig[] {
 }
 
 /**
- * Get all labels as a flat list (tree flattened depth-first).
- * Useful for lookups, session label validation, and non-hierarchical display.
+ * 获取所有标签的扁平列表（按深度优先展开树）。
+ * 适用于查找、会话标签校验、非层级展示等场景。
  */
 export function listLabelsFlat(workspaceRootPath: string): LabelConfig[] {
   const config = loadLabelConfig(workspaceRootPath);
@@ -170,8 +172,8 @@ export function listLabelsFlat(workspaceRootPath: string): LabelConfig[] {
 }
 
 /**
- * Get a single label by ID (searches the entire tree).
- * Returns null if not found.
+ * 根据 ID 获取单个标签（搜索整棵树）。
+ * 找不到时返回 null。
  */
 export function getLabel(
   workspaceRootPath: string,
@@ -182,7 +184,7 @@ export function getLabel(
 }
 
 /**
- * Check if a label ID exists in this workspace (searches entire tree)
+ * 检查某个标签 ID 是否存在于该 workspace 中（搜索整棵树）。
  */
 export function isValidLabelId(
   workspaceRootPath: string,
@@ -193,14 +195,12 @@ export function isValidLabelId(
 }
 
 /**
- * Validate label ID format.
- * Simple slug: lowercase alphanumeric + hyphens, no leading/trailing hyphens.
- * Examples: "bug", "frontend", "my-label"
+ * 校验标签 ID 格式。
+ * 简单 slug：小写字母、数字和连字符，不能有前导/尾随连字符。
+ * 示例："bug"、"frontend"、"my-label"
  */
 export function isValidLabelIdFormat(labelId: string): boolean {
   if (!labelId) return false;
   const SLUG_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
   return SLUG_PATTERN.test(labelId);
 }
-
-

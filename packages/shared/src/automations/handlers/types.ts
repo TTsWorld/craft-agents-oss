@@ -1,65 +1,65 @@
 /**
- * AutomationHandler Interface and Common Types
+ * AutomationHandler 接口与公共类型
  *
- * Defines the contract for all automation handlers in the Event Bus system.
- * Each handler:
- * - Subscribes to relevant events on the bus
- * - Executes its specific logic
- * - Is self-contained and testable in isolation
+ * 定义事件总线系统中所有 automation handler 的契约。
+ * 每个 handler：
+ * - 在总线上订阅感兴趣的事件（类似 Go 里给 http.ServeMux 注册处理器）
+ * - 执行自己的业务逻辑
+ * - 自包含，可单独测试
  */
 
 import type { EventBus, BaseEventPayload } from '../event-bus.ts';
 import type { AutomationEvent, AutomationsConfig, AutomationMatcher, PendingPrompt } from '../types.ts';
 
 // ============================================================================
-// Handler Interface
+// Handler 接口
 // ============================================================================
 
 /**
- * Base interface for all automation handlers.
- * Handlers subscribe to events and process them independently.
+ * 所有 automation handler 的基础接口。
+ * handler 订阅事件并独立处理。
  */
 export interface AutomationHandler {
-  /** Subscribe to events on the bus */
+  /** 在事件总线上订阅事件 */
   subscribe(bus: EventBus): void;
 
-  /** Clean up resources and unsubscribe from events */
+  /** 清理资源并取消订阅 */
   dispose(): void | Promise<void>;
 }
 
 // ============================================================================
-// Handler Options
+// Handler 选项
 // ============================================================================
 
-/** Options for creating a PromptHandler */
+/** 创建 PromptHandler 所需的选项 */
 export interface PromptHandlerOptions {
   /** Workspace ID */
   workspaceId: string;
-  /** Workspace root path for history file location */
+  /** 历史文件存放的 workspace 根目录 */
   workspaceRootPath: string;
-  /** Session ID (if executing in a session context) */
+  /** 当前会话 ID（如果在会话上下文中执行） */
   sessionId?: string;
-  /** Called when prompts are ready to be executed */
+  /** 提示词准备好后通过此回调交给调用方执行 */
   onPromptsReady?: (prompts: PendingPrompt[]) => void;
-  /** Called when a prompt execution fails */
+  /** 提示词执行失败时的回调 */
   onError?: (event: AutomationEvent, error: Error) => void;
 }
 
-/** Options for creating an EventLogHandler */
+/** 创建 EventLogHandler 所需的选项 */
 export interface EventLogHandlerOptions {
-  /** Workspace root path for log file location */
+  /** 日志文件存放的 workspace 根目录 */
   workspaceRootPath: string;
-  /** Workspace ID for log entries */
+  /** 日志条目中的 workspace ID */
   workspaceId: string;
-  /** Called when logging fails after retries */
+  /** 日志写入失败（重试后仍失败）时的回调 */
   onEventLost?: (events: string[], error: Error) => void;
 }
 
 // ============================================================================
-// Handler Result Types
+// Handler 结果类型
 // ============================================================================
 
-/** Result from prompt processing */
+/** prompt 处理结果 */
 export interface PromptProcessingResult {
   event: AutomationEvent;
   prompts: PendingPrompt[];
@@ -67,17 +67,17 @@ export interface PromptProcessingResult {
 }
 
 // ============================================================================
-// Config Provider Interface
+// 配置提供接口
 // ============================================================================
 
 /**
- * Interface for getting automations configuration.
- * Allows handlers to be decoupled from config loading.
+ * 获取自动化配置的接口。
+ * 让 handler 与配置加载逻辑解耦，方便测试时注入假配置。
  */
 export interface AutomationsConfigProvider {
-  /** Get the current automations configuration */
+  /** 获取当前自动化配置 */
   getConfig(): AutomationsConfig | null;
 
-  /** Get matchers for a specific event */
+  /** 获取某个事件下配置的所有 matcher */
   getMatchersForEvent(event: AutomationEvent): AutomationMatcher[];
 }

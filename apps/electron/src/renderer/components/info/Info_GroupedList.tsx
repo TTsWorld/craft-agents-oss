@@ -1,8 +1,8 @@
 /**
  * Info_GroupedList
  *
- * Lists with colored group headers (e.g., for MCP tools display).
- * Supports loading, error, and empty states.
+ * 带彩色分组标题的列表，常用于展示 MCP 工具分组。
+ * 支持加载中、错误、空数据三种状态。
  */
 
 import * as React from 'react'
@@ -30,22 +30,22 @@ const groupHeaderVariants = cva(
 
 export interface Info_GroupedListProps {
   children: React.ReactNode
-  /** Show loading spinner */
+  /** 是否显示加载中 spinner */
   loading?: boolean
-  /** Show error message */
+  /** 错误提示文本 */
   error?: string
-  /** Show empty message when no groups have items */
+  /** 所有分组都为空时显示的提示文本 */
   empty?: string
   className?: string
 }
 
 export interface Info_GroupedListGroupProps {
   children: React.ReactNode
-  /** Group header label */
+  /** 分组标题文本 */
   label: string
-  /** Header color variant */
+  /** 标题颜色变体 */
   variant: 'success' | 'info' | 'warning' | 'muted'
-  /** Optional item count */
+  /** 可选的条目数量，会显示在标题右侧 */
   count?: number
   className?: string
 }
@@ -83,7 +83,7 @@ function Info_GroupedListRoot({
     )
   }
 
-  // Check if there are any items
+  // 检查是否存在至少一个非空分组
   const hasItems = React.Children.toArray(children).some((child) => {
     if (React.isValidElement(child) && child.type === Info_GroupedListGroup) {
       return React.Children.count(child.props.children) > 0

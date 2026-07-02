@@ -1,7 +1,23 @@
+/**
+ * runtime-config.ts
+ *
+ * 会话运行时的“配置指纹”工具模块。
+ *
+ * 在 Agent 系统里，一个会话通常对应一个长期运行的 SDK 子进程。
+ * 当用户修改模型、baseUrl、自定义 endpoint 等字段时，我们通过比较签名决定：
+ * - 热更新：改动只影响运行时，可通过 IPC 通知现有子进程；
+ * - 重建：改动涉及 provider / authType / slug / piAuthProvider 等 credential 路由，
+ *   必须 dispose 旧子进程并重新创建。
+ *
+ * 此外，`filterAttachmentsForModelInput` 在发送前过滤图片附件，避免把图片传给
+ * 不支持 vision 的模型。
+ */
+
 import type { AgentProvider, LlmAuthType } from '@craft-agent/shared/agent/backend'
 import { isCompatProvider, modelSupportsImages, type LlmConnection } from '@craft-agent/shared/config'
 import type { FileAttachment } from '@craft-agent/shared/protocol'
 
+/** 构建后端运行时签名的输入参数。 */
 export interface BackendRuntimeSignatureInput {
   connection: LlmConnection | null
   provider: AgentProvider
@@ -9,10 +25,11 @@ export interface BackendRuntimeSignatureInput {
   resolvedModel: string
 }
 
+/** 模型输入附件过滤结果。 */
 export interface ModelAttachmentFilterResult {
-  /** Attachments safe to pass to the model, or undefined when none remain. */
+  /** 可安全传递给模型的附件，若无剩余则返回 undefined。 */
   attachments?: FileAttachment[]
-  /** Image attachments intentionally omitted from the model payload. */
+  /** 有意从模型负载中省略的图像附件。 */
   omittedImages: FileAttachment[]
 }
 
@@ -34,18 +51,15 @@ function normalizeCustomModels(connection: LlmConnection): Array<Record<string, 
 }
 
 /**
- * Build a stable signature over the fields that the `update_runtime_config`
- * IPC envelope cannot safely propagate to a live subprocess. When this
- * signature drifts, the in-place refresh path must be skipped in favour of
- * a clean dispose + recreate so the new auth/provider routing actually takes
- * effect.
+ * 对 `update_runtime_config` IPC 信封无法安全传播到实时子进程的字段构建稳定签名。
+ * 当此签名发生变化时，必须跳过原地刷新路径，转而执行干净的 dispose + recreate，
+ * 以使新的认证/提供者路由实际生效。
  *
- * Concretely, `update_runtime_config` (see `pi-agent.ts:requestRuntimeConfigUpdate`
- * and the matching handler at `pi-agent-server/src/index.ts:handleUpdateRuntimeConfig`)
- * carries `model, providerType, authType, baseUrl, customEndpoint, customModels` —
- * but NOT `piAuthProvider`, and switching `slug`/`providerType`/`authType` mid-life
- * pulls in credential routing and provider-registry state the subprocess doesn't
- * fully reset on a runtime update.
+ * 具体来说，`update_runtime_config`（参见 `pi-agent.ts:requestRuntimeConfigUpdate`
+ * 及 `pi-agent-server/src/index.ts:handleUpdateRuntimeConfig` 中的对应处理程序）
+ * 携带 `model, providerType, authType, baseUrl, customEndpoint, customModels`——
+ * 但不包含 `piAuthProvider`，并且在生命周期中途切换 `slug`/`providerType`/`authType`
+ * 会引入凭据路由和提供者注册表状态，而子进程在运行时更新时不会完全重置这些状态。
  */
 export function buildRestartRequiredSignature(input: BackendRuntimeSignatureInput): string {
   const { connection, provider, authType } = input
@@ -59,8 +73,8 @@ export function buildRestartRequiredSignature(input: BackendRuntimeSignatureInpu
 }
 
 /**
- * Build a stable signature for config fields that affect an already-created
- * backend runtime. Metadata such as `lastUsedAt` is intentionally omitted.
+ * 对影响已创建后端运行时的配置字段构建稳定签名。
+ * 有意省略 `lastUsedAt` 等元数据。
  */
 export function buildBackendRuntimeSignature(input: BackendRuntimeSignatureInput): string {
   const { connection, provider, authType, resolvedModel } = input
@@ -97,14 +111,14 @@ export function buildBackendRuntimeSignature(input: BackendRuntimeSignatureInput
   }))
 }
 
+/** 判断一个附件是否为图片（按 type 或 mimeType 判定）。 */
 export function isImageAttachment(attachment: Pick<FileAttachment, 'type' | 'mimeType'>): boolean {
   return attachment.type === 'image' || attachment.mimeType?.startsWith('image/') === true
 }
 
 /**
- * Enforce saved custom-endpoint image capability at send time. The session can
- * still persist/display image attachments, but they are not passed to text-only
- * models even if an older subprocess has stale vision-capable registry state.
+ * 在发送时强制使用已保存的自定义端点图像能力。会话仍可持久化/显示图像附件，
+ * 但即使旧子进程具有过时的视觉能力注册表状态，这些附件也不会传递给纯文本模型。
  */
 export function filterAttachmentsForModelInput(
   attachments: FileAttachment[] | undefined,

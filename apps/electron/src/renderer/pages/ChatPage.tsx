@@ -1,8 +1,14 @@
 /**
  * ChatPage
  *
- * Displays a single session's chat with a consistent PanelHeader.
- * Extracted from MainContentPanel for consistency with other pages.
+ * 单个 session 的聊天页面，使用统一的 PanelHeader。
+ * 从 MainContentPanel 抽离出来，与其他页面保持一致的页面化结构。
+ *
+ * 主要职责：
+ * - 加载并显示 session 消息
+ * - 管理输入草稿、附件、pending permission/credential
+ * - 处理标题菜单动作（重命名、星标、归档、删除、分享等）
+ * - 向 ChatDisplay 注入所需的所有回调与状态
  */
 
 import * as React from 'react'
@@ -27,16 +33,17 @@ import { deriveSessionMessagesLoadState, formatSessionLoadFailure } from '@/lib/
 import { ensureSessionMessagesLoadedAtom, forceSessionMessagesReloadAtom, loadedSessionsAtom, sessionMetaMapAtom } from '@/atoms/sessions'
 import { kanbanEditorTargetAtom } from '@/atoms/kanban'
 import { getSessionTitle } from '@/utils/session'
-// Model resolution: connection.defaultModel (no hardcoded defaults)
+// 模型解析：以 connection.defaultModel 为准，不硬编码默认模型
 import { resolveEffectiveConnectionSlug, isSessionConnectionUnavailable } from '@config/llm-connections'
 
+/** ChatPageProps：组件 props 类型定义 */
 export interface ChatPageProps {
   sessionId: string
 }
 
 const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   const { t } = useTranslation()
-  // Diagnostic: mark when component runs
+  // 性能诊断：记录组件运行时刻。
   React.useLayoutEffect(() => {
     rendererPerf.markSessionSwitch(sessionId, 'panel.mounted')
   }, [sessionId])
@@ -82,25 +89,25 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     isFocusedPanel,
   } = useAppShellContext()
 
-  // Use the unified session options hook for clean access
+  // 使用统一的 session 选项 hook，简化对当前 session 设置的访问。
   const {
     options: sessionOpts,
     setOption,
     setPermissionMode,
   } = useSessionOptionsFor(sessionId)
 
-  // Use per-session atom for isolated updates
+  // 使用 per-session atom 读取 session 数据，更新是隔离的。
   const session = useSessionData(sessionId)
 
-  // Track if messages are loaded for this session (for lazy loading)
+  // 追踪当前 session 的消息是否已加载（用于懒加载）。
   const loadedSessions = useAtomValue(loadedSessionsAtom)
   const messagesLoaded = loadedSessions.has(sessionId)
 
-  // Check if session exists in metadata (for loading state detection)
+  // 检查 session 是否存在于元数据中（用于加载状态检测）。
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
   const sessionMeta = sessionMetaMap.get(sessionId)
 
-  // Fallback: ensure messages are loaded when session is viewed
+  // 兜底：当用户查看某个 session 时确保消息已加载。
   const ensureMessagesLoaded = useSetAtom(ensureSessionMessagesLoadedAtom)
   const forceMessagesReload = useSetAtom(forceSessionMessagesReloadAtom)
   const [messagesLoadError, setMessagesLoadError] = React.useState<string | null>(null)
@@ -175,7 +182,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     loadError: messagesLoadError,
   }), [session, sessionMeta, messagesLoaded, messagesLoadError])
 
-  // Perf: Mark when session data is available
+  // 性能：标记 session 数据可用。
   const sessionLoadedMarkedRef = React.useRef<string | null>(null)
   React.useLayoutEffect(() => {
     if (session && sessionLoadedMarkedRef.current !== sessionId) {
@@ -184,7 +191,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     }
   }, [sessionId, session])
 
-  // Track window focus state for marking session as read when app regains focus
+  // 追踪窗口聚焦状态，用于应用重新获得焦点时标记 session 已读。
   const [isWindowFocused, setIsWindowFocused] = React.useState(true)
   React.useEffect(() => {
     window.electronAPI.getWindowFocusState().then(setIsWindowFocused)
@@ -192,11 +199,11 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     return cleanup
   }, [])
 
-  // Track which session user is viewing (for unread state machine).
-  // This tells main process user is looking at this session, so:
-  // 1. If not processing → clear hasUnread immediately
-  // 2. If processing → when it completes, main process will clear hasUnread
-  // The main process handles all the logic; we just report viewing state.
+  // 追踪用户正在查看哪个 session（用于未读状态机）。
+  // 这会通知 main 进程用户正在看该 session：
+  // 1. 如果不在处理中 → 立即清除 hasUnread
+  // 2. 如果在处理中 → 等完成后 main 进程再清除 hasUnread
+  // main 进程负责全部逻辑，这里只上报“正在查看”状态。
   React.useEffect(() => {
     if (session && isWindowFocused && isFocusedPanel !== false) {
       onSetActiveViewingSession(session.id)
@@ -204,25 +211,23 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id, isWindowFocused, isFocusedPanel, onSetActiveViewingSession])
 
-  // Get pending permission and credential for this session
+  // 获取当前 session 待处理的权限请求和凭证请求。
   const pendingPermission = usePendingPermission(sessionId)
   const pendingCredential = usePendingCredential(sessionId)
 
-  // Track draft value for this session
+  // 当前 session 的输入草稿值。
   const [inputValue, setInputValue] = React.useState(() => coerceInputText(getDraft(sessionId)))
   const inputValueRef = React.useRef(inputValue)
   inputValueRef.current = inputValue
 
-  // Re-sync from parent when session changes
+  // session 切换时从父组件重新同步草稿。
   React.useEffect(() => {
     setInputValue(coerceInputText(getDraft(sessionId)))
   }, [getDraft, sessionId])
 
-  // Sync when draft is set externally (e.g., from notifications or shortcuts)
-  // PERFORMANCE NOTE: This bounded polling (max 10 attempts × 50ms = 500ms)
-  // handles external draft injection. Drafts use a ref for typing performance,
-  // so they're not directly reactive. This polling only runs on session switch,
-  // not continuously. Alternative: Add a Jotai atom for draft changes.
+  // 当草稿被外部设置时同步（例如从通知或快捷键注入）。
+  // 性能说明：采用有界轮询（最多 10 次 × 50ms = 500ms）。草稿使用 ref 存储以优化输入性能，
+  // 因此不具备直接响应性。该轮询只在 session 切换时运行，不会持续运行。
   React.useEffect(() => {
     let attempts = 0
     const maxAttempts = 10
@@ -241,7 +246,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     return () => clearInterval(interval)
   }, [sessionId, getDraft])
 
-  // Listen for restore-input events (queued messages restored to input on abort)
+  // 监听 restore-input 事件：中断后把已排队消息恢复到输入框。
   React.useEffect(() => {
     const handler = (e: Event) => {
       const { sessionId: targetId, text } = (e as CustomEvent).detail ?? {}
@@ -262,9 +267,9 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     onInputChange(sessionId, nextText)
   }, [sessionId, onInputChange])
 
-  // Attachments draft state — hydrated async from persisted refs on session switch.
-  // `[]` is the safe default while hydration is in flight; FreeFormInput seeds its
-  // local state from this prop and swaps in the restored list when ready.
+  // 附件草稿状态：session 切换时异步从持久化引用中恢复。
+  // 恢复期间用 `[]` 作为安全默认值；FreeFormInput 先用该 prop 初始化本地状态，
+  // 等恢复完成后再替换为真实附件列表。
   const [attachmentsValue, setAttachmentsValue] = React.useState<import('../../shared/types').FileAttachment[]>([])
 
   React.useEffect(() => {
@@ -281,34 +286,34 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     onAttachmentsChange(sessionId, attachments)
   }, [sessionId, onAttachmentsChange])
 
-  // Session model change handler - persists per-session model and connection
+  // session 模型变更处理：持久化当前 session 的模型和连接。
   const handleModelChange = React.useCallback((model: string, connection?: string) => {
     if (activeWorkspaceId) {
       window.electronAPI.setSessionModel(sessionId, activeWorkspaceId, model, connection)
     }
   }, [sessionId, activeWorkspaceId])
 
-  // Session connection change handler - can only change before first message
+  // session 连接变更处理：通常只能在第一条消息前修改。
   const handleConnectionChange = React.useCallback(async (connectionSlug: string) => {
     try {
       await window.electronAPI.sessionCommand(sessionId, { type: 'setConnection', connectionSlug })
     } catch (error) {
-      // Connection change may fail if session already started or connection is invalid
+      // 如果 session 已开始或连接无效，修改可能失败。
       console.error('Failed to change connection:', error)
     }
   }, [sessionId])
 
-  // Check if session's locked connection has been removed
+  // 检查 session 锁定的连接是否已被移除。
   const connectionUnavailable = React.useMemo(() =>
     isSessionConnectionUnavailable(session?.llmConnection, llmConnections),
     [session?.llmConnection, llmConnections]
   )
 
-  // Effective model for this session (session-specific or global fallback)
+  // 当前 session 实际使用的模型（session 特定 或 全局兜底）。
   const effectiveModel = React.useMemo(() => {
     if (session?.model) return session.model
 
-    // When connection is unavailable, don't resolve through a different connection
+    // 连接不可用时，不要 fallback 到其他连接，避免用户预期外的模型切换。
     if (connectionUnavailable) return session?.model ?? ''
 
     const connectionSlug = resolveEffectiveConnectionSlug(
@@ -319,7 +324,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     return connection?.defaultModel ?? ''
   }, [session?.id, session?.model, session?.llmConnection, workspaceDefaultLlmConnection, llmConnections, connectionUnavailable])
 
-  // Working directory for this session
+  // 当前 session 的工作目录。
   const workingDirectory = session?.workingDirectory
   const activeWorkspace = React.useMemo(
     () => workspaces.find((w) => w.id === activeWorkspaceId) || null,
@@ -332,8 +337,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
 
   const handleOpenFile = React.useCallback(
     async (path: string) => {
-      // Resolve bare relative paths against session working directory,
-      // or workspace root as a fallback when workingDirectory is not set.
+      // 把裸相对路径解析为相对于 session 工作目录，工作目录未设置时再回退到 workspace 根目录。
       const resolved = (() => {
         if (path.startsWith('/') || path.startsWith('~/')) return path
 
@@ -345,9 +349,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
         return `${cleanedBase}/${cleanedPath}`
       })()
 
-      // Smart fallback for missing files in AI output:
-      // if the exact path doesn't exist, search nearby for same basename
-      // (e.g. markdown/linkify.test.ts -> markdown/__tests__/linkify.test.ts).
+      // 对 AI 输出中缺失文件做智能兜底：如果精确路径不存在，就在附近搜索同名文件。
+      // 例如 markdown/linkify.test.ts 可能实际位于 markdown/__tests__/linkify.test.ts。
       if (resolved.startsWith('/')) {
         const lastSlash = resolved.lastIndexOf('/')
         if (lastSlash > 0 && lastSlash < resolved.length - 1) {
@@ -368,7 +371,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
               return
             }
           } catch {
-            // Search fallback is best-effort; proceed with original resolved path.
+            // 搜索是尽力而为，失败时仍使用原解析路径
           }
         }
       }
@@ -385,7 +388,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     [onOpenUrl]
   )
 
-  // Perf: Mark when data is ready
+  // 性能：标记数据就绪。
   const dataReadyMarkedRef = React.useRef<string | null>(null)
   React.useLayoutEffect(() => {
     if (messageLoadState.messagesReady && session && dataReadyMarkedRef.current !== sessionId) {
@@ -394,7 +397,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     }
   }, [sessionId, messageLoadState.messagesReady, session])
 
-  // Perf: Mark render complete after paint
+  // 性能：绘制完成后标记渲染完成。
   React.useEffect(() => {
     if (session) {
       const rafId = requestAnimationFrame(() => {
@@ -404,8 +407,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     }
   }, [sessionId, session])
 
-  // Get display title for header - use getSessionTitle for consistent fallback logic with SessionList
-  // Priority: name > first user message > preview > "New chat"
+  // 标题栏展示标题，使用 getSessionTitle 保持与 SessionList 一致的兜底逻辑。
+  // 优先级：name > 第一条用户消息 > preview > "New chat"
   const displayTitle = session ? getSessionTitle(session) : (sessionMeta ? getSessionTitle(sessionMeta) : t('chat.session'))
   const isFlagged = session?.isFlagged || sessionMeta?.isFlagged || false
   const isArchived = session?.isArchived || sessionMeta?.isArchived || false
@@ -415,14 +418,14 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   const hasUnreadMessages = sessionMeta
     ? !!(sessionMeta.lastFinalMessageId && sessionMeta.lastFinalMessageId !== sessionMeta.lastReadMessageId)
     : false
-  // Use isAsyncOperationOngoing for shimmer effect (sharing, updating share, revoking, title regeneration)
+  // isAsyncOperationOngoing 用于 shimmer 效果（分享、更新分享、撤销、标题重生成等异步操作）。
   const isAsyncOperationOngoing = session?.isAsyncOperationOngoing || sessionMeta?.isAsyncOperationOngoing || false
 
-  // Rename dialog state
+  // 重命名对话框状态
   const [renameDialogOpen, setRenameDialogOpen] = React.useState(false)
   const [renameName, setRenameName] = React.useState('')
 
-  // Session action handlers
+  // session 动作处理器
   const handleRename = React.useCallback(() => {
     setRenameName(displayTitle)
     setRenameDialogOpen(true)
@@ -496,7 +499,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     }
   }, [sessionId])
 
-  // Share action handlers
+  // 分享相关操作回调
   const handleShare = React.useCallback(async () => {
     const result = await window.electronAPI.sessionCommand(sessionId, { type: 'shareToViewer' }) as { success: boolean; url?: string; error?: string } | undefined
     if (result?.success && result.url) {
@@ -539,7 +542,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     }
   }, [sessionId])
 
-  // Share button with dropdown menu rendered in PanelHeader actions slot
+  // 分享按钮（带下拉菜单），渲染在 PanelHeader 的 actions 插槽中
   const shareButton = React.useMemo(() => (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -640,10 +643,9 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     </div>
   ) : primaryHeaderAction
 
-  // Build title menu content for chat sessions using shared SessionMenu.
-  // Desktop uses Radix DropdownMenu via PanelHeader; compact mode uses a
-  // vaul Drawer (CompactSessionMenu) so submenus aren't clipped by the
-  // panel container query on narrow viewports.
+  // 使用共享的 SessionMenu 构建聊天 session 的标题菜单。
+  // 桌面端通过 PanelHeader 使用 Radix DropdownMenu；紧凑模式使用 vaul Drawer
+  // （CompactSessionMenu），避免在窄视口下面板容器查询裁切子菜单。
   const titleMenu = React.useMemo(() => (sessionMeta && !isCompactMode) ? (
     <SessionMenu
       item={sessionMeta}
@@ -714,10 +716,10 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     handleDelete,
   ])
 
-  // Handle missing session - loading or deleted
+  // session 缺失处理：要么正在加载，要么已被删除。
   if (!session) {
     if (sessionMeta) {
-      // Session exists in metadata but not loaded yet - show loading state
+      // session 存在于元数据但消息尚未加载：显示 loading 骨架状态。
       const skeletonSession = {
         id: sessionMeta.id,
         workspaceId: sessionMeta.workspaceId,
@@ -793,7 +795,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
       )
     }
 
-    // Session truly doesn't exist
+    // session 确实不存在（已被删除）
     return (
       <div className="h-full flex flex-col">
         <PanelHeader  title={t('chat.session')} leadingAction={leadingAction} rightSidebarButton={rightSidebarButton} />

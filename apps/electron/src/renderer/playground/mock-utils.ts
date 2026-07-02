@@ -1,3 +1,10 @@
+/**
+ * mock-utils — Playground 示例
+ * 
+ * 所属目录：playground
+ */
+// 从项目的共享类型定义里导入类型。
+// workspace 是“工作区”，source 是 Agent 能用的数据源，permissionMode 是 tool use 时的权限模式。
 import type {
   FileAttachment,
   LoadedSource,
@@ -14,16 +21,16 @@ import type {
 } from '../components/messaging/access/types'
 
 // ============================================================================
-// Messaging mock state + control handle
+// Messaging 模拟状态 + 控制句柄
 // ============================================================================
 //
-// The real messaging flow is driven by IPC push events (platform status,
-// binding changes, WhatsApp pairing phases). To make the messaging UI
-// previewable, we replace those IPC calls with an in-memory event bus and
-// expose a `window.__playgroundMessaging` handle so variant/preview wrappers
-// can flip state (connected ↔ disconnected, WhatsApp phase, bindings) without
-// remounting the component.
+// 真实的 messaging 流程由 IPC 推送事件驱动（平台状态、binding 变更、WhatsApp 配对阶段）。
+// 在 Electron 里，这些 IPC 通常从 main 进程发到 renderer 进程。
+// 为了在 playground 里单独预览 messaging UI，我们用内存中的事件总线替换 IPC，
+// 并暴露 window.__playgroundMessaging 句柄，让 variant/preview 包装器
+// 可以在不重新挂载组件的情况下切换状态（连接/断开、WhatsApp 阶段、binding）。
 
+// type 可以定义函数类型别名，效果类似 Go 的 func(workspaceId, platform, status) 签名。
 type PlatformStatusListener = (
   workspaceId: string,
   platform: string,
@@ -32,15 +39,17 @@ type PlatformStatusListener = (
 type BindingListener = (workspaceId: string) => void
 type WhatsAppEventListener = (payload: { workspaceId: string; event: WhatsAppUiEvent }) => void
 
+// playground 里用的假 workspace id，相当于一个独立工作区。
 const PLAYGROUND_WORKSPACE_ID = 'playground-workspace'
 
+// 联合类型（Union Type）：变量只能是这三个字符串之一，类似 Go 里定义一个常量字符串枚举。
 type AllowListPlatform = 'telegram' | 'whatsapp' | 'lark'
 
 interface AllowListState {
   accessMode: PlatformAccessMode
   owners: PlatformOwner[]
   pending: PendingSender[]
-  /** Per-binding access. Keyed by bindingId. */
+  /** 每个 binding 的访问控制，用 bindingId 作为 key。Record<string, T> 类似 Go 的 map[string]T。 */
   bindings: Record<string, BindingAccess>
 }
 
@@ -50,8 +59,9 @@ interface MessagingMockState {
     whatsapp: MessagingPlatformRuntimeInfo
   }
   bindings: MessagingBinding[]
-  /** Workspace-level allow-list state per platform (Phase 1 mock surface). */
+  /** 每个平台在工作区级别的 allow-list 状态（Phase 1 的模拟面）。 */
   allowList: Record<AllowListPlatform, AllowListState>
+  // Set<T> 是 JS 内置集合，类似 Go 的 map[T]struct{}，用来保存监听器。
   platformStatusListeners: Set<PlatformStatusListener>
   bindingListeners: Set<BindingListener>
   waEventListeners: Set<WhatsAppEventListener>
@@ -71,6 +81,7 @@ function defaultAllowList(): AllowListState {
   return { accessMode: 'open', owners: [], pending: [], bindings: {} }
 }
 
+// 内存里的单例状态。真实应用会把状态放在 main 进程或后端，playground 用内存模拟。
 const messagingMockState: MessagingMockState = {
   runtime: {
     telegram: defaultRuntime('telegram'),
@@ -87,6 +98,7 @@ const messagingMockState: MessagingMockState = {
   waEventListeners: new Set(),
 }
 
+// 通知所有平台状态监听器。try/catch 保证一个监听器出错不会影响其他监听器。
 function emitPlatformStatus(platform: 'telegram' | 'whatsapp') {
   const status = messagingMockState.runtime[platform]
   for (const listener of messagingMockState.platformStatusListeners) {
@@ -106,8 +118,9 @@ function emitWhatsAppEvent(event: WhatsAppUiEvent) {
   }
 }
 
+/** PlaygroundMessagingHandle：类型定义 */
 export interface PlaygroundMessagingHandle {
-  /** Snapshot of current state (for debugging from DevTools). */
+  /** 当前状态的快照（方便在 DevTools 里调试）。 */
   state: MessagingMockState
   setTelegramConnected: (connected: boolean, identity?: string) => void
   setWhatsAppConnected: (connected: boolean, identity?: string) => void
@@ -117,9 +130,9 @@ export interface PlaygroundMessagingHandle {
 }
 
 /**
- * Allow-list mock control. Lets AllowListPreview drive the workspace-level
- * owners / pending / per-binding-access mock state without going through the
- * IPC mocks. Phase 3 wiring will read the same state via electronAPI.
+ * Allow-list 模拟控制器。
+ * AllowListPreview 可以通过它直接修改工作区级别的 owners / pending / 每个 binding 的访问权限，
+ * 而不必走 IPC mock。Phase 3 的正式代码会通过 electronAPI 读取同样的状态。
  */
 export interface PlaygroundAllowListHandle {
   setAccessMode: (platform: AllowListPlatform, mode: PlatformAccessMode) => void
@@ -133,6 +146,7 @@ export interface PlaygroundAllowListHandle {
   reset: () => void
 }
 
+/** playgroundMessagingHandle：常量 */
 export const playgroundMessagingHandle: PlaygroundMessagingHandle = {
   state: messagingMockState,
   setTelegramConnected(connected, identity) {
@@ -177,6 +191,7 @@ export const playgroundMessagingHandle: PlaygroundMessagingHandle = {
   },
 }
 
+/** playgroundAllowListHandle：常量 */
 export const playgroundAllowListHandle: PlaygroundAllowListHandle = {
   setAccessMode(platform, mode) {
     messagingMockState.allowList[platform].accessMode = mode
@@ -198,14 +213,19 @@ export const playgroundAllowListHandle: PlaygroundAllowListHandle = {
 }
 
 // ============================================================================
-// Mock electronAPI
+// 模拟 electronAPI
 // ============================================================================
+//
+// electronAPI 是 Renderer 进程调用 Main 进程能力的桥梁（通过 preload 脚本暴露）。
+// 在 playground 里没有真正的 Electron Main 进程，所以我们用一个普通 JS 对象模拟这套 API，
+// 让依赖 window.electronAPI 的组件可以直接运行。
 
+/** mockElectronAPI：常量 */
 export const mockElectronAPI = {
   isDebugMode: async () => true,
 
-  // Called at module-load time by SessionFilesSection.tsx (and others) to
-  // branch between Electron and web-UI rendering. Must be synchronous.
+  // SessionFilesSection.tsx 等组件在模块加载时就会调用，用来区分 Electron 和 Web UI。
+  // 必须是同步函数，因此这里直接返回 'electron'。
   getRuntimeEnvironment: (): 'electron' | 'web' => 'electron',
 
   openFileDialog: async () => {
@@ -401,8 +421,9 @@ export const mockElectronAPI = {
   },
 
   // ------------------------------------------------------------------
-  // Messaging Gateway (Telegram + WhatsApp)
+  // Messaging Gateway（Telegram + WhatsApp 消息网关）
   // ------------------------------------------------------------------
+  // 这些函数模拟真实 IPC 中与消息平台配置、连接、配对码相关的调用。
 
   getMessagingConfig: async () => {
     console.log('[Playground] getMessagingConfig called')
@@ -487,8 +508,10 @@ export const mockElectronAPI = {
   },
 
   // ------------------------------------------------------------------
-  // Messaging access control (mirrors the production ElectronAPI surface)
+  // Messaging 访问控制（与生产环境 ElectronAPI 保持一致）
   // ------------------------------------------------------------------
+  // 控制谁能通过 Telegram/WhatsApp/Lark 向 Agent 发消息：
+  // open / allow-list 等 accessMode、owners 列表、pending 申请人、binding 级白名单。
 
   getMessagingPlatformOwners: async (platform: AllowListPlatform): Promise<PlatformOwner[]> => {
     console.log('[Playground] getMessagingPlatformOwners called:', platform)
@@ -634,9 +657,8 @@ export const mockElectronAPI = {
     }
   },
 
-  // WhatsApp subprocess-based pairing — we fire a synthetic QR after a short
-  // delay so the "show_qr" phase is visible by default, but variants can
-  // override this by calling __playgroundMessaging.fireWAEvent().
+  // WhatsApp 通过子进程配对；playground 里用 setTimeout 模拟一个假 QR 码，
+  // 让默认就能看到 "show_qr" 阶段。variant 也可以调用 __playgroundMessaging.fireWAEvent() 覆盖。
   startWhatsAppConnect: async () => {
     console.log('[Playground] startWhatsAppConnect called')
     setTimeout(() => {
@@ -664,17 +686,12 @@ export const mockElectronAPI = {
 }
 
 /**
- * Inject mock electronAPI into window if not already present.
- * Call this in playground component wrappers before rendering components
- * that depend on electronAPI.
+ * 如果 window 上还没有 electronAPI，就把模拟版注入进去。
+ * 在渲染依赖 electronAPI 的组件之前调用。
  *
- * IMPORTANT: this also runs as a top-level side effect when this module is
- * imported (see below), so that consumers relying on a synchronous
- * `window.electronAPI.*` read at module-load time (e.g.
- * `SessionFilesSection.tsx`'s top-level `getRuntimeEnvironment()` call) see
- * the mock before their module is evaluated. The entry `playground.tsx`
- * must import this module before any component chain that touches
- * `window.electronAPI` at import time.
+ * 重要：这个模块被 import 时会作为顶层副作用（top-level side effect）立即执行。
+ * 这样那些同步读取 window.electronAPI.* 的代码（例如 SessionFilesSection.tsx 在顶层调用 getRuntimeEnvironment()）
+ * 在它们模块求值前就能看到 mock。
  */
 export function ensureMockElectronAPI() {
   if (!window.electronAPI) {
@@ -691,14 +708,17 @@ export function ensureMockElectronAPI() {
   }
 }
 
-// Install on import so any later module that reads `window.electronAPI` at
-// top level finds the mock in place. Safe: only runs once (idempotent).
+// 模块一导入就执行，保证后续同步读取 window.electronAPI 的代码能拿到 mock。
+// 幂等：重复执行只生效一次。
 ensureMockElectronAPI()
 
 // ============================================================================
-// Sample Data
+// 示例数据（Sample Data）
 // ============================================================================
+// LoadedSource 代表 Agent 已经加载的数据源（source），
+// 例如 GitHub API、Linear API、本地文件目录等。
 
+/** 示例 source 列表，供 playground 里的 source 相关组件使用。 */
 export const mockSources: LoadedSource[] = [
   {
     config: {
@@ -765,6 +785,7 @@ export const mockSources: LoadedSource[] = [
   },
 ]
 
+/** 示例图片附件，用于测试文件/图片上传 UI。 */
 export const sampleImageAttachment: FileAttachment = {
   type: 'image',
   path: '/Users/demo/screenshot.png',
@@ -774,6 +795,7 @@ export const sampleImageAttachment: FileAttachment = {
   base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
 }
 
+/** 示例 PDF 附件。 */
 export const samplePdfAttachment: FileAttachment = {
   type: 'pdf',
   path: '/Users/demo/design.pdf',
@@ -783,9 +805,11 @@ export const samplePdfAttachment: FileAttachment = {
 }
 
 // ============================================================================
-// Mock Callbacks
+// 模拟回调（Mock Callbacks）
 // ============================================================================
+// 这些回调传给输入/附件/后台任务组件，只在 playground 里打印日志，不会触发真实逻辑。
 
+/** 输入框相关回调，包括提交、模型切换、source 变更、权限模式变更等。 */
 export const mockInputCallbacks = {
   onSubmit: (message: string, attachments?: FileAttachment[]) => {
     console.log('[Playground] Message submitted:', { message, attachments })
@@ -824,6 +848,7 @@ export const mockInputCallbacks = {
   },
 }
 
+/** 附件相关回调：删除附件、打开文件。 */
 export const mockAttachmentCallbacks = {
   onRemove: (index: number) => {
     console.log('[Playground] Remove attachment at index:', index)
@@ -834,6 +859,7 @@ export const mockAttachmentCallbacks = {
   },
 }
 
+/** 后台任务相关回调：终止任务。 */
 export const mockBackgroundTaskCallbacks = {
   onKillTask: (taskId: string) => {
     console.log('[Playground] Kill task:', taskId)

@@ -1,3 +1,6 @@
+/**
+ * playground — React 组件
+ */
 // IMPORTANT: keep `mock-utils` as the FIRST local import. It installs the
 // mock `window.electronAPI` as a top-level side effect on import, so that
 // any renderer module that reads `window.electronAPI.*` at module-load time

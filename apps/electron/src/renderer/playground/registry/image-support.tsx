@@ -1,3 +1,10 @@
+/**
+ * image-support 注册项
+ *
+ * 这个文件演示“图片支持”相关的 UI：当当前模型是文本-only 时，
+ * 输入框上方显示的警告横幅，以及模型选择器里的图片开关。
+ * 涉及概念：model（LLM 模型）、vision（图像识别能力）、pi_compat（自定义端点兼容模式）。
+ */
 import * as React from 'react'
 import { Check, Image as ImageIcon } from 'lucide-react'
 import type { ComponentEntry } from './types'
@@ -7,10 +14,9 @@ import { cn } from '@/lib/utils'
 import { useTranslation } from 'react-i18next'
 
 // ============================================================================
-// Pre-flight banner — pure visual demo of the warning shown above
-// AttachmentPreview when the active model is text-only on a pi_compat
-// connection. The banner is dumb: parent decides when to show it. These
-// variants render it directly to verify copy and layout.
+// Pre-flight banner - 在附件预览上方显示的警告横幅演示
+// 当 active model 在 pi_compat 连接下被配置为 text-only 时出现。
+// 横幅本身是无状态组件，是否展示由父组件决定；这里直接渲染以检查文案和布局。
 // ============================================================================
 
 function BannerDemo({
@@ -44,9 +50,8 @@ function BannerDemo({
 }
 
 // ============================================================================
-// Per-model picker row — renders the same JSX shape as the chat-input model
-// picker uses. Variants cover the gate (pi_compat vs not), and the toggle
-// states (vision-on, vision-off, currently selected).
+// Per-model picker row - 模型选择器里的一行
+// 覆盖 pi_compat / 内置 provider 两种场景，以及 vision 开关的不同状态。
 // ============================================================================
 
 interface PickerRowProps {
@@ -109,6 +114,7 @@ function PickerRow({
   )
 }
 
+/** image-support 组件注册列表。 */
 export const imageSupportComponents: ComponentEntry[] = [
   {
     id: 'image-support-banner',

@@ -1,17 +1,15 @@
 /**
- * Microsoft OAuth flow using Azure AD OAuth 2.0 with PKCE
+ * Microsoft OAuth 流程
  *
- * This module handles the complete Microsoft OAuth flow for Microsoft 365 APIs:
- * 1. Opens browser for Microsoft consent screen
- * 2. Receives authorization code via local callback server
- * 3. Exchanges code for access and refresh tokens
- * 4. Returns tokens and user email
+ * 使用 Azure AD OAuth 2.0 with PKCE，处理 Microsoft 365 API 的完整登录流程：
+ * 1. 打开浏览器展示 Microsoft 同意页
+ * 2. 通过本地回调服务器接收授权码
+ * 3. 用授权码换 access/refresh token
+ * 4. 返回 token 和用户邮箱/UPN
  *
- * Supports multiple Microsoft services (Outlook, OneDrive, Calendar, Teams)
- * with predefined scope sets, or custom scopes for other Microsoft Graph APIs.
+ * 支持 Outlook、OneDrive、Calendar、Teams 等服务的预定义 scope，也支持自定义 scope。
  *
- * Uses "common" tenant endpoint to support both personal Microsoft accounts
- * and work/school (Azure AD) accounts.
+ * 使用 "common" 租户端点，同时支持个人 Microsoft 账号和 Azure AD 工作/学校账号。
  */
 
 import { URL } from 'url';
@@ -22,34 +20,31 @@ import { type MicrosoftService } from '../sources/types.ts';
 import { type OAuthSessionContext, buildOAuthDeeplinkUrl } from './types.ts';
 import type { PreparedOAuthFlow, OAuthExchangeParams, OAuthExchangeResult } from './oauth-flow-types.ts';
 
-// Re-export MicrosoftService type for convenient access
+// 再导出一次 MicrosoftService 类型，方便外部使用
 export type { MicrosoftService };
 
-// Microsoft OAuth configuration - must be set via environment variables
-// These are baked into the build at compile time
-// Used for all Microsoft services (Outlook, OneDrive, Calendar, Teams, etc.)
-// Uses pure PKCE flow - no client_secret needed for public clients (desktop/mobile apps)
+// Microsoft OAuth 配置：通过环境变量注入，编译时固化
+// 用于所有 Microsoft 服务（Outlook、OneDrive、Calendar、Teams 等）
+// 使用纯 PKCE 流程，公共客户端不需要 client_secret
 const MICROSOFT_CLIENT_ID = process.env.MICROSOFT_OAUTH_CLIENT_ID || '';
 
-// Microsoft OAuth endpoints (using "common" tenant for multi-tenant support)
-// "common" supports both personal Microsoft accounts and work/school accounts
+// Microsoft OAuth 端点（"common" 租户支持多租户）
 const MICROSOFT_AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize';
 const MICROSOFT_TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
 const MICROSOFT_GRAPH_ME_URL = 'https://graph.microsoft.com/v1.0/me';
 
 /**
- * Predefined scope sets for common Microsoft services
+ * 常见 Microsoft 服务的预定义 scope 集合。
  *
- * Microsoft Graph uses delegated permissions with format:
- * https://graph.microsoft.com/{permission}
+ * Microsoft Graph 使用委托权限，格式为 https://graph.microsoft.com/{permission}。
  *
- * Common permissions:
- * - User.Read: Sign in and read user profile
- * - Mail.Read/ReadWrite/Send: Email access
- * - Calendars.Read/ReadWrite: Calendar access
- * - Files.Read/ReadWrite: OneDrive access
- * - Chat.Read/ReadWrite: Teams chat access
- * - offline_access: Required for refresh tokens
+ * 常见权限：
+ * - User.Read：登录并读取用户资料
+ * - Mail.Read/ReadWrite/Send：邮件访问
+ * - Calendars.Read/ReadWrite：日历访问
+ * - Files.Read/ReadWrite：OneDrive 访问
+ * - Chat.Read/ReadWrite：Teams 聊天访问
+ * - offline_access：获取 refresh token 必需
  */
 export const MICROSOFT_SERVICE_SCOPES: Record<MicrosoftService, string[]> = {
   outlook: [
@@ -82,21 +77,21 @@ export const MICROSOFT_SERVICE_SCOPES: Record<MicrosoftService, string[]> = {
 };
 
 /**
- * Options for starting Microsoft OAuth flow
+ * 启动 Microsoft OAuth 流程的选项。
  */
 export interface MicrosoftOAuthOptions {
-  /** Microsoft service to authenticate (uses predefined scopes) */
+  /** 要登录的 Microsoft 服务（使用预定义 scope） */
   service?: MicrosoftService;
-  /** Custom scopes (overrides service scopes if provided) */
+  /** 自定义 scope（提供时覆盖 service 的 scope） */
   scopes?: string[];
-  /** App type for callback server styling */
+  /** 回调页面样式 */
   appType?: AppType;
-  /** Session context for building deeplink back to chat after OAuth */
+  /** OAuth 完成后跳回聊天 session 的上下文 */
   sessionContext?: OAuthSessionContext;
 }
 
 /**
- * Result of Microsoft OAuth flow
+ * Microsoft OAuth 流程结果。
  */
 export interface MicrosoftOAuthResult {
   success: boolean;
@@ -108,7 +103,7 @@ export interface MicrosoftOAuthResult {
 }
 
 /**
- * Generate PKCE code verifier and challenge
+ * 生成 PKCE verifier 和 challenge。
  */
 function generatePKCE(): { verifier: string; challenge: string } {
   const verifier = randomBytes(32).toString('base64url');
@@ -117,14 +112,14 @@ function generatePKCE(): { verifier: string; challenge: string } {
 }
 
 /**
- * Generate random state for CSRF protection
+ * 生成随机 state，防止 CSRF。
  */
 function generateState(): string {
   return randomBytes(16).toString('hex');
 }
 
 /**
- * Exchange authorization code for tokens
+ * 用授权码换 token。
  */
 async function exchangeCodeForTokens(
   code: string,
@@ -164,7 +159,7 @@ async function exchangeCodeForTokens(
 }
 
 /**
- * Get user email from access token using Microsoft Graph API
+ * 用 access token 通过 Microsoft Graph 获取用户邮箱/UPN。
  */
 async function getUserEmail(accessToken: string): Promise<string> {
   const response = await fetch(MICROSOFT_GRAPH_ME_URL, {
@@ -180,13 +175,12 @@ async function getUserEmail(accessToken: string): Promise<string> {
     userPrincipalName?: string;
   };
 
-  // Microsoft Graph returns 'mail' for work accounts, 'userPrincipalName' as fallback
-  // For personal accounts, userPrincipalName is typically the email
+  // Microsoft Graph 对工作账号返回 mail，个人账号通常用 userPrincipalName 作为兜底
   return data.mail || data.userPrincipalName || 'unknown';
 }
 
 /**
- * Refresh Microsoft access token using refresh token
+ * 用 refresh token 刷新 Microsoft access token。
  */
 export async function refreshMicrosoftToken(refreshToken: string): Promise<{
   accessToken: string;
@@ -217,27 +211,27 @@ export async function refreshMicrosoftToken(refreshToken: string): Promise<{
 
   return {
     accessToken: data.access_token,
-    // Microsoft may return a new refresh token (rotation)
+    // Microsoft 可能会轮换 refresh token
     refreshToken: data.refresh_token,
     expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
   };
 }
 
 /**
- * Check if Microsoft OAuth is configured (client ID is set)
- * Note: Client secret is optional for public clients using PKCE
+ * 检查 Microsoft OAuth 是否已配置（client ID 已设置）。
+ * 注意：公共客户端使用 PKCE，client secret 是可选的。
  */
 export function isMicrosoftOAuthConfigured(): boolean {
   return Boolean(MICROSOFT_CLIENT_ID);
 }
 
 /**
- * Get scopes for a Microsoft service or use custom scopes
+ * 根据 service 或自定义 scopes 获取最终 scope 列表。
  */
 export function getMicrosoftScopes(options: MicrosoftOAuthOptions): string[] {
-  // Custom scopes take precedence
+  // 自定义 scope 优先级最高
   if (options.scopes && options.scopes.length > 0) {
-    // Ensure required scopes are included
+    // 确保包含必需 scope
     const requiredScopes = ['https://graph.microsoft.com/User.Read', 'offline_access'];
     const allScopes = [...options.scopes];
     for (const scope of requiredScopes) {
@@ -248,30 +242,30 @@ export function getMicrosoftScopes(options: MicrosoftOAuthOptions): string[] {
     return allScopes;
   }
 
-  // Use predefined service scopes
+  // 使用预定义服务 scope
   if (options.service && options.service in MICROSOFT_SERVICE_SCOPES) {
     return MICROSOFT_SERVICE_SCOPES[options.service];
   }
 
-  // Default to Outlook scopes for backwards compatibility
+  // 默认用 Outlook scope，保持向后兼容
   return MICROSOFT_SERVICE_SCOPES.outlook;
 }
 
 /**
- * Options for preparing a Microsoft OAuth flow (server-side, no browser interaction)
+ * 准备 Microsoft OAuth 流程的选项（服务端，不打开浏览器）。
  */
 export interface PrepareMicrosoftOAuthOptions {
   service?: MicrosoftService;
   scopes?: string[];
-  /** Port for the local callback server (Electron). One of callbackPort or callbackUrl required. */
+  /** 本地回调服务器端口（Electron）。callbackPort 和 callbackUrl 至少传一个 */
   callbackPort?: number;
-  /** Full callback URL (WebUI). Takes precedence over callbackPort. */
+  /** 完整回调 URL（WebUI）。优先级高于 callbackPort */
   callbackUrl?: string;
 }
 
 /**
- * Prepare a Microsoft OAuth flow without starting a callback server or opening a browser.
- * Returns everything needed to construct the auth URL and later exchange the code.
+ * 准备 Microsoft OAuth 流程，不启动回调服务器也不打开浏览器。
+ * 返回构造授权 URL 和后续换 token 所需的一切。
  */
 export function prepareMicrosoftOAuth(options: PrepareMicrosoftOAuthOptions): PreparedOAuthFlow {
   if (!isMicrosoftOAuthConfigured()) {
@@ -309,8 +303,7 @@ export function prepareMicrosoftOAuth(options: PrepareMicrosoftOAuthOptions): Pr
 }
 
 /**
- * Exchange a Microsoft authorization code for tokens (server-side).
- * Also fetches the user's email/UPN via Microsoft Graph.
+ * 在服务端用 Microsoft 授权码换 token，并获取用户邮箱/UPN。
  */
 export async function exchangeMicrosoftOAuth(params: OAuthExchangeParams): Promise<OAuthExchangeResult> {
   try {
@@ -334,21 +327,21 @@ export async function exchangeMicrosoftOAuth(params: OAuthExchangeParams): Promi
 }
 
 /**
- * Start Microsoft OAuth flow
+ * 启动完整的 Microsoft OAuth 流程。
  *
- * Opens browser for Microsoft consent, handles callback, and returns tokens + email.
- * Supports multiple Microsoft services via the service option, or custom scopes.
+ * 打开浏览器展示 Microsoft 同意页，处理回调，返回 token 和邮箱。
+ * 可以通过 service 指定服务，也可以传自定义 scopes。
  *
  * @example
- * // Authenticate for Outlook
+ * // 登录 Outlook
  * const result = await startMicrosoftOAuth({ service: 'outlook' });
  *
  * @example
- * // Authenticate for OneDrive
+ * // 登录 OneDrive
  * const result = await startMicrosoftOAuth({ service: 'onedrive' });
  *
  * @example
- * // Authenticate with custom scopes
+ * // 用自定义 scope 登录
  * const result = await startMicrosoftOAuth({
  *   scopes: ['https://graph.microsoft.com/Tasks.ReadWrite']
  * });
@@ -357,7 +350,7 @@ export async function startMicrosoftOAuth(
   options: MicrosoftOAuthOptions = {}
 ): Promise<MicrosoftOAuthResult> {
   try {
-    // Verify OAuth credentials are configured
+    // 检查凭据是否已配置
     if (!isMicrosoftOAuthConfigured()) {
       return {
         success: false,
@@ -366,20 +359,20 @@ export async function startMicrosoftOAuth(
       };
     }
 
-    // Get scopes for this request
+    // 获取本次请求需要的 scope
     const scopes = getMicrosoftScopes(options);
 
-    // Generate PKCE and state
+    // 生成 PKCE 和 state
     const pkce = generatePKCE();
     const state = generateState();
 
-    // Start callback server with deeplink for returning to chat session
+    // 启动本地回调服务器，并带上跳回聊天 session 的 deeplink
     const appType = options.appType || 'electron';
     const deeplinkUrl = buildOAuthDeeplinkUrl(options.sessionContext);
     const callbackServer = await createCallbackServer({ appType, deeplinkUrl });
     const redirectUri = `${callbackServer.url}/callback`;
 
-    // Build authorization URL
+    // 构造授权 URL
     const authUrl = new URL(MICROSOFT_AUTH_URL);
     authUrl.searchParams.set('client_id', MICROSOFT_CLIENT_ID);
     authUrl.searchParams.set('redirect_uri', redirectUri);
@@ -388,18 +381,18 @@ export async function startMicrosoftOAuth(
     authUrl.searchParams.set('state', state);
     authUrl.searchParams.set('code_challenge', pkce.challenge);
     authUrl.searchParams.set('code_challenge_method', 'S256');
-    // Response mode 'query' returns code in URL query params (default for authorization_code)
+    // response_mode=query 让授权码出现在 URL query 参数里（authorization_code 默认行为）
     authUrl.searchParams.set('response_mode', 'query');
-    // Prompt 'consent' forces consent screen to ensure we get refresh token
+    // prompt=consent 强制显示同意页，确保拿到 refresh token
     authUrl.searchParams.set('prompt', 'consent');
 
-    // Open browser for authorization
+    // 打开浏览器授权
     await openUrl(authUrl.toString());
 
-    // Wait for callback
+    // 等待回调
     const callback = await callbackServer.promise;
 
-    // Verify state
+    // 校验 state
     if (callback.query.state !== state) {
       return {
         success: false,
@@ -407,7 +400,7 @@ export async function startMicrosoftOAuth(
       };
     }
 
-    // Check for error
+    // 检查回调错误
     if (callback.query.error) {
       return {
         success: false,
@@ -415,7 +408,7 @@ export async function startMicrosoftOAuth(
       };
     }
 
-    // Get authorization code
+    // 获取授权码
     const code = callback.query.code;
     if (!code) {
       return {
@@ -424,10 +417,10 @@ export async function startMicrosoftOAuth(
       };
     }
 
-    // Exchange code for tokens
+    // 用授权码换 token
     const tokens = await exchangeCodeForTokens(code, pkce.verifier, redirectUri);
 
-    // Get user email
+    // 获取用户邮箱
     const email = await getUserEmail(tokens.accessToken);
 
     return {

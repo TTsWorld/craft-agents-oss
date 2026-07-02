@@ -1,8 +1,8 @@
 /**
- * CredentialsStep - Onboarding step wrapper for API key or OAuth flow
+ * CredentialsStep - API key 或 OAuth 认证步骤的外壳组件
  *
- * Thin wrapper that composes ApiKeyInput or OAuthConnect controls
- * with StepFormLayout for the onboarding wizard context.
+ * 只是一个薄包装：把 ApiKeyInput 或 OAuthConnect 放进 StepFormLayout 里，
+ * 让 onboarding wizard 的每一步保持统一的布局。
  */
 
 import { useEffect, useState } from "react"
@@ -19,8 +19,10 @@ import {
 } from "../apisetup"
 import type { CustomEndpointApi } from '@config/llm-connections'
 
+// 凭证状态是 API key 状态和 OAuth 状态的并集
 export type CredentialStatus = ApiKeyStatus | OAuthStatus
 
+// CredentialsStep 的 props 接口
 interface CredentialsStepProps {
   apiSetupMethod: ApiSetupMethod
   status: CredentialStatus
@@ -28,13 +30,13 @@ interface CredentialsStepProps {
   onSubmit: (data: ApiKeySubmitData) => void
   onStartOAuth?: (methodOverride?: ApiSetupMethod) => void
   onBack: () => void
-  // Two-step OAuth flow
+  // 两步 OAuth 流程：等待用户输入授权码
   isWaitingForCode?: boolean
   onSubmitAuthCode?: (code: string) => void
   onCancelOAuth?: () => void
-  // Device flow (Copilot)
+  // Copilot 设备流（device flow）
   copilotDeviceCode?: { userCode: string; verificationUri: string }
-  // Edit mode (pre-fill existing connection values)
+  // 编辑模式：预填充已有连接的值
   editInitialValues?: {
     apiKey?: string
     baseUrl?: string
@@ -66,17 +68,17 @@ export function CredentialsStep({
   const isPiApiKey = apiSetupMethod === 'pi_api_key'
   const isApiKey = isAnthropicApiKey || isPiApiKey
 
-  // Copilot device code clipboard handling
+  // Copilot 设备码的剪贴板状态
   const [copiedCode, setCopiedCode] = useState(false)
 
-  // Auto-copy device code to clipboard when it appears
+  // 设备码出现时自动复制到剪贴板，复制失败也不影响用户手动点击复制
   useEffect(() => {
     if (copilotDeviceCode?.userCode) {
       navigator.clipboard.writeText(copilotDeviceCode.userCode).then(() => {
         setCopiedCode(true)
         setTimeout(() => setCopiedCode(false), 2000)
       }).catch(() => {
-        // Clipboard write failed, user can still click to copy
+        // 剪贴板写入失败，用户仍可点击复制
       })
     }
   }, [copilotDeviceCode?.userCode])
@@ -90,7 +92,7 @@ export function CredentialsStep({
     }
   }
 
-  // --- ChatGPT OAuth flow (native browser OAuth) ---
+  // --- ChatGPT OAuth 流程（原生浏览器 OAuth） ---
   if (isChatGptOAuth) {
     return (
       <StepFormLayout
@@ -130,7 +132,7 @@ export function CredentialsStep({
     )
   }
 
-  // --- Copilot OAuth flow (device flow) ---
+  // --- Copilot OAuth 流程（device flow） ---
   if (isCopilotOAuth) {
     return (
       <StepFormLayout
@@ -194,9 +196,9 @@ export function CredentialsStep({
     )
   }
 
-  // --- Claude OAuth flow ---
+  // --- Claude OAuth 流程 ---
   if (isClaudeOAuth) {
-    // Waiting for authorization code entry
+    // 等待用户输入授权码
     if (isWaitingForCode) {
       return (
         <StepFormLayout
@@ -258,13 +260,14 @@ export function CredentialsStep({
     )
   }
 
-  // --- API Key flow ---
-  // Determine provider type and description based on selected method
+  // --- API Key 流程 ---
+  // 根据所选方法判断提供商类型和提示文案
   const providerType = isPiApiKey ? 'pi_api_key' : 'anthropic'
   const apiKeyDescription = isPiApiKey
     ? "Select a provider preset and enter the API key. For arbitrary Anthropic-compatible endpoints, use Anthropic API Key mode."
     : "Enter your API key. Optionally configure a custom endpoint for OpenRouter, Ollama, or compatible APIs."
 
+  // 用于 ApiKeyInput 强制重新挂载的 key：编辑初始值变化时刷新内部表单
   const apiKeyInputKey = [
     apiSetupMethod,
     editInitialValues?.activePreset ?? '',

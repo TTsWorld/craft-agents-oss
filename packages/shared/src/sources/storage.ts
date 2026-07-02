@@ -1,11 +1,15 @@
 /**
  * Source Storage
  *
- * CRUD operations for workspace-scoped sources.
- * Sources are stored at {workspaceRootPath}/sources/{sourceSlug}/
+ * workspace 级别 source 的增删改查。
+ * source 存储在 {workspaceRootPath}/sources/{sourceSlug}/ 目录下。
  *
- * Note: All functions take `workspaceRootPath` (absolute path to workspace folder),
- * NOT a workspace slug. The `LoadedSource.workspaceId` is derived via basename().
+ * 注意：所有函数都接收 `workspaceRootPath`（workspace 文件夹绝对路径），
+ * 而不是 workspace slug。`LoadedSource.workspaceId` 是用 basename() 从路径取出的目录名。
+ *
+ * TS/Node 小知识：
+ * - `fs` 模块类似 Go 的 os 包，用来读写文件、目录。
+ * - `path.join` 类似 Go 的 filepath.Join，`basename` 类似 filepath.Base。
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from 'fs';
@@ -23,9 +27,8 @@ import { readJsonFileSync } from '../utils/files.ts';
 import { getBuiltinSources, isBuiltinSource, getDocsSource } from './builtin-sources.ts';
 import { expandPath, toPortablePath } from '../utils/paths.ts';
 import { getWorkspaceSourcesPath } from '../workspaces/storage.ts';
-// Circular import (credential-manager imports from this file) is safe here:
-// getSourceCredentialManager is only referenced lazily inside saveSourceConfig,
-// not at module-eval time.
+// 循环引用：credential-manager.ts 会从本文件导入，但 getSourceCredentialManager
+// 只在 saveSourceConfig 里惰性使用，模块加载时不会触发，所以安全。
 import { getSourceCredentialManager } from './credential-manager.ts';
 import {
   validateIconValue,
@@ -36,18 +39,18 @@ import {
 } from '../utils/icon.ts';
 
 // ============================================================
-// Directory Utilities
+// 目录工具
 // ============================================================
 
 /**
- * Get path to a source folder within a workspace
+ * 获取某个 source 在 workspace 中的目录路径
  */
 export function getSourcePath(workspaceRootPath: string, sourceSlug: string): string {
   return join(getWorkspaceSourcesPath(workspaceRootPath), sourceSlug);
 }
 
 /**
- * Ensure sources directory exists for a workspace
+ * 确保 workspace 的 sources 目录存在（不存在就创建）
  */
 export function ensureSourcesDir(workspaceRootPath: string): void {
   const dir = getWorkspaceSourcesPath(workspaceRootPath);
@@ -57,11 +60,11 @@ export function ensureSourcesDir(workspaceRootPath: string): void {
 }
 
 // ============================================================
-// Config Operations
+// 配置读写
 // ============================================================
 
 /**
- * Load source config.json
+ * 读取 source 的 config.json
  */
 export function loadSourceConfig(
   workspaceRootPath: string,
@@ -73,7 +76,7 @@ export function loadSourceConfig(
   try {
     const config = readJsonFileSync<FolderSourceConfig>(configPath);
 
-    // Expand path variables in local source paths for portability
+    // 本地 source 的路径里可能有 ~ 等可移植变量，展开成绝对路径
     if (config.type === 'local' && config.local?.path) {
       config.local.path = expandPath(config.local.path);
     }
@@ -85,10 +88,10 @@ export function loadSourceConfig(
 }
 
 /**
- * Mark a source as authenticated and connected.
- * Updates isAuthenticated, connectionStatus, and clears any connection error.
+ * 标记 source 已认证并已连接。
+ * 更新 isAuthenticated、connectionStatus，并清空连接错误。
  *
- * @returns true if the source was found and updated, false otherwise
+ * @returns 找到并更新返回 true，否则返回 false
  */
 export function markSourceAuthenticated(
   workspaceRootPath: string,
@@ -110,14 +113,14 @@ export function markSourceAuthenticated(
 }
 
 /**
- * Save source config.json
- * @throws Error if config is invalid
+ * 保存 source 的 config.json
+ * @throws 配置校验不通过时抛 Error
  */
 export function saveSourceConfig(
   workspaceRootPath: string,
   config: FolderSourceConfig
 ): void {
-  // Validate config before writing
+  // 写盘前先校验
   const validation = validateSourceConfig(config);
   if (!validation.valid) {
     const errorMessages = validation.errors.map((e) => `${e.path}: ${e.message}`).join(', ');
@@ -130,7 +133,7 @@ export function saveSourceConfig(
     mkdirSync(dir, { recursive: true });
   }
 
-  // Convert local source paths to portable form
+  // 本地 source 路径保存为可移植形式，避免不同机器路径不一致
   const storageConfig: FolderSourceConfig = { ...config, updatedAt: Date.now() };
   if (storageConfig.type === 'local' && storageConfig.local?.path) {
     storageConfig.local = {
@@ -141,19 +144,18 @@ export function saveSourceConfig(
 
   writeFileSync(join(dir, 'config.json'), JSON.stringify(storageConfig, null, 2));
 
-  // Orphan-credential cleanup: when an API source is set to authType:'none',
-  // any credential previously stored for this slug (e.g. from authType:'header')
-  // becomes addressable garbage. getCredentialId() maps 'none', 'header', and
-  // 'query' to the same source_apikey slot, so a stored value can silently
-  // override defaultHeaders on a future config change. Delete it here.
+  // 孤儿凭证清理：当 API source 被设为 authType:'none' 时，
+  // 该 slug 之前存下的凭证（比如 authType:'header' 时存的）会变成可访问的垃圾。
+  // getCredentialId() 把 'none'、'header'、'query' 都映射到同一个 source_apikey 槽位，
+  // 因此旧凭证可能在后续配置变更时悄悄覆盖 defaultHeaders。这里主动删除它。
   if (storageConfig.type === 'api' && storageConfig.api?.authType === 'none') {
     deleteApiKeyCredentialBestEffort(workspaceRootPath, storageConfig);
   }
 }
 
 /**
- * Best-effort delete of the source_apikey credential slot for an API source.
- * Never throws — credential cleanup must not block config saves.
+ * 尽力删除 API source 在 source_apikey 槽位上的凭证。
+ * 绝不抛错 —— 凭证清理不能阻塞配置保存。
  */
 function deleteApiKeyCredentialBestEffort(
   workspaceRootPath: string,
@@ -161,7 +163,7 @@ function deleteApiKeyCredentialBestEffort(
 ): void {
   try {
     const cm = getSourceCredentialManager();
-    // Minimal LoadedSource shape: getCredentialId() only reads config + workspaceId.
+    // 构造一个最简的 LoadedSource：getCredentialId() 只读 config + workspaceId
     const source: LoadedSource = {
       config,
       guide: null,
@@ -176,17 +178,17 @@ function deleteApiKeyCredentialBestEffort(
 }
 
 // ============================================================
-// Guide Operations
+// Guide 读写
 // ============================================================
 
 /**
- * Parse guide markdown.
- * Extracts sections (Scope, Guidelines, Context, API Notes) and Cache (JSON in code block).
+ * 解析 guide.md。
+ * 提取 Scope、Guidelines、Context、API Notes 等章节，以及 Cache（JSON 代码块）。
  */
 function parseGuideMarkdown(raw: string): SourceGuide {
   const guide: SourceGuide = { raw };
 
-  // Extract sections by headers (including Cache)
+  // 按二级标题提取章节（包含 Cache）
   const sectionRegex = /^## (Scope|Guidelines|Context|API Notes|Cache)\n([\s\S]*?)(?=\n## |\Z)/gim;
   let match;
   while ((match = sectionRegex.exec(raw)) !== null) {
@@ -207,13 +209,13 @@ function parseGuideMarkdown(raw: string): SourceGuide {
         guide.apiNotes = content;
         break;
       case 'cache':
-        // Parse JSON from code block: ```json ... ```
+        // 从 ```json ... ``` 代码块里解析 JSON
         const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/);
         if (jsonMatch && jsonMatch[1]) {
           try {
             guide.cache = JSON.parse(jsonMatch[1]);
           } catch {
-            // Invalid JSON, ignore
+            // JSON 无效就忽略
           }
         }
         break;
@@ -224,7 +226,7 @@ function parseGuideMarkdown(raw: string): SourceGuide {
 }
 
 /**
- * Load and parse guide.md with frontmatter cache
+ * 加载并解析 guide.md（包含 frontmatter 缓存）
  */
 export function loadSourceGuide(workspaceRootPath: string, sourceSlug: string): SourceGuide | null {
   const guidePath = join(getSourcePath(workspaceRootPath, sourceSlug), 'guide.md');
@@ -239,27 +241,28 @@ export function loadSourceGuide(workspaceRootPath: string, sourceSlug: string): 
 }
 
 /**
- * Extract a short tagline from guide.md content
- * Looks for the first non-empty paragraph after the title, or falls back to scope section
- * @returns Tagline string (max 100 chars) or null if not found
+ * 从 guide.md 内容中提取简短 tagline。
+ * 优先找标题后面的第一段非空段落，否则退回到 scope 章节。
+ *
+ * @returns tagline 字符串（最长 100 字符），找不到返回 null
  */
 export function extractTagline(guide: SourceGuide | null): string | null {
   if (!guide?.raw) return null;
 
   const content = guide.raw;
 
-  // Try to get first paragraph after the title (# Title)
-  // Match: # Title\n\n<first paragraph>
+  // 尝试匹配标题 # Title 后面的第一段
+  // 匹配：# Title\n\n<first paragraph>
   const titleMatch = content.match(/^#[^\n]+\n+([^\n#][^\n]*)/);
   if (titleMatch?.[1]?.trim()) {
     const tagline = titleMatch[1].trim();
-    // Skip if it looks like a section or placeholder
+    // 跳过看起来像章节标题或占位符的行
     if (!tagline.startsWith('##') && !tagline.startsWith('(')) {
       return tagline.slice(0, 100);
     }
   }
 
-  // Fallback to first line of scope section
+  // 退回到 scope 章节第一行
   if (guide.scope) {
     const firstLine = guide.scope.split('\n')[0]?.trim();
     if (firstLine && !firstLine.startsWith('(')) {
@@ -271,7 +274,7 @@ export function extractTagline(guide: SourceGuide | null): string | null {
 }
 
 /**
- * Save guide.md
+ * 保存 guide.md
  */
 export function saveSourceGuide(
   workspaceRootPath: string,
@@ -287,20 +290,20 @@ export function saveSourceGuide(
 }
 
 // ============================================================
-// Icon Operations (uses shared utilities from utils/icon.ts)
+// 图标操作（复用 utils/icon.ts 里的工具函数）
 // ============================================================
 
 /**
- * Find icon file for a source
- * Returns absolute path to icon file or undefined
+ * 查找 source 的图标文件
+ * @returns 图标文件绝对路径，找不到返回 undefined
  */
 export function findSourceIcon(workspaceRootPath: string, sourceSlug: string): string | undefined {
   return findIconFile(getSourcePath(workspaceRootPath, sourceSlug));
 }
 
 /**
- * Download an icon from a URL and save it to the source directory.
- * Returns the path to the downloaded icon, or null on failure.
+ * 从 URL 下载图标并保存到 source 目录。
+ * @returns 下载后的图标路径，失败返回 null
  */
 export async function downloadSourceIcon(
   workspaceRootPath: string,
@@ -312,8 +315,8 @@ export async function downloadSourceIcon(
 }
 
 /**
- * Check if a source needs its icon downloaded.
- * Returns true if config has a URL icon and no local icon file exists.
+ * 判断 source 是否需要下载图标。
+ * 当配置里的 icon 是 URL 且本地还没有图标文件时返回 true。
  */
 export function sourceNeedsIconDownload(
   workspaceRootPath: string,
@@ -324,28 +327,28 @@ export function sourceNeedsIconDownload(
   return needsIconDownload(config.icon, iconPath);
 }
 
-// Re-export icon utilities for convenience
+// 为了使用方便，重新导出图标工具
 export { isIconUrl } from '../utils/icon.ts';
 
 // ============================================================
-// Load Operations
+// 加载操作
 // ============================================================
 
 /**
- * Load complete source with all files
- * @param workspaceRootPath - Absolute path to workspace folder (e.g., ~/.craft-agent/workspaces/xxx)
- * @param sourceSlug - Source folder name
+ * 加载完整的 source（包含 config、guide、图标路径等）
+ * @param workspaceRootPath - workspace 文件夹绝对路径，例如 ~/.craft-agent/workspaces/xxx
+ * @param sourceSlug - source 文件夹名
  */
 export function loadSource(workspaceRootPath: string, sourceSlug: string): LoadedSource | null {
   const folderPath = getSourcePath(workspaceRootPath, sourceSlug);
   const config = loadSourceConfig(workspaceRootPath, sourceSlug);
   if (!config) return null;
 
-  // Extract workspace folder name for credential lookup
-  // Credentials are keyed by folder name (e.g., "046a02d0-..."), not full path
+  // 用文件夹名作为 workspaceId，凭证查找时用它做 key
+  // 注意：凭证 key 是目录名（例如 "046a02d0-..."），不是完整路径
   const workspaceId = basename(workspaceRootPath);
 
-  // Pre-compute icon path for renderer (avoids fs access in browser)
+  // 预计算图标路径，渲染层就不用再访问文件系统
   const iconPath = findIconFile(folderPath);
 
   return {
@@ -359,7 +362,7 @@ export function loadSource(workspaceRootPath: string, sourceSlug: string): Loade
 }
 
 /**
- * Load all sources for a workspace
+ * 加载某个 workspace 下的所有 source
  */
 export function loadWorkspaceSources(workspaceRootPath: string): LoadedSource[] {
   ensureSourcesDir(workspaceRootPath);
@@ -384,50 +387,49 @@ export function loadWorkspaceSources(workspaceRootPath: string): LoadedSource[] 
 }
 
 /**
- * Get enabled sources for a workspace
+ * 获取某个 workspace 下已启用的 source
  */
 export function getEnabledSources(workspaceRootPath: string): LoadedSource[] {
   return loadWorkspaceSources(workspaceRootPath).filter((s) => s.config.enabled);
 }
 
 /**
- * Check if a source is ready for use (enabled and authenticated).
- * Sources with authType: 'none' or undefined are considered authenticated.
+ * 判断 source 是否可以被使用（已启用且认证状态 OK）。
+ * authType 为 'none' 或未定义时视为已认证。
  *
- * Use this instead of inline `s.config.enabled && s.config.isAuthenticated` checks
- * to ensure consistent handling of no-auth sources.
+ * 不要用内联 `s.config.enabled && s.config.isAuthenticated`，
+ * 用这个函数可以保证对“无需认证”source 的处理一致。
  */
 export function isSourceUsable(source: LoadedSource): boolean {
   if (!source.config.enabled) return false;
 
-  // Get auth type from MCP or API config
+  // 从 MCP 或 API 配置里取 authType
   const authType = source.config.mcp?.authType || source.config.api?.authType;
 
-  // Sources with no auth requirement are always usable when enabled
+  // 无需认证的 source 只要启用就是可用的
   if (authType === 'none' || authType === undefined) return true;
 
-  // Sources requiring auth must be authenticated
+  // 需要认证的 source 必须 isAuthenticated === true
   return source.config.isAuthenticated === true;
 }
 
 /**
- * Get sources by slugs for a workspace.
- * Includes both user-configured sources from disk and builtin sources
- * (like craft-agents-docs) that don't have filesystem folders.
+ * 根据 slug 列表获取 source。
+ * 同时包含磁盘上的用户配置 source 和没有文件夹的内置 source（例如 craft-agents-docs）。
  */
 export function getSourcesBySlugs(workspaceRootPath: string, slugs: string[]): LoadedSource[] {
   const workspaceId = basename(workspaceRootPath);
   const sources: LoadedSource[] = [];
   for (const slug of slugs) {
-    // Check builtin sources first (they don't exist on disk)
+    // 先检查内置 source（它们没有磁盘文件夹）
     if (isBuiltinSource(slug)) {
-      // Currently only craft-agents-docs is a builtin source
+      // 目前只有 craft-agents-docs 是内置 source
       if (slug === 'craft-agents-docs') {
         sources.push(getDocsSource(workspaceId, workspaceRootPath));
       }
       continue;
     }
-    // Load user-configured source from disk
+    // 从磁盘加载用户配置的 source
     const source = loadSource(workspaceRootPath, slug);
     if (source) {
       sources.push(source);
@@ -437,12 +439,10 @@ export function getSourcesBySlugs(workspaceRootPath: string, slugs: string[]): L
 }
 
 /**
- * Load all sources for a workspace INCLUDING built-in sources.
- * Built-in sources (like craft-agents-docs) are always available and merged
- * with user-configured sources from the workspace.
+ * 加载某个 workspace 的所有 source，**包含内置 source**。
+ * 内置 source（例如 craft-agents-docs）始终可用，会和用户配置的 source 合并。
  *
- * Use this when the agent needs visibility into all available sources,
- * including system-provided ones that don't live on disk.
+ * 当 agent 需要看到所有可用 source（包括系统提供、不存盘的 source）时使用这个函数。
  */
 export function loadAllSources(workspaceRootPath: string): LoadedSource[] {
   const workspaceId = basename(workspaceRootPath);
@@ -452,11 +452,11 @@ export function loadAllSources(workspaceRootPath: string): LoadedSource[] {
 }
 
 // ============================================================
-// Create/Delete Operations
+// 创建/删除操作
 // ============================================================
 
 /**
- * Generate URL-safe slug from name
+ * 根据 name 生成 URL 安全的 slug
  */
 export function generateSourceSlug(workspaceRootPath: string, name: string): string {
   let slug = name
@@ -465,12 +465,12 @@ export function generateSourceSlug(workspaceRootPath: string, name: string): str
     .replace(/^-|-$/g, '')
     .substring(0, 50);
 
-  // Ensure slug is not empty
+  // 保证 slug 不为空
   if (!slug) {
     slug = 'source';
   }
 
-  // Check for existing slugs and append number if needed
+  // 如果 slug 已存在，就在末尾加数字
   const sourcesDir = getWorkspaceSourcesPath(workspaceRootPath);
   const existingSlugs = new Set<string>();
   if (existsSync(sourcesDir)) {
@@ -486,7 +486,7 @@ export function generateSourceSlug(workspaceRootPath: string, name: string): str
     return slug;
   }
 
-  // Find next available number
+  // 找到下一个可用数字
   let counter = 2;
   while (existingSlugs.has(`${slug}-${counter}`)) {
     counter++;
@@ -496,7 +496,7 @@ export function generateSourceSlug(workspaceRootPath: string, name: string): str
 }
 
 /**
- * Create a new source in a workspace
+ * 在 workspace 中创建一个新 source
  */
 export async function createSource(
   workspaceRootPath: string,
@@ -506,7 +506,7 @@ export async function createSource(
   const now = Date.now();
 
   const config: FolderSourceConfig = {
-    // ID format: {slug}_{random} for easy identification (e.g., "linear_a1b2c3d4")
+    // ID 格式：{slug}_{随机串}，方便识别，例如 "linear_a1b2c3d4"
     id: `${slug}_${randomUUID().slice(0, 8)}`,
     name: input.name,
     slug,
@@ -517,7 +517,7 @@ export async function createSource(
     updatedAt: now,
   };
 
-  // Add type-specific config
+  // 按类型写入对应配置块
   switch (input.type) {
     case 'mcp':
       if (input.mcp) {
@@ -536,8 +536,8 @@ export async function createSource(
       break;
   }
 
-  // Validate and store icon (emoji or URL)
-  // URL icons are downloaded on first config change via watcher
+  // 校验并存储图标（emoji 或 URL）
+  // URL 图标会在第一次配置变更时由 watcher 下载
   if (input.icon) {
     const validatedIcon = validateIconValue(input.icon, 'Sources');
     if (validatedIcon) {
@@ -545,11 +545,11 @@ export async function createSource(
     }
   }
 
-  // Save config first to create the directory
+  // 先保存配置，创建目录
   saveSourceConfig(workspaceRootPath, config);
 
-  // If icon is a URL, download it immediately
-  // (watcher will also handle this, but doing it here provides immediate feedback)
+  // 如果 icon 是 URL，立即下载
+  // （watcher 也会处理，但这里立即下载能给用户更快反馈）
   const sourcePath = getSourcePath(workspaceRootPath, slug);
   if (config.icon && isIconUrl(config.icon)) {
     const iconPath = await downloadIcon(sourcePath, config.icon, 'Sources');
@@ -557,7 +557,7 @@ export async function createSource(
       debug(`[createSource] Icon downloaded for ${slug}: ${iconPath}`);
     }
   } else if (!config.icon) {
-    // No icon provided - try to auto-fetch from service URL
+    // 没有提供图标 —— 尝试从服务 URL 自动获取
     const { deriveServiceUrl, getHighQualityLogoUrl } = await import('../utils/logo.ts');
     const { downloadIcon } = await import('../utils/icon.ts');
     const serviceUrl = deriveServiceUrl(input);
@@ -566,7 +566,7 @@ export async function createSource(
       if (logoUrl) {
         const iconPath = await downloadIcon(sourcePath, logoUrl, `createSource:${slug}`);
         if (iconPath) {
-          // Store the source URL for reference (not the cached path)
+          // 保存 source URL 作为参考（不是缓存路径）
           config.icon = logoUrl;
           saveSourceConfig(workspaceRootPath, config);
         }
@@ -574,8 +574,8 @@ export async function createSource(
     }
   }
 
-  // Create guide.md with skeleton template
-  // (bundled guides removed - agent should search craft-agents-docs MCP for service-specific guidance)
+  // 创建 guide.md 骨架
+  // （已移除打包的 guide —— agent 应该通过 craft-agents-docs MCP 查询服务专属指南）
   const guideContent = `# ${input.name}
 
 ## Guidelines
@@ -592,7 +592,7 @@ export async function createSource(
 }
 
 /**
- * Delete a source from a workspace
+ * 从 workspace 删除一个 source
  */
 export function deleteSource(workspaceRootPath: string, sourceSlug: string): void {
   const dir = getSourcePath(workspaceRootPath, sourceSlug);
@@ -602,22 +602,21 @@ export function deleteSource(workspaceRootPath: string, sourceSlug: string): voi
 }
 
 /**
- * Check if a source exists in a workspace
+ * 判断 source 是否存在于 workspace 中
  */
 export function sourceExists(workspaceRootPath: string, sourceSlug: string): boolean {
   return existsSync(join(getSourcePath(workspaceRootPath, sourceSlug), 'config.json'));
 }
 
 // ============================================================
-// Source Loading/Saving Helpers
+// Source 加载/保存辅助说明
 // ============================================================
 
-// Note: SourceWithContext and wrapper functions were removed in this PR.
-// Use loadSourceConfig and saveSourceConfig directly instead.
+// 注：SourceWithContext 和相关包装函数已在本 PR 中移除。
+// 需要时请直接使用 loadSourceConfig 和 saveSourceConfig。
 
 // ============================================================
-// Re-export parseGuideMarkdown for use in other modules
+// 重新导出 parseGuideMarkdown，供其他模块使用
 // ============================================================
 
 export { parseGuideMarkdown };
-

@@ -1,8 +1,15 @@
+/**
+ * browser.ts —— 浏览器面板相关 RPC handler。
+ *
+ * 把渲染进程 / 远端发来的浏览器操作请求转发给 BrowserPaneManager。
+ * 例如：create（创建窗口）、navigate（导航）、click（点击元素）、screenshot（截图）等。
+ */
 import { RPC_CHANNELS, type BrowserPaneCreateOptions, type BrowserEmptyStateLaunchPayload } from '../../shared/types'
 import type { BrowserScreenshotOptions } from '../browser-pane-manager'
 import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from './handler-deps'
 
+// 本文件负责处理的 RPC channel 列表
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.browserPane.CREATE,
   RPC_CHANNELS.browserPane.DESTROY,
@@ -27,11 +34,10 @@ export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): v
   const { browserPaneManager, platform } = deps
   if (!browserPaneManager) return
 
+  // 创建浏览器实例：把请求方的 workspaceId 打戳到实例上，
+  // 这样手动打开的浏览器标签只属于当前 workspace；如果 ctx.workspaceId 为 null（例如 CLI），
+  // 则保持全局可见（兼容旧行为）。
   server.handle(RPC_CHANNELS.browserPane.CREATE, (ctx, input?: string | BrowserPaneCreateOptions) => {
-    // Stamp the window with the requester's workspace so manual UI-opened
-    // tabs stay scoped to the workspace where the user clicked. If
-    // ctx.workspaceId is null (no workspace context — e.g. CLI / agent
-    // harness), the window stays globally visible (legacy behavior).
     const workspaceId = ctx.workspaceId ?? null
 
     if (typeof input === 'string') {
@@ -52,12 +58,10 @@ export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): v
     browserPaneManager.destroyInstance(id)
   })
 
+  // 列出所有浏览器实例。workspace 隔离在渲染进程侧做（filterInstancesForWorkspace），
+  // 因为渲染进程同时知道本地 workspaceId 和远程镜像 workspaceId；server 侧按 ctx.workspaceId
+  // 过滤会漏掉远程打戳的标签。
   server.handle(RPC_CHANNELS.browserPane.LIST, () => {
-    // Return all instances. Workspace isolation is enforced renderer-side
-    // (filterInstancesForWorkspace), which knows BOTH the local workspace id
-    // and the remote-mirror workspace id for the active workspace. A server-
-    // side filter on ctx.workspaceId would miss remote-stamped tabs because
-    // ctx.workspaceId is always the local id (set by updateClientWorkspace).
     return browserPaneManager.listInstances()
   })
 
@@ -181,18 +185,10 @@ export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): v
     }
   })
 
-  // Forward browser events to all locally-connected renderers. Workspace
-  // isolation is enforced renderer-side (filterInstancesForWorkspace), which
-  // handles both the local workspace id and the remote-mirror workspace id.
-  //
-  // We can't route STATE_CHANGED to `{ to: 'workspace', workspaceId }` here
-  // because the broadcast routing uses the client's transport-level workspaceId
-  // (the local Craft Agents window's id, set by `updateClientWorkspace`),
-  // while remote-bridged instances are stamped with the remote server's
-  // workspaceId. The two never match, so a workspace-targeted broadcast would
-  // silently fail to reach the renderer. Broadcast to all + filter in the
-  // renderer is the contract that actually works in both local-only and
-  // remote-mirror deployments.
+  // 把浏览器状态事件广播给所有本地连接的渲染进程。
+  // 注意：不能直接按 workspaceId 定向推送，因为本地窗口的 workspaceId 和远程镜像实例的
+  // workspaceId 来自不同命名空间，会匹配失败。因此采用「广播到全部 + 渲染进程自己过滤」
+  // 的方案，在本地-only 和 remote-mirror 两种部署下都能工作。
   browserPaneManager.onStateChange((info) => {
     pushTyped(server, RPC_CHANNELS.browserPane.STATE_CHANGED, { to: 'all' }, info)
   })

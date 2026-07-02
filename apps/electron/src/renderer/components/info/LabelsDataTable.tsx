@@ -1,9 +1,8 @@
 /**
  * LabelsDataTable
  *
- * Hierarchical data table for displaying label configurations.
- * Uses TanStack Table's built-in expand/collapse for tree rendering.
- * Columns: Color, Name (indented + chevron), Value Type.
+ * 用于展示标签配置的树形表格，利用 TanStack Table 内置的展开/折叠能力渲染层级。
+ * 列：颜色、名称（缩进 + 箭头）、值类型。
  */
 
 import * as React from 'react'
@@ -21,22 +20,22 @@ import { useTheme } from '@/hooks/useTheme'
 import type { LabelConfig } from '@craft-agent/shared/labels'
 
 interface LabelsDataTableProps {
-  /** Label tree (root-level nodes with nested children) */
+  /** 标签树（根节点，可能包含嵌套 children） */
   data: LabelConfig[]
-  /** Show search input */
+  /** 是否显示搜索框 */
   searchable?: boolean
-  /** Max height with scroll */
+  /** 最大高度，超出后纵向滚动 */
   maxHeight?: number
-  /** Enable fullscreen button */
+  /** 是否启用全屏按钮 */
   fullscreen?: boolean
-  /** Title for fullscreen overlay */
+  /** 全屏弹窗的标题 */
   fullscreenTitle?: string
   className?: string
 }
 
 /**
- * ExpandableNameCell - Renders label name with indentation and expand/collapse chevron.
- * Depth-based indentation with a rotating chevron for parent nodes.
+ * ExpandableNameCell - 渲染可展开的标签名称单元格。
+ * 根据节点深度缩进，父节点显示可旋转的展开/折叠箭头。
  */
 function ExpandableNameCell({ row }: { row: Row<LabelConfig> }) {
   const canExpand = row.getCanExpand()
@@ -45,10 +44,10 @@ function ExpandableNameCell({ row }: { row: Row<LabelConfig> }) {
   return (
     <div
       className="flex items-center gap-1.5 p-1.5 pl-2.5"
-      // Indent based on depth: 16px per level
+      // 根据节点深度缩进：每层 16px
       style={{ paddingLeft: `${row.depth * 16 + 10}px` }}
     >
-      {/* Expand/collapse chevron for parent nodes */}
+      {/* 父节点显示展开/折叠箭头 */}
       {canExpand ? (
         <button
           type="button"
@@ -66,7 +65,7 @@ function ExpandableNameCell({ row }: { row: Row<LabelConfig> }) {
           />
         </button>
       ) : (
-        // Spacer to keep alignment consistent with expandable rows
+        // 占位元素，保持叶子节点与父节点的水平对齐
         <span className="w-4" />
       )}
       <span className="text-sm truncate">{row.original.name}</span>
@@ -74,7 +73,7 @@ function ExpandableNameCell({ row }: { row: Row<LabelConfig> }) {
   )
 }
 
-// Column definitions for the labels tree table
+// 标签树表格的列定义
 function getColumns(t: TFunction): ColumnDef<LabelConfig>[] {
   return [
     {
@@ -119,8 +118,8 @@ function getColumns(t: TFunction): ColumnDef<LabelConfig>[] {
 }
 
 /**
- * Extract children from a LabelConfig for tree expansion.
- * Returns undefined if no children (tells TanStack this is a leaf node).
+ * 从 LabelConfig 中提取子节点，用于树形展开。
+ * 没有子节点时返回 undefined，TanStack Table 会将其识别为叶子节点。
  */
 function getSubRows(row: LabelConfig): LabelConfig[] | undefined {
   return row.children?.length ? row.children : undefined
@@ -139,7 +138,7 @@ export function LabelsDataTable({
   const { isDark } = useTheme()
   const columns = useMemo(() => getColumns(t), [t])
 
-  // Fullscreen button (shown on hover via group class)
+  // 全屏按钮（外层有 group 类时 hover 显示）
   const fullscreenButton = fullscreen ? (
     <button
       onClick={() => setIsFullscreen(true)}
@@ -156,7 +155,7 @@ export function LabelsDataTable({
     </button>
   ) : undefined
 
-  // Count all labels recursively for the subtitle
+  // 递归统计所有标签数量，用于全屏弹窗副标题
   const countLabels = (labels: LabelConfig[]): number =>
     labels.reduce((sum, l) => sum + 1 + countLabels(l.children || []), 0)
   const totalCount = countLabels(data)
@@ -174,7 +173,7 @@ export function LabelsDataTable({
         getSubRows={getSubRows}
       />
 
-      {/* Fullscreen overlay */}
+      {/* 全屏弹窗 overlay */}
       {fullscreen && (
         <DataTableOverlay
           isOpen={isFullscreen}

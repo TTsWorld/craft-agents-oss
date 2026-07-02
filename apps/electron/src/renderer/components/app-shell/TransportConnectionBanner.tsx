@@ -1,13 +1,24 @@
+/**
+ * TransportConnectionBanner - 传输层连接状态提示横幅。
+ *
+ * 用于展示本地模式以外的连接状态（connecting/reconnecting/failed/disconnected），
+ * 并提供重试按钮。所有面向用户的文案都走 i18n，这里只控制结构与 tone。
+ */
 import i18n from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import type { TransportConnectionState } from '../../../shared/types'
 
+/**
+ * 判断是否需要显示传输连接横幅。
+ * 本地模式或已连接/空闲时不显示。
+ */
 export function shouldShowTransportConnectionBanner(state: TransportConnectionState | null): boolean {
   if (!state || state.mode === 'local') return false
   return state.status !== 'connected' && state.status !== 'idle'
 }
 
+/** TransportBannerCopy：横幅文案与样式 tone */
 export interface TransportBannerCopy {
   title: string
   description: string
@@ -15,6 +26,10 @@ export interface TransportBannerCopy {
   tone: 'warning' | 'error' | 'info'
 }
 
+/**
+ * 根据连接状态生成横幅需要的文案、是否显示重试按钮以及视觉 tone。
+ * 具体文案通过 i18n.t 从翻译文件读取。
+ */
 export function getTransportBannerCopy(state: TransportConnectionState): TransportBannerCopy {
   switch (state.status) {
     case 'connecting':
@@ -61,6 +76,10 @@ export function getTransportBannerCopy(state: TransportConnectionState): Transpo
   }
 }
 
+/**
+ * 从状态中提取失败原因描述，按优先级：
+ * 1. 最后一次错误（按 kind 映射）；2. WebSocket 关闭码；3. 默认等待连接文案。
+ */
 function getFailureReason(state: TransportConnectionState): string {
   const err = state.lastError
   if (err) {
@@ -79,6 +98,7 @@ function getFailureReason(state: TransportConnectionState): string {
   return i18n.t('transport.waitingForConnection')
 }
 
+/** TransportConnectionBanner - 根据状态渲染连接提示横幅 */
 export function TransportConnectionBanner({
   state,
   onRetry,

@@ -1,3 +1,9 @@
+/**
+ * ChatInputZone - 聊天输入区域组合组件。
+ *
+ * 把 ActiveOptionBadges（权限模式、状态、标签徽章）和 InputContainer 组合在一起，
+ * 并处理输入错误边界、标签添加等逻辑。
+ */
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 import { CHAT_LAYOUT } from '@/config/layout'
@@ -29,6 +35,7 @@ interface ChatInputZoneProps {
   inputProps: React.ComponentProps<typeof InputContainer>
 }
 
+/** ChatInputZone - 聊天输入区 */
 export function ChatInputZone({
   compactMode = false,
   showOptionBadges,
@@ -63,6 +70,7 @@ export function ChatInputZone({
 
     onLabelsChange?.([...current, labelId])
 
+    // 如果新增的标签带值类型，则自动打开值编辑浮层
     const config = flattenLabels(labels || []).find(label => label.id === labelId)
     if (config?.valueType) {
       setAutoOpenLabelId(labelId)

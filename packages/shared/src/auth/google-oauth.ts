@@ -1,14 +1,13 @@
 /**
- * Google OAuth flow using Google's OAuth 2.0 with PKCE
+ * Google OAuth 流程
  *
- * This module handles the complete Google OAuth flow for any Google API:
- * 1. Opens browser for Google consent screen
- * 2. Receives authorization code via local callback server
- * 3. Exchanges code for access and refresh tokens
- * 4. Returns tokens and user email
+ * 使用 Google OAuth 2.0 with PKCE，处理完整登录流程：
+ * 1. 打开浏览器展示 Google 同意页
+ * 2. 通过本地回调服务器接收授权码
+ * 3. 用授权码换 access/refresh token
+ * 4. 返回 token 和用户邮箱
  *
- * Supports multiple Google services (Gmail, Calendar, Drive) with predefined
- * scope sets, or custom scopes for other Google APIs.
+ * 支持多种 Google 服务（Gmail、Calendar、Drive 等）的预定义 scope，也支持自定义 scope。
  */
 
 import { URL } from 'url';
@@ -19,77 +18,77 @@ import { type GoogleService } from '../sources/types.ts';
 import { type OAuthSessionContext, buildOAuthDeeplinkUrl } from './types.ts';
 import type { PreparedOAuthFlow, OAuthExchangeParams, OAuthExchangeResult } from './oauth-flow-types.ts';
 
-// Re-export GoogleService type for convenient access
+// 为了调用方便，再导出一次 GoogleService 类型
 export type { GoogleService };
 
-// Google OAuth configuration - environment variables used as fallback
-// Users can provide their own credentials via source config (preferred for OSS)
-// These env vars are only used if credentials are not provided explicitly
-// Note: Google requires client_secret for Desktop apps despite PKCE support
+// Google OAuth 配置：环境变量作为兜底
+// 推荐在 source config 里提供自己的凭据（对 OSS 更友好）
+// 注意：Google 桌面应用即便支持 PKCE，也要求提供 client_secret
 const GOOGLE_CLIENT_ID_ENV = process.env.GOOGLE_OAUTH_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET_ENV = process.env.GOOGLE_OAUTH_CLIENT_SECRET || '';
 
-// Google OAuth endpoints
+// Google OAuth 端点
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo';
 
 /**
- * Predefined scope sets for common Google services
+ * 常见 Google 服务的预定义 scope 集合。
+ * key 是服务名，value 是该服务需要的 scope 数组。
  */
 export const GOOGLE_SERVICE_SCOPES: Record<GoogleService, string[]> = {
   gmail: [
-    'https://www.googleapis.com/auth/gmail.modify', // Read, trash, labels, mark read/unread
-    'https://www.googleapis.com/auth/gmail.compose', // Create and send drafts
+    'https://www.googleapis.com/auth/gmail.modify', // 读、删、打标签、标记已读/未读
+    'https://www.googleapis.com/auth/gmail.compose', // 创建和发送草稿
     'https://www.googleapis.com/auth/userinfo.email',
   ],
   calendar: [
-    'https://www.googleapis.com/auth/calendar', // Full calendar access
+    'https://www.googleapis.com/auth/calendar', // 完整日历访问
     'https://www.googleapis.com/auth/userinfo.email',
   ],
   drive: [
-    'https://www.googleapis.com/auth/drive', // Full Drive access
+    'https://www.googleapis.com/auth/drive', // 完整 Drive 访问
     'https://www.googleapis.com/auth/userinfo.email',
   ],
   docs: [
-    'https://www.googleapis.com/auth/documents', // Full Docs access
+    'https://www.googleapis.com/auth/documents', // 完整 Docs 访问
     'https://www.googleapis.com/auth/userinfo.email',
   ],
   sheets: [
-    'https://www.googleapis.com/auth/spreadsheets', // Full Sheets access
+    'https://www.googleapis.com/auth/spreadsheets', // 完整 Sheets 访问
     'https://www.googleapis.com/auth/userinfo.email',
   ],
   youtube: [
-    'https://www.googleapis.com/auth/youtube.readonly', // Read channel, video, playlist data
-    'https://www.googleapis.com/auth/youtube.force-ssl', // Manage content (comments, playlists, etc.)
+    'https://www.googleapis.com/auth/youtube.readonly', // 读取频道、视频、播放列表
+    'https://www.googleapis.com/auth/youtube.force-ssl', // 管理内容（评论、播放列表等）
     'https://www.googleapis.com/auth/userinfo.email',
   ],
   searchconsole: [
-    'https://www.googleapis.com/auth/webmasters.readonly', // Read Search Console data
+    'https://www.googleapis.com/auth/webmasters.readonly', // 读取 Search Console 数据
     'https://www.googleapis.com/auth/userinfo.email',
   ],
 };
 
 /**
- * Options for starting Google OAuth flow
+ * 启动 Google OAuth 流程的选项。
  */
 export interface GoogleOAuthOptions {
-  /** Google service to authenticate (uses predefined scopes) */
+  /** 要登录的 Google 服务（使用预定义 scope） */
   service?: GoogleService;
-  /** Custom scopes (overrides service scopes if provided) */
+  /** 自定义 scope（提供时覆盖 service 的 scope） */
   scopes?: string[];
-  /** App type for callback server styling */
+  /** 回调页面样式 */
   appType?: AppType;
-  /** OAuth client ID (user-provided, falls back to env var) */
+  /** OAuth client ID（用户提供的，回退到环境变量） */
   clientId?: string;
-  /** OAuth client secret (user-provided, falls back to env var) */
+  /** OAuth client secret（用户提供的，回退到环境变量） */
   clientSecret?: string;
-  /** Session context for building deeplink back to chat after OAuth */
+  /** OAuth 完成后跳回聊天 session 的上下文 */
   sessionContext?: OAuthSessionContext;
 }
 
 /**
- * Result of Google OAuth flow
+ * Google OAuth 流程结果。
  */
 export interface GoogleOAuthResult {
   success: boolean;
@@ -98,14 +97,14 @@ export interface GoogleOAuthResult {
   expiresAt?: number;
   email?: string;
   error?: string;
-  /** OAuth client ID used (for storage alongside tokens) */
+  /** 存储 token 时一起保存的 clientId（Google 刷新需要） */
   clientId?: string;
-  /** OAuth client secret used (for storage alongside tokens - needed for refresh) */
+  /** 存储 token 时一起保存的 clientSecret（Google 刷新需要） */
   clientSecret?: string;
 }
 
 /**
- * Generate PKCE code verifier and challenge
+ * 生成 PKCE verifier 和 challenge。
  */
 function generatePKCE(): { verifier: string; challenge: string } {
   const verifier = randomBytes(32).toString('base64url');
@@ -114,14 +113,14 @@ function generatePKCE(): { verifier: string; challenge: string } {
 }
 
 /**
- * Generate random state for CSRF protection
+ * 生成随机 state，防止 CSRF。
  */
 function generateState(): string {
   return randomBytes(16).toString('hex');
 }
 
 /**
- * Exchange authorization code for tokens
+ * 用授权码换 token。
  */
 async function exchangeCodeForTokens(
   code: string,
@@ -164,7 +163,7 @@ async function exchangeCodeForTokens(
 }
 
 /**
- * Get user email from access token
+ * 用 access token 获取用户邮箱。
  */
 async function getUserEmail(accessToken: string): Promise<string> {
   const response = await fetch(GOOGLE_USERINFO_URL, {
@@ -180,11 +179,11 @@ async function getUserEmail(accessToken: string): Promise<string> {
 }
 
 /**
- * Refresh Google access token using refresh token
+ * 用 refresh token 刷新 Google access token。
  *
- * @param refreshToken - The refresh token from initial OAuth
- * @param clientId - OAuth client ID (falls back to env var if not provided)
- * @param clientSecret - OAuth client secret (falls back to env var if not provided)
+ * @param refreshToken - 初始 OAuth 得到的 refresh token
+ * @param clientId - OAuth client ID（未提供时回退到环境变量）
+ * @param clientSecret - OAuth client secret（未提供时回退到环境变量）
  */
 export async function refreshGoogleToken(
   refreshToken: string,
@@ -233,11 +232,11 @@ export async function refreshGoogleToken(
 }
 
 /**
- * Check if Google OAuth is configured (client ID and secret are available)
+ * 检查 Google OAuth 是否已配置（clientId 和 clientSecret 至少有一个来源可用）。
  *
- * @param clientId - Optional user-provided client ID
- * @param clientSecret - Optional user-provided client secret
- * @returns true if credentials are available (either provided or from env vars)
+ * @param clientId - 可选的用户提供的 client ID
+ * @param clientSecret - 可选的用户提供的 client secret
+ * @returns true 表示凭据可用
  */
 export function isGoogleOAuthConfigured(clientId?: string, clientSecret?: string): boolean {
   const id = clientId || GOOGLE_CLIENT_ID_ENV;
@@ -246,12 +245,12 @@ export function isGoogleOAuthConfigured(clientId?: string, clientSecret?: string
 }
 
 /**
- * Get scopes for a Google service or use custom scopes
+ * 根据 service 或自定义 scopes 获取最终要请求的 scope 列表。
  */
 export function getGoogleScopes(options: GoogleOAuthOptions): string[] {
-  // Custom scopes take precedence
+  // 自定义 scope 优先级最高
   if (options.scopes && options.scopes.length > 0) {
-    // Ensure userinfo.email is included for email retrieval
+    // 确保包含 userinfo.email，否则后面拿不到邮箱
     const emailScope = 'https://www.googleapis.com/auth/userinfo.email';
     if (!options.scopes.includes(emailScope)) {
       return [...options.scopes, emailScope];
@@ -259,32 +258,32 @@ export function getGoogleScopes(options: GoogleOAuthOptions): string[] {
     return options.scopes;
   }
 
-  // Use predefined service scopes
+  // 使用预定义的服务 scope
   if (options.service && options.service in GOOGLE_SERVICE_SCOPES) {
     return GOOGLE_SERVICE_SCOPES[options.service];
   }
 
-  // Default to Gmail scopes for backwards compatibility
+  // 默认用 Gmail scope，保持向后兼容
   return GOOGLE_SERVICE_SCOPES.gmail;
 }
 
 /**
- * Options for preparing a Google OAuth flow (server-side, no browser interaction)
+ * 准备 Google OAuth 流程的选项（服务端，不打开浏览器）。
  */
 export interface PrepareGoogleOAuthOptions {
   service?: GoogleService;
   scopes?: string[];
-  /** Port for the local callback server (Electron). One of callbackPort or callbackUrl required. */
+  /** 本地回调服务器端口（Electron）。callbackPort 和 callbackUrl 至少传一个 */
   callbackPort?: number;
-  /** Full callback URL (WebUI). Takes precedence over callbackPort. */
+  /** 完整回调 URL（WebUI）。优先级高于 callbackPort */
   callbackUrl?: string;
   clientId?: string;
   clientSecret?: string;
 }
 
 /**
- * Prepare a Google OAuth flow without starting a callback server or opening a browser.
- * Returns everything needed to construct the auth URL and later exchange the code.
+ * 准备 Google OAuth 流程，不启动回调服务器也不打开浏览器。
+ * 返回构造授权 URL 和后续换 token 所需的一切。
  */
 export function prepareGoogleOAuth(options: PrepareGoogleOAuthOptions): PreparedOAuthFlow {
   const clientId = options.clientId || GOOGLE_CLIENT_ID_ENV;
@@ -327,8 +326,7 @@ export function prepareGoogleOAuth(options: PrepareGoogleOAuthOptions): Prepared
 }
 
 /**
- * Exchange a Google authorization code for tokens (server-side).
- * Also fetches the user's email address.
+ * 在服务端用 Google 授权码换 token，并获取用户邮箱。
  */
 export async function exchangeGoogleOAuth(params: OAuthExchangeParams): Promise<OAuthExchangeResult> {
   try {
@@ -360,21 +358,21 @@ export async function exchangeGoogleOAuth(params: OAuthExchangeParams): Promise<
 }
 
 /**
- * Start Google OAuth flow
+ * 启动完整的 Google OAuth 流程。
  *
- * Opens browser for Google consent, handles callback, and returns tokens + email.
- * Supports multiple Google services via the service option, or custom scopes.
+ * 打开浏览器展示 Google 同意页，处理回调，返回 token 和邮箱。
+ * 可以通过 service 指定服务，也可以传自定义 scopes。
  *
  * @example
- * // Authenticate for Gmail
+ * // 登录 Gmail
  * const result = await startGoogleOAuth({ service: 'gmail' });
  *
  * @example
- * // Authenticate for Google Calendar
+ * // 登录 Google Calendar
  * const result = await startGoogleOAuth({ service: 'calendar' });
  *
  * @example
- * // Authenticate with custom scopes
+ * // 用自定义 scope 登录
  * const result = await startGoogleOAuth({
  *   scopes: ['https://www.googleapis.com/auth/spreadsheets']
  * });
@@ -383,11 +381,11 @@ export async function startGoogleOAuth(
   options: GoogleOAuthOptions = {}
 ): Promise<GoogleOAuthResult> {
   try {
-    // Resolve credentials: use provided values or fall back to env vars
+    // 解析凭据：优先用传入值，否则回退环境变量
     const clientId = options.clientId || GOOGLE_CLIENT_ID_ENV;
     const clientSecret = options.clientSecret || GOOGLE_CLIENT_SECRET_ENV;
 
-    // Verify OAuth credentials are configured
+    // 检查凭据是否已配置
     if (!isGoogleOAuthConfigured(clientId, clientSecret)) {
       return {
         success: false,
@@ -397,20 +395,20 @@ export async function startGoogleOAuth(
       };
     }
 
-    // Get scopes for this request
+    // 获取本次请求需要的 scope
     const scopes = getGoogleScopes(options);
 
-    // Generate PKCE and state
+    // 生成 PKCE 和 state
     const pkce = generatePKCE();
     const state = generateState();
 
-    // Start callback server with deeplink for returning to chat session
+    // 启动本地回调服务器，并带上跳回聊天 session 的 deeplink
     const appType = options.appType || 'electron';
     const deeplinkUrl = buildOAuthDeeplinkUrl(options.sessionContext);
     const callbackServer = await createCallbackServer({ appType, deeplinkUrl });
     const redirectUri = `${callbackServer.url}/callback`;
 
-    // Build authorization URL
+    // 构造授权 URL
     const authUrl = new URL(GOOGLE_AUTH_URL);
     authUrl.searchParams.set('client_id', clientId);
     authUrl.searchParams.set('redirect_uri', redirectUri);
@@ -419,16 +417,16 @@ export async function startGoogleOAuth(
     authUrl.searchParams.set('state', state);
     authUrl.searchParams.set('code_challenge', pkce.challenge);
     authUrl.searchParams.set('code_challenge_method', 'S256');
-    authUrl.searchParams.set('access_type', 'offline'); // Request refresh token
-    authUrl.searchParams.set('prompt', 'consent'); // Always show consent to get refresh token
+    authUrl.searchParams.set('access_type', 'offline'); // 请求 refresh token
+    authUrl.searchParams.set('prompt', 'consent'); // 每次都显示同意页，确保拿到 refresh token
 
-    // Open browser for authorization
+    // 打开浏览器授权
     await openUrl(authUrl.toString());
 
-    // Wait for callback
+    // 等待回调
     const callback = await callbackServer.promise;
 
-    // Verify state
+    // 校验 state，防止 CSRF
     if (callback.query.state !== state) {
       return {
         success: false,
@@ -436,7 +434,7 @@ export async function startGoogleOAuth(
       };
     }
 
-    // Check for error
+    // 检查回调里是否有错误
     if (callback.query.error) {
       const isAccessBlocked =
         callback.query.error === 'access_denied' &&
@@ -451,7 +449,7 @@ export async function startGoogleOAuth(
       return { success: false, error };
     }
 
-    // Get authorization code
+    // 获取授权码
     const code = callback.query.code;
     if (!code) {
       return {
@@ -460,10 +458,10 @@ export async function startGoogleOAuth(
       };
     }
 
-    // Exchange code for tokens (pass credentials for token exchange)
+    // 用授权码换 token（传凭据用于 token exchange）
     const tokens = await exchangeCodeForTokens(code, pkce.verifier, redirectUri, clientId, clientSecret);
 
-    // Get user email
+    // 获取用户邮箱
     const email = await getUserEmail(tokens.accessToken);
 
     return {
@@ -472,7 +470,7 @@ export async function startGoogleOAuth(
       refreshToken: tokens.refreshToken,
       expiresAt: tokens.expiresIn ? Date.now() + tokens.expiresIn * 1000 : undefined,
       email,
-      // Return credentials so they can be stored for token refresh
+      // 把凭据一起返回，方便存下来用于后续刷新
       clientId,
       clientSecret,
     };

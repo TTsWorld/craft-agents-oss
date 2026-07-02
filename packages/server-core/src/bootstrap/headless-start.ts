@@ -1,3 +1,16 @@
+/**
+ * 无头服务器启动与生命周期管理。
+ *
+ * 这个文件是 `packages/server/src/index.ts` 的底层支撑，相当于 Golang 项目里的 `internal/bootstrap`：
+ * - 校验 server token 熵
+ * - 管理启动锁文件，防止多实例冲突
+ * - 初始化全局配置
+ * - 创建 platform、session manager、WS RPC server
+ * - 注册 RPC handler、启动模型刷新服务
+ * - 提供 HTTP 健康检查端点
+ * - 提供优雅关闭
+ */
+
 import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'node:fs'
 import { uptime as osUptime } from 'node:os'
 import { join } from 'node:path'
@@ -10,11 +23,23 @@ import type { EventSink, RpcServer } from '../transport/types'
 import { createHeadlessPlatform } from '../runtime/platform-headless'
 import type { PlatformServices } from '../runtime/platform'
 
+/**
+ * 模型刷新服务的最小接口。
+ *
+ * 服务器启动后会调用 startAll()，关闭时调用 stopAll()。
+ * 具体实现来自 server-core/model-fetchers。
+ */
 interface ModelRefreshServiceLike {
   startAll(): void
   stopAll?(): void
 }
 
+/**
+ * 启动服务器需要的配置项。
+ *
+ * 用泛型 TSessionManager / THandlerDeps 是为了让 Electron 和无头模式可以复用同一套启动逻辑，
+ * 但传入各自不同的 SessionManager 和 handler 依赖。
+ */
 export interface ServerBootstrapOptions<TSessionManager, THandlerDeps> {
   serverToken?: string
   rpcHost?: string
@@ -32,9 +57,8 @@ export interface ServerBootstrapOptions<TSessionManager, THandlerDeps> {
   initializeSessionManager: (sessionManager: TSessionManager) => Promise<void>
   setSessionEventSink: (sessionManager: TSessionManager, sink: EventSink) => void
   /**
-   * Optional hook called right after the WS RPC server starts listening. Use
-   * this to plumb the server into the SessionManager (e.g. `sm.setRpcServer(server)`)
-   * so the remote-bridge code path for `client:browser:invoke` activates.
+   * WS RPC server 开始监听后的回调。
+   * 通常用来把 server 实例设置给 SessionManager，以激活 client:browser:invoke 远程桥接。
    */
   bindRpcServer?: (sessionManager: TSessionManager, server: RpcServer) => void
   initModelRefreshService: () => ModelRefreshServiceLike
@@ -42,25 +66,31 @@ export interface ServerBootstrapOptions<TSessionManager, THandlerDeps> {
   cleanupClientResources?: (clientId: string) => void
   onClientConnected?: (info: { clientId: string; webContentsId: number | null; workspaceId: string | null; capabilities: string[] }) => void
   serverId?: string
-  /** App version string, included in handshake_ack for client compatibility checks. */
+  /** 应用版本，握手时返回给客户端做兼容性检查 */
   serverVersion?: string
-  /** TLS configuration. When provided, the server listens on wss:// instead of ws://. */
+  /** TLS 配置，提供后监听 wss:// */
   tls?: WsRpcTlsOptions
-  /** Cookie-based session validator for web UI auth on WebSocket upgrade. */
+  /** WebUI cookie 校验器，用于 WebSocket upgrade 时的认证 */
   validateSessionCookie?: (cookieHeader: string | null) => Promise<boolean>
   /**
-   * Optional HTTP request handler for non-WebSocket requests on the RPC port.
-   * When provided, the WsRpcServer serves HTTP (e.g. WebUI) on the same port.
+   * 非 WebSocket HTTP 请求处理器。
+   * 提供后 WsRpcServer 会在同一端口上处理 HTTP（如 WebUI）。
    */
   httpHandler?: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => void
 }
 
+/**
+ * 服务器级 RPC handler 上下文。
+ */
 export interface ServerHandlerContext {
   getConnectedClientCount: () => number
   serverId: string
   startedAt: number
 }
 
+/**
+ * bootstrapServer 返回的实例。
+ */
 export interface ServerInstance<TSessionManager> {
   platform: PlatformServices
   sessionManager: TSessionManager
@@ -70,33 +100,37 @@ export interface ServerInstance<TSessionManager> {
   port: number
   protocol: 'ws' | 'wss'
   token: string
-  /** Context for server-level RPC handlers (status, health, active sessions). */
   serverHandlerContext: ServerHandlerContext
   stop: () => Promise<void>
 }
 
 // ---------------------------------------------------------------------------
-// Token entropy validation
+// Token 熵值校验
 // ---------------------------------------------------------------------------
 
+/** 可接受的最小 server token 长度；低于此值直接拒绝启动。 */
 const MIN_TOKEN_LENGTH = 16
 
 /**
- * Reject tokens that are trivially weak. Runs at startup before the server
- * accepts connections so a bad token never reaches the wire.
+ * 校验 server token 是否足够强。
+ *
+ * 在服务器接受任何连接前就拒绝弱 token，避免安全问题。
+ * 返回 ok/warning/error 三种状态：
+ * - ok=false：直接拒绝启动
+ * - ok=true + warning：允许启动但给出警告
+ * - ok=true：通过
  */
 function validateTokenEntropy(token: string): { ok: boolean; warning?: string; error?: string } {
   if (token.length < MIN_TOKEN_LENGTH) {
     return { ok: false, error: `Token too short (${token.length} chars, minimum ${MIN_TOKEN_LENGTH}). Use a cryptographically random value.` }
   }
 
-  // Reject single-character repeats ("aaaaaaaaaaaaaaaa")
+  // 拒绝单个字符重复
   if (new Set(token).size === 1) {
     return { ok: false, error: 'Token has zero entropy (single repeated character).' }
   }
 
-  // Warn (but allow) low-uniqueness tokens — fewer than 8 unique characters
-  // in a 16+ char token suggests a pattern like "abcabcabc..."
+  // 低唯一字符数给出警告（如 "abcabcabc..."）
   const uniqueChars = new Set(token).size
   if (uniqueChars < 8) {
     return { ok: true, warning: `Token has low entropy (${uniqueChars} unique characters). Consider using a stronger token.` }
@@ -106,8 +140,10 @@ function validateTokenEntropy(token: string): { ok: boolean; warning?: string; e
 }
 
 /**
- * Generate a cryptographically random token suitable for server auth.
- * Returns a 48-character hex string (192 bits of entropy).
+ * 生成服务器认证 token。
+ *
+ * 使用 Web Crypto API 生成 24 字节随机数，转成 48 位十六进制字符串，
+ * 熵值 192 位，足够作为 bearer token。
  */
 export function generateServerToken(): string {
   const bytes = new Uint8Array(24)
@@ -116,16 +152,27 @@ export function generateServerToken(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Startup lock file
+// 启动锁文件（防止同一配置目录下多个 server 实例同时运行）
 // ---------------------------------------------------------------------------
 
+/** 启动锁文件路径，放在配置目录下用于防止多实例并发启动。 */
 const LOCK_FILE = join(CONFIG_DIR, '.server.lock')
 
+/**
+ * 锁文件里存储的信息。
+ *
+ * 保存 PID 和启动时间，用来判断锁是否来自当前进程、已死亡进程，或被复用的 PID。
+ */
 interface LockPayload {
   pid: number
   startedAt: number
 }
 
+/**
+ * 判断进程是否存活。
+ *
+ * process.kill(pid, 0) 是 POSIX 小技巧：不发送实际信号，只检查进程是否存在。
+ */
 function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)
@@ -136,38 +183,44 @@ function isProcessAlive(pid: number): boolean {
 }
 
 /**
- * Parse the lock file content. Supports both the new JSON format
- * (`{pid, startedAt}`) and the legacy plain-PID format for backwards
- * compatibility during upgrades.
+ * 解析锁文件内容。
+ *
+ * 兼容新版 JSON 格式 `{pid, startedAt}` 和旧版纯 PID 格式。
  */
 function parseLockContent(raw: string): LockPayload | null {
   const trimmed = raw.trim()
-  // Try JSON first (new format)
   if (trimmed.startsWith('{')) {
     try {
       const parsed = JSON.parse(trimmed) as Record<string, unknown>
       const pid = typeof parsed.pid === 'number' ? parsed.pid : NaN
       const startedAt = typeof parsed.startedAt === 'number' ? parsed.startedAt : 0
       if (!isNaN(pid)) return { pid, startedAt }
-    } catch { /* fall through to legacy parse */ }
+    } catch { /* 继续按旧版解析 */ }
   }
-  // Legacy format: plain PID number
   const pid = parseInt(trimmed, 10)
   if (!isNaN(pid)) return { pid, startedAt: 0 }
   return null
 }
 
 /**
- * Returns true if the lock's `startedAt` timestamp predates the most recent
- * system boot. This means the lock was written in a previous boot cycle and
- * the PID has been reused by an unrelated process.
+ * 判断锁文件是否来自上一次系统启动之前。
+ *
+ * 如果锁的 startedAt 早于当前系统启动时间，说明 PID 已被操作系统复用给无关进程。
  */
 function isLockFromPreviousBoot(startedAt: number): boolean {
-  if (startedAt <= 0) return false // legacy lock without timestamp — can't tell
+  if (startedAt <= 0) return false
   const bootTime = Date.now() - osUptime() * 1000
   return startedAt < bootTime
 }
 
+/**
+ * 获取服务器启动锁。
+ *
+ * 逻辑类似 Golang 的 `flock` 或单例模式：
+ * - 锁文件存在且对应进程存活：拒绝启动
+ * - 锁文件存在但对应 PID 是容器重启后的复用：覆盖
+ * - 锁文件损坏：覆盖
+ */
 function acquireServerLock(logger: PlatformServices['logger']): void {
   if (existsSync(LOCK_FILE)) {
     try {
@@ -175,14 +228,10 @@ function acquireServerLock(logger: PlatformServices['logger']): void {
       const lock = parseLockContent(content)
 
       if (lock) {
-        // In Docker, PID 1 is reused across container restarts.
-        // If the lock holds our own PID, it's stale from a previous run.
+        // Docker 里 PID 1 会被容器复用，如果锁里就是当前 PID，说明是旧容器残留
         if (lock.pid === process.pid) {
           logger.warn(`[bootstrap] Lock file holds current PID ${lock.pid} (stale from previous container lifecycle), overwriting`)
         } else if (isProcessAlive(lock.pid)) {
-          // PID is alive — but is it actually from a previous boot?
-          // If the lock was written before the current boot, the OS has
-          // recycled the PID and the process is unrelated.
           if (isLockFromPreviousBoot(lock.startedAt)) {
             logger.warn(`[bootstrap] Lock PID ${lock.pid} is alive but lock predates current boot (stale due to PID reuse), overwriting`)
           } else {
@@ -207,39 +256,47 @@ function acquireServerLock(logger: PlatformServices['logger']): void {
   const payload: LockPayload = { pid: process.pid, startedAt: Date.now() }
   writeFileSync(LOCK_FILE, JSON.stringify(payload), 'utf-8')
 
-  // Safety net: release the lock on unexpected exits (SIGKILL, uncaught exceptions, etc.).
-  // process.on('exit') only allows synchronous code — releaseServerLock is fully sync.
+  // 意外退出时尽量释放锁（SIGKILL 等无法捕获，尽力而为）
   process.on('exit', () => { releaseServerLock() })
 }
 
 /**
- * Remove the lock file if it belongs to the current process.
- * Exported so consumers (e.g. the Electron before-quit handler) can call it
- * directly without going through `instance.stop()`.
+ * 释放启动锁。
+ *
+ * 导出给 Electron 的 before-quit handler 直接调用，不必走 instance.stop()。
  */
 export function releaseServerLock(): void {
   try {
     if (existsSync(LOCK_FILE)) {
       const lock = parseLockContent(readFileSync(LOCK_FILE, 'utf-8'))
-      // Only delete if it's our lock
       if (lock && lock.pid === process.pid) {
         unlinkSync(LOCK_FILE)
       }
     }
   } catch {
-    // Best-effort cleanup
+    // 尽力清理
   }
 }
 
 // ---------------------------------------------------------------------------
-// Config artifacts
+// 配置产物初始化
 // ---------------------------------------------------------------------------
 
+/**
+ * 初始化配置目录相关的产物。
+ *
+ * 确保配置目录存在，供后续全局配置、锁文件等使用。
+ */
 function bootstrapConfigArtifacts(platform: PlatformServices): void {
   ensureConfigDir()
   platform.logger.info('[bootstrap] Config artifacts initialized')
 }
 
+/**
+ * 如果全局配置不存在，写入一份默认空配置。
+ *
+ * 对应 Golang 里“若配置文件不存在则初始化默认值”的常见做法。
+ */
 function ensureGlobalConfigExists(platform: PlatformServices): void {
   const config = loadStoredConfig()
   if (config) {
@@ -255,6 +312,23 @@ function ensureGlobalConfigExists(platform: PlatformServices): void {
   platform.logger.info('[bootstrap] Initialized missing global config')
 }
 
+/**
+ * 启动服务器主函数。
+ *
+ * 流程：
+ * 1. 校验 server token
+ * 2. 创建 platform（无头模式默认用 headless platform）
+ * 3. 设置 bundled assets 根目录
+ * 4. 把 platform 注入子系统
+ * 5. 初始化配置目录和全局配置
+ * 6. 获取启动锁
+ * 7. 创建 SessionManager 和模型刷新服务
+ * 8. 创建并启动 WsRpcServer
+ * 9. 创建 handler 依赖并注册 RPC handler
+ * 10. 设置 session 事件 sink
+ * 11. 初始化 SessionManager
+ * 12. 启动模型刷新服务
+ */
 export async function bootstrapServer<TSessionManager, THandlerDeps>(
   options: ServerBootstrapOptions<TSessionManager, THandlerDeps>,
 ): Promise<ServerInstance<TSessionManager>> {
@@ -295,6 +369,7 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
   }
   const rpcPort = Math.trunc(rpcPortRaw)
 
+  // 创建 WebSocket RPC 服务器
   const wsServer = new WsRpcServer({
     host: rpcHost,
     port: rpcPort,
@@ -308,14 +383,13 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
     onClientConnected: options.onClientConnected,
     onClientDisconnected: (clientId) => {
       options.cleanupClientResources?.(clientId)
-      // Best-effort: notify SM so it can drop browser-host pins for this client.
-      // Duck-typed because TSessionManager is generic at the bootstrap layer.
+      // 用 duck typing 通知 SessionManager 断开连接，因为这里是泛型层
       const smWithDisconnect = sessionManager as unknown as { onClientDisconnected?: (id: string) => void }
       if (typeof smWithDisconnect.onClientDisconnected === 'function') {
         try {
           smWithDisconnect.onClientDisconnected(clientId)
         } catch {
-          // Cleanup hook failures must not break the transport.
+          // 清理钩子失败不能破坏传输层
         }
       }
     },
@@ -350,6 +424,8 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
 
   platform.logger.info(`Craft Agent server listening on ${wsServer.protocol}://${rpcHost}:${wsServer.port}`)
 
+  // ---------- 优雅关闭 ----------
+  // 用一个标志位保证 stop() 幂等，多次调用只执行一次清理流程。
   let stopped = false
   const stop = async (): Promise<void> => {
     if (stopped) return
@@ -357,14 +433,13 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
 
     platform.logger.info('Shutting down...')
 
-    // Notify connected clients before closing connections
+    // 关闭前通知所有客户端
     try {
       wsServer.push('server:shuttingDown', { to: 'all' }, {
         reason: 'shutdown',
         graceMs: 2000,
         timestamp: Date.now(),
       })
-      // Brief drain period so clients receive the notification
       await new Promise(resolve => setTimeout(resolve, 2000))
     } catch (error) {
       platform.logger.error('[bootstrap] Failed to send shutdown notification:', error)
@@ -412,7 +487,7 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
 }
 
 // ---------------------------------------------------------------------------
-// HTTP Health Endpoint (opt-in, for load balancers / k8s probes)
+// HTTP 健康检查端点（可选，供负载均衡器 / k8s probe 使用）
 // ---------------------------------------------------------------------------
 
 export interface HealthHttpServerOptions {
@@ -423,18 +498,17 @@ export interface HealthHttpServerOptions {
 }
 
 /**
- * Start a minimal HTTP server for health/status probes.
- * Only starts if port > 0. Returns a cleanup function.
+ * 启动一个最小 HTTP 健康检查服务。
+ *
+ * 只有 port > 0 时才启动；返回 stop 函数用于清理。
+ * 仅在 Bun 环境下使用 Bun.serve，Node/Electron 不需要 HTTP 健康检查。
  */
 export async function startHealthHttpServer(options: HealthHttpServerOptions): Promise<{ stop: () => void } | null> {
   if (options.port <= 0) return null
 
-  // Dynamic import — getHealthCheck uses HandlerDeps shape
   const { getHealthCheck } = await import('../handlers/rpc/server')
-
   const depsLike = { sessionManager: options.deps.sessionManager } as any
 
-  // Use Bun.serve if available, otherwise skip (Node.js/Electron doesn't need HTTP health)
   if (typeof globalThis.Bun !== 'undefined') {
     const server = Bun.serve({
       port: options.port,

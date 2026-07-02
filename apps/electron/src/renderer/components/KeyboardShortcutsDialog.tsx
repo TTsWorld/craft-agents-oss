@@ -1,3 +1,8 @@
+/**
+ * KeyboardShortcutsDialog — React 组件
+ * 
+ * 所属目录：components
+ */
 import { useTranslation } from "react-i18next"
 import {
   Dialog,
@@ -143,6 +148,7 @@ function StaticSection({ section }: { section: ShortcutSection }) {
   )
 }
 
+/** KeyboardShortcutsDialog：函数 */
 export function KeyboardShortcutsDialog({ open, onOpenChange }: KeyboardShortcutsDialogProps) {
   const { t } = useTranslation()
   const componentSpecificSections = useComponentSpecificSections()

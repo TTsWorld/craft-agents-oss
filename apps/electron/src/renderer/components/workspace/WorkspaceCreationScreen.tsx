@@ -13,27 +13,35 @@ import { AddWorkspaceStep_ConnectRemote } from "./AddWorkspaceStep_ConnectRemote
 import type { Workspace } from "../../../shared/types"
 import { toast } from "sonner"
 
+/** 创建流程中的当前步骤 */
 type CreationStep = 'choice' | 'create' | 'open' | 'remote'
 
 interface WorkspaceCreationScreenProps {
-  /** Callback when a workspace is created successfully */
+  /** 工作区创建成功后回调，参数为刚创建的 Workspace 对象 */
   onWorkspaceCreated: (workspace: Workspace) => void
-  /** Callback when the screen is dismissed */
+  /** 关闭当前全屏覆盖层时回调 */
   onClose: () => void
   className?: string
-  /** When set, skip choice step and open ConnectRemote in reconnect mode */
+  /**
+   * 若传入该字段，则跳过选择步骤，直接进入“连接远程”重连模式。
+   * 用于已存在工作区但远程服务器配置需要重新连接的场景。
+   */
   reconnectWorkspace?: Workspace
-  /** Reconnect an existing remote workspace and resolve only on real success. */
+  /**
+   * 重连已有远程工作区，只有真正成功时才 resolve。
+   * 这里用 Promise<void> 让调用方可以等待并捕获异常。
+   */
   onReconnectWorkspace?: (workspaceId: string, remoteServer: { url: string; token: string; remoteWorkspaceId: string }) => Promise<void>
 }
 
 /**
- * WorkspaceCreationScreen - Full-screen overlay for creating workspaces
+ * WorkspaceCreationScreen - 创建工作区的全屏覆盖层
  *
- * Obsidian-style flow:
- * 1. Choice: Create new workspace OR Open existing folder
- * 2a. Create: Enter name + choose location (default or custom)
- * 2b. Open: Browse folder OR create new folder at location
+ * 流程类似 Obsidian：
+ * 1. choice：选择“新建工作区”或“打开已有文件夹”或“连接远程服务器”
+ * 2. create：输入名称 + 选择本地位置
+ * 3. open：浏览本地文件夹
+ * 4. remote：连接远程服务器并选择/创建工作区
  */
 export function WorkspaceCreationScreen({
   onWorkspaceCreated,
@@ -43,12 +51,15 @@ export function WorkspaceCreationScreen({
   onReconnectWorkspace,
 }: WorkspaceCreationScreenProps) {
   const { t } = useTranslation()
-  // Start at 'remote' step directly when reconnecting
+
+  // 如果是重连，则直接进入 remote 步骤
   const [step, setStep] = useState<CreationStep>(reconnectWorkspace ? 'remote' : 'choice')
   const [isCreating, setIsCreating] = useState(false)
+
+  // 窗口尺寸，用于下方 Dithering shader 背景
   const [dimensions, setDimensions] = useState({ width: 1920, height: 1080 })
 
-  // Track window dimensions for shader
+  // 监听窗口大小变化，为 shader 提供实时宽高
   useEffect(() => {
     const updateDimensions = () => {
       setDimensions({ width: window.innerWidth, height: window.innerHeight })
@@ -58,14 +69,15 @@ export function WorkspaceCreationScreen({
     return () => window.removeEventListener('resize', updateDimensions)
   }, [])
 
-  // Wrap onClose to prevent closing during creation
-  // FullscreenOverlayBase handles ESC key, this wrapper prevents closing when busy
+  // 包装 onClose：创建过程中禁止关闭
+  // FullscreenOverlayBase 已经处理 ESC 键，这里再包一层用于屏蔽忙时关闭
   const handleClose = useCallback(() => {
     if (!isCreating) {
       onClose()
     }
   }, [isCreating, onClose])
 
+  // 创建本地或远程工作区
   const handleCreateWorkspace = useCallback(async (folderPath: string, name: string, remoteServer?: { url: string; token: string; remoteWorkspaceId: string }) => {
     setIsCreating(true)
     try {
@@ -81,6 +93,7 @@ export function WorkspaceCreationScreen({
     }
   }, [onWorkspaceCreated])
 
+  // 重连已有远程工作区
   const handleReconnectWorkspace = useCallback(async (workspaceId: string, remoteServer: { url: string; token: string; remoteWorkspaceId: string }) => {
     if (!onReconnectWorkspace) {
       throw new Error('Reconnect handler not configured')
@@ -94,6 +107,7 @@ export function WorkspaceCreationScreen({
     }
   }, [onReconnectWorkspace])
 
+  // 根据当前步骤渲染对应的子组件
   const renderStep = () => {
     switch (step) {
       case 'choice':
@@ -145,18 +159,18 @@ export function WorkspaceCreationScreen({
     }
   }
 
-  // Get theme colors from CSS variables for the shader
+  // 从 CSS 变量读取主题色，用于 Dithering shader
   const shaderColors = useMemo(() => {
     if (typeof window === 'undefined') return { back: '#00000000', front: '#684e85' }
     const root = document.documentElement
     const isDark = root.classList.contains('dark')
-    // Transparent back, accent-tinted front
+    // 背景透明，前景使用主题 accent 色
     return isDark
-      ? { back: '#00000000', front: '#9b7bb8' }  // lighter accent for dark mode
-      : { back: '#00000000', front: '#684e85' }  // accent color
+      ? { back: '#00000000', front: '#9b7bb8' }  // 深色模式使用更亮的 accent
+      : { back: '#00000000', front: '#684e85' }  // 浅色模式使用 accent 色
   }, [])
 
-  // FullscreenOverlayBase handles portal, traffic lights, and ESC key
+  // FullscreenOverlayBase 负责 portal、traffic lights 和 ESC 键处理
   return (
     <FullscreenOverlayBase
       isOpen={true}
@@ -170,7 +184,7 @@ export function WorkspaceCreationScreen({
         transition={overlayTransitionIn}
         className="flex flex-col flex-1"
       >
-        {/* Dithering shader background */}
+        {/* Dithering shader 背景 */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 0.3 }}
@@ -190,9 +204,9 @@ export function WorkspaceCreationScreen({
           />
         </motion.div>
 
-        {/* Header with drag region and close button */}
+        {/* 顶部标题栏拖拽区域与关闭按钮 */}
         <header className="titlebar-drag-region relative h-[50px] shrink-0 flex items-center justify-end px-6">
-          {/* Close button - explicitly no-drag */}
+          {/* 关闭按钮显式声明不可拖拽 */}
           <motion.button
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -216,7 +230,7 @@ export function WorkspaceCreationScreen({
           </motion.button>
         </header>
 
-        {/* Main content */}
+        {/* 主内容区 */}
         <motion.main
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}

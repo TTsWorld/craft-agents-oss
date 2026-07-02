@@ -1,16 +1,29 @@
 /**
- * RemoteBrowserPaneManager
+ * RemoteBrowserPaneManager.ts
  *
- * Thin proxy that implements `IBrowserPaneManager` for a single remote session.
- * Every method packages its args into a `BrowserCapabilityRequest` and ships it
- * to the user's desktop client via `server.invokeClient(...)`. The local
- * `BrowserPaneManager` dispatcher (in `apps/electron`) executes the call and
- * returns the result through the same WS RPC channel.
+ * 远程浏览器面板的代理实现。可以把这里的角色理解为：
+ * - 服务端（Node.js / TypeScript）= 大脑，负责把 Agent 的浏览器工具调用翻译成 RPC 消息；
+ * - 桌面客户端（Electron）= 四肢，真正控制着本地 Chromium 窗口；
+ * - 本文件 = 二者之间的“神经束”。
  *
- * One instance per (sessionId, workspaceId). Stored on `SessionManager` in a
- * `Map<sessionId, RemoteBrowserPaneManager>` and torn down on session destroy.
+ * 核心能力：`client:browser:invoke`
+ * 当 Agent 运行在远程服务器（WebUI / Docker / Headless）而浏览器实例在用户的本地电脑上时，
+ * 我们通过 `CLIENT_BROWSER_INVOKE` 这条能力通道，把 `navigate`、`clickElement`、
+ * `screenshot` 等调用转发到本地 Electron，由 Electron 的 BrowserPaneManager 执行后再把
+ * 结果通过同一条 WebSocket RPC 返回。
  *
- * See docs/adr-transport-locality.md for the locality boundary definition.
+ * 与 Go 的类比：
+ * - 如果 Go 里有一个 `IBrowserPaneManager` 接口和它的 gRPC 客户端封装，这个文件就相当于
+ *   那个 gRPC 客户端——每个方法都只做序列化 + RPC 调用 + 反序列化。
+ * - TypeScript 的 `implements IBrowserPaneManager` 类似 Go 的接口实现约束；
+ *   必须提供接口声明的所有方法，否则编译期报错。
+ *
+ * Agent 开发关键点：
+ * 1. 浏览器工具最终落地不在本进程，因此同步接口只能返回占位值（`remote-pending:*`），
+ *    真正需要结果的流程要使用 `*Async` 方法并 await。
+ * 2. `invoke()` 会检查目标 client 是否声明了 `CLIENT_BROWSER_INVOKE` 能力，
+ *    没有则抛出 `BROWSER_NO_CAPABLE_CLIENT`。
+ * 3. `uploadFile` 明确不支持远程路径，因为服务器无法访问用户本地文件系统。
  */
 
 import { CodedError } from '@craft-agent/shared/protocol'
@@ -40,18 +53,22 @@ import {
 } from '../transport'
 import type { RpcServer } from '../transport/types'
 
+/** 创建 RemoteBrowserPaneManager 所需的依赖。 */
 export interface RemoteBrowserPaneManagerDeps {
   readonly sessionId: string
   readonly workspaceId: string
   readonly rpcServer: RpcServer
   /**
-   * Resolves the desktop client that should host this session's browser.
-   * Returns null when no capable client is connected. SessionManager handles
-   * pin + fallback selection so the bridge stays agnostic of routing policy.
+   * 解析应托管此会话浏览器的桌面客户端。
+   * 如果没有连接的客户端可用，则返回 null。SessionManager 处理固定和回退选择，因此桥接层不关心路由策略。
    */
   readonly getHostClient: () => string | null
 }
 
+/**
+ * 远程浏览器面板的代理实现。
+ * 把 Agent 的浏览器工具调用通过 `client:browser:invoke` RPC 转发到本地 Electron 客户端执行。
+ */
 export class RemoteBrowserPaneManager implements IBrowserPaneManager {
   private readonly sessionId: string
   private readonly workspaceId: string
@@ -66,7 +83,7 @@ export class RemoteBrowserPaneManager implements IBrowserPaneManager {
   }
 
   // ---------------------------------------------------------------------------
-  // Internal: package and ship one IBrowserPaneManager call.
+  // 内部：打包并发送一个 IBrowserPaneManager 调用。
   // ---------------------------------------------------------------------------
 
   private async invoke<T>(method: BrowserCapabilityMethod, args: unknown[]): Promise<T> {
@@ -93,24 +110,22 @@ export class RemoteBrowserPaneManager implements IBrowserPaneManager {
     })
   }
 
-  /** Synchronous methods on IBPM are emulated by awaiting in callers; here we
-   * preserve a `void` return for fire-and-forget paths used by SessionManager. */
+  /** IBPM 上的同步方法通过在调用者中等待来模拟；这里我们为 SessionManager 使用的即发即弃路径保留 `void` 返回。 */
   private invokeSync(method: BrowserCapabilityMethod, args: unknown[]): void {
     this.invoke<unknown>(method, args).catch(() => {
-      // Swallow — callers like setAgentControl / unbindAllForSession don't await.
-      // The remote agent will surface the error on the next awaited call if
-      // something is genuinely broken.
+      // 忽略错误——setAgentControl / unbindAllForSession 等调用方不会 await。
+      // 如果远程代理真的出了问题，下一次 awaited 调用会把错误抛出来。
     })
   }
 
   // ---------------------------------------------------------------------------
-  // IBrowserPaneManager — session lifecycle
+  // IBrowserPaneManager — 会话生命周期
   // ---------------------------------------------------------------------------
 
   setSessionPathResolver(_fn: (sessionId: string) => string | null): void {
-    // No-op: path resolution belongs to the remote server, not the client BPM.
-    // Calls into this method from the server side are still useful locally for
-    // metadata, but the BPM itself doesn't need them on a remote bridge.
+    // 无操作：路径解析属于远程服务器，而不是客户端 BPM。
+    // 从服务器端调用此方法在本地仍然有用，用于
+    // 元数据，但 BPM 本身在远程桥接上不需要它们。
   }
 
   destroyForSession(sessionId: string): void {
@@ -126,18 +141,16 @@ export class RemoteBrowserPaneManager implements IBrowserPaneManager {
   }
 
   /**
-   * IBPM declares `getOrCreateForSession` as synchronous. The async work is
-   * fired-and-forgot here; SessionManager's tool runtime always follows with
-   * an awaited call (navigate, screenshot, …) that surfaces real errors.
+   * IBPM 声明 `getOrCreateForSession` 为同步方法。异步工作在此处即发即弃；
+   * SessionManager 的工具运行时总是随后进行等待调用（导航、截图等），这些调用会暴露真正的错误。
    *
-   * Callers that need the actual instanceId should use the async-friendly
-   * `createForSession` path via the browser-tool-runtime, which awaits.
+   * 需要实际 instanceId 的调用者应使用通过 browser-tool-runtime 的异步友好型 `createForSession` 路径，该路径会等待。
    */
   getOrCreateForSession(sessionId: string, _options?: { workspaceId?: string | null }): string {
-    // The remote bridge can't synchronously block on a WS round-trip. Return
-    // an opaque sentinel — async-aware callers should use `getOrCreateForSessionAsync`.
-    // workspaceId is carried on the wire via `BrowserCapabilityRequest.workspaceId`
-    // (set from `this.workspaceId`), so the dispatcher already knows it.
+    // 远程桥接无法同步阻塞 WS 往返，这里直接返回一个占位标记。
+    // 需要真实 instanceId 的调用方应使用 `getOrCreateForSessionAsync`。
+    // workspaceId 通过 `BrowserCapabilityRequest.workspaceId` 在线路上传输
+    // （从 `this.workspaceId` 设置），因此调度器已经知道它。
     this.invokeSync('getOrCreateForSession', [sessionId])
     return `remote-pending:${sessionId}`
   }
@@ -155,7 +168,7 @@ export class RemoteBrowserPaneManager implements IBrowserPaneManager {
   }
 
   // ---------------------------------------------------------------------------
-  // IBrowserPaneManager — instance management
+  // IBrowserPaneManager — 实例管理
   // ---------------------------------------------------------------------------
 
   createForSession(sessionId: string, options?: { show?: boolean; workspaceId?: string | null }): string {
@@ -168,8 +181,8 @@ export class RemoteBrowserPaneManager implements IBrowserPaneManager {
   }
 
   getInstance(_id: string): BrowserInstanceSnapshot | undefined {
-    // Synchronous accessor — bridge cannot make a WS round-trip here. Callers
-    // who need this info should use the async-friendly `getInstanceAsync`.
+    // 同步访问器——桥接无法在此处进行 WS 往返。需要此信息的调用者
+    // 应使用异步友好型 `getInstanceAsync`。
     return undefined
   }
 
@@ -178,7 +191,7 @@ export class RemoteBrowserPaneManager implements IBrowserPaneManager {
   }
 
   listInstances(): BrowserInstanceInfo[] {
-    // Sync surface returns []; remote-aware code uses `listInstancesAsync`.
+    // 同步表面返回 []；远程感知代码使用 `listInstancesAsync`。
     return []
   }
 
@@ -219,14 +232,14 @@ export class RemoteBrowserPaneManager implements IBrowserPaneManager {
     instanceId: string,
     sessionId?: string,
   ): { released: boolean; reason?: string } {
-    // Synchronous IBPM return — fire-and-forget the actual call. Callers in
-    // forced-stop flows treat a successful local cleanup as best-effort.
+    // 同步 IBPM 返回——实际调用走 fire-and-forget。
+    // 在强制停止流程中，本地清理成功只代表“尽力而为”。
     this.invokeSync('clearAgentControlForInstance', [instanceId, sessionId])
     return { released: true }
   }
 
   // ---------------------------------------------------------------------------
-  // Async methods — these are the ones that actually matter to the agent.
+  // 异步方法——这些才是对代理真正重要的方法。
   // ---------------------------------------------------------------------------
 
   async navigate(id: string, url: string): Promise<{ url: string; title: string }> {
@@ -296,8 +309,8 @@ export class RemoteBrowserPaneManager implements IBrowserPaneManager {
   }
 
   getConsoleLogs(id: string, options?: BrowserConsoleOptions): BrowserConsoleEntry[] {
-    // IBPM declares sync. The async result is awaited inside the runtime layer
-    // that consumes consoleLogs; returning [] here keeps the sync surface intact.
+    // IBPM 声明为同步。异步结果在消费 consoleLogs 的运行时层内部等待；
+    // 返回 [] 保持同步表面完整。
     void this.invoke<BrowserConsoleEntry[]>('getConsoleLogs', [id, options]).catch(() => {})
     return []
   }
@@ -320,13 +333,13 @@ export class RemoteBrowserPaneManager implements IBrowserPaneManager {
   }
 
   // ---------------------------------------------------------------------------
-  // Wire conversions
+  // 线路转换
   // ---------------------------------------------------------------------------
 
   private fromScreenshotWire(wire: ScreenshotResultWire): BrowserScreenshotResult {
     const bytes = wire.imageBytes
-    // Structured clone on the WS layer may deliver this as a Uint8Array or as
-    // a serialized object with `data` field — accept both.
+    // WS 层上的结构化克隆可能将其作为 Uint8Array 或带有 `data` 字段的序列化对象传递——
+    // 两种形式都接受。
     let buffer: Buffer
     if (bytes instanceof Uint8Array) {
       buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)

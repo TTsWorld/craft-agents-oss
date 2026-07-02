@@ -1,32 +1,32 @@
 /**
- * Auto-Label Value Normalization
+ * 自动标签值归一化
  *
- * Normalizes raw extracted values based on the label's valueType.
- * Called after regex capture groups are substituted into the valueTemplate.
+ * 根据标签的 valueType 对正则提取出的原始值做归一化。
+ * 在 valueTemplate 替换完捕获组后调用。
  *
- * Normalization rules:
- * - string: pass-through (no transformation)
- * - number: strip commas, expand suffixes (k/K → ×1000, M → ×1000000)
- * - date: pass-through (regex captures already produce ISO format)
- * - link: trim surrounding whitespace (URL stored verbatim)
+ * 归一化规则：
+ * - string：原样返回
+ * - number：去掉逗号，展开 k/K/M/B 后缀
+ * - date：原样返回（正则捕获已产出 ISO 格式）
+ * - link：去掉首尾空白（URL 原样存储）
  */
 
 /**
- * Normalize a raw extracted value based on the target label's valueType.
- * Returns the normalized string ready for storage in the session label entry.
+ * 根据目标标签的 valueType 归一化原始提取值。
+ * 返回可直接存入会话标签条目的字符串。
  *
- * @param raw - Raw value string from regex valueTemplate substitution
- * @param valueType - The label's declared valueType (determines normalization strategy)
+ * @param raw - valueTemplate 替换后得到的原始值字符串
+ * @param valueType - 标签声明的 valueType，决定归一化策略
  */
 export function normalizeValue(raw: string, valueType?: 'string' | 'number' | 'date' | 'link'): string {
   switch (valueType) {
     case 'number':
       return normalizeNumber(raw)
     case 'date':
-      // Date values from regex capture are expected to already be in ISO format
+      // 来自正则捕获的日期值应当已经是 ISO 格式
       return raw
     case 'link':
-      // URL stored verbatim; just trim surrounding whitespace.
+      // URL 原样存储，仅去掉首尾空白
       return raw.trim()
     case 'string':
     default:
@@ -35,37 +35,37 @@ export function normalizeValue(raw: string, valueType?: 'string' | 'number' | 'd
 }
 
 /**
- * Normalize a number string:
- * - Strip commas (thousands separators): "45,000" → "45000"
- * - Strip leading currency symbols: "$45000" → "45000"
- * - Expand k/K suffix: "45k" → "45000"
- * - Expand M suffix: "1.5M" → "1500000"
- * - Expand B suffix: "2B" → "2000000000"
+ * 归一化数字字符串：
+ * - 去掉千分位逗号："45,000" → "45000"
+ * - 去掉前置货币符号："$45000" → "45000"
+ * - 展开 k/K 后缀："45k" → "45000"
+ * - 展开 M 后缀："1.5M" → "1500000"
+ * - 展开 B 后缀："2B" → "2000000000"
  */
 function normalizeNumber(raw: string): string {
-  // Strip leading currency symbols
+  // 去掉前置货币符号
   let cleaned = raw.replace(/^[$€£¥]/, '')
 
-  // Strip commas
+  // 去掉逗号
   cleaned = cleaned.replace(/,/g, '')
 
-  // Expand suffixes (case-insensitive)
+  // 展开后缀（不区分大小写）
   const suffixMatch = cleaned.match(/^(-?\d+\.?\d*)\s*([kKmMbB])$/)
   if (suffixMatch) {
     const num = parseFloat(suffixMatch[1]!)
     const suffix = suffixMatch[2]!.toLowerCase()
     const multiplier = suffix === 'k' ? 1_000 : suffix === 'm' ? 1_000_000 : 1_000_000_000
     const result = num * multiplier
-    // Avoid floating point artifacts: use integer if whole number
+    // 避免浮点误差：如果是整数就返回整数形式
     return Number.isInteger(result) ? result.toString() : result.toFixed(2)
   }
 
-  // Try to parse as a plain number (validates it's actually numeric)
+  // 尝试按普通数字解析（验证它确实是数字）
   const parsed = parseFloat(cleaned)
   if (!isNaN(parsed) && isFinite(parsed)) {
     return Number.isInteger(parsed) ? parsed.toString() : parsed.toString()
   }
 
-  // Fallback: return cleaned string if it doesn't parse as a number
+  // 回退：若解析不出数字，返回清理后的字符串
   return cleaned
 }

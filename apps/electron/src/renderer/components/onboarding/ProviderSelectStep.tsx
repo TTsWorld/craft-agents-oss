@@ -9,11 +9,12 @@ import openaiIcon from "@/assets/provider-icons/openai.svg"
 import copilotIcon from "@/assets/provider-icons/copilot.svg"
 
 /**
- * The high-level provider choice the user makes on first launch.
- * This maps to one or more ApiSetupMethods downstream.
+ * 用户在首次启动时做出的顶层提供商选择。
+ * 后续会映射到一个或多个 ApiSetupMethod。
  */
 export type ProviderChoice = 'claude' | 'chatgpt' | 'copilot' | 'api_key' | 'local'
 
+// 单个可选项的数据结构
 interface ProviderOption {
   id: ProviderChoice
   name: string
@@ -21,6 +22,7 @@ interface ProviderOption {
   icon: React.ReactNode
 }
 
+// 各个提供商对应的图标
 const PROVIDER_ICONS: Record<ProviderChoice, React.ReactNode> = {
   claude: <img src={claudeIcon} alt="" className="size-5 rounded-[3px]" />,
   chatgpt: <img src={openaiIcon} alt="" className="size-5 rounded-[3px]" />,
@@ -29,18 +31,19 @@ const PROVIDER_ICONS: Record<ProviderChoice, React.ReactNode> = {
   local: <Monitor className="size-5" />,
 }
 
+// 提供商选择步骤的 props 接口
 interface ProviderSelectStepProps {
-  /** Called when the user selects a provider */
+  /** 用户点击某个卡片时触发 */
   onSelect: (choice: ProviderChoice) => void
-  /** Called when the user chooses to skip setup */
+  /** 用户选择“稍后设置”时触发 */
   onSkip?: () => void
 }
 
 /**
- * ProviderSelectStep — First screen after install.
+ * ProviderSelectStep - 安装完成后的第一个页面
  *
- * Welcomes the user and asks them to pick their subscription / auth method.
- * Selecting a card immediately advances to the next step.
+ * 欢迎用户并让其选择订阅 / 认证方式：
+ * 选中卡片后立即进入下一步。
  */
 export function ProviderSelectStep({ onSelect, onSkip }: ProviderSelectStepProps) {
   const { t } = useTranslation()
@@ -100,12 +103,12 @@ export function ProviderSelectStep({ onSelect, onSkip }: ProviderSelectStepProps
               "hover:bg-foreground/[0.02] shadow-minimal",
             )}
           >
-            {/* Icon */}
+            {/* 图标 */}
             <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
               {option.icon}
             </div>
 
-            {/* Content */}
+            {/* 内容 */}
             <div className="flex-1 min-w-0">
               <span className="font-medium text-sm">{option.name}</span>
               <p className="mt-0 hidden sm:block text-xs text-muted-foreground">

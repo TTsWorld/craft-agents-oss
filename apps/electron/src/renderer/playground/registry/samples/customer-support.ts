@@ -234,6 +234,7 @@ const gmailResponse: ActivityItem = {
   timestamp: now - 5000,
 }
 
+/** customerSupportActivities：常量 */
 export const customerSupportActivities: ActivityItem[] = [
   gmailReadComplaint,
   stripeLookup,
@@ -247,6 +248,7 @@ export const customerSupportActivities: ActivityItem[] = [
   gmailResponse,
 ]
 
+/** customerSupportResponse：常量 */
 export const customerSupportResponse: ResponseContent = {
   text: `## Support Case Resolved
 

@@ -1,3 +1,11 @@
+/**
+ * messages 注册项
+ *
+ * 这个文件演示聊天消息相关的 UI 组件：用户气泡、助手回答、系统消息、TurnCard（一个回合卡片）、
+ * 认证请求卡片等。
+ * 涉及概念：session（对话）、turn（一个用户请求+AI 回复的回合）、
+ * stream（流式输出，isStreaming=true 时文字逐个出现）、tool use（Agent 调用工具，如 Read/Grep）。
+ */
 import * as React from 'react'
 import type { ComponentEntry } from './types'
 import {
@@ -17,8 +25,8 @@ import { AuthRequestCard } from '@/components/chat/AuthRequestCard'
 import type { Message } from '../../../shared/types'
 
 // ============================================================================
-// Message Components - Demo components for playground preview
-// Uses shared components from @craft-agent/ui where available
+// 消息组件 - 供 playground 预览的演示组件
+// 尽量复用 @craft-agent/ui 里的共享组件
 // ============================================================================
 
 /** Assistant message bubble - left aligned white card (playground demo version) */
@@ -126,11 +134,11 @@ const PROCESSING_MESSAGES = [
 ]
 
 interface ProcessingIndicatorProps {
-  /** Animation cycle duration in milliseconds */
+  /** 动画循环周期，单位毫秒。 */
   cycleMs?: number
-  /** Whether the elapsed counter should count automatically */
+  /** 是否自动累计已运行秒数。 */
   counting?: boolean
-  /** Initial elapsed time (only used if counting is false) */
+  /** 初始已运行秒数（仅在 counting=false 时使用）。 */
   elapsed?: number
 }
 
@@ -139,9 +147,10 @@ function ProcessingIndicator({ cycleMs = 10000, counting = true, elapsed: initia
   const [messageIndex, setMessageIndex] = React.useState(() =>
     Math.floor(Math.random() * PROCESSING_MESSAGES.length)
   )
+  // useRef 保存一个不会触发渲染的可变值，这里记录开始时间。
   const startTimeRef = React.useRef(Date.now())
 
-  // Update elapsed time every second (only if counting)
+  // useEffect 每秒更新一次已运行时间；返回的清理函数会在组件卸载或依赖变化时清除定时器。
   React.useEffect(() => {
     if (!counting) return
     const interval = setInterval(() => {
@@ -150,11 +159,10 @@ function ProcessingIndicator({ cycleMs = 10000, counting = true, elapsed: initia
     return () => clearInterval(interval)
   }, [counting])
 
-  // Cycle through messages based on cycleMs
+  // 每隔 cycleMs 切换一条提示文案。
   React.useEffect(() => {
     const interval = setInterval(() => {
       setMessageIndex(prev => {
-        // Pick a random different message
         let next = Math.floor(Math.random() * PROCESSING_MESSAGES.length)
         while (next === prev && PROCESSING_MESSAGES.length > 1) {
           next = Math.floor(Math.random() * PROCESSING_MESSAGES.length)
@@ -170,7 +178,7 @@ function ProcessingIndicator({ cycleMs = 10000, counting = true, elapsed: initia
   const labelRef = React.useRef<HTMLSpanElement>(null)
   const [labelWidth, setLabelWidth] = React.useState<number | 'auto'>('auto')
 
-  // Measure label width when message changes (not when counter changes)
+  // useLayoutEffect 在浏览器绘制前同步执行，这里用来测量文字宽度以实现平滑动画。
   React.useLayoutEffect(() => {
     if (labelRef.current) {
       setLabelWidth(labelRef.current.offsetWidth)
@@ -218,13 +226,13 @@ function ProcessingIndicator({ cycleMs = 10000, counting = true, elapsed: initia
 }
 
 // ============================================================================
-// Message Gallery - All message types in one scrollable view
+// Message Gallery - 把所有消息类型放在同一个可滚动视图里
 // ============================================================================
 
 function MessageGallery() {
   const now = Date.now()
 
-  // Sample tool activities for TurnCard
+  // 给 TurnCard 用的示例 tool activity（即 Agent 调用工具的实况）
   const completedGrepActivity: ActivityItem = {
     id: 'tool-1',
     type: 'tool',
@@ -509,7 +517,7 @@ const config = {
   )
 }
 
-/** Helper to create auth message for playground */
+/** 辅助函数：为 playground 构造一条认证请求消息。 */
 function createAuthMessage(opts: {
   type: 'credential' | 'oauth' | 'oauth-google' | 'oauth-slack' | 'oauth-microsoft'
   status: 'pending' | 'completed' | 'cancelled' | 'failed'
@@ -544,9 +552,10 @@ function createAuthMessage(opts: {
 }
 
 // ============================================================================
-// Component Registry Entries
+// 组件注册表条目（Component Registry Entries）
 // ============================================================================
 
+/** messages 组件注册列表。 */
 export const messagesComponents: ComponentEntry[] = [
   {
     id: 'message-gallery',

@@ -101,6 +101,7 @@ function LabelBadgeRowPlayground({ showValues, labelCount }: LabelBadgeRowPlaygr
 // Registry Entry
 // ============================================================================
 
+/** labelBadgeComponents：常量 */
 export const labelBadgeComponents: ComponentEntry[] = [
   {
     id: 'label-badge-row-standalone',

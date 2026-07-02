@@ -1,8 +1,9 @@
 /**
  * SearchableModelInput
  *
- * Input field with a dropdown button that shows a searchable list of models.
- * Used for custom model name configuration in API settings.
+ * 带下拉按钮的可搜索模型输入框。
+ * 用于 API 设置里的自定义模型名称配置：点击下拉会拉取模型列表，
+ * 用户可以在弹出的Popover里搜索并选择模型。
  */
 
 import * as React from 'react'
@@ -15,28 +16,30 @@ import { Spinner } from '@craft-agent/ui'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 export interface ModelOption {
+  /** 模型唯一标识 */
   id: string
+  /** 模型展示名称（可选） */
   name?: string
 }
 
 export interface SearchableModelInputProps {
-  /** Current value */
+  /** 当前输入值 */
   value: string
-  /** Change handler */
+  /** 值变化时的回调 */
   onChange: (value: string) => void
-  /** Blur handler (for saving) */
+  /** 失去焦点时的回调（常用于触发保存） */
   onBlur?: () => void
-  /** Placeholder text */
+  /** 占位提示 */
   placeholder?: string
-  /** Available models to choose from */
+  /** 可供选择的模型列表 */
   models: ModelOption[]
-  /** Whether models are currently being fetched */
+  /** 是否正在拉取模型列表 */
   isLoading?: boolean
-  /** Handler to fetch models (called when dropdown button is clicked) */
+  /** 点击下拉按钮时触发拉取模型 */
   onFetchModels?: () => void
-  /** Whether fetch button should be disabled */
+  /** 是否禁用拉取按钮 */
   fetchDisabled?: boolean
-  /** Additional className */
+  /** 额外 className */
   className?: string
 }
 
@@ -52,11 +55,14 @@ export function SearchableModelInput({
   className,
 }: SearchableModelInputProps) {
   const { t } = useTranslation()
+  // Popover 是否打开
   const [isOpen, setIsOpen] = React.useState(false)
+  // 搜索关键词
   const [searchQuery, setSearchQuery] = React.useState('')
+  // 搜索框 ref，用于打开后自动聚焦
   const searchInputRef = React.useRef<HTMLInputElement>(null)
 
-  // Filter models based on search query
+  // 根据搜索词过滤模型列表（useMemo 避免每次渲染都重新过滤）
   const filteredModels = React.useMemo(() => {
     if (!searchQuery.trim()) return models
     const query = searchQuery.toLowerCase()
@@ -67,6 +73,7 @@ export function SearchableModelInput({
     )
   }, [models, searchQuery])
 
+  // 选中某个模型后：更新值、关闭弹窗、清空搜索、触发 blur 保存
   const handleSelect = (modelId: string) => {
     onChange(modelId)
     setIsOpen(false)
@@ -74,21 +81,23 @@ export function SearchableModelInput({
     onBlur?.()
   }
 
+  // 点击下拉按钮：先拉取模型，打开弹窗，再聚焦搜索框
   const handleFetchClick = async () => {
     if (onFetchModels) {
       await onFetchModels()
       setIsOpen(true)
-      // Focus search input after models load
+      // 等模型加载完后再聚焦搜索框
       setTimeout(() => searchInputRef.current?.focus(), 50)
     }
   }
 
+  // Popover 打开/关闭时的清理和聚焦逻辑
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open)
     if (!open) {
       setSearchQuery('')
     } else if (models.length > 0) {
-      // Focus search input when opening
+      // 打开时聚焦搜索框
       setTimeout(() => searchInputRef.current?.focus(), 0)
     }
   }
@@ -122,7 +131,7 @@ export function SearchableModelInput({
             className="p-1.5 w-[var(--radix-popover-trigger-width)]"
             style={{ minWidth: 280 }}
           >
-            {/* Search input */}
+            {/* 搜索框 */}
             <div className="relative mb-1.5">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
               <input
@@ -139,7 +148,7 @@ export function SearchableModelInput({
                 )}
               />
             </div>
-            {/* Model list */}
+            {/* 模型列表 */}
             <div className="max-h-64 overflow-auto space-y-0.5">
               {filteredModels.length === 0 ? (
                 <div className="px-2.5 py-3 text-sm text-muted-foreground text-center">

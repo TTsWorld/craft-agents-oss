@@ -1,8 +1,13 @@
 /**
- * Source OAuth Handlers
+ * Source OAuth Handlers（Source OAuth 触发处理器）
  *
- * Handlers for triggering OAuth authentication flows.
- * Supports MCP OAuth, Google, Slack, and Microsoft OAuth.
+ * 触发各类 OAuth 认证流程的 handler：
+ * - MCP OAuth（OAuth 2.0 + PKCE）
+ * - Google OAuth（Gmail、Calendar、Drive 等）
+ * - Slack OAuth
+ * - Microsoft OAuth（Outlook、OneDrive、Teams 等）
+ *
+ * 每个 handler 都会构造一个 AuthRequest，通过 ctx.callbacks.onAuthRequest 触发浏览器弹窗。
  */
 
 import type { SessionToolContext } from '../context.ts';
@@ -21,7 +26,7 @@ import { generateRequestId } from '../source-helpers.ts';
 import { basename } from 'node:path';
 
 // ============================================================
-// MCP OAuth Trigger
+// MCP OAuth Trigger：MCP source 的通用 OAuth 触发
 // ============================================================
 
 export interface SourceOAuthTriggerArgs {
@@ -29,8 +34,8 @@ export interface SourceOAuthTriggerArgs {
 }
 
 /**
- * Handle the source_oauth_trigger tool call.
- * Triggers OAuth 2.0 + PKCE flow for MCP sources.
+ * 处理 source_oauth_trigger tool 调用。
+ * 为 MCP source 触发 OAuth 2.0 + PKCE 流程。
  */
 export async function handleSourceOAuthTrigger(
   ctx: SessionToolContext,
@@ -38,13 +43,13 @@ export async function handleSourceOAuthTrigger(
 ): Promise<ToolResult> {
   const { sourceSlug } = args;
 
-  // Load source config
+  // 加载 source 配置
   const source = ctx.loadSourceConfig(sourceSlug);
   if (!source) {
     return errorResponse(`Source '${sourceSlug}' not found.`);
   }
 
-  // Validate source uses OAuth — supports MCP OAuth and generic API OAuth (with or without oauth config block)
+  // 校验 source 是否配置了 OAuth：支持 MCP OAuth 和通用的 API OAuth
   const isMcpOAuth = source.type === 'mcp' && source.mcp?.authType === 'oauth';
   const isApiOAuth = source.type === 'api' && source.api?.authType === 'oauth';
 
@@ -54,9 +59,8 @@ export async function handleSourceOAuthTrigger(
     );
   }
 
-  // Try silent refresh only if source is already authenticated.
-  // If connectionStatus is 'needs_auth' or isAuthenticated is false,
-  // skip refresh and go straight to browser authorization flow.
+  // 如果 source 已经认证过，先尝试静默刷新 token。
+  // 若 connectionStatus 为 needs_auth 或 isAuthenticated 为 false，则跳过刷新直接进入浏览器授权。
   if (source.isAuthenticated && ctx.credentialManager) {
     const workspaceId = basename(ctx.workspacePath) || '';
     const loadedSource = {
@@ -75,7 +79,7 @@ export async function handleSourceOAuthTrigger(
     }
   }
 
-  // Build auth request
+  // 构造 OAuth 认证请求
   const authRequest: McpOAuthAuthRequest = {
     type: 'oauth',
     requestId: generateRequestId('oauth'),
@@ -84,7 +88,7 @@ export async function handleSourceOAuthTrigger(
     sourceName: source.name,
   };
 
-  // Trigger auth request (will cause forceAbort)
+  // 触发认证请求；调用后当前 turn 会被 forceAbort，等待用户在浏览器完成授权
   ctx.callbacks.onAuthRequest(authRequest);
 
   return successResponse(
@@ -101,8 +105,8 @@ export interface GoogleOAuthTriggerArgs {
 }
 
 /**
- * Handle the source_google_oauth_trigger tool call.
- * Triggers Google OAuth for Gmail, Calendar, Drive, etc.
+ * 处理 source_google_oauth_trigger tool 调用。
+ * 为 Google source 触发 OAuth，支持 Gmail、Calendar、Drive 等服务。
  */
 export async function handleGoogleOAuthTrigger(
   ctx: SessionToolContext,
@@ -110,13 +114,13 @@ export async function handleGoogleOAuthTrigger(
 ): Promise<ToolResult> {
   const { sourceSlug } = args;
 
-  // Load source config
+  // 加载 source 配置
   const source = ctx.loadSourceConfig(sourceSlug);
   if (!source) {
     return errorResponse(`Source '${sourceSlug}' not found.`);
   }
 
-  // Verify this is a Google source
+  // 校验这是 Google source
   if (source.provider !== 'google') {
     const hint = !source.provider
       ? `Add "provider": "google" to config.json and retry.`
@@ -126,7 +130,7 @@ export async function handleGoogleOAuthTrigger(
     );
   }
 
-  // Check if Google OAuth is configured (if method available)
+  // 检查 Google OAuth 凭据是否已配置（如果上下文提供该方法）
   if (ctx.isGoogleOAuthConfigured) {
     const api = source.api;
     if (!ctx.isGoogleOAuthConfigured(api?.googleOAuthClientId, api?.googleOAuthClientSecret)) {
@@ -155,9 +159,8 @@ export GOOGLE_OAUTH_CLIENT_SECRET="YOUR_CLIENT_SECRET"
     }
   }
 
-  // Check if already authenticated (with valid token)
+  // 检查是否已经有有效 token
   if (source.isAuthenticated && ctx.credentialManager) {
-    // Create LoadedSource for credential check
     const workspaceId = basename(ctx.workspacePath) || '';
     const loadedSource = {
       config: source,
@@ -172,7 +175,7 @@ export GOOGLE_OAUTH_CLIENT_SECRET="YOUR_CLIENT_SECRET"
     }
   }
 
-  // Determine service from config
+  // 确定要请求的 Google 服务范围
   let service: GoogleService | undefined;
   if (source.api?.googleService) {
     service = source.api.googleService;
@@ -180,7 +183,7 @@ export GOOGLE_OAUTH_CLIENT_SECRET="YOUR_CLIENT_SECRET"
     service = ctx.inferGoogleService(source.api?.baseUrl);
   }
 
-  // Build auth request
+  // 构造认证请求
   const authRequest: GoogleOAuthAuthRequest = {
     type: 'oauth-google',
     requestId: generateRequestId('google-oauth'),
@@ -190,7 +193,7 @@ export GOOGLE_OAUTH_CLIENT_SECRET="YOUR_CLIENT_SECRET"
     service,
   };
 
-  // Trigger auth request
+  // 触发认证请求
   ctx.callbacks.onAuthRequest(authRequest);
 
   return successResponse(
@@ -207,8 +210,8 @@ export interface SlackOAuthTriggerArgs {
 }
 
 /**
- * Handle the source_slack_oauth_trigger tool call.
- * Triggers Slack OAuth for workspace access.
+ * 处理 source_slack_oauth_trigger tool 调用。
+ * 为 Slack source 触发 OAuth，获取 workspace 访问权限。
  */
 export async function handleSlackOAuthTrigger(
   ctx: SessionToolContext,
@@ -216,13 +219,13 @@ export async function handleSlackOAuthTrigger(
 ): Promise<ToolResult> {
   const { sourceSlug } = args;
 
-  // Load source config
+  // 加载 source 配置
   const source = ctx.loadSourceConfig(sourceSlug);
   if (!source) {
     return errorResponse(`Source '${sourceSlug}' not found.`);
   }
 
-  // Verify this is a Slack source
+  // 校验这是 Slack source
   if (source.provider !== 'slack') {
     const hint = !source.provider
       ? `Add "provider": "slack" to config.json and retry.`
@@ -232,7 +235,7 @@ export async function handleSlackOAuthTrigger(
     );
   }
 
-  // Slack OAuth only works with API sources, not MCP
+  // Slack OAuth 只支持 API source，不支持 MCP
   if (source.type !== 'api') {
     let hint = '';
     if (source.type === 'mcp') {
@@ -243,7 +246,7 @@ export async function handleSlackOAuthTrigger(
     );
   }
 
-  // Check if already authenticated (with valid token)
+  // 检查是否已经有有效 token
   if (source.isAuthenticated && ctx.credentialManager) {
     const workspaceId = basename(ctx.workspacePath) || '';
     const loadedSource = {
@@ -259,7 +262,7 @@ export async function handleSlackOAuthTrigger(
     }
   }
 
-  // Determine service from config
+  // 确定要请求的 Slack 服务范围
   let service: SlackService | undefined;
   if (source.api?.slackService) {
     service = source.api.slackService;
@@ -269,7 +272,7 @@ export async function handleSlackOAuthTrigger(
     service = 'full';
   }
 
-  // Build auth request
+  // 构造认证请求
   const authRequest: SlackOAuthAuthRequest = {
     type: 'oauth-slack',
     requestId: generateRequestId('slack-oauth'),
@@ -279,7 +282,7 @@ export async function handleSlackOAuthTrigger(
     service,
   };
 
-  // Trigger auth request
+  // 触发认证请求
   ctx.callbacks.onAuthRequest(authRequest);
 
   return successResponse(
@@ -296,8 +299,8 @@ export interface MicrosoftOAuthTriggerArgs {
 }
 
 /**
- * Handle the source_microsoft_oauth_trigger tool call.
- * Triggers Microsoft OAuth for Outlook, OneDrive, Teams, etc.
+ * 处理 source_microsoft_oauth_trigger tool 调用。
+ * 为 Microsoft source 触发 OAuth，支持 Outlook、OneDrive、Teams 等。
  */
 export async function handleMicrosoftOAuthTrigger(
   ctx: SessionToolContext,
@@ -305,13 +308,13 @@ export async function handleMicrosoftOAuthTrigger(
 ): Promise<ToolResult> {
   const { sourceSlug } = args;
 
-  // Load source config
+  // 加载 source 配置
   const source = ctx.loadSourceConfig(sourceSlug);
   if (!source) {
     return errorResponse(`Source '${sourceSlug}' not found.`);
   }
 
-  // Verify this is a Microsoft source
+  // 校验这是 Microsoft source
   if (source.provider !== 'microsoft') {
     const hint = !source.provider
       ? `Add "provider": "microsoft" to config.json and retry.`
@@ -321,7 +324,7 @@ export async function handleMicrosoftOAuthTrigger(
     );
   }
 
-  // Check if already authenticated (with valid token)
+  // 检查是否已经有有效 token
   if (source.isAuthenticated && ctx.credentialManager) {
     const workspaceId = basename(ctx.workspacePath) || '';
     const loadedSource = {
@@ -337,7 +340,7 @@ export async function handleMicrosoftOAuthTrigger(
     }
   }
 
-  // Determine service from config
+  // 确定要请求的 Microsoft 服务范围
   let service: MicrosoftService | undefined;
   if (source.api?.microsoftService) {
     service = source.api.microsoftService;
@@ -345,14 +348,14 @@ export async function handleMicrosoftOAuthTrigger(
     service = ctx.inferMicrosoftService(source.api?.baseUrl);
   }
 
-  // Require explicit service configuration if it can't be inferred
+  // 如果无法推断服务范围，必须显式配置
   if (!service) {
     return errorResponse(
       `Cannot determine Microsoft service for source '${sourceSlug}'. Set microsoftService ('outlook', 'microsoft-calendar', 'onedrive', 'teams', or 'sharepoint') in api config.`
     );
   }
 
-  // Build auth request
+  // 构造认证请求
   const authRequest: MicrosoftOAuthAuthRequest = {
     type: 'oauth-microsoft',
     requestId: generateRequestId('microsoft-oauth'),
@@ -362,7 +365,7 @@ export async function handleMicrosoftOAuthTrigger(
     service,
   };
 
-  // Trigger auth request
+  // 触发认证请求
   ctx.callbacks.onAuthRequest(authRequest);
 
   return successResponse(

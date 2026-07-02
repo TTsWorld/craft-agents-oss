@@ -1,3 +1,10 @@
+/**
+ * SessionStatusMenu —— Session 工作流状态下拉菜单
+ *
+ * 用于选择或切换 Session 的状态（如 backlog/todo/done），并支持归档/取消归档入口。
+ * 基于 cmdk 的 Command 组件实现可过滤的命令列表。
+ */
+
 import * as React from 'react'
 import { useTranslation } from "react-i18next"
 import { Command as CommandPrimitive } from 'cmdk'
@@ -11,11 +18,11 @@ import {
   getStatusIconStyle,
 } from '@/config/session-status-config'
 
-// Re-export types for backwards compatibility
+// 为了向后兼容重新导出类型
 export { type SessionStatusId, type SessionStatus, getStateIcon, getStateColor }
 
 // ============================================================================
-// Shared Styles (matching slash-command-menu)
+// 共享样式（与 slash-command-menu 保持一致）
 // ============================================================================
 
 const MENU_CONTAINER_STYLE = 'min-w-[180px] overflow-hidden rounded-[8px] bg-background text-foreground shadow-modal-small'
@@ -23,7 +30,7 @@ const MENU_LIST_STYLE = 'max-h-[240px] overflow-y-auto p-1 [&_[cmdk-list-sizer]]
 const MENU_ITEM_STYLE = 'flex cursor-pointer select-none items-center gap-3 rounded-[6px] px-3 py-1.5 text-[13px]'
 
 // ============================================================================
-// StateItemContent - Shared item rendering
+// StateItemContent —— 共用的状态项渲染
 // ============================================================================
 
 const DEFAULT_STATUS_IDS = new Set(['backlog', 'todo', 'needs-review', 'done', 'cancelled'])
@@ -42,26 +49,28 @@ function StateItemContent({ state }: { state: SessionStatus }) {
 }
 
 // ============================================================================
-// SessionStatusMenu Component - For selecting/changing a session's state
+// SessionStatusMenu 组件 —— 选择/切换 Session 状态
 // ============================================================================
 
+/** SessionStatusMenu 的 props 类型 */
 export interface SessionStatusMenuProps {
   states?: SessionStatus[]
   activeState: SessionStatusId
   onSelect: (stateId: SessionStatusId) => void
-  /** Whether the session is currently archived */
+  /** 当前 Session 是否已归档 */
   isArchived?: boolean
-  /** Archive action - shows Archive item at bottom when provided and not archived */
+  /** 归档操作 —— 未归档且提供该回调时显示“归档”项 */
   onArchive?: () => void
-  /** Unarchive action - shows Unarchive item at bottom when provided and archived */
+  /** 取消归档操作 —— 已归档且提供该回调时显示“取消归档”项 */
   onUnarchive?: () => void
-  /** Clear action - shows a "clear" item at bottom (e.g. "No status change") when provided */
+  /** 清除操作 —— 提供该回调时在底部显示"清除"项（例如"不更改状态"） */
   onClear?: () => void
-  /** Label for the clear item. Defaults to "Clear". */
+  /** 清除项的标签文本，默认为 "Clear" */
   clearLabel?: string
   className?: string
 }
 
+/** Session 状态选择菜单 */
 export function SessionStatusMenu({
   states = [],
   activeState,
@@ -77,7 +86,7 @@ export function SessionStatusMenu({
   const [filter, setFilter] = React.useState('')
   const inputRef = React.useRef<HTMLInputElement>(null)
 
-  // Focus input when menu opens
+  // 菜单打开时聚焦过滤输入框
   React.useEffect(() => {
     const timer = setTimeout(() => {
       inputRef.current?.focus()
@@ -85,7 +94,7 @@ export function SessionStatusMenu({
     return () => clearTimeout(timer)
   }, [])
 
-  // Find default value - prefer active state, otherwise first item
+  // 默认选中当前激活状态，否则选中第一项
   const defaultValue = activeState || states[0]?.id
 
   return (
@@ -123,7 +132,7 @@ export function SessionStatusMenu({
             </CommandPrimitive.Item>
           )
         })}
-        {/* Clear item - only shown when handler provided and no filter active */}
+        {/* 清除项 —— 只在提供了回调且无过滤词时显示 */}
         {!filter && onClear && (
           <>
             <div className="border-t border-border/50 mx-2 my-1" />
@@ -143,7 +152,7 @@ export function SessionStatusMenu({
             </CommandPrimitive.Item>
           </>
         )}
-        {/* Archive/Unarchive item - only shown when handler provided and no filter active */}
+        {/* 归档/取消归档项 —— 只在提供了对应回调且无过滤词时显示 */}
         {!filter && (isArchived ? onUnarchive : onArchive) && (
           <>
             <div className="border-t border-border/50 mx-2 my-1" />

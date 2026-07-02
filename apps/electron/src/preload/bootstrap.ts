@@ -1,24 +1,31 @@
 /**
- * WS-mode preload — replaces the full IPC preload (index.ts).
+ * WS 模式 preload 脚本 —— 替代完整的 IPC preload（index.ts）。
  *
- * Normal mode (local server):
- *   Creates a RoutedClient that routes LOCAL_ONLY channels to the local
- *   Electron server and REMOTE_ELIGIBLE channels to whichever server owns
- *   the active workspace (local or remote). Workspace switches swap the
- *   workspace client transparently.
+ * 可以把 preload 理解成 Electron 渲染进程（Renderer）和主进程（Main）之间的“胶水层”：
+ * 它在页面加载前执行，拥有 Node.js 与部分 Electron API 的访问权限，
+ * 再通过 contextBridge 把安全裁剪后的 API 暴露给前端 React 使用。
  *
- * Thin-client mode (CRAFT_SERVER_URL):
- *   Creates a single WsRpcClient connected to the remote server.
- *   All channels go to the remote server.
+ * 普通模式（本地服务器）：
+ *   创建 RoutedClient，把 LOCAL_ONLY 通道路由到本地 Electron 服务器，
+ *   REMOTE_ELIGIBLE 通道则路由到拥有当前工作区的服务器（本地或远程）。
+ *   切换工作区时会透明地切换底层工作区连接。
  *
- * On localhost the WS handshake completes in <1ms. The React app takes >100ms
- * to initialise, so by the time any component calls an API method, the
- * connection is established.
+ * 瘦客户端模式（CRAFT_SERVER_URL）：
+ *   只创建一个 WsRpcClient，直接连接远程服务器。
+ *   所有通道都发往远程服务器。
+ *
+ * 在 localhost 上 WS 握手 <1ms 即可完成；React 应用初始化需要 >100ms，
+ * 因此当组件第一次调用 API 时，连接已经建立好了。
  */
 
-import '@sentry/electron/preload'
+import '@sentry/electron/preload' // Sentry 错误追踪的 preload 集成
 import { contextBridge, ipcRenderer, shell, webUtils } from 'electron'
+// contextBridge：安全地把 API 暴露给渲染进程
+// ipcRenderer：渲染进程向主进程发 IPC 消息
+// shell：调用系统能力（打开浏览器、打开文件等）
+// webUtils：Electron 提供的 Web 相关工具
 import { WsRpcClient, type TransportConnectionState } from '../transport/client'
+// `type` 前缀表示只导入类型，编译后会被擦除，不影响运行时。
 import { RoutedClient } from '../transport/routed-client'
 import { buildClientApi } from '../transport/build-api'
 import { CHANNEL_MAP } from '../transport/channel-map'
@@ -39,9 +46,16 @@ import type { RemoteServerConfig } from '@craft-agent/core/types'
 import type { ElectronAPI } from '../shared/types'
 
 // ---------------------------------------------------------------------------
-// Client interface — common surface for both RoutedClient and WsRpcClient
+// TransportClient 接口 —— RoutedClient 和 WsRpcClient 的公共抽象
 // ---------------------------------------------------------------------------
 
+/**
+ * 传输层客户端接口。
+ *
+ * 这里用 interface 定义对象“形状”（类似 Go 的 interface，但 TS 是结构化的，
+ * 只要对象实现了这些属性/方法就满足该接口，不需要显式声明实现）。
+ * 它同时继承自 RpcClient，并额外提供连接状态相关能力。
+ */
 interface TransportClient extends RpcClient {
   isChannelAvailable(channel: string): boolean
   getConnectionState(): TransportConnectionState
@@ -50,23 +64,31 @@ interface TransportClient extends RpcClient {
 }
 
 // ---------------------------------------------------------------------------
-// Connection setup
+// 连接初始化
 // ---------------------------------------------------------------------------
 
+/**
+ * 通过同步 IPC 获取当前 WebContents 的唯一 ID。
+ * sendSync 会阻塞渲染进程，直到主进程返回结果，适合 preload 阶段一次性读取配置。
+ */
 const webContentsId: number = ipcRenderer.sendSync('__get-web-contents-id')
+
+/**
+ * 判断是否处于瘦客户端模式：只要环境变量 CRAFT_SERVER_URL 存在即为 true。
+ * `!!` 是惯用法，把 truthy/falsy 值强制转成 boolean（类似 Go 的 `!= ""`）。
+ */
 const isClientOnly = !!process.env.CRAFT_SERVER_URL
 
 let client: TransportClient
 
 if (isClientOnly) {
-  // ── Thin-client mode ───────────────────────────────────────────────────
-  // Single WsRpcClient connected directly to the remote server.
-  // No local server, no routing — all channels go to remote.
+  // ── 瘦客户端模式 ─────────────────────────────────────────────────────────
+  // 单个 WsRpcClient 直连远程服务器；没有本地服务器，也不做路由，全部通道走远程。
 
   const wsUrl = process.env.CRAFT_SERVER_URL!
   const wsToken = process.env.CRAFT_SERVER_TOKEN ?? ''
 
-  // Block unencrypted ws:// to non-localhost servers — tokens would be sent in cleartext
+  // 禁止向非 localhost 服务器使用未加密的 ws://，否则 token 会以明文传输
   const parsed = new URL(wsUrl)
   const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1'
   if (parsed.protocol === 'ws:' && !isLocalhost) {
@@ -77,7 +99,7 @@ if (isClientOnly) {
     )
   }
 
-  // Workspace ID is optional — if missing, renderer shows a workspace picker
+  // workspaceId 可选；缺失时渲染层会显示工作区选择器
   const workspaceId = process.env.CRAFT_WORKSPACE_ID || ipcRenderer.sendSync('__get-workspace-id') || undefined
 
   const wsClient = new WsRpcClient(wsUrl, {
@@ -92,9 +114,9 @@ if (isClientOnly) {
   client = wsClient
 
 } else {
-  // ── Normal mode ────────────────────────────────────────────────────────
-  // RoutedClient routes LOCAL_ONLY to local server, REMOTE_ELIGIBLE to
-  // whichever server owns the workspace (local or remote).
+  // ── 普通模式 ─────────────────────────────────────────────────────────────
+  // RoutedClient 把 LOCAL_ONLY 路由到本地服务器，REMOTE_ELIGIBLE 路由到
+  // 拥有该工作区的服务器（本地或远程）。
 
   const wsPort: number = ipcRenderer.sendSync('__get-ws-port')
   const wsToken: string = ipcRenderer.sendSync('__get-ws-token')
@@ -109,12 +131,12 @@ if (isClientOnly) {
     clientCapabilities: [...LOCAL_CLIENT_CAPABILITIES],
   })
 
-  // Check if the current workspace is remote (synchronous IPC during preload eval)
+  // 在 preload 执行期间通过同步 IPC 判断当前工作区是否为远程
   const remoteConfig: RemoteServerConfig | null = ipcRenderer.sendSync('__get-workspace-remote-config')
 
   let initialWorkspaceClient: WsRpcClient
   if (remoteConfig && typeof remoteConfig.url === 'string') {
-    // Workspace is remote — create a direct connection to the remote server
+    // 工作区在远程服务器 —— 创建一个直达该远程服务器的连接
     initialWorkspaceClient = new WsRpcClient(remoteConfig.url, {
       token: remoteConfig.token,
       workspaceId: remoteConfig.remoteWorkspaceId,
@@ -126,18 +148,18 @@ if (isClientOnly) {
     })
     initialWorkspaceClient.connect()
   } else {
-    // Workspace is local — workspace client IS the local client
+    // 工作区在本地 —— 工作区客户端就是本地客户端
     initialWorkspaceClient = localClient
   }
 
   const routedClient = new RoutedClient(localClient, initialWorkspaceClient)
 
-  // Set workspace ID mapping if initial workspace is remote
+  // 如果初始工作区就是远程的，设置本地 workspaceId 到远程 remoteWorkspaceId 的映射
   if (remoteConfig) {
     routedClient.setWorkspaceMapping(workspaceId, remoteConfig.remoteWorkspaceId)
   }
 
-  // Factory for creating remote workspace clients on switch
+  // 工厂函数：切换工作区时按需创建新的远程连接
   routedClient.setClientFactory((remoteServer: RemoteServerConfig) => {
     return new WsRpcClient(remoteServer.url, {
       token: remoteServer.token,
@@ -155,9 +177,10 @@ if (isClientOnly) {
 }
 
 // ---------------------------------------------------------------------------
-// Register client-side capability handlers (server can invoke these)
+// 注册客户端能力（服务器可以反向调用这些方法）
 // ---------------------------------------------------------------------------
 
+// shell.openExternal 用系统默认浏览器打开 URL（例如打开外部授权页）。
 client.handleCapability(CLIENT_OPEN_EXTERNAL, (url: string) => shell.openExternal(url))
 
 client.handleCapability(CLIENT_OPEN_PATH, async (path: string) => {
@@ -177,26 +200,30 @@ client.handleCapability(CLIENT_OPEN_FILE_DIALOG, async (spec: FileDialogSpec) =>
   return await ipcRenderer.invoke('__dialog:showOpenDialog', spec)
 })
 
-// Browser pane invocation. The remote server packages an IBrowserPaneManager
-// method call as a BrowserCapabilityRequest; we dispatch it to the local
-// `BrowserPaneManager` via the `__browser:invoke` IPC channel registered in
-// `apps/electron/src/main/browser-pane-manager.ts:registerCapabilityIpc()`.
+// 浏览器面板调用。远程服务器把 IBrowserPaneManager 的方法调用封装成 BrowserCapabilityRequest；
+// 我们通过 __browser:invoke IPC 通道派发给本地的 BrowserPaneManager
+//（对应 apps/electron/src/main/browser-pane-manager.ts:registerCapabilityIpc()）。
 client.handleCapability(CLIENT_BROWSER_INVOKE, async (req: BrowserCapabilityRequest) => {
   return await ipcRenderer.invoke('__browser:invoke', req)
 })
 
 // ---------------------------------------------------------------------------
-// Build ElectronAPI proxy
+// 构建暴露给渲染进程的 ElectronAPI 代理
 // ---------------------------------------------------------------------------
 
 const api = buildClientApi(client, CHANNEL_MAP, (ch) => client.isChannelAvailable(ch))
 
+// 用 `as any` 临时绕过类型检查，给 api 对象动态附加属性。
+// 实际项目中应尽量避免 as any，这里是为了在不改变 ElectronAPI 声明的前提下扩展 API。
 ;(api as any).getRuntimeEnvironment = (): 'electron' | 'web' => 'electron'
 
 // ---------------------------------------------------------------------------
-// Transport connection state logging (for remote connections)
+// 远程连接状态日志格式化
 // ---------------------------------------------------------------------------
 
+/**
+ * 把 TransportConnectionState 里的错误/关闭原因格式化成可读字符串。
+ */
 function formatTransportReason(state: TransportConnectionState): string {
   const err = state.lastError
   if (err) {
@@ -204,6 +231,7 @@ function formatTransportReason(state: TransportConnectionState): string {
     return `${err.kind}${codePart}: ${err.message}`
   }
 
+  // `?.` 是可选链：如果 lastClose 为 null/undefined 则整个表达式短路为 undefined。
   if (state.lastClose?.code != null) {
     const reason = state.lastClose.reason ? ` (${state.lastClose.reason})` : ''
     return `close ${state.lastClose.code}${reason}`
@@ -212,8 +240,8 @@ function formatTransportReason(state: TransportConnectionState): string {
   return 'no additional details'
 }
 
-// Log remote connection state changes to main process (visible in terminal + main.log).
-// Activates whenever the workspace connection is remote (thin client or remote workspace).
+// 当工作区连接是远程时（瘦客户端或远程工作区），把连接状态变化回传给主进程，
+// 这样终端和 main.log 里都能看到。
 client.onConnectionStateChanged((state) => {
   if (state.mode !== 'remote') return
 
@@ -253,36 +281,43 @@ client.onConnectionStateChanged((state) => {
 })
 
 // ---------------------------------------------------------------------------
-// Transport state API (exposed to renderer)
+// 传输层状态 API（暴露给渲染进程）
 // ---------------------------------------------------------------------------
 
+// 获取当前连接状态
 ;(api as any).getTransportConnectionState = async () => client.getConnectionState()
+
+// 订阅连接状态变化；返回的函数用于取消订阅。
 ;(api as any).onTransportConnectionStateChanged = (callback: (state: TransportConnectionState) => void) => {
   return client.onConnectionStateChanged(callback)
 }
+
+// 手动触发重连
 ;(api as any).reconnectTransport = async () => {
   client.reconnectNow()
 }
 
 // ── performOAuth ─────────────────────────────────────────────────────────
-// Multi-step orchestration: callback server (local) → oauth:start (server) →
-// open browser → wait for callback → oauth:complete (server).
-// Runs client-side because the callback server must receive the redirect.
+// 多步编排：本地回调服务器 → oauth:start（服务器准备）→ 打开浏览器 →
+// 等待回调 → oauth:complete（服务器换 token 并存储凭证）。
+// 必须在客户端跑，因为回调服务器需要接收 OAuth 提供方的 redirect。
 ;(api as any).performOAuth = async (args: {
   sourceSlug: string
   sessionId?: string
   authRequestId?: string
 }): Promise<{ success: boolean; error?: string; email?: string }> => {
+  // Awaited<ReturnType<typeof createCallbackServer>> 表示
+  // “createCallbackServer 返回的 Promise 被 await 后的实际类型”。
   let callbackServer: Awaited<ReturnType<typeof createCallbackServer>> | null = null
   let flowId: string | undefined
   let state: string | undefined
 
   try {
-    // 1. Start local callback server to receive OAuth redirect
+    // 1. 启动本地回调服务器，接收 OAuth 提供方的重定向
     callbackServer = await createCallbackServer({ appType: 'electron' })
     const callbackUrl = `${callbackServer.url}/callback`
 
-    // 2. Ask server to prepare the flow (PKCE, auth URL, store in flow store)
+    // 2. 让服务器准备 PKCE、auth URL 并把 flow 存起来
     const startResult = await client.invoke('oauth:start', {
       sourceSlug: args.sourceSlug,
       callbackUrl,
@@ -292,13 +327,13 @@ client.onConnectionStateChanged((state) => {
     flowId = startResult.flowId
     state = startResult.state
 
-    // 3. Open browser for user consent (local — must open on the user's machine, not remote server)
+    // 3. 在本地打开浏览器让用户授权（必须是用户本机，不能是远程服务器）
     await shell.openExternal(startResult.authUrl)
 
-    // 4. Wait for OAuth provider to redirect to our callback server
+    // 4. 等待 OAuth 提供方重定向回我们的回调服务器
     const callback = await callbackServer.promise
 
-    // 5. Check for errors from the provider
+    // 5. 检查提供方是否返回错误
     if (callback.query.error) {
       const error = callback.query.error_description || callback.query.error
       await client.invoke('oauth:cancel', { flowId, state })
@@ -311,11 +346,11 @@ client.onConnectionStateChanged((state) => {
       return { success: false, error: 'No authorization code received' }
     }
 
-    // 6. Send code to server for token exchange + credential storage
+    // 6. 把授权码交给服务器换取 token 并保存凭据
     const result = await client.invoke('oauth:complete', { flowId, code, state })
     return { success: result.success, error: result.error, email: result.email }
   } catch (err) {
-    // Clean up server-side flow on error
+    // 出错时通知服务器清理本次 flow；.catch(() => {}) 避免清理请求本身抛错影响流程。
     if (flowId && state) {
       client.invoke('oauth:cancel', { flowId, state }).catch(() => {})
     }
@@ -329,9 +364,9 @@ client.onConnectionStateChanged((state) => {
 }
 
 // ── startClaudeOAuth ─────────────────────────────────────────────────────
-// Override the channel-map stub: the server now returns authUrl without opening
-// the browser. We open it locally so it works in remote mode.
-// Claude OAuth is two-step: browser opens → user copies code → pastes in UI.
+// 覆盖 channel-map 里的占位实现：服务器现在只返回 authUrl，不再自己打开浏览器。
+// 我们在本地打开，这样远程模式下也能正常工作。
+// Claude OAuth 是两步式：浏览器打开 → 用户复制 code → 粘贴回 UI。
 ;(api as any).startClaudeOAuth = async (): Promise<{
   success: boolean
   authUrl?: string
@@ -352,9 +387,9 @@ client.onConnectionStateChanged((state) => {
 }
 
 // ── performChatGptOAuth ──────────────────────────────────────────────────
-// Same shape as performOAuth: callback server (port 1455) → chatgpt:startOAuth →
-// browser → callback → chatgpt:completeOAuth.
-// Overrides the startChatGptOAuth API method so the renderer call is unchanged.
+// 流程与 performOAuth 相同：回调服务器（端口 1455）→ chatgpt:startOAuth →
+// 浏览器 → 回调 → chatgpt:completeOAuth。
+// 覆盖 startChatGptOAuth API 方法，渲染层调用方式保持不变。
 ;(api as any).startChatGptOAuth = async (
   connectionSlug: string,
 ): Promise<{ success: boolean; error?: string }> => {
@@ -363,25 +398,25 @@ client.onConnectionStateChanged((state) => {
   let state: string | undefined
 
   try {
-    // 1. Start callback server on ChatGPT's fixed port with /auth/callback path
+    // 1. 在 ChatGPT 固定端口启动回调服务器，并指定 /auth/callback 路径
     callbackServer = await createCallbackServer({
       appType: 'electron',
       port: CHATGPT_OAUTH_CONFIG.CALLBACK_PORT,
       callbackPaths: ['/auth/callback'],
     })
 
-    // 2. Ask server to prepare the flow (PKCE, auth URL, store pending flow)
+    // 2. 让服务器准备 PKCE、auth URL 并把 pending flow 存起来
     const startResult = await client.invoke('chatgpt:startOAuth', connectionSlug)
     flowId = startResult.flowId
     state = startResult.state
 
-    // 3. Open browser for user consent
+    // 3. 在本地打开浏览器让用户授权
     await shell.openExternal(startResult.authUrl)
 
-    // 4. Wait for OpenAI to redirect to our callback server
+    // 4. 等待 OpenAI 重定向回我们的回调服务器
     const callback = await callbackServer.promise
 
-    // 5. Check for errors from the provider
+    // 5. 检查 OpenAI 是否返回错误
     if (callback.query.error) {
       const error = callback.query.error_description || callback.query.error
       await client.invoke('chatgpt:cancelOAuth', { state })
@@ -394,7 +429,7 @@ client.onConnectionStateChanged((state) => {
       return { success: false, error: 'No authorization code received' }
     }
 
-    // 6. Send code to server for token exchange + credential storage
+    // 6. 把授权码交给服务器换取 token 并保存凭据
     const result = await client.invoke('chatgpt:completeOAuth', { flowId, code, state })
     return { success: result.success, error: result.error }
   } catch (err) {
@@ -410,7 +445,8 @@ client.onConnectionStateChanged((state) => {
   }
 }
 
-// App lifecycle — direct IPC (not WS RPC) since it restarts the server itself
+// 应用生命周期 —— 直接使用 IPC（不是 WS RPC），因为这些操作会重启服务器本身，
+// WS 连接会因此断开，不能用 WS 发命令。
 ;(api as ElectronAPI).relaunchApp = () => ipcRenderer.invoke('app:relaunch')
 ;(api as ElectronAPI).removeWorkspace = (workspaceId: string) => ipcRenderer.invoke('workspace:remove', workspaceId)
 ;(api as ElectronAPI).invokeOnServer = (url: string, token: string, channel: string, ...args: any[]) =>
@@ -423,19 +459,18 @@ client.onConnectionStateChanged((state) => {
   return () => { ipcRenderer.removeListener('transfer:progress', handler) }
 }
 
-// System warnings — expose env-based flags set during main process startup
-// (preload-only: reads env var directly, no IPC round-trip needed)
+// 系统警告：暴露主进程启动时写入的环境变量标记。
+//（preload 专属优势：直接读环境变量，不需要 IPC 往返）
 ;(api as ElectronAPI).getSystemWarnings = async () => ({
   vcredistMissing: process.env.CRAFT_VCREDIST_MISSING === '1',
   downloadUrl: process.env.CRAFT_VCREDIST_URL,
 })
 
-// i18n: sync language changes to main process (for native menus/dialogs)
+// i18n：同步语言切换给主进程，让原生菜单/对话框也能跟随语言。
 ;(api as ElectronAPI).changeLanguage = (lang: string) => ipcRenderer.invoke('i18n:changeLanguage', lang)
 
-// webUtils.getPathForFile: returns the absolute OS path of a File object obtained
-// from <input type="file"> or OS drag-drop. Returns null for Files fabricated from
-// Blobs (clipboard paste, web-drag) — those are content-only, no filesystem path.
+// webUtils.getPathForFile：返回从 <input type="file"> 或系统拖拽得到的 File 对象的绝对路径。
+// 对于从 Blob 构造的 File（剪贴板粘贴、网页拖拽）返回 null —— 那些只有内容，没有文件系统路径。
 ;(api as ElectronAPI).getFilePath = (file: File) => {
   try {
     return webUtils.getPathForFile(file) || null
@@ -444,4 +479,6 @@ client.onConnectionStateChanged((state) => {
   }
 }
 
+// 把 api 安全地注入到渲染进程的 window.electronAPI。
+// 之后 React 代码里通过 window.electronAPI 调用这些能力。
 contextBridge.exposeInMainWorld('electronAPI', api)

@@ -1,41 +1,42 @@
 /**
- * Session Self-Management Bindings
+ * Session 自管理回调绑定（session self-management bindings）
  *
- * Attaches 6 session management properties to a SessionToolContext using
- * Object.defineProperty with non-memoized lazy getters. Each access resolves
- * the callback from the session-scoped tool callback registry at call time,
- * so late merges and callback replacements are immediately visible without
- * recreating the context.
+ * 通过 Object.defineProperty 给 SessionToolContext 挂上若干 session 管理属性，
+ * 使用的是「非缓存的 lazy getter」：每次访问都重新去 session-scoped tool
+ * callback registry 里取最新的回调。
  *
- * Used by both the Claude and Pi agent paths to ensure a single binding
- * implementation — the root cause of #511 was that PiAgent's context was
- * missing these bindings entirely.
+ * 这样的好处：后续 merge 进来的回调、被替换掉的回调，无需重建 context 就能
+ * 立刻对工具可见。类比 Go：相当于把一个 interface 字段做成方法调用，
+ * 每次都查注册表而不是缓存第一次的结果。
  *
- * Design rules:
- * - Each getter calls getSessionScopedToolCallbacks() fresh — NO memoization
- * - Returns undefined when the callback is missing — NO no-ops, NO fake data
- * - getSessionInfo is the only field that wraps (for sid ?? sessionId defaulting)
- * - All other fields return the raw registry callback directly (signatures match)
+ * Claude 和 Pi 两条后端路径都用同一份绑定 —— #511 的根因就是 PiAgent 的 context
+ * 漏挂了这些绑定。
+ *
+ * 设计原则：
+ * - 每个 getter 都重新调用 getSessionScopedToolCallbacks()，不做任何 memoization
+ * - 缺失回调时直接返回 undefined，绝不退化成 no-op，也绝不返回假数据
+ * - 只有 getSessionInfo 做了包装（用于 sid ?? sessionId 的默认值处理）
+ * - 其余字段签名与注册表回调一致，直接透传
  */
 
 import type { SessionToolContext } from '@craft-agent/session-tools-core';
 import { getSessionScopedToolCallbacks } from './session-scoped-tool-callback-registry.ts';
 
 /**
- * Attach session self-management bindings to a SessionToolContext.
+ * 把 session 自管理能力挂到 SessionToolContext 上。
  *
- * Defines lazy getters for: setSessionLabels, setSessionStatus,
- * getSessionInfo, listSessions, resolveLabels, resolveStatus.
+ * 用 lazy getter 注册以下属性：setSessionLabels、setSessionStatus、
+ * getSessionInfo、listSessions、resolveLabels、resolveStatus 等。
  *
- * @param context - The SessionToolContext to augment (mutated in place)
- * @param sessionId - The session ID for registry lookup and getSessionInfo defaulting
+ * @param context  - 待增强的 SessionToolContext（会被原地修改）
+ * @param sessionId - 用于查注册表、以及 getSessionInfo 默认 sid 时的兜底
  */
 export function attachSessionSelfManagementBindings(
   context: SessionToolContext,
   sessionId: string,
 ): void {
-  // Direct pass-through bindings — signatures match, no wrapping needed.
-  // Each getter resolves fresh from the registry on every access.
+  // 直接透传的绑定 —— 注册表回调签名和 context 字段完全一致，无需包装。
+  // 每个 getter 都在每次访问时重新查注册表。
 
   Object.defineProperty(context, 'setSessionLabels', {
     get() {
@@ -104,7 +105,7 @@ export function attachSessionSelfManagementBindings(
     enumerable: true,
   });
 
-  // Messaging gateway bindings
+  // 消息网关（messaging gateway）相关绑定 —— 需要在外层 sid 缺省时回退到当前 sessionId
   Object.defineProperty(context, 'getMessagingBindings', {
     get() {
       const fn = getSessionScopedToolCallbacks(sessionId)?.getMessagingBindingsFn;
@@ -125,7 +126,7 @@ export function attachSessionSelfManagementBindings(
     enumerable: true,
   });
 
-  // getSessionInfo needs wrapping to default sid → sessionId
+  // getSessionInfo 需要包一层：未显式传 sid 时默认用当前 sessionId
   Object.defineProperty(context, 'getSessionInfo', {
     get() {
       const fn = getSessionScopedToolCallbacks(sessionId)?.getSessionInfoFn;

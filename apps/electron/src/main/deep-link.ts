@@ -1,37 +1,27 @@
 /**
- * Deep Link Handler
+ * deep-link.ts —— 深链处理器。
  *
- * Parses craftagents:// URLs and routes to appropriate actions.
+ * 解析 craftagents:// URL 并路由到对应动作。
  *
- * URL Formats (workspace is optional - uses active window if omitted):
+ * URL 格式（workspace 可选，省略时使用当前活动窗口）：
  *
- * Compound format (hierarchical navigation):
- *   craftagents://allSessions[/session/{sessionId}]            - Session list (all sessions)
- *   craftagents://flagged[/session/{sessionId}]             - Session list (flagged filter)
- *   craftagents://state/{stateId}[/session/{sessionId}]     - Session list (state filter)
- *   craftagents://sources[/source/{sourceSlug}]          - Sources list
- *   craftagents://settings[/{subpage}]                   - Settings (general, shortcuts, preferences)
+ * 复合路由（层级导航）：
+ *   craftagents://allSessions[/session/{sessionId}]            - 全部会话列表
+ *   craftagents://flagged[/session/{sessionId}]                - 已标记会话
+ *   craftagents://state/{stateId}[/session/{sessionId}]        - 按状态过滤
+ *   craftagents://sources[/source/{sourceSlug}]                - 来源列表
+ *   craftagents://settings[/{subpage}]                         - 设置页
  *
- * Action format:
+ * 动作路由：
  *   craftagents://action/{actionName}[/{id}][?params]
  *   craftagents://workspace/{workspaceId}/action/{actionName}[?params]
  *
- * Actions:
- *   new-chat                  - Create new chat, optional ?input=text&name=name&send=true
- *                               If send=true is provided with input, immediately sends the message
- *   resume-sdk-session/{id}   - Resume Claude Code session by SDK session ID
- *   delete-session/{id}       - Delete session
- *   flag-session/{id}         - Flag session
- *   unflag-session/{id}       - Unflag session
- *
- * Examples:
- *   craftagents://allSessions                               (all sessions view)
- *   craftagents://allSessions/session/abc123                (specific session)
- *   craftagents://settings/shortcuts                     (shortcuts page)
- *   craftagents://sources/source/github                  (github source info)
- *   craftagents://action/new-chat                        (uses active window)
- *   craftagents://action/resume-sdk-session/{sdkId}      (resume Claude Code session)
- *   craftagents://workspace/ws123/allSessions/session/abc123   (targets specific workspace)
+ * 动作：
+ *   new-chat                  - 新建聊天，可带 ?input=text&name=name&send=true
+ *   resume-sdk-session/{id}   - 按 SDK session ID 恢复 Claude Code 会话
+ *   delete-session/{id}       - 删除会话
+ *   flag-session/{id}         - 标记会话
+ *   unflag-session/{id}       - 取消标记
  */
 
 import type { BrowserWindow } from 'electron'
@@ -40,17 +30,18 @@ import type { WindowManager } from './window-manager'
 import { RPC_CHANNELS } from '../shared/types'
 import type { EventSink } from '@craft-agent/server-core/transport'
 
+// 解析后的深链目标
 export interface DeepLinkTarget {
-  /** Workspace ID - undefined means use active window */
+  /** 工作区 ID；undefined 表示使用当前活动窗口 */
   workspaceId?: string
-  /** Compound route format (e.g., 'allSessions/session/abc123', 'settings/shortcuts') */
+  /** 复合路由格式，例如 'allSessions/session/abc123'、'settings/shortcuts' */
   view?: string
-  /** Action route (e.g., 'new-chat', 'delete-session') */
+  /** 动作路由，例如 'new-chat'、'delete-session' */
   action?: string
   actionParams?: Record<string, string>
-  /** Window mode - if set, opens in a new window instead of navigating in existing */
+  /** 窗口模式；若设置则打开新窗口，而非在现有窗口内导航 */
   windowMode?: 'focused' | 'full'
-  /** Right sidebar param (e.g., 'files/path/to/file', 'history') */
+  /** 右侧边栏参数，例如 'files/path/to/file'、'history' */
   rightSidebar?: string
 }
 
@@ -61,18 +52,18 @@ export interface DeepLinkResult {
 }
 
 /**
- * Navigation payload sent to renderer via IPC
+ * 通过 IPC 发送给渲染进程的导航载荷
  */
 export interface DeepLinkNavigation {
-  /** Compound route format (e.g., 'allSessions/session/abc123', 'settings/shortcuts') */
+  /** 复合路由格式，例如 'allSessions/session/abc123'、'settings/shortcuts' */
   view?: string
-  /** Action route (e.g., 'new-chat', 'delete-session') */
+  /** 动作路由，例如 'new-chat'、'delete-session' */
   action?: string
   actionParams?: Record<string, string>
 }
 
 /**
- * Parse window mode from URL search params
+ * 从 URL 查询参数解析窗口模式（focused / full）
  */
 function parseWindowMode(parsed: URL): 'focused' | 'full' | undefined {
   const windowParam = parsed.searchParams.get('window')
@@ -83,14 +74,14 @@ function parseWindowMode(parsed: URL): 'focused' | 'full' | undefined {
 }
 
 /**
- * Parse right sidebar param from URL search params
+ * 从 URL 查询参数解析右侧边栏参数
  */
 function parseRightSidebar(parsed: URL): string | undefined {
   return parsed.searchParams.get('sidebar') || undefined
 }
 
 /**
- * Parse a deep link URL into structured target
+ * 把深链 URL 解析成结构化的 DeepLinkTarget
  */
 export function parseDeepLink(url: string): DeepLinkTarget | null {
   try {
@@ -100,27 +91,27 @@ export function parseDeepLink(url: string): DeepLinkTarget | null {
       return null
     }
 
-    // For custom protocols, the hostname contains the first path segment
-    // e.g., craftagents://workspace/ws123 → hostname='workspace', pathname='/ws123'
-    // e.g., craftagents://allSessions/chat/abc → hostname='allSessions', pathname='/chat/abc'
+    // 自定义协议里，hostname 就是第一个路径段
+    // 例：craftagents://workspace/ws123 → hostname='workspace', pathname='/ws123'
+    // 例：craftagents://allSessions/chat/abc → hostname='allSessions', pathname='/chat/abc'
     const host = parsed.hostname
     const pathParts = parsed.pathname.split('/').filter(Boolean)
     const windowMode = parseWindowMode(parsed)
     const rightSidebar = parseRightSidebar(parsed)
 
-    // craftagents://auth-callback?... (OAuth callbacks - return null to let existing handler process)
+    // craftagents://auth-callback?... OAuth 回调，返回 null 让已有处理器处理
     if (host === 'auth-callback') {
       return null
     }
 
-    // Compound route prefixes
+    // 复合路由前缀
     const COMPOUND_ROUTE_PREFIXES = [
       'allSessions', 'flagged', 'state', 'sources', 'settings', 'skills'
     ]
 
-    // craftagents://allSessions/..., craftagents://settings/..., etc. (compound routes)
+    // craftagents://allSessions/...、craftagents://settings/... 等复合路由
     if (COMPOUND_ROUTE_PREFIXES.includes(host)) {
-      // Reconstruct the full compound route from host + pathname
+      // 用 hostname + pathname 拼出完整复合路由
       const viewRoute = pathParts.length > 0 ? `${host}/${pathParts.join('/')}` : host
       return {
         workspaceId: undefined,
@@ -130,34 +121,34 @@ export function parseDeepLink(url: string): DeepLinkTarget | null {
       }
     }
 
-    // craftagents://workspace/{workspaceId}/... (with workspace targeting)
+    // craftagents://workspace/{workspaceId}/...（指定 workspace）
     if (host === 'workspace') {
       const workspaceId = pathParts[0]
       if (!workspaceId) return null
 
       const result: DeepLinkTarget = { workspaceId, windowMode, rightSidebar }
 
-      // Check what type of route follows the workspace ID
+      // 看 workspace ID 后面是什么类型的路由
       const routeType = pathParts[1]
 
-      // Parse compound routes: /workspace/{id}/{compoundRoute}
-      // e.g., /workspace/ws123/allSessions/session/abc123
+      // 解析复合路由：/workspace/{id}/{compoundRoute}
+      // 例：/workspace/ws123/allSessions/session/abc123
       if (routeType && COMPOUND_ROUTE_PREFIXES.includes(routeType)) {
         const viewRoute = pathParts.slice(1).join('/')
         result.view = viewRoute
         return result
       }
 
-      // Parse /action/{actionName}/...
+      // 解析 /action/{actionName}/...
       if (routeType === 'action') {
         result.action = pathParts[2]
         result.actionParams = {}
-        // Handle path-based ID (e.g., /action/delete-session/{sessionId})
+        // 处理路径里的 ID，例如 /action/delete-session/{sessionId}
         if (pathParts[3]) {
           result.actionParams.id = pathParts[3]
         }
         parsed.searchParams.forEach((value, key) => {
-          // Skip the window and sidebar params - they're handled separately
+          // window 和 sidebar 参数单独处理，不要放进 actionParams
           if (key !== 'window' && key !== 'sidebar') {
             result.actionParams![key] = value
           }
@@ -168,7 +159,7 @@ export function parseDeepLink(url: string): DeepLinkTarget | null {
       return result
     }
 
-    // craftagents://action/... (no workspace - uses active window)
+    // craftagents://action/...（没有 workspace，使用当前活动窗口）
     if (host === 'action') {
       const result: DeepLinkTarget = {
         workspaceId: undefined,
@@ -183,7 +174,7 @@ export function parseDeepLink(url: string): DeepLinkTarget | null {
       }
 
       parsed.searchParams.forEach((value, key) => {
-        // Skip the window and sidebar params - they're handled separately
+        // window 和 sidebar 参数单独处理
         if (key !== 'window' && key !== 'sidebar') {
           result.actionParams![key] = value
         }
@@ -200,18 +191,15 @@ export function parseDeepLink(url: string): DeepLinkTarget | null {
 }
 
 /**
- * Wait for window's renderer to signal ready
+ * 等待窗口的渲染进程加载完成（HTML 加载 + 短暂延时让 React 挂载）
  */
 function waitForWindowReady(window: BrowserWindow): Promise<void> {
   return new Promise((resolve) => {
     if (window.webContents.isLoading()) {
       window.webContents.once('did-finish-load', () => {
-        // TIMING NOTE: This 100ms delay allows React to mount and register
-        // IPC listeners before we send the deep link. `did-finish-load` fires
-        // when the HTML is loaded, but React's useEffect hooks haven't run yet.
-        // A proper handshake (renderer signals "ready") would be cleaner but
-        // adds complexity for minimal gain - this delay is sufficient for all
-        // practical cases and only affects reload scenarios.
+        // 时序说明：did-finish-load 只表示 HTML 加载完成，React 的 useEffect 还没跑。
+        // 延迟 100ms 让 React 挂载并注册 IPC 监听器，再发送深链。
+        // 更严谨的做法是让渲染进程显式发「ready」握手，但复杂度更高，100ms 足够覆盖实际场景。
         setTimeout(resolve, 100)
       })
     } else {
@@ -221,7 +209,7 @@ function waitForWindowReady(window: BrowserWindow): Promise<void> {
 }
 
 /**
- * Build a deep link URL without the window query parameter
+ * 去掉 window 查询参数后的深链 URL，用于在新窗口内部导航
  */
 function buildDeepLinkWithoutWindowParam(url: string): string {
   const parsed = new URL(url)
@@ -230,7 +218,7 @@ function buildDeepLinkWithoutWindowParam(url: string): string {
 }
 
 /**
- * Handle a deep link by navigating to the target
+ * 处理深链：解析目标并导航到对应窗口。
  */
 export async function handleDeepLink(
   url: string,
@@ -242,7 +230,7 @@ export async function handleDeepLink(
   const target = parseDeepLink(url)
 
   if (!target) {
-    // Return success for null targets (like auth-callback) - they're handled elsewhere
+    // auth-callback 这类返回 null 的目标由其他处理器负责，这里直接算成功
     if (url.includes('auth-callback')) {
       return { success: true }
     }
@@ -251,10 +239,10 @@ export async function handleDeepLink(
 
   mainLog.info('[DeepLink] Handling:', target)
 
-  // If windowMode is set, create a new window instead of navigating in existing
+  // 如果指定了 windowMode，就开新窗口而不是在现有窗口里导航
   if (target.windowMode) {
     mainLog.info('[DeepLink] windowMode detected:', target.windowMode)
-    // Get workspaceId from target or from current window
+    // 从目标或当前窗口获取 workspaceId
     let wsId = target.workspaceId
     if (!wsId) {
       const focusedWindow = windowManager.getFocusedWindow()
@@ -278,7 +266,7 @@ export async function handleDeepLink(
       return { success: false, error: 'No workspace available for new window' }
     }
 
-    // Build URL without window param for navigation inside the new window
+    // 去掉 window 参数后的 URL，用于在新窗口内部导航
     const navUrl = buildDeepLinkWithoutWindowParam(url)
     mainLog.info('[DeepLink] Creating new window with navUrl:', navUrl)
 
@@ -292,32 +280,32 @@ export async function handleDeepLink(
     return { success: true, windowId: window.webContents.id }
   }
 
-  // 1. Get target window (existing behavior for non-window-mode links)
+  // 1. 获取目标窗口（非 windowMode 的默认行为）
   let window: BrowserWindow | null = null
 
   if (target.workspaceId) {
-    // Workspace specified - focus or create window for that workspace
+    // 指定了 workspace，聚焦或创建对应窗口
     window = windowManager.focusOrCreateWindow(target.workspaceId)
   } else {
-    // No workspace - use focused window or last active
+    // 没指定 workspace，使用聚焦窗口或最近活动窗口
     window = windowManager.getFocusedWindow() ?? windowManager.getLastActiveWindow()
 
     if (!window) {
-      // No windows at all - can't navigate without a workspace
+      // 没有任何窗口，无法导航
       return { success: false, error: 'No active window to navigate' }
     }
 
-    // Focus the window
+    // 聚焦窗口
     if (window.isMinimized()) {
       window.restore()
     }
     window.focus()
   }
 
-  // 2. Wait for window to be ready (renderer loaded)
+  // 2. 等窗口渲染进程准备好（HTML 加载 + React 挂载）
   await waitForWindowReady(window)
 
-  // 3. Send navigation command to renderer
+  // 3. 把导航命令发给渲染进程
   if (target.view || target.action) {
     const navigation: DeepLinkNavigation = {
       view: target.view,
@@ -327,8 +315,7 @@ export async function handleDeepLink(
     const wsId = target.workspaceId ?? windowManager.getWorkspaceForWindow(window.webContents.id)
     const resolvedClientId = resolveClientId?.(window.webContents.id)
 
-    // Prefer the resolved target window client. Only use preferredClientId as
-    // fallback when no resolver was provided (legacy call sites).
+    // 优先使用解析出的目标窗口 client；只有没提供 resolver 的遗留调用点才用 preferredClientId
     const clientId = resolvedClientId ?? (!resolveClientId ? preferredClientId : undefined)
 
     if (sink && clientId) {

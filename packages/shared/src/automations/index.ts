@@ -1,18 +1,18 @@
 /**
- * Craft Agent Automations - Public API
+ * Craft Agent Automations - 公共 API 入口
  *
- * Slim barrel file that re-exports from decomposed modules:
- * - types.ts: All type definitions
- * - validation.ts: Config validation functions
- * - sdk-bridge.ts: SDK environment variable building
- * - utils.ts: Shared utilities (toSnakeCase, expandEnvVars, etc.)
- * - automation-system.ts: AutomationSystem facade (main entry point)
- * - event-bus.ts: WorkspaceEventBus
- * - handlers/: PromptHandler, WebhookHandler, EventLogHandler
+ * 这是一个 barrel 文件，从各个子模块重新导出：
+ * - types.ts：所有类型定义
+ * - validation.ts：配置校验函数
+ * - sdk-bridge.ts：SDK 环境变量构建
+ * - utils.ts：共享工具（toSnakeCase、expandEnvVars 等）
+ * - automation-system.ts：AutomationSystem 外观类（主入口）
+ * - event-bus.ts：WorkspaceEventBus
+ * - handlers/：PromptHandler、WebhookHandler、EventLogHandler
  */
 
 // ============================================================================
-// Types
+// 类型
 // ============================================================================
 
 export type {
@@ -47,7 +47,7 @@ export type {
 export { APP_EVENTS, AGENT_EVENTS } from './types.ts';
 
 // ============================================================================
-// Validation
+// 校验
 // ============================================================================
 
 export {
@@ -57,52 +57,52 @@ export {
 } from './validation.ts';
 
 // ============================================================================
-// SDK Bridge
+// SDK Bridge（SDK 桥接）
 // ============================================================================
 
 export { buildEnvFromSdkInput } from './sdk-bridge.ts';
 
 // ============================================================================
-// Utilities
+// 工具
 // ============================================================================
 
 export { parsePromptReferences } from './utils.ts';
 
 // ============================================================================
-// Re-exports from sub-modules
+// 子模块重新导出
 // ============================================================================
 
-// Event logger
+// 事件日志
 export { AutomationEventLogger, type LoggedAutomationEvent, type LoggedAutomationEventInput } from './event-logger.ts';
 
-// Schemas
+// Schema
 export { AutomationsConfigSchema, AutomationConditionSchema, TimeConditionSchema, StateConditionSchema, zodErrorToIssues, VALID_EVENTS } from './schemas.ts';
 
-// Condition evaluator
+// 条件求值器
 export { evaluateConditions, type ConditionContext } from './conditions.ts';
 
-// Security utilities
+// 安全工具
 export { sanitizeForShell } from './security.ts';
 
-// Webhook execution utilities
+// Webhook 执行工具
 export { executeWebhookRequest, executeWithRetry, createWebhookHistoryEntry, createPromptHistoryEntry, type ExecuteWebhookOptions, type RetryConfig } from './webhook-utils.ts';
 
-// Retry scheduler
+// 重试调度器
 export { RetryScheduler, type RetryQueueEntry, type RetrySchedulerOptions } from './retry-scheduler.ts';
 
-// Config constants
+// 配置常量
 export { AUTOMATIONS_CONFIG_FILE, AUTOMATIONS_HISTORY_FILE, AUTOMATIONS_RETRY_QUEUE_FILE, HISTORY_FIELD_MAX_LENGTH, AUTOMATION_HISTORY_MAX_RUNS_PER_MATCHER, AUTOMATION_HISTORY_MAX_ENTRIES } from './constants.ts';
 
-// History store
+// 历史存储
 export { appendAutomationHistoryEntry, compactAutomationHistory, compactAutomationHistorySync } from './history-store.ts';
 
-// Config path resolution
+// 配置路径解析
 export { resolveAutomationsConfigPath, generateShortId } from './resolve-config-path.ts';
 
-// Cron matching
+// Cron 匹配
 export { matchesCron } from './cron-matcher.ts';
 
-// Event Bus
+// 事件总线
 export {
   WorkspaceEventBus,
   type EventBus,
@@ -119,14 +119,14 @@ export {
   type AnyEventHandler,
 } from './event-bus.ts';
 
-// AutomationSystem facade
+// AutomationSystem 外观类
 export {
   AutomationSystem,
   type AutomationSystemOptions,
   type SessionMetadataSnapshot as AutomationSystemMetadataSnapshot,
 } from './automation-system.ts';
 
-// Handlers
+// Handlers（处理器）
 export {
   PromptHandler,
   EventLogHandler,

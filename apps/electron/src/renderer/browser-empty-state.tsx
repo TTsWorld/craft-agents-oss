@@ -1,3 +1,6 @@
+/**
+ * browser-empty-state — React 组件
+ */
 import React, { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import ReactDOM from 'react-dom/client'

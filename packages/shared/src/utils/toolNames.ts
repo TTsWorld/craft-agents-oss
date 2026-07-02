@@ -1,15 +1,16 @@
 /**
- * User-friendly display names for tools.
+ * 工具显示名称映射
  *
- * Internal tool names are developer-facing and can be cryptic.
- * This mapping provides cleaner names for the UI.
+ * 内部工具名是面向开发者的，可能比较晦涩。
+ * 本模块为 UI 提供更友好的显示名称。
  */
 
 /**
- * Display names for specific tools that need custom names
+ * 需要自定义显示名称的特定工具映射表。
+ * Record<string, string> 表示“字符串到字符串的字典”，类似 Go 的 map[string]string。
  */
 const TOOL_DISPLAY_NAMES: Record<string, string> = {
-  // Built-in tools
+  // 内置工具
   'Glob': 'Finding Files',
   'Grep': 'Searching Files',
   'Read': 'Reading File',
@@ -23,65 +24,65 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   'TodoWrite': 'Updating Tasks',
   'NotebookEdit': 'Editing Notebook',
 
-  // Documentation tools
+  // 文档工具
   'SearchCraftAgents': 'Search Documentation',
 };
 
 /**
- * Set of tool names that represent parent task tools (subagent launchers).
- * The SDK renamed 'Task' to 'Agent' in v0.2.72 — both must be recognised.
- * Add future renames here instead of scattering checks across the codebase.
+ * 表示父任务工具的集合（启动子 Agent 的工具）。
+ * SDK 在 v0.2.72 把 'Task' 重命名为 'Agent'——两者都要识别。
+ * 以后有重命名统一加到这里，避免代码里散落判断。
  */
 export const PARENT_TASK_TOOLS: ReadonlySet<string> = new Set(['Task', 'Agent']);
 
-/** Check whether a tool name is a parent task tool (Task or Agent). */
+/** 判断工具名是否是父任务工具（Task 或 Agent）。 */
 export const isParentTaskTool = (name: string): boolean => PARENT_TASK_TOOLS.has(name);
 
 /**
- * Tools that should be hidden from the UI (purely internal state changes)
+ * 应从 UI 中隐藏的工具（纯内部状态变更）。
  */
 export const HIDDEN_TOOLS = new Set<string>([
-  // Currently empty - safe mode is toggled via UI, not tools
+  // 当前为空 - 安全模式通过 UI 切换，而不是工具
 ]);
 
 /**
- * Format tool name for display (snake_case to Title Case)
- * Generic fallback for tools without explicit mappings
+ * 将工具名格式化为显示名称（snake_case 转 Title Case）。
+ * 没有显式映射时的通用回退处理。
  */
 function formatToolName(name: string): string {
-  // Handle MCP tools (mcp__server__tool)
+  // 处理 MCP 工具（mcp__server__tool）
   if (name.startsWith('mcp__')) {
     const parts = name.split('__');
     const tool = parts[2] || parts[1] || name;
     return tool.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
   }
 
-  // Handle api_* tools
+  // 处理 api_* 工具
   if (name.startsWith('api_')) {
-    const apiName = name.slice(4); // Remove 'api_' prefix
+    const apiName = name.slice(4); // 去掉 'api_' 前缀
     return `API: ${apiName.charAt(0).toUpperCase() + apiName.slice(1)}`;
   }
 
-  // Default: convert to title case
+  // 默认：转标题大小写
   return name
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /**
- * Get user-friendly display name for a tool.
+ * 获取工具的友好显示名称。
  *
- * @param toolName - The internal tool name (e.g., "mcp__linear__list_issues")
- * @returns User-friendly display name
+ * @param toolName - 内部工具名，例如 "mcp__linear__list_issues"
+ * @returns 面向用户的显示名称
  */
 export function getToolDisplayName(toolName: string): string {
-  // Check explicit mappings first (full name)
+  // 优先查完整名映射
   if (TOOL_DISPLAY_NAMES[toolName]) {
     return TOOL_DISPLAY_NAMES[toolName];
   }
 
-  // For MCP tools, also check mapping with just the base tool name
-  // e.g., "mcp__linear__list_issues" -> check "list_issues"
+  // MCP 工具还尝试用基础工具名查映射
+  // 例如 "mcp__linear__list_issues" -> 查 "list_issues"
   if (toolName.startsWith('mcp__')) {
     const parts = toolName.split('__');
     const baseName = parts[parts.length - 1] || toolName;
@@ -90,20 +91,20 @@ export function getToolDisplayName(toolName: string): string {
     }
   }
 
-  // Fallback to generic formatting
+  // 回退到通用格式化
   return formatToolName(toolName);
 }
 
 /**
- * Check if a tool should be hidden from the UI
+ * 判断工具是否应在 UI 中隐藏。
  */
 export function shouldHideTool(toolName: string): boolean {
-  // Check full name first
+  // 先检查完整名
   if (HIDDEN_TOOLS.has(toolName)) {
     return true;
   }
 
-  // For MCP tools, also check the base name
+  // MCP 工具再检查基础名
   if (toolName.startsWith('mcp__')) {
     const parts = toolName.split('__');
     const baseName = parts[parts.length - 1] || '';

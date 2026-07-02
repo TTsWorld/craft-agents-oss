@@ -9,6 +9,20 @@
  * file owns the user-facing text and recovery actions for each code.
  */
 
+/**
+ * 文件：统一错误类型与解析
+ *
+ * 角色：定义 AgentError 结构，并提供 parseError / parseSDKErrorText 等函数，
+ * 把五花八门的异常（HTTP 错误、SDK 文本、HTML 代理拦截、子进程退出）分类成
+ * ErrorCode，附带用户友好的文案与恢复动作。
+ *
+ * 重点：
+ * - ErrorCode 来自 @craft-agent/core/types，保证跨包的 wire format 统一。
+ * - 解析顺序很关键：先判断 OpenRouter 数据策略、模型不支持工具、HTML 代理拦截，
+ *   再按 HTTP 状态码分类，避免误归类。
+ * - isLikelyProxyInterception：检测防火墙/代理返回 HTML 页面导致 API 解析失败。
+ */
+
 import type { ErrorCode } from '@craft-agent/core/types';
 import { getProviderMetadata } from '../config/provider-metadata.ts';
 

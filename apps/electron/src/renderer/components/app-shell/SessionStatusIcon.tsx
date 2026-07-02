@@ -1,3 +1,8 @@
+/**
+ * SessionStatusIcon — React 组件
+ * 
+ * 所属目录：app-shell
+ */
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
@@ -12,12 +17,14 @@ interface SessionStatusIconProps {
   item: SessionMeta
 }
 
+/** SessionStatusIcon - 会话状态图标，点击弹出状态选择菜单 */
 export function SessionStatusIcon({ item }: SessionStatusIconProps) {
   const { t } = useTranslation()
   const ctx = useSessionListContext()
   const [open, setOpen] = useState(false)
   const status = getSessionStatus(item)
 
+  // 选择新状态后关闭浮层并通知上下文
   const handleSelect = (state: import("@/config/session-status-config").SessionStatusId) => {
     setOpen(false)
     ctx.onSessionStatusChange(item.id, state)
@@ -38,6 +45,7 @@ export function SessionStatusIcon({ item }: SessionStatusIconProps) {
           aria-expanded={open}
           aria-label={t("status.change")}
           onContextMenu={(e) => {
+            // 屏蔽右键默认菜单，避免和自定义菜单冲突
             e.preventDefault()
             e.stopPropagation()
           }}

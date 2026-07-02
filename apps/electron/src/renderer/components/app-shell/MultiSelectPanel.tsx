@@ -1,8 +1,8 @@
 /**
- * MultiSelectPanel - Panel shown when multiple items are selected.
+ * MultiSelectPanel - 多选时显示的占位面板。
  *
- * Displays the selection count and optional batch action buttons.
- * Used for sessions (with status/label/archive actions), sources, and skills.
+ * 展示选中数量，并提供批量操作按钮（状态、标签、归档、发送工作区等）。
+ * 会话、来源、技能等列表的多选场景都会复用。
  */
 
 import * as React from 'react'
@@ -28,33 +28,35 @@ import { LabelMenuItems, StatusMenuItems } from './SessionMenuParts'
 
 type MultiSelectEntityType = 'automation' | 'session' | 'skill' | 'source'
 
+/** MultiSelectPanelProps：组件 props 类型定义 */
 export interface MultiSelectPanelProps {
-  /** Number of selected items */
+  /** 选中项数量 */
   count: number
-  /** Entity type used to resolve localized selection copy (default: "session") */
+  /** 实体类型，用于选择正确的本地化文案（默认 "session"） */
   entityType?: MultiSelectEntityType
-  /** Available todo states */
+  /** 可用工作状态列表 */
   sessionStatuses?: SessionStatus[]
-  /** Active status if all selected share the same state */
+  /** 如果所有选中项状态一致，则显示该状态 */
   activeStatusId?: SessionStatusId | null
-  /** Callback when setting status for all selected */
+  /** 为所有选中项设置状态的回调 */
   onSetStatus?: (status: SessionStatusId) => void
-  /** Available label configs (tree) */
+  /** 可用标签配置树 */
   labels?: LabelConfig[]
-  /** Labels applied to all selected sessions */
+  /** 所有选中项共有的标签 ID 集合 */
   appliedLabelIds?: Set<string>
-  /** Callback when toggling a label for all selected */
+  /** 切换某个标签的回调 */
   onToggleLabel?: (labelId: string) => void
-  /** Callback when archiving all selected */
+  /** 归档所有选中项的回调 */
   onArchive?: () => void
-  /** Callback when sending selected to another workspace */
+  /** 发送到其他工作区的回调 */
   onSendToWorkspace?: () => void
-  /** Callback when clearing the selection */
+  /** 清空选择的回调 */
   onClearSelection?: () => void
-  /** Optional className for the container */
+  /** 容器额外的 CSS 类名 */
   className?: string
 }
 
+/** MultiSelectPanel - 多选占位面板 */
 export function MultiSelectPanel({
   count,
   entityType = 'session',
@@ -93,7 +95,7 @@ export function MultiSelectPanel({
         className
       )}
     >
-      {/* Selection count */}
+      {/* 选中数量 */}
       <div className="flex flex-col items-center gap-2">
         <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center">
           <span className="text-2xl font-semibold text-accent">{count}</span>
@@ -120,7 +122,7 @@ export function MultiSelectPanel({
         </div>
       </div>
 
-      {/* Action buttons */}
+      {/* 批量操作按钮 */}
       <div className="flex flex-wrap justify-center gap-2">
         {onSetStatus && (
           <DropdownMenu>
@@ -196,7 +198,7 @@ export function MultiSelectPanel({
         )}
       </div>
 
-      {/* Keyboard hint moved below click hint */}
+      {/* 键盘提示已移到点击提示上方 */}
     </div>
   )
 }

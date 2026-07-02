@@ -1,10 +1,10 @@
 /**
- * Session Bundle — Serialization Format for Session Export/Import
+ * Session Bundle —— 会话导出/导入的序列化格式
  *
- * A SessionBundle is the portable representation of a session directory,
- * used for transferring sessions between workspaces (same-server or cross-server).
+ * SessionBundle 是会话目录的可移植表示，
+ * 用于在不同 workspace 之间迁移会话（同服或跨服）。
  *
- * This is the foundation for session dispatch (move/fork), backup, and sharing.
+ * 它是会话分发（move/fork）、备份和分享的基础。
  */
 
 import { existsSync, readFileSync } from 'fs'
@@ -19,69 +19,71 @@ import {
   collectDirectoryFiles,
 } from '../utils/bundle-files.ts'
 
-// Re-export BundleFile and MAX_BUNDLE_SIZE_BYTES for backward compatibility
+// 为了向后兼容，重新导出 BundleFile 和 MAX_BUNDLE_SIZE_BYTES
 export { type BundleFile, MAX_BUNDLE_SIZE_BYTES } from '../utils/bundle-files.ts'
 
 /**
- * Directories to skip when collecting session files for export.
- * tmp/ is regenerable; dotfiles are typically internal state.
+ * 导出会话时要跳过的目录。
+ * tmp/ 可以重新生成；dotfiles 通常是内部状态。
  */
 const SKIP_DIRS = new Set(['tmp'])
 
 /**
- * Files to skip when collecting session files for export.
- * session.jsonl is in the bundle as structured data.
+ * 导出会话时要跳过的文件。
+ * session.jsonl 会作为结构化数据单独放在 bundle 里。
  */
 const SKIP_SESSION_FILES = new Set(['session.jsonl', 'session.jsonl.tmp'])
 
 /**
- * Dispatch mode determines how the imported session relates to the original.
+ * 分发模式，决定导入后的会话与原会话的关系。
+ * - move：迁移，原会话不再保留
+ * - fork：分叉，基于原会话创建分支
  */
 export type DispatchMode = 'move' | 'fork'
 
 /**
- * Branch info for fork operations.
- * Enables SDK-level conversation branching on the target server,
- * so the forked session has full context from the original.
+ * fork 操作所需的分支信息。
+ * 让目标服务器能在 SDK 层面做真正的对话分支，
+ * 这样 fork 出来的会话才能继承原会话的完整上下文。
  */
 export interface BundleBranchInfo {
-  /** SDK session ID to branch from */
+  /** 要基于哪个 SDK session ID 分支 */
   sdkSessionId: string
-  /** SDK turn ID (branch point) */
+  /** SDK turn ID（分支点） */
   sdkTurnId: string
-  /** Working directory for SDK session storage */
+  /** SDK 会话存储用的工作目录 */
   sdkCwd: string
 }
 
 /**
- * Serialized representation of a session directory.
- * JSON envelope format — sessions are typically small (text + a few attachments).
+ * 会话目录的序列化表示。
+ * JSON 信封格式——通常会话不大（文本 + 少量附件）。
  */
 export interface SessionBundle {
-  /** Bundle format version */
+  /** Bundle 格式版本 */
   version: 1
-  /** Session data (header metadata + full message history) */
+  /** 会话数据（header 元数据 + 完整消息历史） */
   session: {
-    /** Session metadata (id, name, timestamps, config) */
+    /** 会话元数据（id、name、timestamps、config 等） */
     header: SessionHeader
-    /** Full message history */
+    /** 完整消息历史 */
     messages: StoredMessage[]
   }
-  /** All files from the session directory (attachments, plans, data, downloads, etc.) */
+  /** 会话目录下的所有文件（附件、plan、数据、下载文件等） */
   files: BundleFile[]
-  /** Branch info for fork operations (populated by the exporter when forking) */
+  /** fork 操作的分支信息（fork 时由导出方填入） */
   branchInfo?: BundleBranchInfo
 }
 
 /**
- * Serialize a session directory into a SessionBundle.
+ * 把会话目录序列化成 SessionBundle。
  *
- * Reads the session JSONL and all associated files (attachments, plans, data, downloads).
- * Skips tmp/ directory and dotfiles. Validates total size against MAX_BUNDLE_SIZE_BYTES.
+ * 读取 session JSONL 和所有关联文件（附件、plan、数据、下载）。
+ * 跳过 tmp/ 目录和 dotfiles；总大小超过 MAX_BUNDLE_SIZE_BYTES 时返回 null。
  *
- * @param workspaceRootPath - Root path of the workspace containing the session
- * @param sessionId - ID of the session to serialize
- * @returns SessionBundle or null if session doesn't exist or exceeds size limit
+ * @param workspaceRootPath - 包含该会话的 workspace 根目录
+ * @param sessionId - 要序列化的会话 ID
+ * @returns SessionBundle；不存在或超过大小限制时返回 null
  */
 export function serializeSession(
   workspaceRootPath: string,
@@ -95,36 +97,35 @@ export function serializeSession(
     return null
   }
 
-  // Read and parse session JSONL
+  // 读取并解析 session JSONL
   const stored = readSessionJsonl(sessionFile)
   if (!stored) {
     debug('[bundle] Failed to parse session JSONL:', sessionFile)
     return null
   }
 
-  // Collect all files from session directory (except session.jsonl and tmp/)
+  // 收集会话目录下的所有文件（跳过 session.jsonl 和 tmp/）
   const files = collectDirectoryFiles(sessionDir, {
     skipDirs: SKIP_DIRS,
     skipFiles: SKIP_SESSION_FILES,
   })
 
-  // Validate total bundle size
+  // 校验 bundle 总大小
   const totalSize = files.reduce((sum, f) => sum + f.size, 0)
   if (totalSize > MAX_BUNDLE_SIZE_BYTES) {
     debug(`[bundle] Session exceeds max bundle size: ${totalSize} bytes > ${MAX_BUNDLE_SIZE_BYTES} bytes`)
     return null
   }
 
-  // Build header from stored session (re-use the header creation from JSONL)
-  // We read the raw header from the JSONL to preserve pre-computed fields
+  // 用 JSONL 原生的 header 保留预计算字段
   const rawContent = readFileSync(sessionFile, 'utf-8')
   const firstLine = rawContent.split('\n')[0]
   if (!firstLine) return null
 
-  // Strip server-internal fields that shouldn't travel with the bundle
+  // 去掉服务端内部字段，这些不应该随 bundle 迁移
   const header: SessionHeader = {
     ...JSON.parse(firstLine) as SessionHeader,
-    // workspaceRootPath will be set by the importing server
+    // workspaceRootPath 会由导入方重新设置
   }
 
   return {
@@ -138,8 +139,10 @@ export function serializeSession(
 }
 
 /**
- * Validate a SessionBundle structure.
- * Checks version, required fields, and basic integrity.
+ * 校验 SessionBundle 结构。
+ * 检查版本号、必填字段和基本完整性。
+ *
+ * @returns 是一个 TS 类型谓词（type predicate）：返回 true 时 TS 知道参数已是 SessionBundle
  */
 export function validateBundle(bundle: unknown): bundle is SessionBundle {
   if (!bundle || typeof bundle !== 'object') return false

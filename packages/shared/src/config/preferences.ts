@@ -6,6 +6,7 @@ import { readJsonFileSync } from '../utils/files.ts';
 import { i18n, SUPPORTED_LANGUAGE_CODES } from '../i18n/index.ts';
 import { LOCALE_REGISTRY, type LanguageCode } from '../i18n/registry.ts';
 
+/** 用户地理位置（可选） */
 export interface UserLocation {
   city?: string;
   region?: string;
@@ -13,47 +14,51 @@ export interface UserLocation {
 }
 
 /**
- * Diff viewer display preferences
- * Persisted to preferences.json as a user-level setting
+ * Diff 查看器的显示偏好。
+ * 作为用户级设置持久化到 preferences.json。
  */
 export interface DiffViewerPreferences {
-  /** Diff layout: 'unified' (stacked) or 'split' (side-by-side) */
+  /** Diff 布局：unified（合并）或 split（左右分栏） */
   diffStyle?: 'unified' | 'split';
-  /** Whether to disable background highlighting on changed lines */
+  /** 是否禁用变更行的背景高亮 */
   disableBackground?: boolean;
 }
 
+/** 用户偏好设置结构（类似 Go struct） */
 export interface UserPreferences {
+  /** 用户称呼 */
   name?: string;
+  /** 时区 */
   timezone?: string;
+  /** 位置信息 */
   location?: UserLocation;
-  // Free-form notes the agent learns about the user
+  /** Agent 可以学习的关于用户的自由备注 */
   notes?: string;
-  // Diff viewer display preferences
+  /** Diff 查看器偏好 */
   diffViewer?: DiffViewerPreferences;
-  // Whether to include Co-Authored-By trailer on git commits (default: true)
+  /** git commit 是否附加 Co-Authored-By 尾注（默认 true） */
   includeCoAuthoredBy?: boolean;
   /**
-   * Internal: persisted UI language code (mirrors Appearance → Language).
-   * Maintained only by the main-process `i18n:changeLanguage` IPC handler.
-   * Not user-editable; not exposed via the `update_user_preferences` tool.
+   * 内部字段：持久化的 UI 语言代码（与 Appearance → Language 同步）。
+   * 仅由主进程的 `i18n:changeLanguage` IPC handler 维护，
+   * 不暴露给用户编辑，也不通过 `update_user_preferences` tool 修改。
    */
   uiLanguage?: LanguageCode;
-  // When the preferences were last updated
+  /** 上次更新时间戳 */
   updatedAt?: number;
 }
 
 const PREFERENCES_FILE = join(CONFIG_DIR, 'preferences.json');
 
+/** 从磁盘加载用户偏好；文件不存在或解析失败时返回空对象 */
 export function loadPreferences(): UserPreferences {
   try {
     if (!existsSync(PREFERENCES_FILE)) {
       return {};
     }
     const raw = readJsonFileSync<UserPreferences & { language?: unknown }>(PREFERENCES_FILE);
-    // Scrub legacy free-text `language` field on read so it never leaks
-    // back into a write. Old values were free-text ("Hungarian", "English") —
-    // not language codes — so we drop them rather than migrate.
+    // 读取时清理旧版自由文本 language 字段，避免它再次写回磁盘。
+    // 旧值是 "Hungarian"、"English" 这类文本，不是语言代码，因此直接丢弃而非迁移。
     if (raw && typeof raw === 'object' && 'language' in raw) {
       delete (raw as { language?: unknown }).language;
     }
@@ -63,22 +68,27 @@ export function loadPreferences(): UserPreferences {
   }
 }
 
+/** 保存用户偏好，自动更新 updatedAt */
 export function savePreferences(prefs: UserPreferences): void {
   ensureConfigDir();
   prefs.updatedAt = Date.now();
   writeFileSync(PREFERENCES_FILE, JSON.stringify(prefs, null, 2), 'utf-8');
 }
 
+/**
+ * 增量更新用户偏好。
+ * location 和 diffViewer 会递归合并，而不是整体覆盖。
+ */
 export function updatePreferences(updates: Partial<UserPreferences>): UserPreferences {
   const current = loadPreferences();
   const updated = {
     ...current,
     ...updates,
-    // Merge location if provided
+    // 如果传了 location，就合并到现有 location
     location: updates.location
       ? { ...current.location, ...updates.location }
       : current.location,
-    // Merge diffViewer if provided
+    // 如果传了 diffViewer，就合并到现有 diffViewer
     diffViewer: updates.diffViewer
       ? { ...current.diffViewer, ...updates.diffViewer }
       : current.diffViewer,
@@ -87,13 +97,14 @@ export function updatePreferences(updates: Partial<UserPreferences>): UserPrefer
   return updated;
 }
 
+/** 获取偏好文件路径 */
 export function getPreferencesPath(): string {
   return PREFERENCES_FILE;
 }
 
 /**
- * Read the persisted UI language code (validated against the supported set).
- * Returns `undefined` when the field is missing or holds an unrecognised value.
+ * 读取持久化的 UI 语言代码（会校验是否在支持列表中）。
+ * 字段缺失或不被识别时返回 undefined。
  */
 export function getPersistedUiLanguage(): LanguageCode | undefined {
   const prefs = loadPreferences();
@@ -104,9 +115,9 @@ export function getPersistedUiLanguage(): LanguageCode | undefined {
 }
 
 /**
- * Persist the UI language code. Idempotent — does not rewrite the file
- * (or bump `updatedAt`) when the value is unchanged. This avoids re-triggering
- * the config watcher on startup syncs and duplicate IPC calls.
+ * 持久化 UI 语言代码。
+ * 幂等：值未变时不重写文件（也不更新 updatedAt），
+ * 避免启动同步时反复触发 config watcher 和重复 IPC 调用。
  */
 export function setPersistedUiLanguage(code: LanguageCode): void {
   const current = loadPreferences();
@@ -115,15 +126,11 @@ export function setPersistedUiLanguage(code: LanguageCode): void {
 }
 
 /**
- * Native-language name to request for AI-generated session titles, or
- * `undefined` to let the model follow the conversation's own language.
+ * 为 AI 生成会话标题时需要的“母语名称”，如果没有选择语言则返回 undefined。
  *
- * Resolves from the explicitly persisted UI language (disk-backed) rather than
- * `i18n.resolvedLanguage`, which in the main process hydrates asynchronously at
- * startup and can still read the `'en'` fallback when an early title fires
- * (#885). Returning `undefined` when no language was chosen lets the title
- * prompt auto-detect the conversation language instead of being forced to
- * English.
+ * 使用显式持久化到磁盘的 UI 语言，而不是 i18n.resolvedLanguage：
+ * 主进程的 i18n 在启动时是异步水合的，早期生成标题时可能还读到 'en' 回退（#885）。
+ * 返回 undefined 会让标题 prompt 自动检测对话语言，而不是被强制用英文。
  */
 export function resolveTitleLanguageName(): string | undefined {
   const code = getPersistedUiLanguage();
@@ -131,12 +138,13 @@ export function resolveTitleLanguageName(): string | undefined {
 }
 
 /**
- * Format preferences for inclusion in system prompt
+ * 把用户偏好格式化成 system prompt 片段。
+ * 空偏好或只有默认值时返回空字符串，避免污染 prompt。
  */
 export function formatPreferencesForPrompt(): string {
   const prefs = loadPreferences();
 
-  // Derive language from the app's i18n setting (Appearance > Language).
+  // 从应用 i18n 设置推导语言（Appearance > Language）
   const langCode = (i18n.resolvedLanguage ?? 'en') as LanguageCode;
   const langEntry = LOCALE_REGISTRY[langCode];
   const langName = langEntry?.nativeName ?? 'English';
@@ -164,7 +172,7 @@ export function formatPreferencesForPrompt(): string {
     }
   }
 
-  // Always include language so the AI knows which language to respond in.
+  // 始终包含语言，让 AI 知道应该用什么语言回复
   lines.push(`- Preferred language: ${langName}`);
 
   if (prefs.notes) {
@@ -176,14 +184,14 @@ export function formatPreferencesForPrompt(): string {
 }
 
 /**
- * Format preferences as readable text for display
+ * 把用户偏好格式化成可读的展示文本。
  */
 export function formatPreferencesDisplay(): string {
   const prefs = loadPreferences();
 
   const lines: string[] = ['**Your Preferences**', ''];
 
-  // Check if any preferences are actually set
+  // 检查是否有任何实际设置的偏好
   const hasName = !!prefs.name;
   const hasTimezone = !!prefs.timezone;
   const hasLocation = prefs.location && (prefs.location.city || prefs.location.region || prefs.location.country);
@@ -229,8 +237,8 @@ export function formatPreferencesDisplay(): string {
 }
 
 /**
- * Whether the Co-Authored-By trailer should be included on git commits.
- * Defaults to true when the preference is not explicitly set.
+ * 是否应在 git commit 中附加 Co-Authored-By 尾注。
+ * 用户未显式设置时默认 true。
  */
 export function getCoAuthorPreference(): boolean {
   const prefs = loadPreferences();

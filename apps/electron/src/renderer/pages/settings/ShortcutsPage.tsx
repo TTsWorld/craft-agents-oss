@@ -1,7 +1,7 @@
 /**
  * ShortcutsPage
  *
- * Displays keyboard shortcuts reference from the centralized action registry.
+ * 展示集中式动作注册表中的键盘快捷键参考。
  */
 
 import * as React from 'react'
@@ -13,22 +13,25 @@ import type { DetailsPageMeta } from '@/lib/navigation-registry'
 import { isMac } from '@/lib/platform'
 import { actionsByCategory, useActionLabel, type ActionId } from '@/actions'
 
+/** 页面元数据：设置导航中的“快捷键”页面 */
 export const meta: DetailsPageMeta = {
   navigator: 'settings',
   slug: 'shortcuts',
 }
 
+/** 单个快捷键项 */
 interface ShortcutItem {
   keys: string[]
   description: string
 }
 
+/** 快捷键分组 */
 interface ShortcutSection {
   title: string
   shortcuts: ShortcutItem[]
 }
 
-// Component-specific shortcuts that aren't in the centralized registry
+// 不属于集中式注册表的组件级快捷键
 function useComponentSpecificSections(): ShortcutSection[] {
   const { t } = useTranslation()
   return [
@@ -68,9 +71,9 @@ function Kbd({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Renders a shortcut row for an action from the registry
+ * 渲染注册表中某个动作对应的快捷键行
  */
-// Map action IDs to i18n keys for translated labels
+// 将动作 ID 映射到用于翻译的 i18n 键
 const ACTION_LABEL_KEYS: Partial<Record<ActionId, string>> = {
   'app.newChat': 'shortcuts.action.newChat',
   'app.newChatInPanel': 'shortcuts.action.newChatInPanel',
@@ -106,9 +109,9 @@ function ActionShortcutRow({ actionId }: { actionId: ActionId }) {
 
   if (!hotkey) return null
 
-  // Split hotkey into individual keys for display
-  // Mac: symbols are concatenated (⌘⇧N) - need smart splitting
-  // Windows: separated by + (Ctrl+Shift+N) - split on +
+  // 将热键拆分为独立按键用于展示
+  // Mac：符号连续拼接（如 ⌘⇧N），需要智能拆分
+  // Windows：以 + 分隔（如 Ctrl+Shift+N），直接 split 即可
   const keys = isMac
     ? hotkey.match(/[⌘⇧⌥←→]|Tab|Esc|./g) || []
     : hotkey.split('+')
@@ -124,6 +127,7 @@ function ActionShortcutRow({ actionId }: { actionId: ActionId }) {
   )
 }
 
+/** 快捷键设置页面 */
 export default function ShortcutsPage() {
   const { t } = useTranslation()
   const componentSpecificSections = useComponentSpecificSections()
@@ -133,7 +137,7 @@ export default function ShortcutsPage() {
       <div className="flex-1 min-h-0 mask-fade-y">
         <ScrollArea className="h-full">
           <div className="px-5 py-7 max-w-3xl mx-auto space-y-8">
-            {/* Registry-driven sections */}
+            {/* 注册表驱动的分组 */}
             {Object.entries(actionsByCategory).map(([category, actions]) => (
               <SettingsSection key={category} title={t(`shortcuts.category.${category.toLowerCase()}`)}>
                 <SettingsCard>
@@ -144,7 +148,7 @@ export default function ShortcutsPage() {
               </SettingsSection>
             ))}
 
-            {/* Component-specific sections */}
+            {/* 组件级分组 */}
             {componentSpecificSections.map((section) => (
               <SettingsSection key={section.title} title={section.title}>
                 <SettingsCard>

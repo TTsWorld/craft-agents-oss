@@ -1,3 +1,8 @@
+/**
+ * SourcesListPanel - 来源列表面板。
+ *
+ * 展示当前工作区已加载的来源，按类型/状态显示徽章，并提供打开、删除、发送到工作区等操作。
+ */
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { DatabaseZap } from 'lucide-react'
@@ -33,6 +38,7 @@ const SOURCE_TYPE_FILTER_LABEL_KEYS: Record<string, string> = {
   local: 'sourcesList.filterLocalFolder',
 }
 
+/** SourcesListPanelProps：组件 props 类型定义 */
 export interface SourcesListPanelProps {
   sources: LoadedSource[]
   sourceFilter?: SourceFilter | null
@@ -44,6 +50,7 @@ export interface SourcesListPanelProps {
   className?: string
 }
 
+/** SourcesListPanel - 来源列表 */
 export function SourcesListPanel({
   sources,
   sourceFilter,
@@ -58,11 +65,12 @@ export function SourcesListPanel({
   const { workspaces, activeWorkspaceId } = useAppShellContext()
   const hasOtherWorkspaces = workspaces.length > 1
 
-  // Send to Workspace dialog state
+  // 发送到工作区对话框的状态
   const [sendDialogOpen, setSendDialogOpen] = React.useState(false)
   const [sendResourceSlug, setSendResourceSlug] = React.useState<string | null>(null)
   const [sendResourceLabel, setSendResourceLabel] = React.useState('')
 
+  // 根据 sourceFilter 过滤来源列表
   const filteredSources = React.useMemo(() => {
     if (!sourceFilter) return sources
     return sources.filter(s => s.config.type === sourceFilter.sourceType)
@@ -147,7 +155,7 @@ export function SourcesListPanel({
       }}
     />
 
-    {/* Send to Workspace dialog */}
+    {/* 发送到工作区对话框 */}
     {sendResourceSlug && (
       <SendResourceToWorkspaceDialog
         open={sendDialogOpen}

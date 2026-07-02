@@ -1,3 +1,8 @@
+/**
+ * PermissionRequest - 结构化输入：权限请求。
+ *
+ * 显示工具名、操作说明、命令预览，并提供 Allow / Always Allow / Deny 三个操作。
+ */
 import { useTranslation } from 'react-i18next'
 import { ShieldAlert, Check, X, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -8,19 +13,19 @@ import type { PermissionResponse } from './types'
 interface PermissionRequestProps {
   request: PermissionRequestType
   onResponse: (response: PermissionResponse) => void
-  /** When true, removes container styling (shadow, rounded) - used when wrapped by InputContainer */
+  /** 为 true 时移除容器样式（阴影、圆角），用于被 InputContainer 包裹时 */
   unstyled?: boolean
 }
 
 /**
- * PermissionRequest - Self-contained structured input for permission approval
+ * PermissionRequest - 自包含的权限审批结构化输入。
  *
- * Shows:
- * - Shield icon + "Permission Required" header
- * - Tool name badge
- * - Description of what the tool wants to do
- * - Command preview (scrollable)
- * - Action buttons: Allow, Always Allow, Deny
+ * 展示：
+ * - 盾牌图标 + “Permission Required” 标题
+ * - 工具名
+ * - 工具想做什么的描述
+ * - 可滚动的命令预览
+ * - 操作按钮：Allow、Always Allow、Deny
  */
 export function PermissionRequest({ request, onResponse, unstyled = false }: PermissionRequestProps) {
   const { t } = useTranslation()
@@ -47,7 +52,7 @@ export function PermissionRequest({ request, onResponse, unstyled = false }: Per
       )}
       data-tutorial="permission-banner"
     >
-      {/* Content - grows to fill available space and scrolls before actions disappear */}
+      {/* 内容区自适应填充，并在操作按钮消失前可滚动 */}
       <div className="p-4 space-y-3 flex-1 min-h-0 flex flex-col overflow-y-auto">
         <div className="space-y-2 pb-1">
           <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
@@ -61,7 +66,7 @@ export function PermissionRequest({ request, onResponse, unstyled = false }: Per
           </div>
         </div>
 
-        {/* Command preview */}
+        {/* 命令预览 */}
         {request.command && (
           <div className="bg-foreground/5 rounded-md p-3 font-mono text-xs text-foreground/90 whitespace-pre-wrap break-all max-h-24 overflow-y-auto">
             {request.command}
@@ -69,7 +74,7 @@ export function PermissionRequest({ request, onResponse, unstyled = false }: Per
         )}
       </div>
 
-      {/* Action buttons */}
+      {/* 操作按钮 */}
       <div className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-2 border-t border-border/50">
         <Button
           size="sm"
@@ -100,7 +105,7 @@ export function PermissionRequest({ request, onResponse, unstyled = false }: Per
           Deny
         </Button>
 
-        {/* Tip text */}
+        {/* 提示文字 */}
         <span className="min-w-0 flex-1 basis-full text-[10px] text-muted-foreground sm:basis-auto sm:text-right">
           "Always Allow" remembers this command for the session
         </span>

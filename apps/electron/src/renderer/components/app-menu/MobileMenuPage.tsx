@@ -3,25 +3,27 @@ import * as Icons from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 
+/** 移动端菜单的页面壳组件。 */
+
 export interface MobileMenuPageProps {
   title: string
   /**
-   * When true, the leading control is a back chevron that calls `onBack`.
-   * When false, no leading control is shown (root page).
+   * 为 true 时，顶部左侧显示返回箭头并调用 onBack；
+   * 为 false 时，不显示左侧控制按钮（根页面）。
    */
   showBack?: boolean
   onBack?: () => void
-  /** Trailing close X button. Always available. */
+  /** 右上角关闭按钮，始终显示。 */
   onClose: () => void
   children: React.ReactNode
   className?: string
 }
 
 /**
- * Generic full-screen page shell used for the root menu and every sub-page.
+ * 移动端菜单的通用全屏页面壳。
  *
- * Layout: a sticky header (back/title/close) followed by a scrollable body.
- * Padding respects iOS safe areas (`env(safe-area-inset-*)`).
+ * 布局：顶部固定标题栏（返回/标题/关闭）+ 下方可滚动内容区。
+ * padding 使用 env(safe-area-inset-*) 适配 iPhone 刘海屏。
  */
 export function MobileMenuPage({
   title,

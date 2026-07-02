@@ -1,3 +1,10 @@
+/**
+ * Playground 组件注册表入口。
+ *
+ * 把所有子注册表（chat、turn-card、onboarding 等）合并成一个扁平列表，
+ * 并暴露按分类排序的查询方法。可以把它理解为 Go 中一个聚合多个子包的 "registry" 包。
+ */
+
 import type { ComponentEntry, CategoryGroup, Category } from './types'
 import { onboardingComponents } from './onboarding'
 import { chatComponents } from './chat'
@@ -29,6 +36,7 @@ import { taskEditorComponents } from './task-editor'
 
 export * from './types'
 
+/** 所有 playground 组件的扁平注册表 */
 export const componentRegistry: ComponentEntry[] = [
   ...mobileWebUIComponents,
   ...apiKeyInputComponents,
@@ -60,6 +68,11 @@ export const componentRegistry: ComponentEntry[] = [
   ...imageSupportComponents,
 ]
 
+/**
+ * 返回按固定分类顺序排好的组件分组。
+ *
+ * 不在 categoryOrder 里的分类会被过滤掉，这样 Sidebar 只展示我们关心的分组。
+ */
 export function getCategories(): CategoryGroup[] {
   const categoryOrder: Category[] = ['Mobile WebUI', 'Automations', 'Onboarding', 'Agent Setup', 'Chat', 'Island', 'Browser', 'Planner', 'Custom Shadows', 'Session List', 'Kanban', 'Entity Lists', 'Edit Popover', 'Turn Cards', 'TurnCard Modes', 'Fullscreen', 'Chat Messages', 'Chat Inputs', 'Toast Messages', 'Markdown', 'Icons', 'OAuth', 'Messaging']
   const categoryMap = new Map<Category, ComponentEntry[]>()
@@ -77,6 +90,7 @@ export function getCategories(): CategoryGroup[] {
     }))
 }
 
+/** 按 id 查找组件 */
 export function getComponentById(id: string): ComponentEntry | undefined {
   return componentRegistry.find(c => c.id === id)
 }

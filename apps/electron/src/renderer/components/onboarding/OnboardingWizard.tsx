@@ -9,6 +9,7 @@ import { GitBashWarning, type GitBashStatus } from "./GitBashWarning"
 import type { ApiKeySubmitData } from "../apisetup"
 import type { CustomEndpointApi } from '@config/llm-connections'
 
+// 引导流程的步骤名，用联合类型限定只能取这些字符串
 export type OnboardingStep =
   | 'welcome'
   | 'git-bash'
@@ -17,8 +18,10 @@ export type OnboardingStep =
   | 'credentials'
   | 'complete'
 
+// 登录状态
 export type LoginStatus = 'idle' | 'waiting' | 'success' | 'error'
 
+// OnboardingWizard 的状态对象，由父组件持有并传入
 export interface OnboardingState {
   step: OnboardingStep
   loginStatus: LoginStatus
@@ -32,11 +35,12 @@ export interface OnboardingState {
   isCheckingGitBash?: boolean
 }
 
+// OnboardingWizard 的 props 接口
 interface OnboardingWizardProps {
-  /** Current state of the wizard */
+  /** 当前 wizard 的状态 */
   state: OnboardingState
 
-  // Event handlers
+  // 事件回调
   onContinue: () => void
   onBack: () => void
   onSelectApiSetupMethod: (method: ApiSetupMethod) => void
@@ -44,29 +48,29 @@ interface OnboardingWizardProps {
   onStartOAuth?: (methodOverride?: ApiSetupMethod) => void
   onFinish: () => void
 
-  // Claude OAuth (two-step flow)
+  // Claude OAuth 两步流程
   isWaitingForCode?: boolean
   onSubmitAuthCode?: (code: string) => void
   onCancelOAuth?: () => void
 
-  // Copilot device flow
+  // Copilot 设备流
   copilotDeviceCode?: { userCode: string; verificationUri: string }
 
-  // Git Bash (Windows)
+  // Git Bash（Windows）
   onBrowseGitBash?: () => Promise<string | null>
   onUseGitBashPath?: (path: string) => void
   onRecheckGitBash?: () => void
   onClearError?: () => void
 
-  // Provider select (new flow)
+  // 提供商选择（新流程）
   onSelectProvider?: (choice: ProviderChoice) => void
-  /** Called when user chooses "Setup later" on provider select */
+  /** 在提供商选择页点击“稍后设置”时触发 */
   onSkipSetup?: () => void
 
-  // Local model
+  // 本地模型
   onSubmitLocalModel?: (data: LocalModelSubmitData) => void
 
-  // Edit mode (pre-fill existing connection values)
+  // 编辑模式：预填充已有连接值
   editInitialValues?: {
     apiKey?: string
     baseUrl?: string
@@ -80,13 +84,13 @@ interface OnboardingWizardProps {
 }
 
 /**
- * OnboardingWizard - Full-screen onboarding flow container
+ * OnboardingWizard - 全屏引导流程容器
  *
- * Manages the step-by-step flow for setting up Craft Agent:
- * 1. Welcome
- * 2. Provider Select (Claude / ChatGPT / Copilot / API Key / Local)
- * 3. Credentials (API Key or OAuth) or Local Model
- * 4. Completion
+ * 负责按步骤串联 Craft Agent 的初始化配置：
+ * 1. 欢迎页
+ * 2. 提供商选择（Claude / ChatGPT / Copilot / API Key / 本地模型）
+ * 3. 凭据页（API Key 或 OAuth）或本地模型页
+ * 4. 完成页
  */
 export function OnboardingWizard({
   state,
@@ -96,23 +100,23 @@ export function OnboardingWizard({
   onSubmitCredential,
   onStartOAuth,
   onFinish,
-  // Two-step OAuth flow
+  // 两步 OAuth 流程
   isWaitingForCode,
   onSubmitAuthCode,
   onCancelOAuth,
-  // Copilot device flow
+  // Copilot 设备流
   copilotDeviceCode,
-  // Git Bash (Windows)
+  // Git Bash（Windows）
   onBrowseGitBash,
   onUseGitBashPath,
   onRecheckGitBash,
   onClearError,
-  // Provider select (new flow)
+  // 提供商选择（新流程）
   onSelectProvider,
   onSkipSetup,
-  // Local model
+  // 本地模型
   onSubmitLocalModel,
-  // Edit mode
+  // 编辑模式
   editInitialValues,
   className
 }: OnboardingWizardProps) {
@@ -197,11 +201,10 @@ export function OnboardingWizard({
         className
       )}
     >
-      {/* Draggable title bar region for transparent window (macOS) */}
+      {/* macOS 透明窗口可拖拽的标题栏区域 */}
       <div className="titlebar-drag-region fixed top-0 left-0 right-0 h-[50px] z-titlebar" />
 
-      {/* Main content — min-h-full + flex center means: center when content fits,
-          natural flow + scroll when content is taller than the viewport (mobile). */}
+      {/* 主内容区：内容较少时垂直居中；超出视口时自然滚动（适配移动端） */}
       <main className="flex min-h-full items-center justify-center p-4 sm:p-8">
         {renderStep()}
       </main>

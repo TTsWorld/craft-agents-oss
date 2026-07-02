@@ -1,8 +1,8 @@
 /**
- * EventLogHandler - Logs all automation events to events.jsonl
+ * EventLogHandler - 把所有自动化事件记录到 events.jsonl
  *
- * Subscribes to all events and logs them for audit trail and replay.
- * Uses the existing AutomationEventLogger for buffered I/O.
+ * 订阅总线上的所有事件，用于审计和回放。
+ * 底层复用已有的 AutomationEventLogger 做缓冲写入。
  */
 
 import { createLogger } from '../../utils/debug.ts';
@@ -14,7 +14,7 @@ import { AutomationEventLogger } from '../event-logger.ts';
 const log = createLogger('event-log-handler');
 
 // ============================================================================
-// EventLogHandler Implementation
+// EventLogHandler 实现
 // ============================================================================
 
 export class EventLogHandler implements AutomationHandler {
@@ -27,14 +27,14 @@ export class EventLogHandler implements AutomationHandler {
     this.options = options;
     this.logger = new AutomationEventLogger(options.workspaceRootPath);
 
-    // Forward event loss callback if provided
+    // 如果调用方关心事件丢失，把回调转发给 logger
     if (options.onEventLost) {
       this.logger.onEventLost = options.onEventLost;
     }
   }
 
   /**
-   * Subscribe to all events on the bus.
+   * 订阅总线上的所有事件。
    */
   subscribe(bus: EventBus): void {
     this.bus = bus;
@@ -44,7 +44,7 @@ export class EventLogHandler implements AutomationHandler {
   }
 
   /**
-   * Handle an event by logging it.
+   * 处理事件：把它记录到事件日志。
    */
   private async handleEvent(event: AutomationEvent, payload: BaseEventPayload): Promise<void> {
     const startTime = payload.timestamp;
@@ -55,7 +55,7 @@ export class EventLogHandler implements AutomationHandler {
       sessionId: payload.sessionId,
       workspaceId: this.options.workspaceId,
       data: { ...payload },
-      results: [], // Results are logged separately by handlers that produce them
+      results: [], // 执行结果由各 handler 单独记录
       durationMs,
     });
 
@@ -63,14 +63,14 @@ export class EventLogHandler implements AutomationHandler {
   }
 
   /**
-   * Get the path to the event log file.
+   * 获取事件日志文件路径。
    */
   getLogPath(): string {
     return this.logger.getLogPath();
   }
 
   /**
-   * Clean up resources.
+   * 清理资源并取消订阅。
    */
   async dispose(): Promise<void> {
     if (this.bus && this.boundHandler) {
@@ -79,7 +79,7 @@ export class EventLogHandler implements AutomationHandler {
     }
     this.bus = null;
 
-    // Flush and close the logger
+    // 刷盘并关闭 logger
     await this.logger.dispose();
     log.debug(`[EventLogHandler] Disposed`);
   }

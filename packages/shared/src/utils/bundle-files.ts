@@ -1,10 +1,10 @@
 /**
- * Bundle File Utilities
+ * Bundle 文件工具
  *
- * Shared helpers for serializing directory trees into portable JSON bundles.
- * Used by both session bundles and resource bundles.
+ * 把目录树序列化为可移植的 JSON bundle 的共享辅助函数。
+ * 用于会话 bundle 和资源 bundle。
  *
- * BundleFile.relativePath is always forward-slash separated for cross-platform portability.
+ * BundleFile.relativePath 始终使用正斜杠，保证跨平台可移植。
  */
 
 import { existsSync, readdirSync, readFileSync, statSync, mkdirSync, writeFileSync } from 'fs'
@@ -12,55 +12,55 @@ import { join, relative, dirname, sep } from 'path'
 import { debug } from './debug.ts'
 
 /**
- * Maximum bundle size in bytes (~100MB).
+ * bundle 最大大小（约 100MB）。
  */
 export const MAX_BUNDLE_SIZE_BYTES = 100 * 1024 * 1024
 
 /**
- * A file entry in a bundle.
- * Contains a portable relative path and base64-encoded content.
+ * bundle 中的单个文件条目。
+ * 包含可移植的相对路径和 base64 编码的内容。
  */
 export interface BundleFile {
-  /** Portable relative path within the directory (always forward-slash separated) */
+  /** 目录内的可移植相对路径（始终为正斜杠分隔） */
   relativePath: string
-  /** Base64-encoded file content */
+  /** Base64 编码的文件内容 */
   contentBase64: string
-  /** Original file size in bytes (for validation) */
+  /** 原始文件大小（字节），用于校验 */
   size: number
 }
 
 // ============================================================
-// Path Portability
+// 路径可移植性
 // ============================================================
 
 /**
- * Normalize an OS-native relative path to portable forward-slash form.
+ * 将操作系统原生的相对路径转换为可移植的正斜杠形式。
  */
 export function toPortableRelPath(relPath: string): string {
   return relPath.split(sep).join('/')
 }
 
 /**
- * Convert a portable forward-slash path to OS-native form for filesystem writes.
+ * 将可移植的正斜杠路径转换为操作系统原生形式，用于写入文件系统。
  */
 export function fromPortableRelPath(portablePath: string): string {
   return portablePath.split('/').join(sep)
 }
 
 // ============================================================
-// Validation
+// 校验
 // ============================================================
 
 /**
- * Validate a single BundleFile entry for safety and integrity.
- * Returns an error message string, or null if valid.
+ * 校验单个 BundleFile 条目的安全性与完整性。
+ * 返回错误信息字符串，合法则返回 null。
  */
 export function validateBundleFile(file: BundleFile): string | null {
   if (!file.relativePath || typeof file.relativePath !== 'string') {
     return 'Missing or invalid relativePath'
   }
 
-  // Path traversal checks
+  // 路径穿越检查
   if (file.relativePath.includes('..')) {
     return `Path traversal detected: ${file.relativePath}`
   }
@@ -71,12 +71,12 @@ export function validateBundleFile(file: BundleFile): string | null {
     return `Backslash path separator not allowed: ${file.relativePath}`
   }
 
-  // Check for empty segments (double slashes)
+  // 检查空路径段（双斜杠）
   if (file.relativePath.includes('//')) {
     return `Invalid path (double slash): ${file.relativePath}`
   }
 
-  // Validate base64 and size
+  // 校验 base64 和大小
   if (typeof file.contentBase64 !== 'string') {
     return `Invalid contentBase64 for ${file.relativePath}`
   }
@@ -84,7 +84,7 @@ export function validateBundleFile(file: BundleFile): string | null {
     return `Invalid size for ${file.relativePath}`
   }
 
-  // Verify decoded size matches declared size
+  // 校验解码后大小是否与声明一致
   try {
     const decoded = Buffer.from(file.contentBase64, 'base64')
     if (decoded.length !== file.size) {
@@ -98,24 +98,27 @@ export function validateBundleFile(file: BundleFile): string | null {
 }
 
 // ============================================================
-// Collection
+// 收集
 // ============================================================
 
+/**
+ * 收集目录文件的选项。
+ */
 export interface CollectOptions {
-  /** File names to skip (exact match, e.g., 'config.json') */
+  /** 跳过的文件名（精确匹配，如 'config.json'） */
   skipFiles?: Set<string>
-  /** Directory names to skip (exact match, e.g., 'tmp') */
+  /** 跳过的目录名（精确匹配，如 'tmp'） */
   skipDirs?: Set<string>
 }
 
 /**
- * Collect all non-hidden regular files recursively from a directory.
- * Returns BundleFile entries sorted by relativePath for deterministic ordering.
+ * 递归收集目录中所有非隐藏普通文件。
+ * 返回按 relativePath 排序的 BundleFile 数组，保证输出确定性。
  *
- * Skips:
- * - Hidden files and directories (starting with '.')
- * - Files/dirs matching skipFiles/skipDirs options
- * - Unreadable files (logged and skipped)
+ * 跳过：
+ * - 隐藏文件和目录（以 '.' 开头）
+ * - 匹配 skipFiles/skipDirs 的文件/目录
+ * - 无法读取的文件（记录日志并跳过）
  */
 export function collectDirectoryFiles(dir: string, options?: CollectOptions): BundleFile[] {
   const files: BundleFile[] = []
@@ -127,7 +130,7 @@ export function collectDirectoryFiles(dir: string, options?: CollectOptions): Bu
 
     const entries = readdirSync(currentDir, { withFileTypes: true })
     for (const entry of entries) {
-      // Skip hidden files and directories
+      // 跳过隐藏文件和目录
       if (entry.name.startsWith('.')) continue
 
       const fullPath = join(currentDir, entry.name)
@@ -150,7 +153,7 @@ export function collectDirectoryFiles(dir: string, options?: CollectOptions): Bu
           })
         } catch (err) {
           debug(`[bundle-files] Failed to read file ${fullPath}:`, err)
-          // Skip unreadable files rather than failing the entire collection
+          // 跳过无法读取的文件，而不是让整个收集失败
         }
       }
     }
@@ -158,21 +161,21 @@ export function collectDirectoryFiles(dir: string, options?: CollectOptions): Bu
 
   walk(dir)
 
-  // Sort for deterministic output
+  // 排序以保证确定性输出
   files.sort((a, b) => a.relativePath.localeCompare(b.relativePath))
 
   return files
 }
 
 // ============================================================
-// Restoration
+// 恢复
 // ============================================================
 
 /**
- * Restore BundleFile entries to a target directory.
- * Creates subdirectories as needed. Validates each file before writing.
+ * 将 BundleFile 条目恢复到目标目录。
+ * 按需创建子目录。写入前逐个校验文件。
  *
- * @throws Error if any file fails path validation (path traversal, absolute path, etc.)
+ * @throws Error 当任意文件路径校验失败（路径穿越、绝对路径等）时抛出
  */
 export function restoreFiles(targetDir: string, files: BundleFile[]): void {
   for (const file of files) {
@@ -184,18 +187,18 @@ export function restoreFiles(targetDir: string, files: BundleFile[]): void {
     const nativePath = fromPortableRelPath(file.relativePath)
     const fullPath = join(targetDir, nativePath)
 
-    // Safety: ensure resolved path is inside target dir
+    // 安全校验：确保解析后的路径仍在目标目录内
     if (!fullPath.startsWith(targetDir + sep) && fullPath !== targetDir) {
       throw new Error(`Path escapes target directory: ${file.relativePath}`)
     }
 
-    // Ensure parent directory exists
+    // 确保父目录存在
     const parentDir = dirname(fullPath)
     if (!existsSync(parentDir)) {
       mkdirSync(parentDir, { recursive: true })
     }
 
-    // Decode and write
+    // 解码并写入
     const content = Buffer.from(file.contentBase64, 'base64')
     writeFileSync(fullPath, content)
   }

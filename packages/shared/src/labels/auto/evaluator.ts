@@ -1,29 +1,28 @@
 /**
- * Auto-Label Evaluator
+ * 自动标签求值器
  *
- * Core evaluation engine for auto-label rules. Scans user messages against
- * configured regex patterns, producing label matches.
+ * 自动标签规则的核心引擎。扫描用户消息，根据配置的正则模式生成标签匹配。
  *
- * Evaluation flow:
- * 1. Strip code blocks from message (avoid matching inside code)
- * 2. Walk the label tree, collect all labels with autoRules
- * 3. For each rule: run regex with forced 'g' flag, substitute capture groups
- * 4. Normalize extracted values based on the label's valueType
- * 5. Deduplicate matches (same labelId + value = keep only first)
- * 6. Cap at MAX_MATCHES_PER_MESSAGE to prevent label explosion
- * 7. Return array of AutoLabelMatch ready for session storage
+ * 求值流程：
+ * 1. 去掉消息中的代码块（避免在代码中匹配）
+ * 2. 遍历标签树，收集所有带 autoRules 的标签
+ * 3. 对每条规则：强制使用 'g' flag 运行正则，替换捕获组
+ * 4. 根据标签的 valueType 归一化提取出的值
+ * 5. 去重（相同 labelId + value 只保留第一条）
+ * 6. 限制为 MAX_MATCHES_PER_MESSAGE，防止粘贴日志/数据时标签爆炸
+ * 7. 返回可直接存入 session 的 AutoLabelMatch 数组
  */
 
 import type { LabelConfig, AutoLabelRule } from '../types.ts'
 import type { AutoLabelMatch } from './types.ts'
 import { normalizeValue } from './normalize.ts'
 
-/** Maximum number of auto-label matches per message to prevent label explosion from pasted logs/data */
+/** 单条消息最多允许的自动标签匹配数，防止粘贴日志/数据时标签爆炸 */
 const MAX_MATCHES_PER_MESSAGE = 10
 
 /**
- * Recursively collect all labels that have autoRules defined.
- * Walks the entire label tree depth-first.
+ * 递归收集所有定义了 autoRules 的标签。
+ * 按深度优先遍历整棵标签树。
  */
 export function collectAutoLabelRules(labels: LabelConfig[]): Array<{
   label: LabelConfig
@@ -49,41 +48,41 @@ export function collectAutoLabelRules(labels: LabelConfig[]): Array<{
 }
 
 /**
- * Strip fenced code blocks and inline code from message text.
- * Prevents regex patterns from matching inside code examples, logs, etc.
+ * 去掉文本中的围栏代码块和行内代码。
+ * 防止正则匹配到代码示例、日志等内容内部。
  */
 function stripCodeBlocks(text: string): string {
   return text
-    .replace(/```[\s\S]*?```/g, '')  // fenced code blocks
-    .replace(/`[^`]+`/g, '')          // inline code
+    .replace(/```[\s\S]*?```/g, '')  // 围栏代码块
+    .replace(/`[^`]+`/g, '')          // 行内代码
 }
 
 /**
- * Evaluate all auto-label rules against a user message.
- * Returns deduplicated matches with normalized values, capped at MAX_MATCHES_PER_MESSAGE.
+ * 对用户消息求值所有自动标签规则。
+ * 返回去重、归一化后的匹配结果，数量上限为 MAX_MATCHES_PER_MESSAGE。
  *
- * @param message - The user's message text to scan
- * @param labels - The workspace label tree (from config)
+ * @param message - 要扫描的用户消息文本
+ * @param labels - workspace 的标签树（来自配置）
  */
 export function evaluateAutoLabels(
   message: string,
   labels: LabelConfig[],
 ): AutoLabelMatch[] {
-  // Strip code blocks before scanning to avoid matching inside code
+  // 扫描前先去掉代码块，避免匹配到代码内部
   const cleanMessage = stripCodeBlocks(message)
 
   const rules = collectAutoLabelRules(labels)
   const matches: AutoLabelMatch[] = []
-  // Track seen entries to deduplicate (same label + same value = skip)
+  // 用 Set 记录已出现的 label+value，实现去重
   const seen = new Set<string>()
 
   for (const { label, rule } of rules) {
-    // Stop if we've hit the match limit
+    // 达到上限就停止
     if (matches.length >= MAX_MATCHES_PER_MESSAGE) break
 
     const ruleMatches = evaluateRegexRule(cleanMessage, label, rule)
 
-    // Deduplicate and add to results (respecting match limit)
+    // 去重后加入结果（同时尊重上限）
     for (const match of ruleMatches) {
       if (matches.length >= MAX_MATCHES_PER_MESSAGE) break
 
@@ -99,9 +98,9 @@ export function evaluateAutoLabels(
 }
 
 /**
- * Evaluate a regex-based auto-label rule.
- * Always enforces the 'g' flag to prevent infinite exec() loops.
- * Uses single-pass $N substitution to prevent injection.
+ * 求值单条基于正则的自动标签规则。
+ * 始终强制加上 'g' flag，防止 exec() 死循环。
+ * 使用单次 $N 替换，避免捕获文本本身包含 $N 导致的二次注入。
  */
 function evaluateRegexRule(
   message: string,
@@ -111,7 +110,7 @@ function evaluateRegexRule(
   const matches: AutoLabelMatch[] = []
 
   try {
-    // Ensure global flag is always present to prevent infinite exec() loops
+    // 始终强制全局 flag，防止 exec() 在相同位置无限循环
     const flags = rule.flags
       ? (rule.flags.includes('g') ? rule.flags : rule.flags + 'g')
       : 'gi'
@@ -119,13 +118,12 @@ function evaluateRegexRule(
     let match: RegExpExecArray | null
 
     while ((match = regex.exec(message)) !== null) {
-      // Single-pass $N substitution: prevents injection where captured text
-      // contains $N patterns that would be double-substituted
+      // 单次 $N 替换：防止捕获文本里含有 $N 模式而被二次替换
       let value = rule.valueTemplate
         ? rule.valueTemplate.replace(/\$(\d+)/g, (_, n) => match![parseInt(n)] ?? '')
         : match[1] ?? match[0]
 
-      // Normalize based on the label's declared valueType
+      // 根据标签声明的 valueType 做归一化
       value = normalizeValue(value, label.valueType)
 
       matches.push({
@@ -134,13 +132,13 @@ function evaluateRegexRule(
         matchedText: match[0],
       })
 
-      // Prevent infinite loop on zero-length matches
+      // 避免零长度匹配导致无限循环
       if (match[0].length === 0) {
         regex.lastIndex++
       }
     }
   } catch (e) {
-    // Invalid regex — skip silently (validation should catch this at config time)
+    // 正则非法时静默跳过（配置保存时的校验应当能提前发现）
     console.warn(`[AutoLabel] Invalid regex for label "${label.id}": ${rule.pattern}`, e)
   }
 

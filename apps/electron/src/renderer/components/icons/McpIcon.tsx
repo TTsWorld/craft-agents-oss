@@ -1,8 +1,11 @@
 import type { SVGProps } from "react"
 
 /**
- * MCP (Model Context Protocol) logo icon
- * Official logo from https://github.com/modelcontextprotocol/docs
+ * MCP（Model Context Protocol，模型上下文协议）官方 Logo 图标。
+ *
+ * MCP 是一套让 Agent/客户端和外部工具、数据源进行标准化通信的协议，
+ * 可以理解为给 LLM 工具调用定义的一套“HTTP/REST 风格”的接口规范。
+ * 图标来源：https://github.com/modelcontextprotocol/docs
  */
 export function McpIcon(props: SVGProps<SVGSVGElement>) {
   return (

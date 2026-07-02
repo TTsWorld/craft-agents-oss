@@ -1,22 +1,21 @@
 /**
- * Automation Naming Utilities (browser-safe)
+ * 自动化名称工具（浏览器安全）
  *
- * Shared helpers for deriving human-readable names from automation matchers.
- * This file is intentionally free of Node.js APIs (process, fs, crypto, shell)
- * so it can be used by both server-side and renderer code.
+ * 从 matcher 中提取人类可读的名称。文件故意不使用 Node.js API
+ *（process、fs、crypto、shell），以便服务端和渲染进程共用。
  */
 
 import type { AutomationMatcher } from './types.ts';
 
 /**
- * Derive a human-readable name from an automation matcher.
+ * 从 matcher 派生一个人类可读的自动化名称。
  *
- * Priority:
- * 1. Explicit `matcher.name`
- * 2. First prompt action's `@mention` → "<mention> prompt"
- * 3. First prompt action's prompt text (truncated to 40 chars)
- * 4. First webhook action's URL (truncated to 40 chars)
- * 5. Event name fallback (raw event string)
+ * 优先级：
+ * 1. matcher 显式指定的 name
+ * 2. 第一个 prompt 动作里的 @mention → "<mention> prompt"
+ * 3. 第一个 prompt 动作的 prompt 文本（截断到 40 字符）
+ * 4. 第一个 webhook 动作的 URL（截断到 40 字符）
+ * 5. 事件名兜底
  */
 export function deriveAutomationName(event: string, matcher: AutomationMatcher): string {
   if (matcher.name) return matcher.name;
@@ -29,7 +28,7 @@ export function deriveAutomationName(event: string, matcher: AutomationMatcher):
     return label.length > 40 ? label.slice(0, 40) + '...' : label;
   }
 
-  // Extract @skill/@source mention
+  // 提取 @skill/@source 引用
   const mentionMatch = firstAction.prompt.match(/@(\S+)/);
   if (mentionMatch) return `${mentionMatch[1]} prompt`;
 

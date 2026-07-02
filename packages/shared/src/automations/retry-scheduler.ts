@@ -1,15 +1,13 @@
 /**
- * RetryScheduler - Persistent retry queue for failed webhooks
+ * RetryScheduler - 失败 webhook 的持久化延迟重试队列
  *
- * When immediate retries (seconds-scale) are exhausted and a webhook still fails,
- * it's added to a persistent JSONL queue file. The scheduler checks the queue
- * every 60 seconds and retries at increasing intervals:
- *   - 1st deferred: 5 minutes
- *   - 2nd deferred: 30 minutes
- *   - 3rd deferred: 1 hour
+ * 当 webhook 立即重试（秒级）全部失败且仍是瞬态错误时，会被追加到 JSONL 队列文件。
+ * 调度器每分钟检查一次队列，按递增间隔重试：
+ *   - 第 1 次延迟：5 分钟
+ *   - 第 2 次延迟：30 分钟
+ *   - 第 3 次延迟：1 小时
  *
- * After all deferred attempts fail, the entry is removed and a final history
- * entry is written. Queue entries survive app restarts.
+ * 所有延迟重试仍失败则丢弃，并写入最终历史记录。队列条目在应用重启后仍然保留。
  */
 
 import { readFile, writeFile, appendFile } from 'fs/promises';
@@ -22,43 +20,43 @@ import type { WebhookAction, WebhookActionResult } from './types.ts';
 
 const log = createLogger('retry-scheduler');
 
-// Deferred retry delays: 5m, 30m, 1h
+// 延迟重试间隔：5 分钟、30 分钟、1 小时
 const DEFERRED_DELAYS_MS = [
-  5 * 60_000,    // 5 minutes
-  30 * 60_000,   // 30 minutes
-  60 * 60_000,   // 1 hour
+  5 * 60_000,    // 5 分钟
+  30 * 60_000,   // 30 分钟
+  60 * 60_000,   // 1 小时
 ];
 
 const MAX_DEFERRED_ATTEMPTS = DEFERRED_DELAYS_MS.length;
 
-/** Queue tick interval (how often we check the queue file) */
-const TICK_INTERVAL_MS = 60_000; // 1 minute
+/** 队列扫描间隔 */
+const TICK_INTERVAL_MS = 60_000; // 1 分钟
 
 // ============================================================================
-// Queue Entry
+// 队列条目
 // ============================================================================
 
 export interface RetryQueueEntry {
-  /** Unique entry ID */
+  /** 唯一条目 ID */
   id: string;
-  /** Matcher ID (for history correlation) */
+  /** Matcher ID，用于历史记录关联 */
   matcherId: string;
-  /** The webhook action with expanded values (no env vars needed at retry time) */
+  /** 已展开环境变量的 webhook action（重试时无需原始事件环境） */
   action: WebhookAction;
-  /** Expanded URL (post-env-expansion) for safe logging */
+  /** 已展开的 URL，用于安全日志 */
   expandedUrl: string;
-  /** Number of deferred attempts already made (0 = first deferred pending) */
+  /** 已经执行过的延迟重试次数（0 表示第一次延迟重试尚未执行） */
   deferredAttempt: number;
-  /** Timestamp when the next retry should happen */
+  /** 下次重试时间戳 */
   nextRetryAt: number;
-  /** Timestamp when this entry was created */
+  /** 条目创建时间 */
   createdAt: number;
-  /** Last error message */
+  /** 最近一次错误信息 */
   lastError?: string;
 }
 
 // ============================================================================
-// RetryScheduler
+// RetryScheduler（重试调度器）
 // ============================================================================
 
 export interface RetrySchedulerOptions {
@@ -75,18 +73,18 @@ export class RetryScheduler {
   }
 
   /**
-   * Start the scheduler. Checks queue every minute.
+   * 启动调度器。每隔 1 分钟检查一次队列。
    */
   start(): void {
     if (this.timer) return;
     this.timer = setInterval(() => this.tick(), TICK_INTERVAL_MS);
     log.debug('[RetryScheduler] Started');
-    // Run an initial tick after a short delay (don't block startup)
+    // 启动后 5 秒先跑一次初始扫描，不阻塞启动流程
     setTimeout(() => this.tick(), 5_000);
   }
 
   /**
-   * Stop the scheduler and clean up.
+   * 停止调度器并清理定时器。
    */
   dispose(): void {
     if (this.timer) {
@@ -97,8 +95,8 @@ export class RetryScheduler {
   }
 
   /**
-   * Enqueue a failed webhook for deferred retry.
-   * Called by WebhookHandler when immediate retries are exhausted.
+   * 把失败的 webhook 加入延迟重试队列。
+   * 由 WebhookHandler 在立即重试耗尽后调用。
    */
   async enqueue(
     matcherId: string,
@@ -123,7 +121,7 @@ export class RetryScheduler {
   }
 
   /**
-   * Process the queue: read entries, retry those that are due, rewrite the queue.
+   * 处理队列：读取条目，重试到期的，重写剩余队列。
    */
   private async tick(): Promise<void> {
     if (this.processing) return;
@@ -132,12 +130,12 @@ export class RetryScheduler {
     try {
       const queuePath = join(this.workspaceRootPath, AUTOMATIONS_RETRY_QUEUE_FILE);
 
-      // Read queue
+      // 读取队列文件
       let raw: string;
       try {
         raw = await readFile(queuePath, 'utf-8');
       } catch {
-        // No queue file — nothing to do
+        // 没有队列文件就什么都不做
         return;
       }
 
@@ -149,7 +147,7 @@ export class RetryScheduler {
         try {
           entries.push(JSON.parse(line) as RetryQueueEntry);
         } catch {
-          // Skip malformed lines
+          // 跳过损坏行
         }
       }
 
@@ -160,12 +158,12 @@ export class RetryScheduler {
 
       for (const entry of entries) {
         if (entry.nextRetryAt > now) {
-          // Not due yet — keep in queue
+          // 时间未到，继续保留在队列
           remaining.push(entry);
           continue;
         }
 
-        // Attempt retry
+        // 执行重试
         log.debug(`[RetryScheduler] Retrying ${entry.id} (deferred attempt ${entry.deferredAttempt + 1}/${MAX_DEFERRED_ATTEMPTS})`);
         let result: WebhookActionResult;
         try {
@@ -181,7 +179,7 @@ export class RetryScheduler {
         }
 
         if (result.success) {
-          // Success — write history entry and drop from queue
+          // 成功：写历史并从队列删除
           log.debug(`[RetryScheduler] ${entry.id} succeeded on deferred attempt ${entry.deferredAttempt + 1}`);
           const historyEntry = createWebhookHistoryEntry({
             matcherId: entry.matcherId,
@@ -197,9 +195,9 @@ export class RetryScheduler {
           } catch (e) {
             log.debug(`[RetryScheduler] Failed to write history: ${e}`);
           }
-          // Don't add to remaining — drop from queue
+          // 不加入 remaining，即从队列删除
         } else if (entry.deferredAttempt + 1 >= MAX_DEFERRED_ATTEMPTS) {
-          // Final attempt failed — write permanent failure to history
+          // 最终尝试失败：写永久失败历史
           log.debug(`[RetryScheduler] ${entry.id} permanently failed after ${MAX_DEFERRED_ATTEMPTS} deferred attempts`);
           const historyEntry = createWebhookHistoryEntry({
             matcherId: entry.matcherId,
@@ -216,9 +214,9 @@ export class RetryScheduler {
           } catch (e) {
             log.debug(`[RetryScheduler] Failed to write history: ${e}`);
           }
-          // Don't add to remaining — drop from queue
+          // 不加入 remaining
         } else {
-          // Still retryable — schedule next deferred attempt
+          // 还可重试：安排下一次延迟重试
           const nextDelay = DEFERRED_DELAYS_MS[entry.deferredAttempt + 1]!;
           remaining.push({
             ...entry,
@@ -230,7 +228,7 @@ export class RetryScheduler {
         }
       }
 
-      // Rewrite queue file with remaining entries
+      // 用剩余条目重写队列文件
       if (remaining.length === 0) {
         await writeFile(queuePath, '', 'utf-8');
       } else {
@@ -243,5 +241,4 @@ export class RetryScheduler {
       this.processing = false;
     }
   }
-
 }

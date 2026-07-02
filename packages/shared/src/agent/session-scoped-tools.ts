@@ -1,18 +1,24 @@
 /**
- * Session-Scoped Tools
+ * Session 级（Session-Scoped）工具集
  *
- * Tools that are scoped to a specific session. Each session gets its own
- * instance of these tools with session-specific callbacks and state.
+ * "Session 级工具"指绑定到具体某个 session 的工具。每个 session 会拥有自己的
+ * 工具实例，并注入该 session 专属的回调和状态。
  *
- * This file is a thin adapter that wraps the shared handlers from
- * @craft-agent/session-tools-core for use with the Claude SDK.
+ * Agent / 工具调用概念速记（给刚接触 TS/Agent 的同学）：
+ *   - Tool：模型可以调用的函数，类比 Golang 里通过 RPC 注册的 handler。
+ *   - MCP（Model Context Protocol）：暴露工具/资源给模型的协议；本文件用
+ *     `createSdkMcpServer` 把多个工具打包成一个 MCP server，由 Claude SDK 调用。
+ *   - Session：一段对话的会话状态；session-scoped 工具的可用性与回调绑定到它。
  *
- * All tool definitions, schemas, and handlers live in session-tools-core.
- * This adapter only handles:
- * - Session callback registry (per-session onPlanSubmitted, onAuthRequest, queryFn)
- * - Plan state management
- * - Claude SDK tool() wrapping with DOC_REF-enriched descriptions
- * - call_llm (backend-specific, not in registry)
+ * 本文件是一个轻量适配层（adapter），把来自 `@craft-agent/session-tools-core`
+ * 的共享 handler 包装成 Claude SDK 可用的形式。
+ *
+ * 所有工具的真正定义、参数 schema、handler 都位于 session-tools-core；
+ * 本适配层只负责：
+ *   - Session 回调注册表（每个 session 的 onPlanSubmitted / onAuthRequest / queryFn 等）
+ *   - Plan（计划）状态管理
+ *   - 用 Claude SDK 的 tool() 包装工具，并把 DOC_REF 写入工具描述
+ *   - call_llm（后端特定，不在注册表中）
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
@@ -21,13 +27,13 @@ import { DOC_REFS } from '../docs/index.ts';
 import { createClaudeContext } from './claude-context.ts';
 import { basename } from 'node:path';
 
-// Import from session-tools-core: registry + schemas + base descriptions
+// 从 session-tools-core 导入：注册表 + schema + 基础描述
 import {
   SESSION_BACKEND_TOOL_NAMES,
   SESSION_TOOL_REGISTRY,
   getSessionToolDefs,
   TOOL_DESCRIPTIONS as BASE_DESCRIPTIONS,
-  // Types
+  // 类型
   type ToolResult,
   type AuthRequest,
 } from '@craft-agent/session-tools-core';
@@ -37,7 +43,7 @@ import { createBrowserTools, type BrowserPaneFns } from './browser-tools.ts';
 import { FEATURE_FLAGS } from '../feature-flags.ts';
 import { getBrowserToolEnabled } from '../config/storage.ts';
 
-// Re-export types for backward compatibility
+// 类型再导出，保持向后兼容（外部消费者已用旧路径引用这些类型）
 export type {
   CredentialInputMode,
   AuthRequestType,
@@ -53,14 +59,14 @@ export type {
   MicrosoftService,
 } from '@craft-agent/session-tools-core';
 
-// Re-export browser pane types for session manager wiring
+// 给 session manager 装配用的 browser pane 类型再导出
 export type { BrowserPaneFns } from './browser-tools.ts';
 
 // ============================================================
-// Session-Scoped Tool Callbacks (re-exported from dedicated registry module)
+// Session 级工具回调（从专门的 registry 模块再导出）
 // ============================================================
 
-// Re-export for all downstream consumers (index.ts, claude-agent.ts, pi-agent.ts, etc.)
+// 给所有下游消费者（index.ts、claude-agent.ts、pi-agent.ts 等）再导出
 export {
   type SessionScopedToolCallbacks,
   registerSessionScopedToolCallbacks,
@@ -69,11 +75,11 @@ export {
   getSessionScopedToolCallbacks,
 } from './session-scoped-tool-callback-registry.ts';
 
-// Local imports for use within this file's factory function
+// 本文件 factory 内部使用
 import { getSessionScopedToolCallbacks } from './session-scoped-tool-callback-registry.ts';
 import { attachSessionSelfManagementBindings } from './session-self-management-bindings.ts';
 
-/** Backend-executed session tools currently supported by the Claude adapter layer. */
+/** Claude 适配层目前支持的后端执行型 session 工具集合。 */
 export const CLAUDE_BACKEND_SESSION_TOOL_NAMES = new Set<string>([
   'call_llm',
   'spawn_session',
@@ -81,8 +87,8 @@ export const CLAUDE_BACKEND_SESSION_TOOL_NAMES = new Set<string>([
 ]);
 
 /**
- * Guardrail: ensure Claude adapter wiring stays in sync with backend-mode tools
- * declared in session-tools-core. Fail fast during setup instead of runtime drift.
+ * 一致性护栏：确保 Claude 适配层装配的后端工具与 session-tools-core 声明的
+ * 后端模式工具保持一致。在装配阶段就快速失败（fail fast），避免运行时漂移。
  */
 function assertClaudeBackendSessionToolParity(): void {
   const missing = [...SESSION_BACKEND_TOOL_NAMES].filter(
@@ -97,58 +103,49 @@ function assertClaudeBackendSessionToolParity(): void {
 }
 
 // ============================================================
-// Plan State Management
+// Plan（计划文件）状态管理
 // ============================================================
 
-// Map of sessionId -> last submitted plan path (for retrieval after submission)
+// sessionId → 最近一次提交的 plan 文件路径；用于提交后检索
 const sessionPlanFilePaths = new Map<string, string>();
 
-/**
- * Get the last submitted plan file path for a session
- */
+/** 获取某个 session 最近一次提交的 plan 文件路径（无则 null）。 */
 export function getLastPlanFilePath(sessionId: string): string | null {
   return sessionPlanFilePaths.get(sessionId) ?? null;
 }
 
-/**
- * Set the last submitted plan file path for a session
- */
+/** 记录某个 session 最近一次提交的 plan 文件路径。 */
 export function setLastPlanFilePath(sessionId: string, path: string): void {
   sessionPlanFilePaths.set(sessionId, path);
 }
 
-/**
- * Clear plan file state for a session
- */
+/** 清除某个 session 的 plan 文件状态。 */
 export function clearPlanFileState(sessionId: string): void {
   sessionPlanFilePaths.delete(sessionId);
 }
 
 // ============================================================
-// Plan Path Helpers
+// Plan 路径相关辅助函数
 // ============================================================
 
-/**
- * Get the plans directory for a session
- */
+/** 获取某个 session 的 plans 目录路径。 */
 export function getSessionPlansDir(workspacePath: string, sessionId: string): string {
   return getSessionPlansPath(workspacePath, sessionId);
 }
 
-/**
- * Check if a path is within a session's plans directory
- */
+/** 判断某个路径是否位于给定 session 的 plans 目录之内。 */
 export function isPathInPlansDir(path: string, workspacePath: string, sessionId: string): boolean {
   const plansDir = getSessionPlansDir(workspacePath, sessionId);
   return path.startsWith(plansDir);
 }
 
 // ============================================================
-// Tool Result Converter
+// 工具结果转换
 // ============================================================
 
 /**
- * Convert shared ToolResult to SDK format
+ * 把共享层 ToolResult 转成 Claude SDK 期望的格式。
+ * 主要差别：把每条 content 都映射成 `{ type: 'text', text }`，并按需带 `isError`。
  */
 function convertResult(result: ToolResult): { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
   return {
@@ -158,29 +155,27 @@ function convertResult(result: ToolResult): { content: Array<{ type: 'text'; tex
 }
 
 // ============================================================
-// Cache for Session-Scoped Tools
+// Session 级工具的缓存
 // ============================================================
 
-// Cache tools by session to avoid recreating them on every query.
-// We cache the tools array (expensive to build) but NOT the MCP server wrapper,
-// because createSdkMcpServer returns an MCP Server instance that holds transport
-// state. The SDK's query() calls connect() on it, setting _transport. On the next
-// query(), connect() is called again — but if the previous Query's subprocess hasn't
-// fully exited yet, _transport is still set and connect() throws
-// "Already connected to a transport". Creating a fresh server wrapper per query avoids this.
+// 按 session 缓存工具数组，避免每条消息都重建（构造成本较高）。
+// 注意：我们缓存的是 tools 数组（重建昂贵），但【不缓存】MCP server 包装。
+// 原因：createSdkMcpServer 返回的 MCP Server 实例持有 transport 状态；
+// SDK 的 query() 会调用其 connect() 并设置 _transport。下一次 query() 又会调用
+// connect()，但如果上一个 Query 的子进程还没完全退出，_transport 仍然存在，
+// connect() 会抛 "Already connected to a transport"。所以每次 query 都新建一个
+// server 包装，能规避这个竞态。
 const sessionToolsCache = new Map<string, ReturnType<typeof tool>[]>();
 
 /**
- * Invalidate ALL session tool caches (e.g., when a global setting like browserToolEnabled changes).
- * This forces tools to be rebuilt on the next message for every session.
+ * 失效【所有】 session 的工具缓存（例如 browserToolEnabled 之类的全局开关变化）。
+ * 这会强制每个 session 在下一条消息时重建工具。
  */
 export function invalidateAllSessionToolsCaches(): void {
   sessionToolsCache.clear();
 }
 
-/**
- * Clean up cached tools for a session
- */
+/** 清理某个 session 已缓存的工具（session 结束/销毁时调用）。 */
 export function cleanupSessionScopedTools(sessionId: string): void {
   const prefix = `${sessionId}::`;
   for (const key of sessionToolsCache.keys()) {
@@ -191,12 +186,12 @@ export function cleanupSessionScopedTools(sessionId: string): void {
 }
 
 // ============================================================
-// Tool Descriptions (base from registry + Claude-specific DOC_REFS)
+// 工具描述（注册表基础描述 + Claude 专属的 DOC_REF 增强）
 // ============================================================
 
 const TOOL_DESCRIPTIONS: Record<string, string> = {
   ...BASE_DESCRIPTIONS,
-  // Claude-specific enrichments with DOC_REFs
+  // Claude 专属：把对应文档链接拼到描述末尾
   config_validate: BASE_DESCRIPTIONS.config_validate + `\n\n**Reference:** ${DOC_REFS.sources}`,
   skill_validate: BASE_DESCRIPTIONS.skill_validate + `\n\n**Reference:** ${DOC_REFS.skills}`,
   mermaid_validate: BASE_DESCRIPTIONS.mermaid_validate + `\n\n**Reference:** ${DOC_REFS.mermaid}`,
@@ -204,15 +199,15 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
 };
 
 // ============================================================
-// Main Factory Function
+// 主工厂函数
 // ============================================================
 
 /**
- * Get or create session-scoped tools for a session.
- * Returns an MCP server with all session-scoped tools registered.
+ * 获取（或创建）某个 session 的 session 级工具集。
+ * 返回一个已注册了所有 session 级工具的 MCP server。
  *
- * All tools come from the canonical SESSION_TOOL_DEFS registry in session-tools-core,
- * except call_llm which is backend-specific.
+ * 工具都来自 session-tools-core 中的权威注册表 SESSION_TOOL_DEFS，
+ * 唯一例外是 call_llm —— 它是后端特定的（每个后端实现不同）。
  */
 export function getSessionScopedTools(
   sessionId: string,
@@ -221,32 +216,35 @@ export function getSessionScopedTools(
 ): ReturnType<typeof createSdkMcpServer> {
   const cacheKey = `${sessionId}::${workspaceRootPath}`;
 
-  // Return cached tools if available, but always create a fresh MCP server wrapper
+  // 命中缓存就复用工具数组；但每次都必须新建一个 MCP server 包装（见上面缓存注释）
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let tools: any[] | undefined = sessionToolsCache.get(cacheKey);
   if (!tools) {
-    // Create Claude context with full capabilities
+    // 构造 Claude 上下文（带完整能力）
     const ctx = createClaudeContext({
       sessionId,
       workspacePath: workspaceRootPath,
       workspaceId: workspaceId || basename(workspaceRootPath) || '',
       onPlanSubmitted: (planPath: string) => {
+        // plan 提交时：记录路径 + 转发给该 session 注册的回调
         setLastPlanFilePath(sessionId, planPath);
         const callbacks = getSessionScopedToolCallbacks(sessionId);
         callbacks?.onPlanSubmitted?.(planPath);
       },
       onAuthRequest: (request: unknown) => {
+        // 鉴权请求：转发给该 session 注册的回调
         const callbacks = getSessionScopedToolCallbacks(sessionId);
         callbacks?.onAuthRequest?.(request as AuthRequest);
       },
     });
 
-    // Attach session self-management bindings (lazy getters from callback registry)
+    // 装配 session 自管理绑定（懒加载 getter，从回调注册表取值）
     attachSessionSelfManagementBindings(ctx, sessionId);
 
-    // Helper to create a tool from the canonical registry.
-    // The `as any` on schema bridges a Zod generic-variance issue when .shape
-    // types (ZodType<string>) flow into Record<string, ZodType<unknown>>.
+    // 用权威注册表构造工具的小助手。
+    // 这里的 `as any` 是为了绕开 Zod 的泛型协变问题：
+    // 当 .shape 类型（ZodType<string>）流入 Record<string, ZodType<unknown>> 时
+    // TS 会报错，这里强制桥接一下。
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     function registryTool(name: string, schema: any) {
       const def = SESSION_TOOL_REGISTRY.get(name)!;
@@ -256,29 +254,30 @@ export function getSessionScopedTools(
       }, def.readOnly ? { annotations: { readOnlyHint: true } } : undefined);
     }
 
-    // Ensure backend-mode tool wiring is in sync with core metadata.
+    // 校验后端模式工具装配与 core 中的元数据一致（避免后端漂移）
     assertClaudeBackendSessionToolParity();
 
-    // Create tools from the canonical registry — all tools with handlers.
-    // Tool visibility is centrally filtered in session-tools-core to avoid backend drift.
+    // 从权威注册表批量构造工具 —— 凡是有 handler 的都装上。
+    // 工具的可见性在 session-tools-core 中统一过滤，避免各后端各自为政。
     tools = getSessionToolDefs({ includeDeveloperFeedback: FEATURE_FLAGS.developerFeedback })
-      .filter(def => def.handler !== null) // Skip backend-specific tools (call_llm)
+      .filter(def => def.handler !== null) // 跳过后端特定工具（如 call_llm）
       .map(def => registryTool(def.name, def.inputSchema.shape));
 
-    // Add call_llm — backend-specific (not in registry handler)
+    // 追加 call_llm —— 后端特定（注册表里没它的 handler）
     const sessionPath = getSessionPath(workspaceRootPath, sessionId);
     tools.push(
       createLLMTool({
         sessionId,
         sessionPath,
         getQueryFn: () => {
+          // 懒取：每次实际调用时再去注册表里取，避免拿到旧的回调闭包
           const callbacks = getSessionScopedToolCallbacks(sessionId);
           return callbacks?.queryFn;
         },
       }),
     );
 
-    // Add spawn_session — backend-specific (not in registry handler)
+    // 追加 spawn_session —— 后端特定
     tools.push(
       createSpawnSessionTool({
         sessionId,
@@ -289,9 +288,9 @@ export function getSessionScopedTools(
       }),
     );
 
-    // Add browser_* tools — backend-specific (requires BrowserPaneManager in Electron)
-    // Gated by the "Built-in browser" setting so users with external browser tools
-    // (Playwright, Puppeteer, etc.) can disable the built-in one.
+    // 追加 browser_* 系列工具 —— 后端特定（需要 Electron 里的 BrowserPaneManager）
+    // 受"Built-in browser"开关控制：如果用户已用 Playwright/Puppeteer 等外部
+    // 浏览器工具，可以关闭内置浏览器工具。
     if (getBrowserToolEnabled()) {
       tools.push(
         ...createBrowserTools({
@@ -307,8 +306,8 @@ export function getSessionScopedTools(
     sessionToolsCache.set(cacheKey, tools);
   }
 
-  // Always create a fresh MCP server wrapper to avoid "Already connected to a transport"
-  // race condition when queries are sent back-to-back (see comment on sessionToolsCache).
+  // 始终新建 MCP server 包装，避免连续 query 时出现
+  // "Already connected to a transport" 的竞态（见上方缓存注释）。
   return createSdkMcpServer({
     name: 'session',
     version: '1.0.0',

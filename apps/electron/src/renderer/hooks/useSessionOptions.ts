@@ -1,13 +1,13 @@
 /**
  * Session Options Types
  *
- * Type definitions and helpers for session-scoped settings.
- * The actual hook is in AppShellContext.tsx as useSessionOptionsFor().
+ * 会话级设置的类型定义与辅助函数。
+ * 实际 hook 在 AppShellContext.tsx 中以 useSessionOptionsFor() 提供。
  *
- * ADDING A NEW SESSION OPTION:
- * 1. Add field to SessionOptions interface below
- * 2. Update defaultSessionOptions
- * 3. Add UI control in FreeFormInput.tsx (or wherever needed)
+ * 新增会话选项步骤：
+ * 1. 在下方 SessionOptions 接口中添加字段
+ * 2. 更新 defaultSessionOptions
+ * 3. 在 FreeFormInput.tsx（或需要的地方）添加 UI 控件
  */
 
 import type { PermissionMode } from '../../shared/types'
@@ -15,27 +15,27 @@ import type { ThinkingLevel } from '@craft-agent/shared/agent/thinking-levels'
 import { DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels'
 
 /**
- * All session-scoped options in one place.
+ * 所有会话级设置汇总。
  */
 export interface SessionOptions {
-  /** Permission mode ('safe', 'ask', 'allow-all') */
+  /** 权限模式（'safe'、'ask'、'allow-all'）：决定 AI 执行工具前是否需要用户确认 */
   permissionMode: PermissionMode
-  /** Monotonic version from backend permission mode state (used to ignore stale events) */
+  /** 后端权限模式状态的单调递增版本号，用于忽略旧事件 */
   permissionModeVersion?: number
-  /** Session-level thinking level — sticky, persisted. See {@link ThinkingLevel}. */
+  /** 会话级思考深度，持久化保存。详见 {@link ThinkingLevel} */
   thinkingLevel: ThinkingLevel
 }
 
-/** Default values for new sessions */
+/** 新会话的默认值 */
 export const defaultSessionOptions: SessionOptions = {
-  permissionMode: 'ask', // Default to ask mode (prompt for permissions)
-  thinkingLevel: DEFAULT_THINKING_LEVEL, // Default to 'medium' level
+  permissionMode: 'ask', // 默认询问模式（执行工具前弹窗确认）
+  thinkingLevel: DEFAULT_THINKING_LEVEL, // 默认中等深度
 }
 
-/** Type for partial updates to session options */
+/** 会话选项的部分更新类型 */
 export type SessionOptionUpdates = Partial<SessionOptions>
 
-/** Helper to merge session options with updates */
+/** 合并当前会话选项与增量更新 */
 export function mergeSessionOptions(
   current: SessionOptions | undefined,
   updates: SessionOptionUpdates
@@ -46,4 +46,3 @@ export function mergeSessionOptions(
     ...updates,
   }
 }
-

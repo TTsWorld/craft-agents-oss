@@ -1,3 +1,18 @@
+/**
+ * MCP 服务器的 OAuth 客户端实现
+ *
+ * 本模块负责与需要 OAuth 授权的 MCP（Model Context Protocol）服务器对接：
+ * 1. 发现 OAuth 授权服务器元数据（metadata discovery）
+ * 2. 动态注册 OAuth 客户端
+ * 3. 生成 PKCE、启动本地回调服务器
+ * 4. 打开浏览器完成授权
+ * 5. 用授权码换 token
+ * 6. 刷新 access token
+ *
+ * 对 Agent 初学者来说：MCP 是 Agent 和外部工具/数据源通信的协议；
+ * 这里的 OAuth 就是 Agent 连接某个 MCP 服务器前的“登录”步骤。
+ */
+
 import { createServer, type Server } from 'http';
 import { URL } from 'url';
 import { randomBytes, createHash } from 'crypto';
@@ -6,10 +21,17 @@ import { generateCallbackPage } from './callback-page.ts';
 import { type OAuthSessionContext, buildOAuthDeeplinkUrl } from './types.ts';
 import type { PreparedOAuthFlow, OAuthExchangeParams, OAuthExchangeResult } from './oauth-flow-types.ts';
 
+/**
+ * CraftOAuth 类构造时需要的配置。
+ */
 export interface OAuthConfig {
-  mcpUrl: string; // Full MCP URL including path (e.g., https://mcp.craft.do/my/mcp)
+  /** 完整 MCP URL，包含路径，例如 https://mcp.craft.do/my/mcp */
+  mcpUrl: string;
 }
 
+/**
+ * OAuth token 结果。
+ */
 export interface OAuthTokens {
   accessToken: string;
   refreshToken?: string;
@@ -17,29 +39,44 @@ export interface OAuthTokens {
   tokenType: string;
 }
 
+/**
+ * 回调函数：用于向调用方报告状态和错误。
+ * 类似 Go 里的回调接口或 channel。
+ */
 export interface OAuthCallbacks {
   onStatus: (message: string) => void;
   onError: (error: string) => void;
 }
 
-// Port range for OAuth callback server - tries ports sequentially until one is available
+// 本地 OAuth 回调服务器端口范围：顺序尝试直到有可用端口
 const CALLBACK_PORT_START = 8914;
 const CALLBACK_PORT_END = 8924;
 const CALLBACK_PATH = '/oauth/callback';
 const CLIENT_NAME = 'Claude Code (Craft Agent)';
 
-// Generate PKCE code verifier and challenge
+/**
+ * 生成 PKCE verifier 和 challenge。
+ */
 function generatePKCE(): { verifier: string; challenge: string } {
   const verifier = randomBytes(32).toString('base64url');
   const challenge = createHash('sha256').update(verifier).digest('base64url');
   return { verifier, challenge };
 }
 
-// Generate random state for CSRF protection
+/**
+ * 生成随机 state，防止 CSRF。
+ */
 function generateState(): string {
   return randomBytes(16).toString('hex');
 }
 
+/**
+ * CraftOAuth 主类。
+ *
+ * 封装了 MCP 服务器的完整 OAuth 登录流程。
+ * 对 Go 同学来说，可以把它理解成一个带状态的工作流对象，
+ * 类似一个 http.Client 加上一组专属的登录方法。
+ */
 export class CraftOAuth {
   private config: OAuthConfig;
   private server: Server | null = null;
@@ -52,7 +89,10 @@ export class CraftOAuth {
     this.sessionContext = sessionContext;
   }
 
-  // Get OAuth server metadata using progressive discovery
+  /**
+   * 渐进式发现 OAuth 授权服务器元数据。
+   * 如果找不到会抛出错误。
+   */
   private async getServerMetadata(): Promise<OAuthMetadata> {
     const metadata = await discoverOAuthMetadata(
       this.config.mcpUrl,
@@ -66,7 +106,14 @@ export class CraftOAuth {
     return metadata;
   }
 
-  // Register OAuth client dynamically
+  /**
+   * 动态注册 OAuth 客户端。
+   * 部分 MCP 服务器支持动态客户端注册（RFC 7591）。
+   *
+   * @param registrationEndpoint - 注册端点
+   * @param port - 本地回调服务器端口，用于构造 redirect_uri
+   * @returns 注册得到的 client_id 和可选的 client_secret
+   */
   private async registerClient(registrationEndpoint: string, port: number): Promise<{
     client_id: string;
     client_secret?: string;
@@ -81,7 +128,7 @@ export class CraftOAuth {
         redirect_uris: [redirectUri],
         grant_types: ['authorization_code', 'refresh_token'],
         response_types: ['code'],
-        token_endpoint_auth_method: 'none', // Public client
+        token_endpoint_auth_method: 'none', // 公共客户端，不需要 client_secret
       }),
     });
 
@@ -96,7 +143,15 @@ export class CraftOAuth {
     }>;
   }
 
-  // Exchange authorization code for tokens
+  /**
+   * 用授权码换 token。
+   *
+   * @param tokenEndpoint - token 端点
+   * @param code - 授权码
+   * @param codeVerifier - PKCE verifier
+   * @param clientId - 客户端 ID
+   * @param port - 本地回调端口
+   */
   private async exchangeCodeForTokens(
     tokenEndpoint: string,
     code: string,
@@ -132,9 +187,9 @@ export class CraftOAuth {
       token_type?: string;
     };
 
-    // Default to 3600s (1 hour) if server doesn't return expires_in.
-    // Most OAuth access tokens expire in 1 hour per RFC 6749.
-    // Without this, tokens with no expiresAt are never detected as needing refresh.
+    // 如果服务端没返回 expires_in，默认按 3600 秒（1 小时）处理。
+    // 大多数 OAuth access token 按 RFC 6749 都是 1 小时有效期；
+    // 没有这个默认值，那些不返回 expires_in 的 token 就永远不会被检测到需要刷新。
     const expiresIn = data.expires_in ?? 3600;
 
     return {
@@ -145,7 +200,9 @@ export class CraftOAuth {
     };
   }
 
-  // Refresh access token
+  /**
+   * 用 refresh token 刷新 access token。
+   */
   async refreshAccessToken(
     refreshToken: string,
     clientId: string
@@ -185,7 +242,10 @@ export class CraftOAuth {
     };
   }
 
-  // Check if the MCP server requires OAuth
+  /**
+   * 检查 MCP 服务器是否需要 OAuth 认证。
+   * 通过尝试发现 OAuth 元数据来判断。
+   */
   async checkAuthRequired(): Promise<boolean> {
     this.callbacks.onStatus('Checking if authentication is required...');
 
@@ -200,7 +260,7 @@ export class CraftOAuth {
         return true;
       }
 
-      // No metadata found at any candidate URL
+      // 任何候选 URL 都没找到元数据
       this.callbacks.onStatus('No OAuth metadata found - server may be public');
       return false;
     } catch (error) {
@@ -209,11 +269,25 @@ export class CraftOAuth {
     }
   }
 
-  // Start the OAuth flow
+  /**
+   * 启动完整 OAuth 登录流程。
+   *
+   * 步骤：
+   * 1. 发现 OAuth 服务器元数据
+   * 2. 生成 PKCE 和 state
+   * 3. 启动本地回调服务器
+   * 4. 动态注册客户端（如果服务器支持）
+   * 5. 构造授权 URL
+   * 6. 打开浏览器
+   * 7. 等待授权码回调
+   * 8. 用授权码换 token
+   *
+   * @returns tokens 和 clientId
+   */
   async authenticate(): Promise<{ tokens: OAuthTokens; clientId: string }> {
     this.callbacks.onStatus('Fetching OAuth server configuration...');
 
-    // 1. Get server metadata — no port dependency
+    // 1. 获取服务器元数据（不依赖端口）
     let metadata;
     try {
       metadata = await this.getServerMetadata();
@@ -224,15 +298,14 @@ export class CraftOAuth {
       throw error;
     }
 
-    // 2. Generate PKCE and state — no dependencies
+    // 2. 生成 PKCE 和 state（无依赖）
     const pkce = generatePKCE();
     const state = generateState();
     this.callbacks.onStatus('Generated PKCE challenge and state');
 
-    // 3. Start callback server — binds directly with retry, returns the bound port.
-    //    This must happen before client registration because the redirect_uri
-    //    includes the port, and we need the *actually bound* port (not a checked-
-    //    then-released one) to avoid a TOCTOU race condition.
+    // 3. 启动本地回调服务器：直接尝试绑定，返回实际绑定的端口。
+    //    这必须在客户端注册之前完成，因为 redirect_uri 包含端口，
+    //    我们需要的是“实际绑定”的端口，而不是“先检查再释放”的端口，以避免 TOCTOU 竞态。
     this.callbacks.onStatus('Starting callback server...');
     let port: number;
     let codePromise: Promise<string>;
@@ -247,7 +320,7 @@ export class CraftOAuth {
       throw error;
     }
 
-    // 4. Register client if endpoint available — now has the bound port
+    // 4. 如果支持动态注册，现在注册客户端（已拿到绑定端口）
     let clientId: string;
     if (metadata.registration_endpoint) {
       this.callbacks.onStatus(`Registering client at ${metadata.registration_endpoint}...`);
@@ -256,19 +329,19 @@ export class CraftOAuth {
         clientId = client.client_id;
         this.callbacks.onStatus(`Registered as client: ${clientId}`);
       } catch (error) {
-        // Clean up the callback server if registration fails
+        // 注册失败时关闭回调服务器
         this.stopServer();
         const msg = error instanceof Error ? error.message : 'Unknown error';
         this.callbacks.onStatus(`Client registration failed: ${msg}`);
         throw error;
       }
     } else {
-      // Use a default client ID for public clients
+      // 没有注册端点时，使用默认公共客户端 ID
       clientId = 'craft-agent';
       this.callbacks.onStatus(`Using default client ID: ${clientId}`);
     }
 
-    // 5. Build authorization URL
+    // 5. 构造授权 URL
     const redirectUri = `http://localhost:${port}${CALLBACK_PATH}`;
     const authUrl = new URL(metadata.authorization_endpoint);
     authUrl.searchParams.set('response_type', 'code');
@@ -278,16 +351,16 @@ export class CraftOAuth {
     authUrl.searchParams.set('code_challenge', pkce.challenge);
     authUrl.searchParams.set('code_challenge_method', 'S256');
 
-    // 6. Open browser for authorization
+    // 6. 打开浏览器授权
     this.callbacks.onStatus('Opening browser for authorization...');
     await openUrl(authUrl.toString());
 
-    // 7. Wait for the authorization code
+    // 7. 等待授权码回调
     this.callbacks.onStatus('Waiting for you to authorize in browser...');
     const authCode = await codePromise;
     this.callbacks.onStatus('Authorization code received!');
 
-    // 8. Exchange code for tokens
+    // 8. 用授权码换 token
     this.callbacks.onStatus('Exchanging authorization code for tokens...');
     const tokens = await this.exchangeCodeForTokens(
       metadata.token_endpoint,
@@ -302,21 +375,18 @@ export class CraftOAuth {
   }
 
   /**
-   * Start the OAuth callback server by binding directly to a port in the range
-   * CALLBACK_PORT_START .. CALLBACK_PORT_END.
+   * 启动 OAuth 回调服务器。
    *
-   * Eliminates the TOCTOU race condition: the port returned is the port the
-   * server is actually listening on — there is no gap between checking and
-   * binding. On EADDRINUSE the candidate server is closed and the next port
-   * is tried.
+   * 在 CALLBACK_PORT_START .. CALLBACK_PORT_END 范围内直接尝试绑定真实服务器。
+   * 消除 TOCTOU 竞态：返回的端口就是服务器实际监听的端口，
+   * 不存在“检查完再绑定”的时间窗口。遇到 EADDRINUSE 就关闭候选服务器试下一个。
    *
-   * Returns immediately once the server is bound, with a `codePromise` that
-   * resolves when the OAuth callback delivers the authorization code.
+   * 服务器绑定成功后立即返回，codePromise 会在 OAuth 回调送达授权码后 resolve。
    */
   private async startCallbackServer(
     expectedState: string
   ): Promise<{ port: number; codePromise: Promise<string> }> {
-    // Set up the deferred code promise — resolved/rejected by the request handler
+    // 构造一个 deferred Promise，由请求处理器来 resolve/reject
     let resolveCode: (code: string) => void;
     let rejectCode: (error: Error) => void;
     const codePromise = new Promise<string>((resolve, reject) => {
@@ -324,12 +394,13 @@ export class CraftOAuth {
       rejectCode = reject;
     });
 
+    // 5 分钟超时：如果一直没收到回调就拒绝并关闭服务器
     const timeout = setTimeout(() => {
       this.stopServer();
       rejectCode(new Error('OAuth timeout - no callback received'));
-    }, 300000); // 5 minute timeout
+    }, 300000);
 
-    // Try binding on each candidate port in the range
+    // 逐个端口尝试绑定
     for (let port = CALLBACK_PORT_START; port <= CALLBACK_PORT_END; port++) {
       const candidate = createServer((req, res) => {
         const url = new URL(req.url || '/', `http://localhost:${port}`);
@@ -378,7 +449,7 @@ export class CraftOAuth {
             return;
           }
 
-          // Success!
+          // 成功：返回成功页面，并 resolve code
           res.writeHead(200, { 'Content-Type': 'text/html' });
           res.end(generateCallbackPage({
             title: 'Authorization Successful',
@@ -404,7 +475,7 @@ export class CraftOAuth {
           });
         });
 
-        // Bind succeeded — keep this server
+        // 绑定成功：保留这个服务器
         this.server = candidate;
         this.server.on('error', (err) => {
           clearTimeout(timeout);
@@ -412,19 +483,19 @@ export class CraftOAuth {
         });
         return { port, codePromise };
       } catch (err: unknown) {
-        // Port in use — close the candidate and try the next one
+        // 端口被占用：关闭候选服务器并试下一个
         candidate.close();
         const isAddressInUse =
           err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'EADDRINUSE';
         if (!isAddressInUse) {
-          // Unexpected error — clean up and propagate
+          // 非占用错误：清理并抛出
           clearTimeout(timeout);
           throw err instanceof Error ? err : new Error(String(err));
         }
       }
     }
 
-    // All ports exhausted
+    // 所有端口都试完了
     clearTimeout(timeout);
     throw new Error(
       `All OAuth callback ports (${CALLBACK_PORT_START}-${CALLBACK_PORT_END}) are in use. Please restart the application.`
@@ -438,15 +509,17 @@ export class CraftOAuth {
     }
   }
 
-  // Cancel the OAuth flow
+  /**
+   * 取消 OAuth 流程：关闭本地回调服务器。
+   */
   cancel(): void {
     this.stopServer();
   }
 }
 
 /**
- * Register an MCP OAuth client dynamically.
- * Extracted from CraftOAuth.registerClient for reuse in prepareMcpOAuth.
+ * MCP OAuth 客户端动态注册错误。
+ * 从 CraftOAuth.registerClient 提取出来，供 prepareMcpOAuth 复用。
  */
 class McpClientRegistrationError extends Error {
   status?: number;
@@ -458,10 +531,21 @@ class McpClientRegistrationError extends Error {
   }
 }
 
+/**
+ * 判断是否回退到默认 MCP 客户端 ID。
+ * 当动态注册返回 401/403 时，可能是提供商限制了未审核客户端，此时回退到默认 ID 继续流程。
+ */
 function shouldFallbackToDefaultMcpClient(error: unknown): boolean {
   return error instanceof McpClientRegistrationError && (error.status === 401 || error.status === 403);
 }
 
+/**
+ * 向 MCP OAuth 注册端点动态注册客户端。
+ *
+ * @param registrationEndpoint - 注册端点
+ * @param redirectUri - 重定向 URI
+ * @returns client_id 和可选 client_secret
+ */
 async function registerMcpOAuthClient(
   registrationEndpoint: string,
   redirectUri: string
@@ -493,7 +577,7 @@ async function registerMcpOAuthClient(
 }
 
 /**
- * Exchange an MCP authorization code for tokens (standalone, no class instance needed).
+ * 用 MCP 授权码换 token（独立函数，不需要类实例）。
  */
 async function exchangeMcpCodeForTokens(
   tokenEndpoint: string,
@@ -539,11 +623,14 @@ async function exchangeMcpCodeForTokens(
 }
 
 /**
- * Prepare an MCP OAuth flow without starting a callback server or opening a browser.
+ * 准备 MCP OAuth 流程，不启动回调服务器也不打开浏览器。
  *
- * Performs metadata discovery, PKCE generation, optional client registration,
- * and auth URL construction. Accepts either callbackPort (Electron) or
- * callbackUrl (WebUI) to construct the redirect URI.
+ * 执行元数据发现、PKCE 生成、可选的客户端注册、授权 URL 构造。
+ * 接受 callbackPort（Electron）或 callbackUrl（WebUI）来构造 redirect_uri。
+ *
+ * @param mcpUrl - MCP 服务器 URL
+ * @param options.callbackPort - 本地回调端口
+ * @param options.callbackUrl - 完整回调 URL
  */
 export async function prepareMcpOAuth(
   mcpUrl: string,
@@ -571,9 +658,8 @@ export async function prepareMcpOAuth(
         throw error;
       }
 
-      // Dynamic client registration can be intentionally gated by providers
-      // (for example returning 403 for unapproved clients). In that case,
-      // fall back to a default client ID and proceed with the flow.
+      // 动态客户端注册可能被提供商故意限制（例如未审核客户端返回 403）。
+      // 这种情况下回退到默认客户端 ID，继续完成流程。
       clientId = 'craft-agent';
     }
   } else {
@@ -601,7 +687,7 @@ export async function prepareMcpOAuth(
 }
 
 /**
- * Exchange an MCP authorization code for tokens (server-side).
+ * 在服务端用 MCP 授权码换 token。
  */
 export async function exchangeMcpOAuth(params: OAuthExchangeParams): Promise<OAuthExchangeResult> {
   try {
@@ -629,18 +715,21 @@ export async function exchangeMcpOAuth(params: OAuthExchangeParams): Promise<OAu
 }
 
 /**
- * Extract the origin (scheme + host + port) from an MCP URL.
- * This is the base URL for OAuth discovery per RFC 8414.
+ * 从 MCP URL 中提取 origin（scheme + host + port）。
+ * 这是 RFC 8414 规定的 OAuth discovery 基础 URL。
  */
 export function getMcpBaseUrl(mcpUrl: string): string {
   try {
     return new URL(mcpUrl).origin;
   } catch {
-    // If URL parsing fails, return as-is and let caller handle it
+    // URL 解析失败时原样返回，让调用方处理
     return mcpUrl;
   }
 }
 
+/**
+ * OAuth 授权服务器元数据。
+ */
 export interface OAuthMetadata {
   authorization_endpoint: string;
   token_endpoint: string;
@@ -648,8 +737,8 @@ export interface OAuthMetadata {
 }
 
 /**
- * Try to fetch OAuth authorization server metadata from a specific URL.
- * Returns the metadata if successful, null if not found or error.
+ * 尝试从指定 URL 获取 OAuth 授权服务器元数据。
+ * 成功返回元数据；失败或找不到返回 null。
  */
 async function tryFetchAuthServerMetadata(
   url: string,
@@ -676,19 +765,21 @@ async function tryFetchAuthServerMetadata(
 }
 
 /**
- * Protected resource metadata per RFC 9728
+ * 受保护资源元数据（RFC 9728）。
  */
 interface ProtectedResourceMetadata {
   resource: string;
   authorization_servers?: string[];
 }
 
-/** Default timeout for OAuth discovery requests (5 seconds) */
+/** OAuth discovery 请求默认超时：5 秒 */
 const DISCOVERY_TIMEOUT_MS = 5000;
 
 /**
- * Check if a URL is safe to fetch (SSRF protection).
- * Rejects private IPs, localhost, and non-HTTPS URLs.
+ * 检查 URL 是否可以安全请求（SSRF 防护）。
+ * 拒绝私有 IP、localhost、非 HTTPS URL。
+ *
+ * @returns safe 为 true 表示安全；为 false 时 reason 说明原因
  */
 function isUrlSafeToFetch(urlString: string): { safe: boolean; reason?: string } {
   let url: URL;
@@ -698,21 +789,20 @@ function isUrlSafeToFetch(urlString: string): { safe: boolean; reason?: string }
     return { safe: false, reason: 'Invalid URL' };
   }
 
-  // Must be HTTPS (allow HTTP only for localhost in dev)
+  // 必须是 HTTPS（开发环境允许 localhost 用 HTTP）
   if (url.protocol !== 'https:') {
     return { safe: false, reason: 'URL must use HTTPS' };
   }
 
-  // Check hostname for private IP ranges
+  // 检查 hostname 是否是私有 IP
   const hostname = url.hostname.toLowerCase();
 
-  // Block localhost variants
+  // 拦截 localhost 变体
   if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
     return { safe: false, reason: 'Localhost not allowed' };
   }
 
-  // Block private IP ranges (basic check - covers most cases)
-  // This catches: 10.x.x.x, 172.16-31.x.x, 192.168.x.x, 169.254.x.x
+  // 拦截常见私有网段：10.x.x.x、172.16-31.x.x、192.168.x.x、169.254.x.x
   const ipMatch = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
   if (ipMatch) {
     const a = Number(ipMatch[1]);
@@ -723,7 +813,7 @@ function isUrlSafeToFetch(urlString: string): { safe: boolean; reason?: string }
       a === 127 ||                          // 127.0.0.0/8
       (a === 172 && b >= 16 && b <= 31) ||  // 172.16.0.0/12
       (a === 192 && b === 168) ||           // 192.168.0.0/16
-      (a === 169 && b === 254)              // 169.254.0.0/16 (link-local/AWS metadata)
+      (a === 169 && b === 254)              // 169.254.0.0/16（链路本地/AWS metadata）
     ) {
       return { safe: false, reason: 'Private IP range not allowed' };
     }
@@ -733,16 +823,19 @@ function isUrlSafeToFetch(urlString: string): { safe: boolean; reason?: string }
 }
 
 /**
- * Type guard for ProtectedResourceMetadata
+ * 类型守卫：判断数据是否符合 ProtectedResourceMetadata 结构。
+ *
+ * 类型守卫是 TS 特性：函数返回 boolean，但返回 true 时 TS 会把参数收窄成指定类型。
+ * 类似 Go 里的 type switch，但由编译器推断。
  */
 function isProtectedResourceMetadata(data: unknown): data is ProtectedResourceMetadata {
   if (typeof data !== 'object' || data === null) return false;
   const obj = data as Record<string, unknown>;
 
-  // resource is required
+  // resource 是必填字段
   if (typeof obj.resource !== 'string') return false;
 
-  // authorization_servers is optional but must be string array if present
+  // authorization_servers 可选，但如果有必须是字符串数组
   if (obj.authorization_servers !== undefined) {
     if (!Array.isArray(obj.authorization_servers)) return false;
     if (!obj.authorization_servers.every(s => typeof s === 'string')) return false;
@@ -752,7 +845,7 @@ function isProtectedResourceMetadata(data: unknown): data is ProtectedResourceMe
 }
 
 /**
- * Fetch with timeout using AbortController
+ * 带超时的 fetch：用 AbortController 实现。
  */
 async function fetchWithTimeout(
   url: string,
@@ -774,35 +867,39 @@ async function fetchWithTimeout(
 }
 
 /**
- * Normalize URL by removing trailing slash
+ * 去掉 URL 末尾的斜杠。
  */
 function normalizeUrl(url: string): string {
   return url.endsWith('/') ? url.slice(0, -1) : url;
 }
 
 /**
- * Parse the resource_metadata URL from a WWW-Authenticate header.
- * Example header: Bearer error="invalid_token", resource_metadata="https://example.com/.well-known/oauth-protected-resource/path"
- * Supports both double and single quoted values per RFC 7235.
+ * 从 WWW-Authenticate 响应头中解析 resource_metadata URL。
+ *
+ * 示例头：
+ * Bearer error="invalid_token", resource_metadata="https://example.com/.well-known/oauth-protected-resource/path"
+ *
+ * 支持 RFC 7235 规定的双引号和单引号值。
  */
 function parseResourceMetadataFromHeader(wwwAuthenticate: string | null): string | null {
   if (!wwwAuthenticate) return null;
 
-  // Look for resource_metadata="..." or resource_metadata='...' in the header
-  // Also handles optional spaces around the equals sign
+  // 查找 resource_metadata="..." 或 resource_metadata='...'
+  // 也兼容等号两边有空格的情况
   const match = wwwAuthenticate.match(/resource_metadata\s*=\s*["']([^"']+)["']/);
   return match?.[1] ?? null;
 }
 
 /**
- * Fetch protected resource metadata and return the authorization server URL.
- * Per RFC 9728, the protected resource metadata contains authorization_servers array.
+ * 获取受保护资源元数据并返回授权服务器 URL。
+ *
+ * 按 RFC 9728，受保护资源元数据里包含 authorization_servers 数组。
  */
 async function fetchProtectedResourceMetadata(
   metadataUrl: string,
   onLog?: (message: string) => void
 ): Promise<string | null> {
-  // SSRF protection: validate URL before fetching
+  // SSRF 防护：请求前校验 URL
   const urlCheck = isUrlSafeToFetch(metadataUrl);
   if (!urlCheck.safe) {
     onLog?.(`  ✗ Unsafe URL rejected: ${urlCheck.reason}`);
@@ -819,13 +916,13 @@ async function fetchProtectedResourceMetadata(
 
     const data: unknown = await response.json();
 
-    // Type guard validation
+    // 类型守卫校验
     if (!isProtectedResourceMetadata(data)) {
       onLog?.(`  ✗ Invalid protected resource metadata format`);
       return null;
     }
 
-    // Check for non-empty authorization_servers array
+    // 检查 authorization_servers 是否非空
     if (!data.authorization_servers?.length) {
       onLog?.(`  ✗ No authorization_servers in protected resource metadata`);
       return null;
@@ -833,7 +930,7 @@ async function fetchProtectedResourceMetadata(
 
     const authServer = data.authorization_servers[0]!;
 
-    // Validate the auth server URL too
+    // 授权服务器 URL 也要做 SSRF 校验
     const authServerCheck = isUrlSafeToFetch(authServer);
     if (!authServerCheck.safe) {
       onLog?.(`  ✗ Unsafe authorization server URL rejected: ${authServerCheck.reason}`);
@@ -854,11 +951,11 @@ async function fetchProtectedResourceMetadata(
 }
 
 /**
- * Try to discover OAuth metadata via RFC 9728 flow:
- * 1. Make a request to the MCP endpoint to get 401 with WWW-Authenticate header
- * 2. Parse resource_metadata URL from the header
- * 3. Fetch protected resource metadata
- * 4. Get authorization server URL and fetch its metadata
+ * 通过 RFC 9728 流程发现 OAuth 元数据：
+ * 1. 向 MCP 端点发请求，拿到 401 + WWW-Authenticate 头
+ * 2. 从头中解析 resource_metadata URL
+ * 3. 获取受保护资源元数据
+ * 4. 拿到授权服务器 URL 后再获取其元数据
  */
 async function discoverViaProtectedResource(
   mcpUrl: string,
@@ -867,21 +964,21 @@ async function discoverViaProtectedResource(
   try {
     onLog?.(`  Trying RFC 9728 protected resource discovery...`);
 
-    // Make a request to the MCP endpoint to trigger 401
-    // Try HEAD first, fall back to GET, then POST (Streamable HTTP servers only accept POST)
+    // 向 MCP 端点发请求以触发 401
+    // 先尝试 HEAD，不支持再回退 GET，再不支持则 POST（Streamable HTTP MCP 服务器只接受 POST）
     let response: Response;
     try {
       response = await fetchWithTimeout(mcpUrl, { method: 'HEAD' });
-      // Some servers don't support HEAD, fall back to GET
+      // 有些服务器不支持 HEAD，回退 GET
       if (response.status === 405) {
         onLog?.(`  HEAD not supported, trying GET...`);
         response = await fetchWithTimeout(mcpUrl, { method: 'GET' });
       }
-      // Streamable HTTP MCP servers only accept POST.
-      // POST is not a safe HTTP method, but this is acceptable here:
-      // 1. We only proceed if the response is 401 (all other statuses are ignored)
-      // 2. The endpoint is user-configured and trusted by design
-      // 3. The body '{}' is a no-op for JSON-RPC servers (missing required fields)
+      // Streamable HTTP MCP 服务器只接受 POST。
+      // POST 不是安全方法，但这里可以接受：
+      // 1. 只在响应为 401 时继续处理，其他状态都忽略
+      // 2. 端点是用户配置的、设计上受信任的
+      // 3. 请求体 '{}' 对 JSON-RPC 服务器来说是无操作（缺少必填字段）
       if (response.status === 405) {
         onLog?.(`  GET not supported, trying POST...`);
         response = await fetchWithTimeout(mcpUrl, {
@@ -897,7 +994,7 @@ async function discoverViaProtectedResource(
       return null;
     }
 
-    // We expect a 401 with WWW-Authenticate header
+    // 期望收到 401 + WWW-Authenticate 头
     if (response.status !== 401) {
       onLog?.(`  ✗ Expected 401, got ${response.status}`);
       return null;
@@ -911,7 +1008,7 @@ async function discoverViaProtectedResource(
       return null;
     }
 
-    // SSRF protection: validate the resource_metadata URL
+    // SSRF 防护：校验 resource_metadata URL
     const urlCheck = isUrlSafeToFetch(resourceMetadataUrl);
     if (!urlCheck.safe) {
       onLog?.(`  ✗ Unsafe resource_metadata URL rejected: ${urlCheck.reason}`);
@@ -920,13 +1017,13 @@ async function discoverViaProtectedResource(
 
     onLog?.(`  Found resource_metadata hint`);
 
-    // Fetch protected resource metadata to get authorization server
+    // 获取受保护资源元数据，拿到授权服务器
     const authServerUrl = await fetchProtectedResourceMetadata(resourceMetadataUrl, onLog);
     if (!authServerUrl) {
       return null;
     }
 
-    // Fetch authorization server metadata (normalize URL to avoid double slashes)
+    // 获取授权服务器元数据（normalize URL 防止双斜杠）
     const normalizedAuthServer = normalizeUrl(authServerUrl);
     const authServerMetadataUrl = `${normalizedAuthServer}/.well-known/oauth-authorization-server`;
     return await tryFetchAuthServerMetadata(authServerMetadataUrl, onLog);
@@ -938,13 +1035,13 @@ async function discoverViaProtectedResource(
 }
 
 /**
- * Discovers OAuth metadata using progressive discovery per RFC 8414 and RFC 9728.
- * Returns the first successful metadata, or null if all fail.
+ * 渐进式发现 OAuth 元数据（RFC 8414 + RFC 9728）。
+ * 返回第一个成功的元数据，全部失败返回 null。
  *
- * Discovery order:
- * 1. RFC 9728: Parse resource_metadata from WWW-Authenticate header on 401
- * 2. Origin root: `{origin}/.well-known/oauth-authorization-server`
- * 3. Path-scoped: `{origin}/.well-known/oauth-authorization-server{pathname}`
+ * 发现顺序：
+ * 1. RFC 9728：从 401 响应的 WWW-Authenticate 头解析 resource_metadata
+ * 2. Origin 根目录：{origin}/.well-known/oauth-authorization-server
+ * 3. Path-scoped：{origin}/.well-known/oauth-authorization-server{pathname}
  */
 export async function discoverOAuthMetadata(
   mcpUrl: string,
@@ -960,17 +1057,17 @@ export async function discoverOAuthMetadata(
 
   onLog?.(`Discovering OAuth metadata for ${mcpUrl}`);
 
-  // 1. Try RFC 9728 protected resource discovery first (handles Craft MCP and other compliant servers)
+  // 1. 先尝试 RFC 9728 受保护资源发现（适用于 Craft MCP 和其他合规服务器）
   const rfc9728Metadata = await discoverViaProtectedResource(mcpUrl, onLog);
   if (rfc9728Metadata) {
     return rfc9728Metadata;
   }
 
-  // 2. Fall back to RFC 8414 discovery locations
+  // 2. 回退到 RFC 8414 标准发现位置
   const candidates = [
-    // Origin root (most common for MCP servers)
+    // Origin 根目录（MCP 服务器最常见）
     `${url.origin}/.well-known/oauth-authorization-server`,
-    // Path-scoped (RFC 8414 allows this)
+    // Path-scoped（RFC 8414 允许）
     `${url.origin}/.well-known/oauth-authorization-server${url.pathname}`,
   ];
 

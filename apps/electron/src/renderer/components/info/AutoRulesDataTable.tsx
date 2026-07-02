@@ -1,12 +1,10 @@
 /**
  * AutoRulesDataTable
  *
- * Flat data table displaying all auto-label rules across all labels.
- * Each row shows which label a rule belongs to, the regex pattern, flags,
- * value template, and description.
+ * 平铺展示所有标签（label）自动应用规则的表格。
+ * 每一行包含规则所属标签、正则表达式、flags、值模板与描述。
  *
- * Rules are collected by recursively traversing the label tree and flattening
- * all autoRules into a single list.
+ * 通过递归遍历标签树，把所有 autoRules 拍平成单一列表。
  */
 
 import * as React from 'react'
@@ -26,32 +24,32 @@ import { toast } from 'sonner'
 import type { LabelConfig, AutoLabelRule } from '@craft-agent/shared/labels'
 
 /**
- * Flattened auto-rule row: associates a rule with its parent label
+ * 拍平后的自动规则行：把规则和它所属的标签关联起来。
  */
 interface AutoRuleRow {
-  /** The label this rule belongs to */
+  /** 规则所属的标签 */
   label: LabelConfig
-  /** The auto-label rule */
+  /** 自动标签规则本身 */
   rule: AutoLabelRule
 }
 
 interface AutoRulesDataTableProps {
-  /** Label tree (root-level nodes with nested children) */
+  /** 标签树（根节点，可能包含嵌套 children） */
   data: LabelConfig[]
-  /** Show search input */
+  /** 是否显示搜索框 */
   searchable?: boolean
-  /** Max height with scroll */
+  /** 最大高度，超出后纵向滚动 */
   maxHeight?: number
-  /** Enable fullscreen button */
+  /** 是否启用全屏按钮 */
   fullscreen?: boolean
-  /** Title for fullscreen overlay */
+  /** 全屏弹窗的标题 */
   fullscreenTitle?: string
   className?: string
 }
 
 /**
- * PatternBadge - Monospace regex pattern with click-to-copy and tooltip.
- * Mirrors the PatternBadge from PermissionsDataTable for consistency.
+ * PatternBadge - 等宽字体展示正则模式，点击可复制到剪贴板，过长时显示 tooltip。
+ * 与 PermissionsDataTable 中的 PatternBadge 保持一致。
  */
 function PatternBadge({ pattern }: { pattern: string }) {
   const { t } = useTranslation()
@@ -86,7 +84,7 @@ function PatternBadge({ pattern }: { pattern: string }) {
   return badge
 }
 
-// Column definitions for the auto-rules flat table
+// 自动规则平铺表格的列定义
 function getColumns(t: TFunction): ColumnDef<AutoRuleRow>[] {
   return [
     {
@@ -159,8 +157,7 @@ function getColumns(t: TFunction): ColumnDef<AutoRuleRow>[] {
 }
 
 /**
- * Recursively collect all auto-rules from the label tree,
- * associating each rule with its parent label.
+ * 递归收集标签树中的所有自动规则，每个规则都与其所属标签关联。
  */
 function collectAutoRules(labels: LabelConfig[]): AutoRuleRow[] {
   const rows: AutoRuleRow[] = []
@@ -195,10 +192,10 @@ export function AutoRulesDataTable({
   const { isDark } = useTheme()
   const columns = useMemo(() => getColumns(t), [t])
 
-  // Flatten label tree into auto-rule rows
+  // 把标签树拍平为自动规则行
   const rows = useMemo(() => collectAutoRules(data), [data])
 
-  // Fullscreen button (shown on hover)
+  // 全屏按钮（hover 时显示）
   const fullscreenButton = fullscreen ? (
     <button
       onClick={() => setIsFullscreen(true)}
@@ -227,7 +224,7 @@ export function AutoRulesDataTable({
         className={cn(fullscreen && 'group', className)}
       />
 
-      {/* Fullscreen overlay */}
+      {/* 全屏弹窗 overlay */}
       {fullscreen && (
         <DataTableOverlay
           isOpen={isFullscreen}

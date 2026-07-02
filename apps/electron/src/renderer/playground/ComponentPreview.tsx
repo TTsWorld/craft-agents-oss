@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils'
 import type { ComponentEntry } from './registry'
 import { TooltipProvider } from '@craft-agent/ui'
 
+/** 中间预览区 props */
 interface ComponentPreviewProps {
   component: ComponentEntry
   props: Record<string, unknown>
@@ -12,8 +13,10 @@ const MIN_WIDTH = 100
 const MIN_HEIGHT = 100
 const DEFAULT_WIDTH = 800
 const DEFAULT_HEIGHT = 600
+/** localStorage 键：记录预览容器的尺寸 */
 const STORAGE_KEY = 'playground-preview-size'
 
+/** 从 localStorage 读取上次保存的预览尺寸 */
 function loadSavedSize(): { width: number; height: number } {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
@@ -27,11 +30,12 @@ function loadSavedSize(): { width: number; height: number } {
       }
     }
   } catch {
-    // Ignore parse errors
+    // 忽略解析异常
   }
   return { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }
 }
 
+/** 组件预览区：展示标题、可拖拽调整大小的预览框 */
 export function ComponentPreview({ component, props }: ComponentPreviewProps) {
   const [size, setSize] = React.useState(loadSavedSize)
   const containerRef = React.useRef<HTMLDivElement>(null)
@@ -39,7 +43,7 @@ export function ComponentPreview({ component, props }: ComponentPreviewProps) {
   const startPosRef = React.useRef({ x: 0, y: 0 })
   const startSizeRef = React.useRef({ width: 0, height: 0 })
 
-  // Merge default props, mock data, and current props
+  // 合并默认值、mock 数据与当前手动设置的 props
   const mergedProps = React.useMemo(() => {
     const defaults: Record<string, unknown> = {}
     for (const prop of component.props) {
@@ -49,10 +53,11 @@ export function ComponentPreview({ component, props }: ComponentPreviewProps) {
     return { ...defaults, ...mockData, ...props }
   }, [component, props])
 
-  // Render with optional wrapper
+  // 取出要渲染的组件与可选的 wrapper
   const Component = component.component
   const Wrapper = component.wrapper ?? React.Fragment
 
+  /** 开始拖拽调整尺寸 */
   const handleMouseDown = React.useCallback((e: React.MouseEvent, direction: 'right' | 'bottom' | 'corner') => {
     e.preventDefault()
     isDraggingRef.current = direction
@@ -60,6 +65,7 @@ export function ComponentPreview({ component, props }: ComponentPreviewProps) {
     startSizeRef.current = { ...size }
   }, [size])
 
+  // 监听全局鼠标移动/松开，完成拖拽并保存尺寸
   React.useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDraggingRef.current) return
@@ -84,7 +90,7 @@ export function ComponentPreview({ component, props }: ComponentPreviewProps) {
 
     const handleMouseUp = () => {
       if (isDraggingRef.current) {
-        // Save size to localStorage when drag ends
+        // 拖拽结束时把尺寸持久化到 localStorage
         setSize(currentSize => {
           localStorage.setItem(STORAGE_KEY, JSON.stringify(currentSize))
           return currentSize
@@ -102,13 +108,14 @@ export function ComponentPreview({ component, props }: ComponentPreviewProps) {
     }
   }, [])
 
+  // 根据组件注册项的 overflow / layout 配置决定预览框滚动行为
   const previewOverflowClass = component.previewOverflow
     ? (component.previewOverflow === 'visible' ? 'overflow-visible' : component.previewOverflow === 'hidden' ? 'overflow-hidden' : 'overflow-auto')
     : (component.layout === 'full' ? 'overflow-hidden' : 'overflow-auto')
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Header */}
+      {/* 标题栏：组件名称、描述、当前尺寸、重置按钮 */}
       <div className="border-b border-border px-4 pt-3 pb-3">
         <h2 className="text-lg font-semibold text-foreground font-sans">
           {component.name}
@@ -132,20 +139,20 @@ export function ComponentPreview({ component, props }: ComponentPreviewProps) {
         </div>
       </div>
 
-      {/* Preview area */}
+      {/* 预览画布 */}
       <div
         className={cn(
           'flex-1 overflow-auto p-4 flex',
           component.layout === 'top' ? 'items-start justify-center' : 'items-center justify-center'
         )}
       >
-        {/* Resizable container */}
+        {/* 可调整大小的容器 */}
         <div
           ref={containerRef}
           className="relative"
           style={{ width: size.width, height: size.height }}
         >
-          {/* Component preview box */}
+          {/* 组件预览框 */}
           <div
             className={cn(
               'w-full h-full rounded-lg border border-border',
@@ -161,19 +168,19 @@ export function ComponentPreview({ component, props }: ComponentPreviewProps) {
             </TooltipProvider>
           </div>
 
-          {/* Right resize handle */}
+          {/* 右侧拖拽条 */}
           <div
             onMouseDown={(e) => handleMouseDown(e, 'right')}
             className="absolute top-0 -right-1 w-2 h-full cursor-ew-resize hover:bg-foreground/20 active:bg-foreground/30 transition-colors"
           />
 
-          {/* Bottom resize handle */}
+          {/* 底部拖拽条 */}
           <div
             onMouseDown={(e) => handleMouseDown(e, 'bottom')}
             className="absolute -bottom-1 left-0 h-2 w-full cursor-ns-resize hover:bg-foreground/20 active:bg-foreground/30 transition-colors"
           />
 
-          {/* Corner resize handle */}
+          {/* 右下角拖拽手柄 */}
           <div
             onMouseDown={(e) => handleMouseDown(e, 'corner')}
             className="absolute -bottom-1 -right-1 w-3 h-3 cursor-nwse-resize hover:bg-foreground/30 active:bg-foreground/40 transition-colors rounded-br"

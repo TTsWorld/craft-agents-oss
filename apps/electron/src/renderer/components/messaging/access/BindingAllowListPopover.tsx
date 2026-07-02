@@ -1,16 +1,13 @@
 /**
- * Per-binding allow-list editor.
+ * 单条 binding（会话绑定）的 allow-list 编辑器。
  *
- * Trigger is a small pill rendered next to the binding row's actions; click
- * opens a popover with three modes:
- *  - inherit     — fall back to workspace owners (default for new bindings)
- *  - allow-list  — explicit subset of senders (always includes the owner)
- *  - open        — anyone in an accepted chat can route (back-compat / public)
+ * 触发器是 binding 行右侧的一个小药丸按钮；点击后弹出三种模式：
+ *  - inherit：继承工作空间 owner 列表（新 binding 的默认值）
+ *  - allow-list：显式指定允许发送者的子集（必须包含 owner）
+ *  - open：任何在该 chat 内的人都能路由消息（兼容旧版本/公开场景）
  *
- * Phase 1 keeps the allow-list editor minimal: the user can see existing
- * allowed senders and toggle owner names on/off. Adding arbitrary senders
- * happens via the workspace pending-requests flow — this popover only lets
- * you slice down which subset of *known* users can talk to *this* binding.
+ * 第一期做得比较轻量：只能看到已有允许发送者并勾选/取消 owner。
+ * 添加任意发送者走“待审批请求”流程；这个 popover 只负责把已知用户裁剪到当前 binding。
  */
 
 import * as React from 'react'
@@ -22,23 +19,26 @@ import type { BindingAccess, BindingAccessMode, PlatformOwner } from './types'
 
 interface Props {
   access: BindingAccess
-  /** Workspace owners; the inherit/allow-list modes operate against this set. */
+  // 工作空间 owner 列表；inherit / allow-list 模式都基于这个集合计算
   workspaceOwners: PlatformOwner[]
   onChange: (next: BindingAccess) => void
 }
 
+// 三种模式对应的 i18n key，用于在 UI 中显示模式名称
 const MODE_LABEL_KEYS: Record<BindingAccessMode, string> = {
   inherit: 'settings.messaging.telegram.access.bindingPopover.mode.inherit.label',
   'allow-list': 'settings.messaging.telegram.access.bindingPopover.mode.allowList.label',
   open: 'settings.messaging.telegram.access.bindingPopover.mode.open.label',
 }
 
+// 三种模式对应的说明文字 i18n key
 const MODE_DESCRIPTION_KEYS: Record<BindingAccessMode, string> = {
   inherit: 'settings.messaging.telegram.access.bindingPopover.mode.inherit.description',
   'allow-list': 'settings.messaging.telegram.access.bindingPopover.mode.allowList.description',
   open: 'settings.messaging.telegram.access.bindingPopover.mode.open.description',
 }
 
+// 每种模式对应的图标组件。typeof ShieldCheck 表示“某个 lucide 图标组件类型”。
 const MODE_ICONS: Record<BindingAccessMode, typeof ShieldCheck> = {
   inherit: ShieldCheck,
   'allow-list': Lock,
@@ -78,8 +78,7 @@ export function BindingAllowListPopover({ access, workspaceOwners, onChange }: P
               onSelect={() =>
                 onChange({
                   mode,
-                  // Reset allow-list when leaving 'allow-list' mode so the
-                  // gateway has no stale data to evaluate.
+                  // 离开 allow-list 模式时清空 allowedSenderIds，避免网关继续沿用旧数据做判断
                   allowedSenderIds:
                     mode === 'allow-list'
                       ? access.allowedSenderIds.length > 0
@@ -173,6 +172,7 @@ function ModeRow({
   )
 }
 
+// 根据当前 access 模式生成触发按钮上显示的简短标签
 function buildTriggerLabel(
   access: BindingAccess,
   workspaceOwnersCount: number,

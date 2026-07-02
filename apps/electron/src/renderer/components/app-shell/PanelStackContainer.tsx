@@ -1,25 +1,23 @@
 /**
  * PanelStackContainer
  *
- * Horizontal layout container for ALL panels:
- * Sidebar → Navigator → Content Panel(s) with resize sashes.
+ * 所有面板的横向布局容器：
+ * 侧边栏 → 导航面板 → 内容面板（带可拖拽调整宽度的 sash）。
  *
- * Content panels use CSS flex-grow with their proportions as weights:
- * - Each panel gets `flex: <proportion> 1 0px` with `min-width: PANEL_MIN_WIDTH`
- * - Flex distributes available space proportionally — panels fill the viewport
- * - When panels hit min-width, overflow-x: auto kicks in naturally
+ * 内容面板使用 CSS flex-grow，按 proportion 作为权重分配空间：
+ * - 每个面板得到 `flex: <proportion> 1 0px`，并设置 `min-width: PANEL_MIN_WIDTH`
+ * - flex 会按比例把剩余空间分完，让面板填满可视区域
+ * - 当面板碰到最小宽度时，容器自然出现横向滚动条
  *
- * Sidebar and Navigator are NOT part of the proportional layout —
- * they have their own fixed/user-resizable widths managed by AppShell.
- * They just reduce the available width for content panels and scroll with everything else.
+ * 侧边栏和导航面板不参与比例布局——它们的宽度由 AppShell 单独管理，
+ * 只是占掉内容面板可用的宽度，并随整体一起滚动。
  *
- * The right sidebar stays OUTSIDE this container.
+ * 右侧边栏不在这个容器内部。
  *
- * Compact mode (mobile / narrow window):
- * The flex layout is replaced with an absolute-positioned, transform-animated
- * stack — navigator and the focused content panel both stay mounted and slide
- * in/out via CompactPanelTransition. This produces an iOS UINavigationController
- * feel rather than a CSS reflow.
+ * 紧凑模式（移动端 / 窄窗口）：
+ * flex 布局被替换为 absolute 定位 + transform 动画的栈：
+ * 导航面板和当前聚焦的内容面板都保持挂载，通过 CompactPanelTransition 滑入/滑出，
+ * 实现类似 iOS UINavigationController 的转场效果，而不是 CSS 重排。
  */
 
 import { useRef, useEffect } from 'react'
@@ -40,10 +38,10 @@ import {
   RADIUS_INNER,
 } from './panel-constants'
 
-/** Spring transition matching AppShell's sidebar/navigator animation */
+/** 弹簧动画参数，与 AppShell 侧边栏/导航面板的动画保持一致 */
 const PANEL_SPRING = { type: 'spring' as const, stiffness: 600, damping: 49 }
 
-/** Visual breathing room between the fixed compact TopBar and the first panel. */
+/** 紧凑模式下，固定顶部 TopBar 与第一个面板之间的视觉间隙 */
 const COMPACT_PANEL_TOP_GAP = 8
 
 interface PanelStackContainerProps {
@@ -53,11 +51,12 @@ interface PanelStackContainerProps {
   navigatorWidth: number
   isSidebarAndNavigatorHidden: boolean
   isRightSidebarVisible?: boolean
-  /** Compact mode: single-panel, list/content toggle (mobile or narrow window) */
+  /** 紧凑模式：单面板，列表与内容切换（移动端或窄窗口） */
   isCompact?: boolean
   isResizing?: boolean
 }
 
+/** 面板栈容器：根据桌面/紧凑模式渲染不同的布局 */
 export function PanelStackContainer({
   sidebarSlot,
   sidebarWidth,
@@ -74,9 +73,9 @@ export function PanelStackContainer({
 
   const contentPanels = panelStack
 
-  // Compact mode: drill-in is "detail focused", not just "session selected".
-  // For sessions: a session is selected. For settings: a subpage is selected.
-  // For sources/skills/automations: a detail entity is selected.
+  // 紧凑模式下，“进入详情”不只是“选中会话”。
+  // 会话：选中了某个会话；设置：选中了某个子页面；
+  // sources/skills/automations：选中了某个具体实体。
   const focusedNavState = focusedRoute ? parseRouteToNavigationState(focusedRoute) : null
   const isDetailFocused = isDetailNavState(focusedNavState)
   const hasSelectedContent = isCompact && isDetailFocused
@@ -89,15 +88,14 @@ export function PanelStackContainer({
   const prevCountRef = useRef(contentPanels.length)
 
   const hasSidebar = sidebarWidth > 0
-  // Desktop: navigator is shown when AppShell asks for it. Compact: navigator
-  // is always mounted (transform-hidden when detail-focused) so the slide can
-  // animate both slots in lockstep.
+  // 桌面端：按 AppShell 给的 navigatorWidth 决定是否显示导航面板。
+  // 紧凑模式：导航面板始终挂载；当聚焦详情时通过 transform 隐藏，保证两侧同步滑入/滑出。
   const hasNavigator = isCompact ? navigatorWidth > 0 : navigatorWidth > 0
   const isMultiPanel = visiblePanels.length > 1
   const isLeftEdge = !hasSidebar && !hasNavigator
 
-  // Auto-scroll to newly pushed content panel (desktop multi-panel only).
-  // Compact mode is single-panel so there's nothing to scroll into view.
+  // 桌面多面板时，新增内容面板后自动滚动到最右侧。
+  // 紧凑模式是单面板，不需要滚动进视野。
   useEffect(() => {
     if (contentPanels.length > prevCountRef.current && scrollRef.current && !isCompact) {
       requestAnimationFrame(() => {
@@ -112,10 +110,10 @@ export function PanelStackContainer({
 
   const transition = (isResizing || isCompact) ? { duration: 0 } : PANEL_SPRING
 
-  // === COMPACT BRANCH ===
-  // Single-panel layout with iOS-style slide between navigator and detail.
-  // Both stay in the DOM; CompactPanelTransition transforms whichever should be
-  // off-screen. Sidebar is hidden by AppShell in compact mode (sidebarWidth = 0).
+  // === 紧凑模式分支 ===
+  // 单面板布局，导航面板和详情面板像 iOS 一样左右滑动切换。
+  // 两者都保留在 DOM 中，CompactPanelTransition 负责把不在当前屏的面板移出可视区。
+  // 紧凑模式下侧边栏由 AppShell 隐藏（sidebarWidth = 0）。
   if (isCompact) {
     const focusedEntry = visiblePanels[0]
     return (
@@ -131,7 +129,7 @@ export function PanelStackContainer({
           '--compact-panel-stack-top': `${PANEL_STACK_VERTICAL_OVERFLOW + COMPACT_PANEL_TOP_GAP}px`,
         } as React.CSSProperties}
       >
-        {/* Navigator slot — full width, slides left to -30% when detail focused. */}
+        {/* 导航面板插槽：全宽；进入详情时向左滑出到 -30% */}
         {hasNavigator && (
           <CompactPanelTransition role="navigator" isDetailActive={hasSelectedContent}>
             <div
@@ -141,7 +139,7 @@ export function PanelStackContainer({
                 'bg-background shadow-middle',
               )}
               style={{
-                // Compact mode runs flush to the viewport floor — no rounded bottom.
+                // 紧凑模式下贴底，底部不需要圆角
                 borderTopLeftRadius: RADIUS_INNER,
                 borderBottomLeftRadius: 0,
                 borderTopRightRadius: RADIUS_INNER,
@@ -153,7 +151,7 @@ export function PanelStackContainer({
           </CompactPanelTransition>
         )}
 
-        {/* Content slot — full width, slides in from the right when detail focused. */}
+        {/* 内容面板插槽：全宽；进入详情时从右侧滑入 */}
         {focusedEntry && (
           <CompactPanelTransition role="detail" isDetailActive={hasSelectedContent}>
             <div className="h-full w-full flex">
@@ -175,8 +173,8 @@ export function PanelStackContainer({
     )
   }
 
-  // === DESKTOP BRANCH ===
-  // Same flex-row layout as before; behavior is unchanged.
+  // === 桌面模式分支 ===
+  // 保持之前的 flex 横向布局，行为不变。
   return (
     <div
       ref={scrollRef}
@@ -200,7 +198,7 @@ export function PanelStackContainer({
         transition={transition}
         style={{ gap: PANEL_GAP, flexGrow: 1, minWidth: 0 }}
       >
-        {/* === SIDEBAR SLOT === */}
+        {/* === 侧边栏插槽 === */}
         <motion.div
           data-panel-role="sidebar"
           initial={false}
@@ -218,7 +216,7 @@ export function PanelStackContainer({
           </div>
         </motion.div>
 
-        {/* === NAVIGATOR SLOT === */}
+        {/* === 导航面板插槽 === */}
         <motion.div
           data-panel-role="navigator"
           initial={false}
@@ -244,7 +242,7 @@ export function PanelStackContainer({
           </div>
         </motion.div>
 
-        {/* === CONTENT PANELS WITH SASHES === */}
+        {/* === 内容面板与调整宽度 sash === */}
         {visiblePanels.length === 0 ? (
           <div className="flex-1 flex items-center justify-center" />
         ) : (

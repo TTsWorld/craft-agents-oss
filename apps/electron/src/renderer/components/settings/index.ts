@@ -1,8 +1,8 @@
 /**
  * Settings Components
  *
- * Reusable UI components for building settings pages.
- * Provides consistent styling and behavior across the app.
+ * 设置页可复用的 UI 组件集合。
+ * 提供统一的样式和行为，方便在 renderer 进程（Electron 的前端界面）中组装设置页面。
  *
  * @example
  * import {
@@ -14,7 +14,7 @@
  * } from '@/components/settings'
  */
 
-// Structure
+// 结构类组件
 export {
   SettingsSection,
   SettingsGroup,
@@ -31,7 +31,7 @@ export {
   type SettingsCardProps,
 } from './SettingsCard'
 
-// Rows
+// 行类组件
 export {
   SettingsRow,
   SettingsRowLabel,
@@ -43,7 +43,7 @@ export {
   type SettingsToggleProps,
 } from './SettingsToggle'
 
-// Selection
+// 选择类组件
 export {
   SettingsRadioGroup,
   SettingsRadioCard,
@@ -78,7 +78,7 @@ export {
   type SettingsMenuSelectRowProps,
 } from './SettingsMenuSelect'
 
-// Inputs
+// 输入类组件
 export {
   SettingsInput,
   SettingsInputRow,

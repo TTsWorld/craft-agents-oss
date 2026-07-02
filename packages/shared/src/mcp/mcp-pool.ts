@@ -1,18 +1,19 @@
 /**
- * Centralized MCP Client Pool
+ * 集中式 MCP 客户端连接池。
  *
- * Owns all MCP source connections in the main Electron process.
- * All backends (Claude, Pi) receive proxy tool definitions
- * and route tool calls through this pool instead of managing MCP connections
- * themselves.
+ * 在 Electron 主进程中持有所有 MCP source 的连接。
+ * 后端（Claude、Pi 等）拿到代理工具定义后，统一通过本池来调用工具，
+ * 而不需要各自维护 MCP 连接。
  *
- * Benefits:
- * - One MCP code path for all backends
- * - Shared clients across sessions (e.g., same Linear connection)
- * - No credential cache files — main process has direct access
- * - Runtime source switching without session restart
+ * 这样做的好处：
+ * - 所有后端共用一套 MCP 代码路径；
+ * - 同一连接可在多个 session 间复用（例如共用同一个 Linear 连接）；
+ * - 不需要凭证缓存文件，主进程可直接访问；
+ * - 运行时切换 source 不需要重启 session。
  */
 
+// 从 client.ts 导入实现类，并用 `type` 只导入类型；
+// `type` 告诉 TS 这些符号仅在类型检查阶段使用，不会生成运行时 import。
 import { CraftMcpClient, type McpClientConfig, type PoolClient } from './client.ts';
 import { ApiSourcePoolClient } from './api-source-pool-client.ts';
 import type { SdkMcpServerConfig } from '../agent/backend/types.ts';
@@ -27,8 +28,8 @@ import {
 } from '../utils/binary-detection.ts';
 
 /**
- * Configuration for an in-process API source server.
- * Used by sync() to connect API sources alongside MCP sources.
+ * 进程内 API source server 的配置。
+ * sync() 用它来和远程 MCP source 一起管理连接。
  */
 export interface ApiServerConfig {
   type: 'sdk';
@@ -36,8 +37,8 @@ export interface ApiServerConfig {
 }
 
 /**
- * Proxy tool definition — the format passed to backends for registration.
- * Uses mcp__{slug}__{toolName} naming convention.
+ * 代理工具定义：传给后端注册时用的格式。
+ * 名字遵循 `mcp__{slug}__{toolName}` 的约定。
  */
 export interface ProxyToolDef {
   name: string;
@@ -46,17 +47,17 @@ export interface ProxyToolDef {
 }
 
 /**
- * Result of an MCP tool call, matching the subprocess protocol format.
+ * MCP 工具调用的结果，格式与外部子进程协议对齐。
  */
 export interface McpToolResult {
   content: string;
   isError: boolean;
-  /** Source slug for error attribution (set on failure) */
+  /** 失败时用来标注是哪个 source 出的错 */
   sourceSlug?: string;
 }
 
 /**
- * Convert SdkMcpServerConfig (used by backend types) to CraftMcpClient config.
+ * 把后端使用的 SdkMcpServerConfig 转成 CraftMcpClient 能识别的 McpClientConfig。
  */
 function sdkConfigToClientConfig(config: SdkMcpServerConfig): McpClientConfig | null {
   if (config.type === 'http' || config.type === 'sse') {
@@ -78,9 +79,8 @@ function sdkConfigToClientConfig(config: SdkMcpServerConfig): McpClientConfig | 
 }
 
 /**
- * Check if an MCP source's config has changed in a way that requires reconnection.
- * Compares auth headers (token refresh) and URL changes.
- * Ignores stdio sources since they don't use OAuth tokens.
+ * 判断某个 MCP source 的配置是否发生了需要重新连接的变化。
+ * 主要比较认证头（token 刷新）和 URL 变化；忽略 stdio source，因为它们不使用 OAuth token。
  */
 function mcpConfigChanged(oldConfig: SdkMcpServerConfig, newConfig: SdkMcpServerConfig): boolean {
   if (oldConfig.type !== newConfig.type) return true;
@@ -98,62 +98,67 @@ function mcpConfigChanged(oldConfig: SdkMcpServerConfig, newConfig: SdkMcpServer
   return false;
 }
 
+/**
+ * MCP 客户端连接池：统一管理所有 source 的连、断、工具发现、调用。
+ */
 export class McpClientPool {
-  /** Active MCP clients keyed by source slug */
+  /** 当前活跃的 MCP 客户端，按 source slug 索引。 */
   private clients = new Map<string, PoolClient>();
 
-  /** Configs used for active MCP connections (for change detection during sync) */
+  /** 当前活跃连接使用的配置，sync() 时用来检测配置变化。 */
   protected activeConfigs = new Map<string, SdkMcpServerConfig>();
 
-  /** Cached tool lists keyed by source slug */
+  /** 每个 source 缓存的工具列表，按 slug 索引。 */
   private toolCache = new Map<string, Tool[]>();
 
-  /** Proxy tool name → { slug, originalName } (e.g., "mcp__linear__createIssue" → { slug: "linear", originalName: "createIssue" }) */
+  /** 代理工具名 → { slug, originalName }，例如 "mcp__linear__createIssue" → { slug: "linear", originalName: "createIssue" } */
   private proxyTools = new Map<string, { slug: string; originalName: string }>();
 
-  /** Optional debug logger */
+  /** 可选的调试日志回调。 */
   private debugFn: ((msg: string) => void) | undefined;
 
-  /** Workspace root path for local MCP filtering */
+  /** 当前 workspace 的根路径，用于过滤本地 MCP。 */
   private workspaceRootPath?: string;
 
-  /** Session storage path for saving large responses */
+  /** session 存储路径，用于保存大结果或二进制文件。 */
   private sessionPath?: string;
 
-  /** Summarize callback for large response handling */
+  /** 大结果摘要回调，收到超大响应时用来生成摘要。 */
   private summarizeCallback?: (prompt: string) => Promise<string | null>;
 
-  /** Called after sync() connects/disconnects sources, so clients can be notified */
+  /** sync() 连接/断开 source 后调用，通知外部工具列表已变。 */
   onToolsChanged?: () => void;
 
   constructor(options?: { debug?: (msg: string) => void; workspaceRootPath?: string; sessionPath?: string }) {
+    // `options?.debug` 是可选链：options 可能为 undefined，有值才取字段。
     this.debugFn = options?.debug;
     this.workspaceRootPath = options?.workspaceRootPath;
     this.sessionPath = options?.sessionPath;
   }
 
   /**
-   * Set the summarize callback for large response handling.
-   * Typically called after agent creation: pool.setSummarizeCallback(agent.getSummarizeCallback())
+   * 设置大结果摘要回调。
+   * 通常在创建 agent 后调用：pool.setSummarizeCallback(agent.getSummarizeCallback())
    */
   setSummarizeCallback(fn: (prompt: string) => Promise<string | null>): void {
     this.summarizeCallback = fn;
   }
 
+  // 私有调试方法，统一加前缀。
   private debug(msg: string): void {
     this.debugFn?.(`[McpClientPool] ${msg}`);
   }
 
   // ============================================================
-  // Connection Lifecycle
+  // 连接生命周期
   // ============================================================
 
   /**
-   * Register a client: connect, cache tools, build proxy mappings.
-   * Shared logic for both remote MCP and in-process API sources.
+   * 注册一个客户端：连上、缓存工具、建立代理映射。
+   * 供远程 MCP 和进程内 API source 共用。
    */
   protected async registerClient(slug: string, client: PoolClient): Promise<void> {
-    // listTools() triggers connect() internally for both CraftMcpClient and ApiSourcePoolClient
+    // listTools() 内部会自动触发 connect()，CraftMcpClient 和 ApiSourcePoolClient 都是如此。
     const tools = await client.listTools();
     this.clients.set(slug, client);
     this.toolCache.set(slug, tools);
@@ -167,13 +172,14 @@ export class McpClientPool {
   }
 
   /**
-   * Connect to an MCP source server (remote HTTP/SSE/stdio).
-   * If already connected, this is a no-op.
+   * 连接一个远程 MCP source（HTTP / SSE / stdio）。
+   * 如果已经连接，则什么都不做。
    */
   async connect(slug: string, config: SdkMcpServerConfig): Promise<void> {
     if (this.clients.has(slug)) return;
     const clientConfig = sdkConfigToClientConfig(config);
     if (!clientConfig) {
+      // `as { type: string }` 是类型断言：告诉 TS 把 config 当成有 type 字段的对象读取。
       this.debug(`Unknown MCP server type for ${slug}: ${(config as { type: string }).type}`);
       return;
     }
@@ -182,7 +188,7 @@ export class McpClientPool {
   }
 
   /**
-   * Connect to an in-process MCP server (API source) via in-memory transport.
+   * 连接一个进程内的 MCP server（API source），通过内存 transport 通信。
    */
   async connectInProcess(slug: string, mcpServer: McpServer): Promise<void> {
     if (this.clients.has(slug)) return;
@@ -190,7 +196,7 @@ export class McpClientPool {
   }
 
   /**
-   * Disconnect a source and remove its tools from the pool.
+   * 断开某个 source 的连接，并清除它的工具映射。
    */
   async disconnect(slug: string): Promise<void> {
     const client = this.clients.get(slug);
@@ -199,7 +205,7 @@ export class McpClientPool {
       this.clients.delete(slug);
     }
 
-    // Remove proxy tool entries for this slug
+    // 删除该 slug 对应的所有代理工具条目。
     for (const [proxyName, info] of this.proxyTools) {
       if (info.slug === slug) this.proxyTools.delete(proxyName);
     }
@@ -209,7 +215,7 @@ export class McpClientPool {
   }
 
   /**
-   * Disconnect all sources and clear all state.
+   * 断开所有 source 并清空所有状态。
    */
   async disconnectAll(): Promise<void> {
     const closePromises = Array.from(this.clients.values()).map(c => c.close().catch(() => {}));
@@ -222,22 +228,22 @@ export class McpClientPool {
   }
 
   // ============================================================
-  // Sync: Reconcile active sources
+  // Sync：把实际连接对齐到期望的 source 集合
   // ============================================================
 
   /**
-   * Sync the pool to match a desired set of MCP + API sources.
-   * Connects new sources, disconnects removed ones, keeps existing ones.
+   * 让连接池和期望的 MCP + API source 集合保持一致。
+   * 新 source 连上，移除不需要的 source，保留未变化的 source。
    *
-   * @param mcpServers - Map of slug → config for desired MCP sources
-   * @param apiServers - Map of slug → config for desired API sources
-   * @returns List of slugs that failed to connect
+   * @param mcpServers - 期望的 MCP source：slug → 配置
+   * @param apiServers - 期望的 API source：slug → 配置
+   * @returns 连接失败的 slug 列表
    */
   async sync(
     mcpServers: Record<string, SdkMcpServerConfig>,
     apiServers: Record<string, ApiServerConfig> = {}
   ): Promise<string[]> {
-    // Filter out stdio sources when local MCP is disabled for this workspace.
+    // 如果当前 workspace 禁用了本地 MCP，则过滤掉 stdio 类型的 source。
     const localEnabled = !this.workspaceRootPath || isLocalMcpEnabled(this.workspaceRootPath);
     const filteredMcp: Record<string, SdkMcpServerConfig> = {};
     for (const [slug, config] of Object.entries(mcpServers)) {
@@ -248,9 +254,10 @@ export class McpClientPool {
       filteredMcp[slug] = config;
     }
 
-    // Extract McpServer instances from API configs
+    // 从 API 配置中提取出真正的 McpServer 实例。
     const apiSlugs = new Map<string, McpServer>();
     for (const [slug, config] of Object.entries(apiServers)) {
+      // `config?.type` 是可选链：config 可能为 undefined；只有 type 为 sdk 且有 instance 才加入。
       if (config?.type === 'sdk' && config.instance) {
         apiSlugs.set(slug, config.instance);
       }
@@ -260,14 +267,14 @@ export class McpClientPool {
     const currentSlugs = new Set(this.clients.keys());
     const failures: string[] = [];
 
-    // Disconnect sources no longer desired
+    // 断开那些不再需要的 source。
     for (const slug of currentSlugs) {
       if (!desiredSlugs.has(slug)) {
         await this.disconnect(slug);
       }
     }
 
-    // Connect new MCP sources + reconnect existing ones whose config changed (e.g. refreshed token)
+    // 连接新的 MCP source；如果配置变化（例如 token 刷新）则先断开再重连。
     for (const [slug, config] of Object.entries(filteredMcp)) {
       if (!currentSlugs.has(slug)) {
         try {
@@ -291,7 +298,7 @@ export class McpClientPool {
       }
     }
 
-    // Connect new API sources
+    // 连接新的 API source。
     for (const [slug, server] of apiSlugs) {
       if (!currentSlugs.has(slug)) {
         try {
@@ -303,38 +310,38 @@ export class McpClientPool {
       }
     }
 
+    // 通知外部工具列表已变化（如果外部设置了回调）。
     this.onToolsChanged?.();
     return failures;
   }
 
   // ============================================================
-  // Tool Discovery
+  // 工具发现
   // ============================================================
 
   /**
-   * Get cached tools for a source. Returns empty array if not connected.
+   * 获取某个 source 缓存的工具列表；未连接返回空数组。
    */
   getTools(slug: string): Tool[] {
     return this.toolCache.get(slug) || [];
   }
 
   /**
-   * Get all connected source slugs.
+   * 获取所有已连接的 source slug。
    */
   getConnectedSlugs(): string[] {
     return Array.from(this.clients.keys());
   }
 
   /**
-   * Check if a source is connected.
+   * 判断某个 source 是否已连接。
    */
   isConnected(slug: string): boolean {
     return this.clients.has(slug);
   }
 
   /**
-   * Generate proxy tool definitions for all connected sources (or a subset).
-   * These are passed to backends for tool registration.
+   * 生成所有已连接 source（或指定 subset）的代理工具定义，传给后端注册。
    */
   getProxyToolDefs(slugs?: string[]): ProxyToolDef[] {
     const targetSlugs = slugs || Array.from(this.toolCache.keys());
@@ -343,8 +350,8 @@ export class McpClientPool {
     for (const slug of targetSlugs) {
       const tools = this.toolCache.get(slug) || [];
       for (const tool of tools) {
-        // Strip $schema — AJV (Pi agent) fails on unregistered meta-schema URIs.
-        // Same pattern as getToolDefsAsJsonSchema() in tool-defs.ts.
+        // 去掉 $schema：AJV（Pi agent）遇到未注册的 meta-schema URI 会报错。
+        // 和 tool-defs.ts 里的 getToolDefsAsJsonSchema() 用同一套模式。
         const { $schema, ...cleanSchema } = (tool.inputSchema as Record<string, unknown>) || {};
         defs.push({
           name: `mcp__${slug}__${tool.name}`,
@@ -358,12 +365,12 @@ export class McpClientPool {
   }
 
   // ============================================================
-  // Tool Execution
+  // 工具执行
   // ============================================================
 
   /**
-   * Execute an MCP tool by its proxy name (mcp__{slug}__{toolName}).
-   * Returns a result matching the subprocess protocol format.
+   * 通过代理工具名（mcp__{slug}__{toolName}）执行 MCP 工具。
+   * 返回符合外部子进程协议格式的结果。
    */
   async callTool(proxyName: string, args: Record<string, unknown>): Promise<McpToolResult> {
     const info = this.proxyTools.get(proxyName);
@@ -374,6 +381,7 @@ export class McpClientPool {
       };
     }
 
+    // 解构：从映射信息中取出 source slug 和原始工具名。
     const { slug, originalName } = info;
 
     const client = this.clients.get(slug);
@@ -386,6 +394,7 @@ export class McpClientPool {
     }
 
     try {
+      // `as {...}` 是类型断言：把 SDK 返回的未知结果限定为我们后续处理的形状。
       const result = await client.callTool(originalName, args) as {
         content?: Array<{ type: string; text?: unknown; data?: string; mimeType?: string }>;
         isError?: boolean;
@@ -394,17 +403,17 @@ export class McpClientPool {
       const contentBlocks = result.content || [];
       const parts: string[] = [];
 
-      // 1. Process each content block — handle text, image, audio
+      // 1. 逐个处理 content block：文本直接拼接，图片/音频 base64 数据保存到本地。
       for (const block of contentBlocks) {
         if (block.type === 'text') {
-          // Handle non-string text fields (e.g., objects from non-conforming servers)
+          // 兼容非标准 server：text 字段可能不是字符串，对象则 JSON 化。
           if (typeof block.text === 'string') {
             parts.push(block.text);
           } else if (block.text !== undefined && block.text !== null) {
             parts.push(JSON.stringify(block.text, null, 2));
           }
         } else if ((block.type === 'image' || block.type === 'audio') && block.data && this.sessionPath) {
-          // Decode base64 binary content and save to downloads/
+          // 解码 base64 二进制内容并保存到 downloads/。
           try {
             const buffer = Buffer.from(block.data, 'base64');
             const ext = detectExtensionFromMagic(buffer) || '.bin';
@@ -416,15 +425,15 @@ export class McpClientPool {
               parts.push(`[${block.type.charAt(0).toUpperCase() + block.type.slice(1)} saved: ${saved.path} (${saved.sizeHuman})]`);
             }
           } catch {
-            // Base64 decode failed — skip this block
+            // Base64 解码失败就跳过这个 block。
           }
         }
       }
 
-      // 2. Combine parts (fallback to JSON.stringify if no content extracted)
+      // 2. 把文本片段拼起来；如果完全没提取出内容，就 fallback 为整个 result 的 JSON。
       const text = parts.join('\n') || JSON.stringify(result);
 
-      // 3. Centralized binary + large response handling
+      // 3. 统一的大结果处理：非错误且 sessionPath 存在时，超大结果会被摘要或转存。
       if (!result.isError && this.sessionPath) {
         const guarded = await guardLargeResult(text, {
           sessionPath: this.sessionPath,
@@ -451,7 +460,7 @@ export class McpClientPool {
   }
 
   /**
-   * Check if a tool name is an MCP proxy tool managed by this pool.
+   * 判断一个工具名是否属于本池管理的 MCP 代理工具。
    */
   isProxyTool(toolName: string): boolean {
     return this.proxyTools.has(toolName);

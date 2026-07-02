@@ -1,3 +1,39 @@
+/**
+ * SessionManager.ts
+ *
+ * Craft Agent 的核心会话管家。可以把本文件理解为：
+ * - 一个 Go 后端里的 `SessionService` + `AgentService` + `EventBus` 的混合体；
+ * - 同时兼任“浏览器工具调度员”和“文件变更监听器”。
+ *
+ * 主要职责：
+ * 1. 会话生命周期：create / get / delete / archive / flag / rename。
+ * 2. Agent 创建：根据 LLM connection 解析 provider（Claude / Pi），按需启动 SDK 子进程。
+ * 3. 事件转发：把 Agent 子进程产出的事件（text_delta、tool_start、tool_result、complete 等）
+ *    通过 `eventSink` 广播给前端/Electron/WebSocket 客户端。
+ * 4. 文件监听：每个 workspace 有一个 ConfigWatcher，监听 sources、skills、labels、automations
+ *    等配置变化，并热重载到已存在的会话中。
+ * 5. 浏览器面板管理：决定使用本地 Electron BPM，还是通过 `client:browser:invoke` 转发到
+ *    远程桌面客户端。
+ * 6. 消息队列：当 Agent 正在处理时收到新消息，根据连接策略选择 steer（中途改向）或
+ *    queue（FIFO 重放）。
+ *
+ * TypeScript 要点：
+ * - `ManagedSession` 是运行时内存态，比持久化层 `StoredSession` 多了 `agent`、`messageQueue`、
+ *   `backgroundShellCommands` 等临时字段。类似 Go 里的内存对象 vs 数据库模型。
+ * - `private readonly xxx: Map<string, ...>` 是 TS 的类字段语法；`readonly` 只保证引用不可变，
+ *   Map 内部仍可增删。类似 Go 里 `map` 作为 struct 字段。
+ * - `async/await` 与 Go 的 goroutine + channel 不同：TS 里是单线程事件循环 + 微任务队列，
+ *   适合 I/O 密集型，不适合 CPU 密集型阻塞。
+ *
+ * Agent 开发关键点：
+ * - Agent 是懒加载（lazy）的：第一次 `sendMessage` 时才 `getOrCreateAgent`；
+ * - 每个会话的 LLM connection 在第一条消息后会被锁定（`connectionLocked`），保证后续对话
+ *   始终使用同一 provider；
+ * - `processEvent` 是事件总线入口，所有 Agent 事件都在这里被翻译为 UI 事件并持久化；
+ * - `onProcessingStopped` 是处理停止后的单一 truth source，负责清理状态、处理队列、
+ *   更新未读标记。
+ */
+
 import type { EventSink, RpcServer } from '@craft-agent/server-core/transport'
 import { CLIENT_BROWSER_INVOKE } from '@craft-agent/server-core/transport'
 import type { ISessionManager, IBrowserPaneManager, ExecutePromptAutomationInput } from '@craft-agent/server-core/handlers'
@@ -40,7 +76,7 @@ import {
 import type { ActiveSessionInfo, SessionProcessingStatus } from '@craft-agent/core/types'
 import { loadWorkspaceConfig } from '@craft-agent/shared/workspaces'
 import {
-  // Session persistence functions
+  // 会话持久化函数
   listSessions as listStoredSessions,
   loadSession as loadStoredSession,
   saveSession as saveStoredSession,
@@ -98,18 +134,22 @@ import { loadStatusConfig } from '@craft-agent/shared/statuses/storage'
 import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntry, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
 
-// Import from server-core domain utilities
+// 从 server-core 领域工具导入
 import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
 import { resizeImageForAPI, resizeIconBuffer } from '@craft-agent/server-core/services'
 export { sanitizeForTitle }
 
-// Module-level platform ref — set once during init via setSessionPlatform()
+// 模块级平台引用——在初始化时通过 setSessionPlatform() 设置一次
 let _platform: PlatformServices | null = null
 
-// Scoped logger — upgraded from console fallback when setSessionPlatform() is called.
-// Named `sessionLog` so all ~30 existing call sites remain unchanged.
+// 作用域日志器——调用 setSessionPlatform() 时从 console 回退升级而来
+// 命名为 `sessionLog`，以便所有约30个现有调用点保持不变
 let sessionLog: Logger = createScopedLogger(CONSOLE_LOGGER, 'session')
 
+/**
+ * 注入当前进程的平台服务（文件系统、日志、错误上报等）。
+ * 必须在创建任何会话之前调用一次；后续所有会话操作都依赖 `_platform`。
+ */
 export function setSessionPlatform(platform: PlatformServices): void {
   _platform = platform
   sessionLog = createScopedLogger(platform.logger, 'session')
@@ -143,6 +183,10 @@ const defaultSessionRuntimeHooks: SessionRuntimeHooks = {
 
 let sessionRuntimeHooks: SessionRuntimeHooks = defaultSessionRuntimeHooks
 
+/**
+ * 覆盖会话运行时的生命周期钩子（徽章计数、异常捕获、启停回调）。
+ * 用于 Electron 主进程或 CLI 在启动时注入 UI 相关回调。
+ */
 export function setSessionRuntimeHooks(hooks: Partial<SessionRuntimeHooks>): void {
   sessionRuntimeHooks = {
     ...sessionRuntimeHooks,
@@ -160,10 +204,10 @@ function buildBackendHostRuntimeContext(): BackendHostRuntimeContext {
 }
 
 /**
- * Feature flags for agent behavior
+ * 代理行为的特性标志
  */
 export const AGENT_FLAGS = {
-  /** Default modes enabled for new sessions */
+  /** 新会话启用的默认模式 */
   defaultModesEnabled: true,
 } as const
 
@@ -171,20 +215,19 @@ const MAX_ADMIN_REMEMBER_MINUTES = 60
 const MAX_ANNOTATIONS_PER_MESSAGE = 200
 const MAX_ANNOTATION_JSON_BYTES = 32 * 1024
 
-// Window during which fs.watch metadata-revert events from our own atomic write
-// are ignored, so the watcher does not roll back the in-memory mutation we
-// just persisted. See onSessionMetadataChange.
+// 窗口期，在此期间忽略来自我们自身原子写入的 fs.watch 元数据回滚事件
+// 以便监视器不会回滚我们刚刚持久化的内存变更
+// 参见 onSessionMetadataChange
 const METADATA_WRITE_GUARD_MS = 5000
 
 /**
- * Text sent to the session when a plan is approved from outside the desktop
- * UI (e.g. Telegram button). Mirrors the English `plan.approved` i18n key
- * used by the desktop flow at `plan-approval-message.ts`. Not localized —
- * the agent reads this, not the end user.
+ * 当计划从桌面 UI 外部（如 Telegram 按钮）批准时发送给会话的文本。
+ * 镜像桌面流程中 `plan-approval-message.ts` 使用的英文 `plan.approved` i18n 键。
+ * 不进行本地化——此文本由代理读取，而非最终用户。
  */
 const PLAN_APPROVAL_MESSAGE = 'Plan approved, please execute.'
 
-// validateSpawnAttachmentPath removed — use shared validateFilePath from @craft-agent/server-core/handlers
+// validateSpawnAttachmentPath 已移除——改用 @craft-agent/server-core/handlers 中的共享 validateFilePath
 
 const PI_TURN_ANCHORS_VERSION = 1
 const PI_TURN_ANCHORS_FILE = 'pi-turn-anchors.json'
@@ -198,6 +241,10 @@ function getPiTurnAnchorsPath(sessionPath: string): string {
   return join(sessionPath, 'meta', PI_TURN_ANCHORS_FILE)
 }
 
+/**
+ * 从会话存储中加载 Pi SDK 的轮次锚点索引。
+ * 用于 Pi provider 在分支或续话时精确定位历史消息。
+ */
 export async function loadPiTurnAnchors(sessionPath: string): Promise<PiTurnAnchorsIndex> {
   const filePath = getPiTurnAnchorsPath(sessionPath)
   try {
@@ -228,6 +275,10 @@ async function getPiTurnAnchor(sessionPath: string, messageId: string): Promise<
   return index.anchors[messageId]
 }
 
+/**
+ * 保存一条 Pi SDK 轮次锚点映射（Craft messageId -> Pi anchorId）。
+ * 文件不存在时会自动创建 meta 目录。
+ */
 export async function savePiTurnAnchor(sessionPath: string, messageId: string, anchorId: string): Promise<void> {
   if (!messageId || !anchorId) return
 
@@ -242,14 +293,13 @@ export async function savePiTurnAnchor(sessionPath: string, messageId: string, a
 }
 
 /**
- * Copy Pi turn anchors from the source session into the branch session,
- * filtered to the messages actually carried into the branch.
+ * 将源会话中的 Pi 轮次锚点复制到分支会话中，
+ * 仅过滤实际带入分支的消息。
  *
- * Without this, branching a branch is silently lossy: the source branch's
- * sidecar contains no anchors for messages copied from its own parent, so a
- * downstream branch falls back to "full-history fork" — discarding the
- * branch cutoff and producing a session whose visible history doesn't match
- * what the LLM sees. See craft-agents-oss#782.
+ * 没有此操作，分支的分支会静默丢失数据：源分支的 sidecar
+ * 不包含从其自身父级复制的消息的锚点，因此下游分支
+ * 回退到“全历史分支”——丢弃分支截断点并生成一个
+ * 可见历史与 LLM 所见不匹配的会话。参见 craft-agents-oss#782。
  */
 export async function copyPiTurnAnchorsForBranch(
   sourceSessionPath: string,
@@ -354,13 +404,13 @@ async function saveClaudeTurnAnchor(
 }
 
 /**
- * Build MCP and API servers from sources using the new unified modules.
- * Handles credential loading and server building in one step.
- * When auth errors occur, updates source configs to reflect actual state.
+ * 使用新的统一模块从源码构建 MCP 和 API 服务器。
+ * 一步处理凭据加载和服务器构建。
+ * 当发生认证错误时，更新源配置以反映实际状态。
  *
- * @param sources - Sources to build servers for
- * @param sessionPath - Optional path to session folder for saving large API responses
- * @param tokenRefreshManager - Optional TokenRefreshManager for OAuth token refresh
+ * @param sources - 要构建服务器的源
+ * @param sessionPath - 可选的会话文件夹路径，用于保存大型 API 响应
+ * @param tokenRefreshManager - 可选的 TokenRefreshManager，用于 OAuth 令牌刷新
  */
 async function buildServersFromSources(
   sources: LoadedSource[],
@@ -372,7 +422,7 @@ async function buildServersFromSources(
   const credManager = getSourceCredentialManager()
   const serverBuilder = getSourceServerBuilder()
 
-  // Load credentials for all sources
+  // 加载所有源的凭据
   const sourcesWithCreds: SourceWithCredential[] = await Promise.all(
     sources.map(async (source) => ({
       source,
@@ -382,18 +432,18 @@ async function buildServersFromSources(
   )
   span.mark('credentials.loaded')
 
-  // Build token getter for refreshable sources (OAuth + renew-endpoint)
-  // Uses TokenRefreshManager for unified refresh logic (DRY principle)
+  // 为可刷新的源（OAuth + renew-endpoint）构建令牌获取器
+  // 使用 TokenRefreshManager 实现统一刷新逻辑（DRY 原则）
   const getTokenForSource = (source: LoadedSource) => {
     const provider = source.config.provider
-    // Provider-specific OAuth (Google, Slack, Microsoft) or generic OAuth (authType: 'oauth')
+    // 特定提供商的 OAuth（Google、Slack、Microsoft）或通用 OAuth（authType: 'oauth'）
     if (isApiOAuthProvider(provider) || source.config.api?.authType === 'oauth') {
       const manager = tokenRefreshManager ?? new TokenRefreshManager(credManager, {
         log: (msg) => sessionLog.debug(msg),
       })
       return createTokenGetter(manager, source)
     }
-    // API renew endpoint — non-OAuth token refresh
+    // API renew 端点——非 OAuth 令牌刷新
     if (hasRenewEndpoint(source)) {
       const manager = tokenRefreshManager ?? new TokenRefreshManager(credManager, {
         log: (msg) => sessionLog.debug(msg),
@@ -403,17 +453,17 @@ async function buildServersFromSources(
     return undefined
   }
 
-  // Per-request credential getter for non-OAuth / non-renew API sources
-  // (bearer / header / query / basic auth).
+  // 非 OAuth / 非 renew API 源的每次请求凭据获取器
+  // （bearer / header / query / basic 认证）。
   //
-  // Without this, the in-process API tool captures the credential as a static
-  // string at build time and keeps using it forever — meaning a fresh JWT
-  // entered via source_credential_prompt is ignored until session restart.
+  // 没有此机制，进程内 API 工具会在构建时捕获凭据作为静态字符串
+  // 并永久使用它——这意味着通过 source_credential_prompt 输入的新 JWT
+  // 会被忽略，直到会话重启。
   //
-  // With this getter, every API call reads the latest credential from the
-  // vault, so credential updates take effect on the next call. OAuth and
-  // renew-endpoint sources have their own refresh logic via TokenRefreshManager
-  // and are skipped here.
+  // 使用此获取器，每次 API 调用都会从保管库读取最新凭据，
+  // 因此凭据更新会在下一次调用时生效。OAuth 和
+  // renew-endpoint 源通过 TokenRefreshManager 拥有自己的刷新逻辑
+  // 并在此处跳过。
   const getCredentialForSource = (source: LoadedSource) => {
     if (source.config.type !== 'api') return undefined
     if (source.config.api?.authType === 'none') return undefined
@@ -423,7 +473,7 @@ async function buildServersFromSources(
     return async () => credManager.getApiCredential(source)
   }
 
-  // Pass sessionPath to enable saving large API responses to session folder
+  // 传递 sessionPath 以启用将大型 API 响应保存到会话文件夹
   const result = await serverBuilder.buildAll(
     sourcesWithCreds,
     getTokenForSource,
@@ -435,10 +485,10 @@ async function buildServersFromSources(
   span.setMetadata('mcpCount', Object.keys(result.mcpServers).length)
   span.setMetadata('apiCount', Object.keys(result.apiServers).length)
 
-  // Update source configs for auth errors so UI reflects actual state.
-  // Re-classify AUTH_REQUIRED → TOKEN_EXPIRED when the credential is merely
-  // expired-but-refreshable; in that case the refresh cycle handles recovery
-  // and we must NOT prematurely mark the source as needing re-auth (#710).
+  // 更新认证错误的源配置，以便 UI 反映实际状态。
+  // 当凭据仅过期但可刷新时，将 AUTH_REQUIRED 重新分类为 TOKEN_EXPIRED；
+  // 在这种情况下，刷新周期处理恢复
+  // 我们绝不能过早地将源标记为需要重新认证（#710）。
   for (const error of result.errors) {
     if (error.error !== SERVER_BUILD_ERRORS.AUTH_REQUIRED) continue
     const source = sources.find(s => s.config.slug === error.sourceSlug)
@@ -465,27 +515,27 @@ async function buildServersFromSources(
 }
 
 /**
- * Result of expired-credential refresh.
+ * 过期凭据刷新的结果。
  */
 interface RefreshExpiredCredentialsResult {
-  /** Number of sources whose tokens were successfully refreshed */
+  /** 成功刷新令牌的源数量 */
   refreshedCount: number
-  /** Sources that failed to refresh (for warning display) */
+  /** 刷新失败的源（用于警告显示） */
   failedSources: Array<{ slug: string; reason: string }>
 }
 
 /**
- * Refresh expired OAuth / renew-endpoint tokens for the given sources.
+ * 刷新给定源的过期 OAuth / renew-endpoint 令牌。
  *
- * Side effects (carried by `TokenRefreshManager.ensureFreshToken`):
- * - Success: source.config.isAuthenticated = true (in-memory + on disk).
- * - Failure: source.config.isAuthenticated = false + connectionStatus = 'needs_auth'
- *   (in-memory + on disk), so isSourceUsable() returns false and the source is
- *   excluded from intendedSlugs by callers.
+ * 副作用（由 `TokenRefreshManager.ensureFreshToken` 承载）：
+ * - 成功：source.config.isAuthenticated = true（内存 + 磁盘）。
+ * - 失败：source.config.isAuthenticated = false + connectionStatus = 'needs_auth'
+ *   （内存 + 磁盘），因此 isSourceUsable() 返回 false，且该源被
+ *   调用者从 intendedSlugs 中排除。
  *
- * The caller is responsible for building servers AFTER this returns — that way
- * a single fresh build sees the correct credentials and the correct usable set.
- * Issue #710.
+ * 调用者负责在此返回后构建服务器——这样
+ * 一次新的构建就能看到正确的凭据和正确的可用集。
+ * 问题 #710。
  */
 async function refreshExpiredCredentials(
   sources: LoadedSource[],
@@ -511,9 +561,9 @@ async function refreshExpiredCredentials(
 }
 
 /**
- * Apply bridge-mcp-server updates for backends that use it.
- * Delegates to the backend's own applyBridgeUpdates() method.
- * Each backend handles its own strategy via applyBridgeUpdates().
+ * 为使用它的后端应用 bridge-mcp-server 更新。
+ * 委托给后端自己的 applyBridgeUpdates() 方法。
+ * 每个后端通过 applyBridgeUpdates() 处理自己的策略。
  */
 async function applyBridgeUpdates(
   agent: AgentInstance,
@@ -537,19 +587,19 @@ async function applyBridgeUpdates(
 }
 
 /**
- * Resolve tool display metadata for a tool call.
- * Returns metadata with base64-encoded icon for viewer compatibility.
+ * 解析工具调用的工具显示元数据。
+ * 返回包含 base64 编码图标的元数据，以兼容查看器。
  *
- * @param toolName - Tool name from the event (e.g., "Skill", "mcp__linear__list_issues")
- * @param toolInput - Tool input (used for Skill tool to get skill identifier)
- * @param workspaceRootPath - Path to workspace for loading skills/sources
- * @param sources - Loaded sources for the workspace
+ * @param toolName - 事件中的工具名称（例如 "Skill"、"mcp__linear__list_issues"）
+ * @param toolInput - 工具输入（用于 Skill 工具以获取技能标识符）
+ * @param workspaceRootPath - 工作区路径，用于加载技能/源
+ * @param sources - 工作区已加载的源
  */
 const BROWSER_TOOL_ICON_FILENAME = 'chrome.svg'
 let browserToolIconDataUrlCache: string | null | undefined
 
 async function getBrowserToolIconDataUrl(): Promise<string | undefined> {
-  // Cache miss sentinel: undefined means "not computed yet"
+  // 缓存未命中哨兵：undefined 表示“尚未计算”
   if (browserToolIconDataUrlCache !== undefined) {
     return browserToolIconDataUrlCache ?? undefined
   }
@@ -557,9 +607,9 @@ async function getBrowserToolIconDataUrl(): Promise<string | undefined> {
   try {
     const iconCandidates = [
       join(getToolIconsDir(), BROWSER_TOOL_ICON_FILENAME),
-      // Dev fallback (before sync to ~/.craft-agent/tool-icons)
+      // 开发回退（同步到 ~/.craft-agent/tool-icons 之前）
       join(process.cwd(), 'apps', 'electron', 'resources', 'tool-icons', BROWSER_TOOL_ICON_FILENAME),
-      // Packaged fallback (app resources)
+      // 打包回退（应用资源）
       join(process.resourcesPath, 'tool-icons', BROWSER_TOOL_ICON_FILENAME),
     ]
 
@@ -586,14 +636,14 @@ async function resolveToolDisplayMeta(
   workspaceRootPath: string,
   sources: LoadedSource[]
 ): Promise<ToolDisplayMeta | undefined> {
-  // Check if it's an MCP tool (format: mcp__<serverSlug>__<toolName>)
+  // 检查是否为 MCP 工具（格式：mcp__<serverSlug>__<toolName>）
   if (toolName.startsWith('mcp__')) {
     const parts = toolName.split('__')
     if (parts.length >= 3) {
       const serverSlug = parts[1]
       const toolSlug = parts.slice(2).join('__')
 
-      // Internal MCP server tools (session, docs)
+      // 内部 MCP 服务器工具（session、docs）
       const internalMcpServers: Record<string, Record<string, string>> = {
         'session': {
           'SubmitPlan': 'Submit Plan',
@@ -631,18 +681,18 @@ async function resolveToolDisplayMeta(
         }
       }
 
-      // External source tools
+      // 外部源工具
       let sourceSlug = serverSlug
 
-      // Special case: api-bridge server embeds source slug in tool name as "api_{slug}"
-      // e.g., mcp__api-bridge__api_stripe → sourceSlug = "stripe"
+      // 特殊情况：api-bridge 服务器在工具名称中嵌入源 slug，格式为 "api_{slug}"
+      // 例如，mcp__api-bridge__api_stripe → sourceSlug = "stripe"
       if (sourceSlug === 'api-bridge' && toolSlug.startsWith('api_')) {
         sourceSlug = toolSlug.slice(4)
       }
 
       const source = sources.find(s => s.config.slug === sourceSlug)
       if (source) {
-        // Try file-based icon first, fall back to emoji icon from config
+        // 首先尝试基于文件的图标，回退到配置中的表情符号图标
         const iconDataUrl = source.iconPath
           ? await encodeIconToDataUrlAsync(source.iconPath, { resize: resizeIconBuffer })
           : getEmojiIcon(source.config.icon)
@@ -657,20 +707,20 @@ async function resolveToolDisplayMeta(
     return undefined
   }
 
-  // Check if it's the Skill tool
+  // 检查是否为 Skill 工具
   if (toolName === 'Skill' && toolInput) {
-    // Skill input has 'skill' param with format: "skillSlug" or "workspaceId:skillSlug"
+    // Skill 输入具有 'skill' 参数，格式为 "skillSlug" 或 "workspaceId:skillSlug"
     const skillParam = toolInput.skill as string | undefined
     if (skillParam) {
-      // Extract skill slug (remove workspace prefix if present)
+      // 提取技能 slug（如果存在则移除工作区前缀）
       const skillSlug = skillParam.includes(':') ? skillParam.split(':').pop() : skillParam
       if (skillSlug) {
-        // Load skills and find the one being invoked
+        // 加载技能并找到正在调用的那个
         try {
           const skills = loadAllSkills(workspaceRootPath)
           const skill = skills.find(s => s.slug === skillSlug)
           if (skill) {
-            // Try file-based icon first, fall back to emoji icon from metadata
+            // 首先尝试基于文件的图标，回退到元数据中的表情符号图标
             const iconDataUrl = skill.iconPath
               ? await encodeIconToDataUrlAsync(skill.iconPath, { resize: resizeIconBuffer })
               : getEmojiIcon(skill.metadata.icon)
@@ -682,16 +732,16 @@ async function resolveToolDisplayMeta(
             }
           }
         } catch {
-          // Skills loading failed, skip
+          // 技能加载失败，跳过
         }
       }
     }
     return undefined
   }
 
-  // CLI tool icon resolution for Bash commands
-  // Parses the command string to detect known tools (git, npm, docker, etc.)
-  // and resolves their brand icon from ~/.craft-agent/tool-icons/
+  // CLI 工具图标解析（用于 Bash 命令）
+  // 解析命令字符串以检测已知工具（git、npm、docker 等）
+  // 并从 ~/.craft-agent/tool-icons/ 解析其品牌图标
   if (toolName === 'Bash' && toolInput?.command) {
     try {
       const toolIconsDir = getToolIconsDir()
@@ -704,11 +754,11 @@ async function resolveToolDisplayMeta(
         }
       }
     } catch {
-      // Icon resolution is best-effort — never crash the session for it
+      // 图标解析是尽力而为——绝不因此使会话崩溃
     }
   }
 
-  // Native browser tool names (with Chrome icon)
+  // 原生浏览器工具名称（带 Chrome 图标）
   const normalizedBrowserToolName = normalizeBrowserToolName(toolName)
   if (normalizedBrowserToolName) {
     const browserDisplayName = normalizedBrowserToolName
@@ -724,8 +774,8 @@ async function resolveToolDisplayMeta(
     }
   }
 
-  // Native tool display names (no icons - UI handles these with built-in icons)
-  // This ensures toolDisplayMeta is always populated for consistent display
+  // 原生工具显示名称（无图标——UI 使用内置图标处理这些）
+  // 这确保 toolDisplayMeta 始终填充，以实现一致的显示
   const nativeToolNames: Record<string, string> = {
     'Read': 'Read',
     'Write': 'Write',
@@ -751,82 +801,97 @@ async function resolveToolDisplayMeta(
     }
   }
 
-  // Unknown tool - no display metadata (will fall back to tool name in UI)
+  // 未知工具——无显示元数据（将在 UI 中回退到工具名称）
   return undefined
 }
 
-/** Agent type - unified backend interface for all providers */
+/** 代理类型——所有提供商的统一后端接口 */
 type AgentInstance = AgentBackend
 
 /**
- * Status of a background task in the main-process registry.
- * - `running`   — backgrounded and no terminal notification seen yet.
- * - `completed`/`failed`/`stopped` — a real SDK task_notification arrived.
- * - `orphaned`  — the turn that owned the task ended before a terminal
- *   notification arrived. With the (default) per-turn subprocess model the task
- *   almost certainly died with the subprocess, so reporting it as still
- *   "running" would be a lie. Once WS2 keep-alive is enabled these are no longer
- *   produced because the query outlives the turn.
+ * 主进程注册表中后台任务的状态。
+ * - `running`   —— 已转入后台，尚未看到终止通知。
+ * - `completed`/`failed`/`stopped` —— 收到了真实的 SDK task_notification。
+ * - `orphaned`  —— 拥有该任务的 turn 在终止通知到达前就结束了。在（默认的）每 turn 子进程
+ *   模型下，该任务几乎肯定随子进程一起消亡，因此把它报告为仍"running"就是在撒谎。
+ *   一旦启用 WS2 keep-alive，就不再产生此类状态，因为查询的生命周期超过了 turn。
  */
 type BackgroundTaskStatus = 'running' | 'completed' | 'failed' | 'stopped' | 'orphaned'
 
-/** A background task tracked from launch, for cross-subprocess status queries. */
+/** 从启动开始跟踪的后台任务，用于跨子进程的状态查询。 */
 interface RunningBackgroundTask {
   taskId: string
   toolUseId?: string
   intent?: string
-  /** ms timestamp when the task was backgrounded */
+  /** 任务转入后台时的毫秒时间戳 */
   startTime: number
-  /** ms timestamp of the last task_progress notification, if any */
+  /** 最近一次 task_progress 通知的毫秒时间戳（如果有） */
   lastProgressAt?: number
-  /** elapsed seconds from the most recent progress notification, if any */
+  /** 最近一次进度通知经过的秒数（如果有） */
   elapsedSeconds?: number
   status: BackgroundTaskStatus
-  /** ms timestamp when the task reached a terminal/orphaned status */
+  /** 任务达到终止/孤儿状态时的毫秒时间戳 */
   completedAt?: number
-  /** turn that launched the task (used to orphan on that turn's completion) */
+  /** 发起该任务的 turn（用于在该 turn 完成时将其标记为孤儿） */
   turnId?: string
-  /** Workflow run id (wf_...) — set when this task is a Workflow launch. */
+  /** Workflow 运行 id（wf_...）—— 当该任务是 Workflow 启动时设置。 */
   workflowId?: string
-  /** Count of workflow sub-agents completed so far (Workflow tasks only). */
+  /** 目前已完成的 workflow 子 agent 数量（仅 Workflow 任务）。 */
   agentsCompleted?: number
 }
 
+/**
+ * 单个会话的运行时内存表示。
+ *
+ * 与 Go 的类比：
+ * - 如果 Go 里有一个 `type Session struct`，那么 `ManagedSession` 就是它在内存里的扩展版，
+ *   附加了运行时字段（如 `agent`、`messageQueue`），这些字段不会序列化到磁盘。
+ *
+ * 关键字段解释：
+ * - `agent: AgentInstance | null`：懒加载，第一条消息前为 null；
+ * - `isProcessing`：当前是否正在流式处理中；
+ * - `processingGeneration`：单调递增，用于检测当前处理是否已被新消息取代；
+ * - `messageQueue`：Agent 忙碌时收到的新消息队列，FIFO 重放；
+ * - `backgroundShellCommands / backgroundTaskOutputs`：记录后台 shell / task，
+ *   支持 `KillShell` 和 `getTaskOutput`；
+ * - `tokenRefreshManager`：OAuth / renew-endpoint token 的刷新器，每个会话独立，
+ *   避免跨会话刷新竞争。
+ */
 interface ManagedSession {
   id: string
   workspace: Workspace
-  agent: AgentInstance | null  // Lazy-loaded - null until first message
+  agent: AgentInstance | null  // 延迟加载——在第一条消息之前为 null
   messages: Message[]
   isProcessing: boolean
-  /** Set when user requests stop - allows event loop to drain before clearing isProcessing */
+  /** 用户请求停止时设置——允许事件循环在清除 isProcessing 之前排空 */
   stopRequested?: boolean
   lastMessageAt: number
   streamingText: string
-  // Incremented each time a new message starts processing.
-  // Used to detect if a follow-up message has superseded the current one (stale-request guard).
+  // 每次新消息开始处理时递增。
+  // 用于检测后续消息是否已取代当前消息（过期请求防护）。
   processingGeneration: number
-  // NOTE: Parent-child tracking state (pendingTools, parentToolStack, toolToParentMap,
-  // pendingTextParent) has been removed. CraftAgent now provides parentToolUseId
-  // directly on all events using the SDK's authoritative parent_tool_use_id field.
-  // See: packages/shared/src/agent/tool-matching.ts
-  // Session name (user-defined or AI-generated)
+  // 注意：父子跟踪状态（pendingTools、parentToolStack、toolToParentMap、
+  // pendingTextParent）已移除。CraftAgent 现在使用 SDK 权威的 parent_tool_use_id 字段
+  // 直接在所有事件上提供 parentToolUseId。
+  // 参见：packages/shared/src/agent/tool-matching.ts
+  // 会话名称（用户定义或 AI 生成）
   name?: string
   isFlagged: boolean
-  /** Whether this session is archived */
+  /** 此会话是否已归档 */
   isArchived?: boolean
-  /** Timestamp when session was archived (for retention policy) */
+  /** 会话归档的时间戳（用于保留策略） */
   archivedAt?: number
-  /** Permission mode for this session ('safe', 'ask', 'allow-all') */
+  /** 此会话的权限模式（'safe'、'ask'、'allow-all'） */
   permissionMode?: PermissionMode
-  /** Previous permission mode (preserved across restarts for session_state modeTransition context) */
+  /** 先前的权限模式（在重启之间保留，用于 session_state modeTransition 上下文） */
   previousPermissionMode?: PermissionMode
-  /** Centralized MCP client pool for this session's source connections */
+  /** 此会话源连接的集中式 MCP 客户端池 */
   mcpPool?: McpClientPool
-  /** HTTP MCP server exposing pool tools to external SDK subprocesses */
+  /** 将池工具暴露给外部 SDK 子进程的 HTTP MCP 服务器 */
   poolServer?: McpPoolServer
-  // SDK session ID for conversation continuity
+  // SDK 会话 ID，用于对话连续性
   sdkSessionId?: string
-  // Token usage for display
+  // 用于显示的令牌使用情况
   tokenUsage?: {
     inputTokens: number
     outputTokens: number
@@ -835,183 +900,185 @@ interface ManagedSession {
     costUsd: number
     cacheReadTokens?: number
     cacheCreationTokens?: number
-    /** Model's context window size in tokens (from SDK modelUsage) */
+    /** 模型的上下文窗口大小（以令牌为单位，来自 SDK modelUsage） */
     contextWindow?: number
   }
-  // Session status (user-controlled) - determines open vs closed
-  // Dynamic status ID referencing workspace status config
+  // 会话状态（用户控制）——决定打开还是关闭
+  // 引用工作区状态配置的动态状态 ID
   sessionStatus?: string
-  // Read/unread tracking - ID of last message user has read
+  // 已读/未读跟踪——用户已读的最后一条消息的 ID
   lastReadMessageId?: string
   /**
-   * Explicit unread flag - single source of truth for NEW badge.
-   * Set to true when assistant message completes while user is NOT viewing.
-   * Set to false when user views the session (and not processing).
+   * 显式未读标志——NEW 徽章的唯一真实来源。
+   * 当助手消息完成且用户未查看时设置为 true。
+   * 当用户查看会话（且未处理中）时设置为 false。
    */
   hasUnread?: boolean
-  // Per-session source selection (slugs of enabled sources)
+  // 每个会话的源选择（已启用源的 slug）
   enabledSourceSlugs?: string[]
-  // Labels applied to this session (additive tags, many-per-session)
+  // 应用于此会话的标签（累加标签，每个会话多个）
   labels?: string[]
-  // Workspace-scoped project binding (undefined = unbound)
+  // workspace 级项目绑定（undefined = 未绑定）
   projectId?: string
-  // Parent session id — when set, this session is a subtask of the parent (undefined = top-level task)
+  // 父 session id —— 设置后表示该 session 是父任务的子任务（undefined = 顶级任务）
   parentSessionId?: string
-  // Kanban board column id ('todo' | 'in-progress' | 'done'); independent of sessionStatus
+  // 看板列 id（'todo' | 'in-progress' | 'done'）；与 sessionStatus 独立
   kanbanColumn?: string
-  // Tasks Conductor: slug of the task spec this session belongs to (orchestrator + child nodes)
+  // Tasks Conductor：该 session 所属的任务 spec slug（编排器 + 子节点）
   taskSlug?: string
-  // Tasks Conductor: id of the run that spawned this child session (child nodes only)
+  // Tasks Conductor：派生该子 session 的运行的 id（仅子节点）
   taskRunId?: string
-  // Tasks Conductor: id of the DAG node this child session executes (child nodes only)
+  // Tasks Conductor：该子 session 执行的 DAG 节点 id（仅子节点）
   taskNodeId?: string
-  // Tasks Conductor: total DAG node count (orchestrator only) — stable board progress denominator
+  // Tasks Conductor：DAG 节点总数（仅编排器）—— 稳定的看板进度分母
   taskNodeCount?: number
-  // Tasks Conductor: hidden generate-time orchestrator awaiting validated adoption (off the board)
+  // Tasks Conductor：隐藏的生成时编排器，等待验证后采纳（不在看板上）
   taskDraft?: boolean
-  // Working directory for this session (used by agent for bash commands)
+  // 此会话的工作目录（代理用于 bash 命令）
   workingDirectory?: string
-  // SDK cwd for session storage - set once at creation, never changes.
-  // Ensures SDK can find session transcripts regardless of workingDirectory changes.
+  // SDK 会话存储的 cwd——创建时设置一次，永不更改。
+  // 确保 SDK 无论 workingDirectory 如何更改都能找到会话记录。
   sdkCwd?: string
-  // Shared viewer URL (if shared via viewer)
+  // 共享查看器 URL（如果通过查看器共享）
   sharedUrl?: string
-  // Shared session ID in viewer (for revoke)
+  // 查看器中的共享会话 ID（用于撤销）
   sharedId?: string
-  // Model to use for this session (overrides global config if set)
+  // 此会话使用的模型（如果设置则覆盖全局配置）
   model?: string
-  // LLM connection slug for this session (locked after first message)
+  // 此会话的 LLM 连接 slug（第一条消息后锁定）
   llmConnection?: string
-  // Whether the connection is locked (cannot be changed after first agent creation)
+  // 连接是否已锁定（首次创建代理后无法更改）
   connectionLocked?: boolean
-  // Thinking level for this session ('off', 'think', 'max')
+  // 此会话的思考级别（'off'、'think'、'max'）
   thinkingLevel?: ThinkingLevel
-  // System prompt preset for mini agents ('default' | 'mini')
+  // 迷你代理的系统提示预设（'default' | 'mini'）
   systemPromptPreset?: 'default' | 'mini' | string
-  // Role/type of the last message (for badge display without loading messages)
+  // 最后一条消息的角色/类型（用于徽章显示，无需加载消息）
   lastMessageRole?: 'user' | 'assistant' | 'plan' | 'tool' | 'error'
-  // ID of the last final (non-intermediate) assistant message - pre-computed for unread detection
+  // 最后一条最终（非中间）助手消息的 ID——预计算用于未读检测
   lastFinalMessageId?: string
-  // Turn baseline: last final assistant message ID at turn start (runtime-only, not persisted)
+  // 轮次基线：轮次开始时最后一条最终助手消息的 ID（仅运行时，不持久化）
   turnStartFinalMessageId?: string
-  // External session metadata updates seen while processing (applied after turn stop)
+  // 处理过程中看到的外部会话元数据更新（轮次停止后应用）
   pendingExternalMetadata?: SessionHeader
-  // Guard: suppress external metadata revert after programmatic writes (setSessionStatus/setSessionLabels).
-  // fs.watch fires during atomic write (unlink+rename) and can read stale data, reverting in-memory state.
+  // 防护：在程序化写入（setSessionStatus/setSessionLabels）后抑制外部元数据回滚。
+  // fs.watch 在原子写入期间触发（unlink+rename）并可能读取过期数据，回滚内存状态。
   _metadataWriteGuardUntil?: number
-  // Whether an async operation is ongoing (sharing, updating share, revoking, title regeneration)
-  // Used for shimmer effect on session title
+  // 异步操作是否正在进行（共享、更新共享、撤销、标题重新生成）
+  // 用于会话标题的闪烁效果
   isAsyncOperationOngoing?: boolean
-  // Preview of first user message (for sidebar display fallback)
+  // 第一条用户消息的预览（用于侧边栏显示回退）
   preview?: string
-  // When the session was first created (ms timestamp from JSONL header)
+  // 会话首次创建的时间（JSONL 头部的毫秒时间戳）
   createdAt?: number
-  // Total message count (pre-computed in JSONL header for fast list loading)
+  // 总消息数（在 JSONL 头部预计算，用于快速列表加载）
   messageCount?: number
-  // Message queue for handling new messages while processing
-  // When a message arrives during processing, we interrupt and queue
+  // 处理过程中处理新消息的消息队列
+  // 当消息在处理过程中到达时，我们中断并排队
   messageQueue: Array<{
     message: string
     attachments?: FileAttachment[]
     storedAttachments?: StoredAttachment[]
     options?: SendMessageOptions
-    messageId?: string  // Pre-generated ID for matching with UI
-    optimisticMessageId?: string  // Frontend's ID for reliable event matching
+    messageId?: string  // 预生成的 ID，用于与 UI 匹配
+    optimisticMessageId?: string  // 前端的 ID，用于可靠的事件匹配
   }>
-  // Map of shellId -> command for killing background shells
+  // shellId -> 命令的映射，用于终止后台 shell
   backgroundShellCommands: Map<string, string>
-  // Map of taskId -> output info for background task results
+  // taskId -> 输出信息的映射，用于后台任务结果
   backgroundTaskOutputs: Map<string, { outputFile: string; summary: string; status: string; completedAt: number }>
-  // Registry of background tasks (running + recently-terminal) for this session.
-  // Unlike backgroundTaskOutputs (which only stores COMPLETED tasks for output
-  // retrieval), this tracks tasks from the moment they are backgrounded, so a
-  // cross-subprocess "status?" query can enumerate what is actually live. The
-  // SDK's in-subprocess task tools cannot answer this: their state dies with the
-  // subprocess at turn end, so this main-process registry is the real source of
-  // truth for background-task status. See RunningBackgroundTask.
+  // 该 session 的后台任务注册表（运行中 + 最近终止的）。
+  // 与 backgroundTaskOutputs（只存储已完成任务用于获取输出）不同，这里从任务转入后台的那一刻起
+  // 就开始跟踪，这样跨子进程的"状态如何？"查询就能枚举出真正还在运行的任务。SDK 的进程内
+  // 任务工具无法回答这个问题：它们的状态在 turn 结束时随子进程消亡，因此这个主进程注册表才是
+  // 后台任务状态的真正事实来源。见 RunningBackgroundTask。
   backgroundTaskRegistry: Map<string, RunningBackgroundTask>
-  // Whether messages have been loaded from disk (for lazy loading)
+  // 消息是否已从磁盘加载（用于延迟加载）
   messagesLoaded: boolean
-  // Pending auth request tracking (for unified auth flow)
+  // 待处理的认证请求跟踪（用于统一认证流程）
   pendingAuthRequestId?: string
   pendingAuthRequest?: AuthRequest
-  // Auth retry tracking (for mid-session token expiry)
-  // Store last sent message/attachments to enable retry after token refresh
+  // 认证重试跟踪（用于会话中令牌过期）
+  // 存储最后发送的消息/附件，以便在令牌刷新后启用重试
   lastSentMessage?: string
   lastSentAttachments?: FileAttachment[]
   lastSentStoredAttachments?: StoredAttachment[]
   lastSentOptions?: SendMessageOptions
-  // Flag to prevent infinite retry loops (reset at start of each sendMessage)
+  // 防止无限重试循环的标志（每次 sendMessage 开始时重置）
   authRetryAttempted?: boolean
-  // Flag indicating auth retry is in progress (to prevent complete handler from interfering)
+  // 表示认证重试正在进行的标志（防止 complete 处理程序干扰）
   authRetryInProgress?: boolean
-  // Whether this session is hidden from session list (e.g., mini edit sessions)
+  // 此会话是否在会话列表中隐藏（例如，迷你编辑会话）
   hidden?: boolean
   branchFromMessageId?: string
-  // Branch context strategy:
-  // - sdk-fork: provider-level fork from parent SDK session
-  // - seeded-fresh-session: fresh backend session seeded with transcript up to branch cutoff
+  // 分支上下文策略：
+  // - sdk-fork：从父级 SDK 会话进行提供者级别的分支
+  // - seeded-fresh-session：使用分支截止点之前的记录作为种子的全新后端会话
   branchContextStrategy?: 'sdk-fork' | 'seeded-fresh-session'
-  // Parent session's SDK session ID (used only when branchContextStrategy === 'sdk-fork')
+  // 父级会话的 SDK 会话 ID（仅在 branchContextStrategy === 'sdk-fork' 时使用）
   branchFromSdkSessionId?: string
-  // Parent session's storage path (used only when branchContextStrategy === 'sdk-fork')
+  // 父级会话的存储路径（仅在 branchContextStrategy === 'sdk-fork' 时使用）
   branchFromSessionPath?: string
-  // Parent session's sdkCwd — needed so the fork subprocess uses the correct
-  // ~/.claude/projects/{cwd-hash}/ directory to find the parent's session file.
+  // 父级会话的 sdkCwd — 分支子进程需要它来使用正确的
+  // ~/.claude/projects/{cwd-hash}/ 目录以找到父级的会话文件。
   branchFromSdkCwd?: string
-  // SDK assistant message UUID at the branch point — used as resumeSessionAt
-  // to trim the forked conversation at the branch point.
+  // 分支点处的 SDK 助手消息 UUID — 用作 resumeSessionAt
+  // 以在分支点截断分支后的对话。
   branchFromSdkTurnId?: string
-  // One-shot flag for seeded branch mode - set true after first turn seed injection.
+  // 种子分支模式的一次性标志 — 在第一次轮次种子注入后设置为 true。
   branchSeedApplied?: boolean
-  // One-shot hidden summary injected on the first turn after a remote transfer.
+  // 远程转移后，在第一个轮次注入的一次性隐藏摘要。
   transferredSessionSummary?: string
-  // Whether the transferred-session summary has already been injected.
+  // 转移会话的摘要是否已被注入。
   transferredSessionSummaryApplied?: boolean
-  // Token refresh manager for OAuth token refresh with rate limiting
+  // 用于 OAuth 令牌刷新的令牌刷新管理器，带速率限制
   tokenRefreshManager: TokenRefreshManager
-  // Metadata for sessions created by automations
+  // 由自动化创建的会话的元数据
   triggeredBy?: { automationName?: string; event?: string; timestamp?: number }
-  // Promise that resolves when the agent instance is ready (for title gen to await)
+  // 当代理实例就绪时解决的 Promise（供标题生成等待）
   agentReady?: Promise<void>
   agentReadyResolve?: () => void
-  // Per-session env overrides for SDK subprocess (e.g., ANTHROPIC_BASE_URL).
-  // Stored on managed session so it persists across agent recreations (auth-retry, etc.)
+  // 每个会话的 SDK 子进程环境变量覆盖（例如，ANTHROPIC_BASE_URL）。
+  // 存储在托管会话上，以便在代理重新创建时持久化（认证重试等）
   envOverrides?: Record<string, string>
-  // Runtime-affecting backend config signature captured when the live agent was created/refreshed.
+  // 创建/刷新实时代理时捕获的影响运行时的后端配置签名。
   backendRuntimeSignature?: string
   /**
-   * Signature over fields that cannot be propagated via `update_runtime_config`
-   * (see `runtime-config.ts:buildRestartRequiredSignature`). When this drifts,
-   * the agent must be disposed + recreated rather than refreshed in place.
+   * 无法通过 `update_runtime_config` 传播的字段的签名
+   * （参见 `runtime-config.ts:buildRestartRequiredSignature`）。当此签名发生变化时，
+   * 必须销毁并重新创建代理，而不是原地刷新。
    */
   backendRestartSignature?: string
-  // Whether the previous turn was interrupted (for context injection on next message).
-  // Ephemeral — not persisted to disk. Cleared after one-shot injection.
+  // 上一轮次是否被中断（用于在下一消息中注入上下文）。
+  // 临时 — 不持久化到磁盘。一次性注入后清除。
   wasInterrupted?: boolean
   /**
-   * Runtime-only: Pi SDK message id → Craft assistant message id.
-   * Populated when a `text_complete` arrives carrying `sdkMessageId`, and read
-   * when the follow-up `pi_turn_anchor` event arrives (deferred by one microtask
-   * so the SDK's session-manager has updated its leaf — see craft-agents-oss#782).
-   * Capped at PI_SDK_MESSAGE_ID_CACHE_LIMIT to bound memory in long sessions.
+   * 仅运行时：Pi SDK 消息 ID → Craft 助手消息 ID。
+   * 当携带 `sdkMessageId` 的 `text_complete` 到达时填充，
+   * 并在后续的 `pi_turn_anchor` 事件到达时读取（延迟一个微任务，
+   * 以便 SDK 的会话管理器已更新其叶子节点 — 参见 craft-agents-oss#782）。
+   * 上限为 PI_SDK_MESSAGE_ID_CACHE_LIMIT 以限制长会话中的内存。
    */
   piSdkMessageToCraftMessage?: Map<string, string>
-  // Source-activation auto-retry (craft-agents-oss#804). When a source activates
-  // mid-turn, we re-send the original message with a "[<slug> activated]" suffix
-  // after a short delay. The pending slot lets `sendMessage` dedup a duplicate
-  // RPC from a legacy renderer that still ships the client-side auto_retry.
+  // 源激活自动重试（craft-agents-oss#804）。当源在轮次中激活时
+  // 我们会在短暂延迟后，用 "[<slug> activated]" 后缀重新发送原始消息。
+  // pending 槽位允许 `sendMessage` 去重来自旧版渲染器的重复
+  // RPC，该渲染器仍然发送客户端的 auto_retry。
   autoRetryTimer?: ReturnType<typeof setTimeout>
   autoRetryPending?: {
     content: string
     deadlineMs: number
-    /** True after the first matching sendMessage consumes the slot; later matches drop. */
+    /** 第一个匹配的 sendMessage 消费该槽位后设为 true；后续匹配丢弃。 */
     committed: boolean
   }
 }
 
 const PI_SDK_MESSAGE_ID_CACHE_LIMIT = 256
 
+/**
+ * 承载“源激活后自动重试”的 pending 状态。
+ * 被 `sendMessage` 和自动重试逻辑共享，用于去重并设置重试截止时间。
+ */
 export interface AutoRetryPendingHost {
   autoRetryPending?: {
     content: string
@@ -1020,6 +1087,12 @@ export interface AutoRetryPendingHost {
   }
 }
 
+/**
+ * 认领一次自动重试槽位。
+ * - 若 message 与 pending 内容匹配且在截止时间前未提交，则标记为已提交并返回 'send'；
+ * - 已提交或超时的重复调用返回 'drop'；
+ * - 普通消息返回 'send'。
+ */
 export function claimAutoRetryPending(
   host: AutoRetryPendingHost,
   message: string,
@@ -1044,9 +1117,9 @@ export function claimAutoRetryPending(
 }
 
 /**
- * Create a ManagedSession from any session-like source (SessionMetadata, SessionConfig, StoredSession).
- * Spreads all matching fields from the source so new persistent fields automatically propagate.
- * Runtime-only fields get sensible defaults.
+ * 从任何类似会话的源（SessionMetadata, SessionConfig, StoredSession）创建 ManagedSession。
+ * 从源中展开所有匹配的字段，以便新的持久化字段自动传播。
+ * 仅运行时的字段获得合理的默认值。
  */
 export function createManagedSession(
   source: { id: string } & Partial<ManagedSession>,
@@ -1059,8 +1132,8 @@ export function createManagedSession(
   ) as Partial<ManagedSession>
 
   if ('thinkingLevel' in sourceFields) {
-    // TODO: Remove legacy 'think' normalization after old persisted session
-    // headers have realistically aged out across upgrades.
+    // TODO: 在旧的持久化会话头在升级过程中
+    // 实际过期后，移除遗留的 'think' 规范化。
     const normalizedThinkingLevel = normalizeThinkingLevel(sourceFields.thinkingLevel)
     if (normalizedThinkingLevel) {
       sourceFields.thinkingLevel = normalizedThinkingLevel
@@ -1070,10 +1143,10 @@ export function createManagedSession(
   }
 
   const managed = {
-    // Spread all session-like fields from source (id, name, permissionMode, labels, model, etc.)
-    // This ensures new persistent fields automatically flow through without manual copying.
+    // 从源展开所有类似会话的字段（id, name, permissionMode, labels, model 等）
+    // 这确保新的持久化字段自动流转，无需手动复制。
     ...sourceFields,
-    // Runtime-only defaults (not persisted)
+    // 仅运行时的默认值（不持久化）
     workspace,
     agent: null,
     messages: [],
@@ -1090,7 +1163,7 @@ export function createManagedSession(
     tokenRefreshManager: new TokenRefreshManager(getSourceCredentialManager(), {
       log: (msg) => sessionLog.debug(msg),
     }),
-    // Caller overrides (permissionMode defaults, thinkingLevel, messagesLoaded, etc.)
+    // 调用者覆盖（permissionMode 默认值, thinkingLevel, messagesLoaded 等）
     ...overrides,
   } as ManagedSession
 
@@ -1101,7 +1174,7 @@ export function createManagedSession(
   }
 
   if (managed.branchContextStrategy === 'seeded-fresh-session' && managed.branchSeedApplied === undefined) {
-    // If an SDK session ID already exists, first turn has already happened.
+    // 如果 SDK 会话 ID 已存在，则第一轮次已经发生。
     managed.branchSeedApplied = !!managed.sdkSessionId
   }
 
@@ -1109,16 +1182,16 @@ export function createManagedSession(
 }
 
 /**
- * Resolve supportsBranching for a managed session.
- * Prefers the live agent instance; falls back to true for all backends.
+ * 解析托管会话的 supportsBranching。
+ * 优先使用实时代理实例；否则对所有后端返回 true。
  */
 function resolveSupportsBranching(managed: ManagedSession): boolean {
-  // If agent is live, use its instance property (authoritative)
+  // 如果代理是实时的，使用其实例属性（权威来源）
   if (managed.agent) {
     return managed.agent.supportsBranching
   }
 
-  return true // default: branching enabled for all backends
+  return true // 默认值：对所有后端启用分支
 }
 
 const DEFAULT_TOKEN_USAGE = {
@@ -1127,19 +1200,19 @@ const DEFAULT_TOKEN_USAGE = {
 }
 
 /**
- * Convert a ManagedSession to a renderer-side Session object.
- * Uses pickSessionFields() for persistent fields so new fields propagate automatically.
+ * 将 ManagedSession 转换为渲染器端的 Session 对象。
+ * 使用 pickSessionFields() 获取持久化字段，以便新字段自动传播。
  */
 function managedToSession(m: ManagedSession, overrides?: Partial<Session>): Session {
   return {
     ...pickSessionFields(m),
-    // Pre-computed fields from header (not in SESSION_PERSISTENT_FIELDS)
+    // 从头信息预计算的字段（不在 SESSION_PERSISTENT_FIELDS 中）
     preview: m.preview,
     lastMessageRole: m.lastMessageRole,
     tokenUsage: m.tokenUsage,
     messageCount: m.messageCount,
     lastFinalMessageId: m.lastFinalMessageId,
-    // Runtime-only fields
+    // 仅运行时字段
     workspaceId: m.workspace.id,
     workspaceName: m.workspace.name,
     messages: [],
@@ -1150,8 +1223,8 @@ function managedToSession(m: ManagedSession, overrides?: Partial<Session>): Sess
   } as Session
 }
 
-// Performance: Batch IPC delta events to reduce renderer load
-const DELTA_BATCH_INTERVAL_MS = 50  // Flush batched deltas every 50ms
+// 性能：批量处理 IPC delta 事件以减少渲染器负载
+const DELTA_BATCH_INTERVAL_MS = 50  // 每 50ms 刷新一次批处理的 delta
 
 interface PendingDelta {
   delta: string
@@ -1159,92 +1232,102 @@ interface PendingDelta {
 }
 
 /**
- * In-process session-completion signal for the Tasks Conductor.
+ * 进程内的会话完成信号，供 Tasks Conductor 使用。
  *
- * Emitted once per turn from `onProcessingStopped` when the session's message
- * queue is empty (i.e. true completion, not a hand-off between queued turns),
- * carrying the stop `reason`. This is an internal, side-effect-free seam — it is
- * NOT a renderer event and NOT exposed to agents. The Conductor maps the reason
- * onto a node run-state: complete→done, error/timeout→failed, interrupted→cancelled.
+ * 每次 turn 在 `onProcessingStopped` 中、当 session 的消息队列为空时（即真正的完成，
+ * 而非排队 turn 之间的交接）触发一次，携带停止 `reason`。这是一个内部的、无副作用的接缝
+ * —— 它不是渲染器事件，也不对 agent 暴露。Conductor 把 reason 映射到节点运行状态：
+ * complete→done、error/timeout→failed、interrupted→cancelled。
  */
 export interface SessionCompletionEvent {
   sessionId: string
   workspaceId: string
   reason: 'complete' | 'interrupted' | 'error' | 'timeout'
-  /** The final (non-intermediate) assistant message id for this turn, if any. */
+  /** 该 turn 的最终（非 intermediate）assistant 消息 id（如果有）。 */
   finalMessageId?: string
-  /** Convenience copy of the final assistant message text (same as getSessionFinalText). */
+  /** 最终 assistant 消息文本的便捷副本（同 getSessionFinalText）。 */
   finalText?: string
-  /** The session's cumulative token usage, so the Conductor can meter token_budget without re-fetching. */
+  /** 该 session 的累计 token 使用量，让 Conductor 无需重新获取即可计量 token_budget。 */
   tokenUsage?: TokenUsage
 }
 
+/**
+ * 会话管理器主类。
+ *
+ * 内部维护若干 Map，可按 sessionId / workspaceRootPath 快速索引：
+ * - `sessions`：所有已加载会话的运行时态；
+ * - `pendingDeltas / deltaFlushTimers`：文本流式增量批处理，减少 IPC 频率；
+ * - `configWatchers`：每个 workspace 一个文件监听器；
+ * - `automationSystems`：每个 workspace 的自动化系统（含定时器、事件匹配、执行器）；
+ * - `pendingCredentialResolvers / pendingPermissionRequests`：等待用户输入的认证/权限请求；
+ * - `adminRememberApprovals`：管理员"允许 N 分钟"的特权命令记忆窗口；
+ * - `messageLoadingPromises`：懒加载消息时的去重 Promise；
+ * - `activeViewingSession`：记录用户当前正在查看哪个会话，用于未读判定；
+ * - `agentRefreshLocks`：保证同一会话的 runtime config 刷新串行化，避免并发刷新导致子进程竞态。
+ */
 export class SessionManager implements ISessionManager {
   private sessions: Map<string, ManagedSession> = new Map()
-  // Delta batching for performance - reduces IPC events from 50+/sec to ~20/sec
+  // 为性能进行 Delta 批处理 - 将 IPC 事件从 50+/秒 减少到约 20/秒
   private pendingDeltas: Map<string, PendingDelta> = new Map()
   private deltaFlushTimers: Map<string, NodeJS.Timeout> = new Map()
-  // Config watchers for live updates (sources, etc.) - one per workspace
+  // 用于实时更新的配置监视器（源等）- 每个工作区一个
   private configWatchers: Map<string, ConfigWatcher> = new Map()
-  // Automation systems for workspace event automations - one per workspace (includes scheduler, diffing, and handlers)
+  // 用于工作区事件自动化的自动化系统 - 每个工作区一个（包括调度器、差异比较和处理程序）
   private automationSystems: Map<string, AutomationSystem> = new Map()
-  // Pending credential request resolvers (keyed by requestId)
+  // 待处理的凭据请求解析器（以 requestId 为键）
   private pendingCredentialResolvers: Map<string, (response: import('@craft-agent/shared/protocol').CredentialResponse) => void> = new Map()
-  // Permission request metadata tracking (keyed by requestId)
+  // 权限请求元数据跟踪（以 requestId 为键）
   private pendingPermissionRequests: Map<string, {
     sessionId: string
     type?: 'bash' | 'file_write' | 'mcp_mutation' | 'api_mutation' | 'admin_approval'
     commandHash?: string
   }> = new Map()
-  // Privileged approval binding + audit logger
+  // 特权审批绑定 + 审计日志记录器
   private privilegedExecutionBroker = new PrivilegedExecutionBroker(sessionLog)
-  // Session-local admin remember windows (exact command hash binding)
+  // 会话本地管理员记住窗口（精确命令哈希绑定）
   private adminRememberApprovals: Map<string, {
     createdAt: number
     expiresAt: number
     sourceRequestId: string
   }> = new Map()
-  // Promise deduplication for lazy-loading messages (prevents race conditions)
+  // 用于延迟加载消息的 Promise 去重（防止竞态条件）
   private messageLoadingPromises: Map<string, Promise<void>> = new Map()
   /**
-   * Track which session the user is actively viewing (per workspace).
-   * Map of workspaceId -> sessionId. Used to determine if a session should be
-   * marked as unread when assistant completes - if user is viewing it, don't mark unread.
+   * 跟踪用户当前正在查看的会话（每个工作区）。
+   * 映射 workspaceId -> sessionId。用于确定助手完成时是否应将会话标记为未读 -
+   * 如果用户正在查看它，则不标记为未读。
    */
   private activeViewingSession: Map<string, string> = new Map()
-  /** Coordinates startup initialization waiters from IPC handlers. */
+  /** 协调来自 IPC 处理程序的启动初始化等待者。 */
   private initGate = new InitGate()
-  // O(1) index: taskId → sessionId for background task output lookup (avoids O(n) session scan)
+  // O(1) 索引：taskId → sessionId，用于后台任务输出查找（避免 O(n) 会话扫描）
   private taskOutputIndex: Map<string, string> = new Map()
   /**
-   * WS2 keep-alive flag (default ON, opt-out via `CRAFT_KEEP_BG_AGENTS_ALIVE=0`).
-   * When true, a persistent streaming query keeps the subprocess alive across
-   * turns so background sub-agents survive, and orphaning is suppressed. When
-   * false (kill-switch), sub-agents are bound to a single turn's subprocess and
-   * die at turn end, so markOrphanedBackgroundTasks() flips still-running registry
-   * entries to `orphaned` on turn completion. Resolved via the shared
-   * `resolveKeepBackgroundTasksAlive` so the main process and the Claude backend
-   * can never disagree about whether keep-alive is on.
+   * WS2 keep-alive 标志（默认开启，可通过 `CRAFT_KEEP_BG_AGENTS_ALIVE=0` 关闭）。
+   * 为 true 时，一个持久的流式查询让子进程跨 turn 存活，使后台子 agent 得以保留，并抑制孤儿化。
+   * 为 false（kill-switch）时，子 agent 绑定到单个 turn 的子进程，在 turn 结束时消亡，
+   * 因此 markOrphanedBackgroundTasks() 会在 turn 完成时把仍处于 running 的注册表条目翻转为 `orphaned`。
+   * 通过共享的 `resolveKeepBackgroundTasksAlive` 解析，确保主进程和 Claude 后端对 keep-alive
+   * 是否开启永远不会产生分歧。
    */
   private readonly keepBackgroundTasksAlive: boolean = resolveKeepBackgroundTasksAlive()
   /**
-   * Per-session in-flight runtime-refresh promise. Ensures `updateRuntimeConfig`
-   * (or a dispose) cannot overlap with another refresh OR with a send-path
-   * `getOrCreateAgent` on the same session. Without this serialization, a
-   * `SAVE`-triggered refresh and a `sendMessage`-triggered refresh can both
-   * see `agent.isProcessing()=false`, both fire `updateRuntimeConfig`, and the
-   * subprocess can race the resulting `chat` against the still-pending update.
+   * 每个会话正在进行的运行时刷新 Promise。确保 `updateRuntimeConfig`
+   * （或 dispose）不能与另一个刷新重叠，也不能与同一会话上的发送路径
+   * `getOrCreateAgent` 重叠。没有此序列化，
+   * `SAVE` 触发的刷新和 `sendMessage` 触发的刷新都可能
+   * 看到 `agent.isProcessing()=false`，两者都触发 `updateRuntimeConfig`，并且
+   * 子进程可能使生成的 `chat` 与仍在等待的更新发生竞态。
    */
   private agentRefreshLocks: Map<string, Promise<void>> = new Map()
-  /** Monotonic clock to ensure strictly increasing message timestamps */
+  /** 单调时钟以确保严格递增的消息时间戳 */
   private lastTimestamp = 0
 
   /**
-   * Optional binder installed by the messaging-gateway bootstrap. When set,
-   * `executePromptAutomation` calls it after creating a session whose matcher
-   * declared `telegramTopic`, so the new session is bound to a Telegram forum
-   * topic in the workspace's paired supergroup. Best-effort — failures must
-   * not block the session.
+   * 由消息网关引导程序安装的可选绑定器。设置后，
+   * `executePromptAutomation` 在创建其匹配器声明了 `telegramTopic` 的会话后调用它，
+   * 以便新会话绑定到工作区配对超级组中的 Telegram 论坛主题。
+   * 尽力而为 — 失败不得阻塞会话。
    */
   private automationBinder?: (input: {
     workspaceId: string
@@ -1253,9 +1336,9 @@ export class SessionManager implements ISessionManager {
   }) => Promise<void>
 
   /**
-   * Centralized setter for session processing state.
-   * Automatically notifies the power manager on transitions (true→false, false→true)
-   * so callers don't need to remember to call onSessionStarted/onSessionStopped.
+   * 会话处理状态的集中设置器。
+   * 在状态转换时自动通知电源管理器（true→false, false→true），
+   * 因此调用者无需记住调用 onSessionStarted/onSessionStopped。
    */
   private setProcessing(managed: ManagedSession, processing: boolean): void {
     const was = managed.isProcessing
@@ -1267,16 +1350,15 @@ export class SessionManager implements ISessionManager {
     }
   }
 
-  /** Wait until initialize() has completed (sessions loaded from disk).
-   *  Resolves immediately if already initialized. */
+  /** 等待 initialize() 完成（从磁盘加载会话）。
+   *  如果已初始化则立即解决。 */
   waitForInit(): Promise<void> {
     return this.initGate.wait()
   }
 
   /**
-   * Install the automation→topic binder. Wired by the messaging-gateway
-   * bootstrap so SessionManager doesn't need to import the messaging
-   * package (avoids a package-level circular dependency).
+   * 安装自动化→主题绑定器。由消息网关引导程序连接，
+   * 以便 SessionManager 无需导入消息包（避免包级循环依赖）。
    */
   setAutomationBinder(
     fn: (input: { workspaceId: string; sessionId: string; topicName: string }) => Promise<void>,
@@ -1287,7 +1369,7 @@ export class SessionManager implements ISessionManager {
   private browserPaneManager: IBrowserPaneManager | null = null
   private rpcServer: RpcServer | null = null
   private remoteBpms = new Map<string, RemoteBrowserPaneManager>()
-  /** Pinned desktop client per session for `client:browser:invoke` routing. */
+  /** 每个会话固定的桌面客户端，用于 `client:browser:invoke` 路由。 */
   private browserHostByCanvas = new Map<string, string>()
   private eventSink: EventSink | null = null
 
@@ -1295,22 +1377,27 @@ export class SessionManager implements ISessionManager {
     this.eventSink = sink
   }
 
+  /**
+   * 注入本地浏览器面板管理器（Electron 同进程模式）。
+   *
+   * 当 Agent 与 Electron 客户端运行在同一进程时，直接调用本地 BPM；
+   * 否则通过 `setRpcServer` 启用远程桥接（`RemoteBrowserPaneManager`）。
+   */
   setBrowserPaneManager(bpm: IBrowserPaneManager): void {
     this.browserPaneManager = bpm
     bpm.setSessionPathResolver((sessionId) => this.getSessionPath(sessionId))
   }
 
   /**
-   * Provide the WS RPC server so remote clients can host browser tools.
+   * 提供 WS RPC 服务器，以便远程客户端可以托管浏览器工具。
    *
-   * When called, the SM activates the remote-bridge code path: per-session
-   * `RemoteBrowserPaneManager` instances are created lazily by
-   * {@link getBrowserPaneManagerForSession}, and the browser-host client is
-   * resolved via {@link getBrowserHostClient} with capability-aware fallback.
+   * 调用时，SM 激活远程桥接代码路径：每个会话的
+   * `RemoteBrowserPaneManager` 实例由 {@link getBrowserPaneManagerForSession} 延迟创建，
+   * 浏览器主机客户端通过 {@link getBrowserHostClient} 解析，并具有能力感知的回退。
    *
-   * Local Electron callers do not need to call this — they already
-   * call `setBrowserPaneManager(bpm)` with the in-process BPM, which takes
-   * precedence over the remote bridge in {@link getBrowserPaneManagerForSession}.
+   * 本地 Electron 调用者无需调用此方法 — 它们已经
+   * 使用进程内 BPM 调用 `setBrowserPaneManager(bpm)`，
+   * 在 {@link getBrowserPaneManagerForSession} 中优先于远程桥接。
    */
   setRpcServer(server: RpcServer): void {
     this.rpcServer = server
@@ -1318,14 +1405,13 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Resolve the {@link IBrowserPaneManager} that owns the user's local browser
-   * for a given session. Returns:
+   * 解析拥有用户本地浏览器的 {@link IBrowserPaneManager}，用于给定会话。返回：
    *
-   * 1. The locally-injected `browserPaneManager` when present (Electron client co-located
-   *    with the agent), regardless of session.
-   * 2. A session-bound {@link RemoteBrowserPaneManager} when `rpcServer` is set.
-   *    Cached in `remoteBpms` so repeat lookups don't allocate.
-   * 3. `null` when there's neither a local BPM nor an RPC server.
+   * 1. 当存在本地注入的 `browserPaneManager` 时（与代理共置的 Electron 客户端），
+   *    无论会话如何，都返回它。
+   * 2. 当设置了 `rpcServer` 时，返回会话绑定的 {@link RemoteBrowserPaneManager}。
+   *    缓存在 `remoteBpms` 中，以便重复查找不分配新对象。
+   * 3. 当既没有本地 BPM 也没有 RPC 服务器时，返回 `null`。
    */
   getBrowserPaneManagerForSession(sid: string): IBrowserPaneManager | null {
     if (this.browserPaneManager) return this.browserPaneManager
@@ -1348,12 +1434,11 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Record which desktop client should host this session's browser. Called
-   * with `ctx.clientId` from the `sessions.sendMessage` RPC handler so the
-   * agent's browser_* tools route back to the client that posted the message.
+   * 记录哪个桌面客户端应托管此会话的浏览器。从 `sessions.sendMessage` RPC 处理程序
+   * 使用 `ctx.clientId` 调用，以便代理的 browser_* 工具路由回发布消息的客户端。
    *
-   * No-op when `callerClientId` is undefined — preserves the existing pin
-   * (lets reconnected clients continue holding the host role).
+   * 当 `callerClientId` 为 undefined 时无操作 — 保留现有的固定客户端
+   * （让重新连接的客户端继续持有主机角色）。
    */
   private setLastMessageClientId(sid: string, callerClientId: string | undefined): void {
     if (!callerClientId) return
@@ -1361,9 +1446,9 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Called by the transport bootstrap on `onClientDisconnected`. Drops any
-   * pins held by `clientId` so the next browser tool call re-resolves via
-   * {@link findClientsWithCapability} instead of trying to ship to a dead client.
+   * 由传输引导程序在 `onClientDisconnected` 时调用。删除由 `clientId` 持有的任何固定客户端，
+   * 以便下一次浏览器工具调用通过 {@link findClientsWithCapability} 重新解析，
+   * 而不是尝试发送到已断开的客户端。
    */
   onClientDisconnected(clientId: string): void {
     for (const [sid, pinned] of this.browserHostByCanvas) {
@@ -1372,9 +1457,9 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Pinned client first, with fallback to any connected client for the workspace
-   * that advertises `client:browser:invoke`. The fallback handles reconnect-with-
-   * new-clientId so the agent isn't stuck waiting for another user message.
+   * 优先使用固定的客户端，回退到工作区中任何已连接且声明了 `client:browser:invoke` 的客户端。
+   * 回退处理使用新 clientId 重新连接的情况，
+   * 这样代理就不会卡住等待另一个用户消息。
    */
   private getBrowserHostClient(sid: string): string | null {
     if (!this.rpcServer) return null
@@ -1394,8 +1479,8 @@ export class SessionManager implements ISessionManager {
     return fallback
   }
 
-  /** Returns a strictly increasing timestamp (ms). When Date.now() collides with
-   *  the previous value, increments by 1 to preserve event ordering. */
+  /** 返回严格递增的时间戳（毫秒）。当 Date.now() 与
+   *  前一个值冲突时，递增 1 以保持事件顺序。 */
   private monotonic(): number {
     const now = Date.now()
     this.lastTimestamp = now > this.lastTimestamp ? now : this.lastTimestamp + 1
@@ -1466,14 +1551,14 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Apply external session header metadata to in-memory state and emit UI events.
-   * Returns true if any in-memory metadata field changed.
+   * 将外部会话头元数据应用于内存状态并发出 UI 事件。
+   * 如果任何内存元数据字段发生更改，则返回 true。
    */
   private applyExternalSessionMetadata(managed: ManagedSession, header: SessionHeader): boolean {
     const sessionId = managed.id
     let changed = false
 
-    // Labels
+    // 标签
     const oldLabels = JSON.stringify(managed.labels ?? [])
     const newLabels = JSON.stringify(header.labels ?? [])
     if (oldLabels !== newLabels) {
@@ -1482,7 +1567,7 @@ export class SessionManager implements ISessionManager {
       changed = true
     }
 
-    // Flagged
+    // 已标记
     if ((managed.isFlagged ?? false) !== (header.isFlagged ?? false)) {
       managed.isFlagged = header.isFlagged ?? false
       this.sendEvent(
@@ -1492,14 +1577,14 @@ export class SessionManager implements ISessionManager {
       changed = true
     }
 
-    // Session status
+    // 会话状态
     if (managed.sessionStatus !== header.sessionStatus) {
       managed.sessionStatus = header.sessionStatus
       this.sendEvent({ type: 'session_status_changed', sessionId, sessionStatus: header.sessionStatus ?? '' }, managed.workspace.id)
       changed = true
     }
 
-    // Name
+    // 名称
     if (managed.name !== header.name) {
       managed.name = header.name
       this.sendEvent({ type: 'name_changed', sessionId, name: header.name }, managed.workspace.id)
@@ -1521,7 +1606,7 @@ export class SessionManager implements ISessionManager {
     if (changed) {
       sessionLog.info(`External metadata change detected for session ${sessionId}`)
 
-      // Prevent stale pending writes from reverting externally-updated metadata.
+      // 防止过时的待处理写入还原外部更新的元数据。
       sessionPersistenceQueue.cancel(sessionId)
       this.persistSession(managed)
     }
@@ -1530,17 +1615,19 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Set up ConfigWatcher for a workspace to broadcast live updates
-   * (sources added/removed, guide.md changes, etc.)
-   * Called eagerly at boot for all workspaces (automations/scheduler) and
-   * on client connect (GET_WORKSPACE / SWITCH_WORKSPACE).
-   * Idempotent — returns immediately if already watching.
-   * workspaceId must be the global config ID (what the renderer knows).
+   * 为 workspace 配置文件监听器（ConfigWatcher）。
+   *
+   * 这是 Agent 系统的“热重载”中枢：
+   * - sources.json / 单个 source 目录变化 → 重载 sources 并广播给该 workspace 所有会话；
+   * - labels.json / statuses.json / automations.json 变化 → 广播给 UI；
+   * - session.jsonl 头变化 → 检测外部编辑（多设备同步 / 手动修改）并同步内存态。
+   *
+   * 注意：每个 workspace 只创建一个 watcher；幂等，重复调用直接返回。
    */
   setupConfigWatcher(workspaceRootPath: string, workspaceId: string): void {
-    // Check if already watching this workspace
+    // 检查是否已在监视此工作区
     if (this.configWatchers.has(workspaceRootPath)) {
-      return // Already watching this workspace
+      return // 已在监视此工作区
     }
 
     sessionLog.info(`Setting up ConfigWatcher for workspace: ${workspaceId} (${workspaceRootPath})`)
@@ -1559,8 +1646,8 @@ export class SessionManager implements ISessionManager {
       },
       onSourceGuideChange: (sourceSlug: string) => {
         sessionLog.info(`Source guide changed: ${sourceSlug}`)
-        // Broadcast the updated sources list so sidebar picks up guide changes
-        // Note: Guide changes don't require session source reload (no server changes)
+        // 广播更新后的源列表，以便侧边栏获取指南更改
+        // 注意：指南更改不需要重新加载会话源（无服务器更改）
         const sources = loadWorkspaceSources(workspaceRootPath)
         this.broadcastSourcesChanged(workspaceId, sources)
       },
@@ -1575,7 +1662,7 @@ export class SessionManager implements ISessionManager {
       onLabelConfigChange: () => {
         sessionLog.info(`Label config changed in ${workspaceId}`)
         this.broadcastLabelsChanged(workspaceId)
-        // Emit LabelConfigChange event via AutomationSystem
+        // 通过 AutomationSystem 发出 LabelConfigChange 事件
         const automationSystem = this.automationSystems.get(workspaceRootPath)
         if (automationSystem) {
           automationSystem.emitLabelConfigChange().catch((error) => {
@@ -1585,7 +1672,7 @@ export class SessionManager implements ISessionManager {
       },
       onAutomationsConfigChange: () => {
         sessionLog.info(`Automations config changed in ${workspaceId}`)
-        // Reload automations config via AutomationSystem
+        // 通过 AutomationSystem 重新加载自动化配置
         const automationSystem = this.automationSystems.get(workspaceRootPath)
         if (automationSystem) {
           const result = automationSystem.reloadConfig()
@@ -1595,7 +1682,7 @@ export class SessionManager implements ISessionManager {
             sessionLog.error(`Failed to reload automations for workspace ${workspaceId}:`, result.errors)
           }
         }
-        // Notify renderer to re-read automations.json
+        // 通知渲染器重新读取 automations.json
         this.broadcastAutomationsChanged(workspaceId)
       },
       onLlmConnectionsChange: () => {
@@ -1616,34 +1703,34 @@ export class SessionManager implements ISessionManager {
       },
       onSkillChange: async (slug, skill) => {
         sessionLog.info(`Skill '${slug}' changed:`, skill ? 'updated' : 'deleted')
-        // Broadcast updated list to UI
+        // 向 UI 广播更新后的列表
         const { loadAllSkills } = await import('@craft-agent/shared/skills')
         const skills = loadAllSkills(workspaceRootPath)
         this.broadcastSkillsChanged(workspaceId, skills)
       },
 
-      // Session metadata changes (edits to session.jsonl headers).
-      // Detects changes from both internal writes (self) and external sources
-      // (other instances, scripts, manual edits).
+      // 会话元数据更改（对 session.jsonl 头的编辑）。
+      // 检测来自内部写入（自身）和外部源的更改
+      // （其他实例、脚本、手动编辑）。
       onSessionMetadataChange: (sessionId, header) => {
         const managed = this.sessions.get(sessionId)
         if (!managed) return
 
-        // Check if this is our own write echoing back via fs.watch().
-        // Self-writes don't need in-memory sync (already up to date), but
-        // still need to notify the automation system for event matching.
+        // 检查这是否是我们自己的写入通过 fs.watch() 回显。
+        // 自身写入不需要内存同步（已经是最新的），但
+        // 仍然需要通知自动化系统进行事件匹配。
         const incomingSignature = getHeaderMetadataSignature(header)
         const lastWrittenSignature = sessionPersistenceQueue.getLastWrittenSignature(sessionId)
         const isSelfWrite = !!(lastWrittenSignature && incomingSignature === lastWrittenSignature)
 
-        // For external writes: sync in-memory state + emit UI events.
-        // Skip for self-writes to avoid feedback loops (especially on Windows
-        // where fs.watch fires aggressively: unlink + rename = 2+ events).
+        // 对于外部写入：同步内存状态 + 发出 UI 事件。
+        // 跳过自身写入以避免反馈循环（尤其是在 Windows 上
+        // fs.watch 触发频繁：unlink + rename = 2+ 个事件）。
         if (!isSelfWrite) {
-          // Defer external metadata application when:
-          // 1. Session is actively processing (agent running), OR
-          // 2. Session was just written programmatically (set_session_status/labels tool)
-          //    — fs.watch fires during atomic write (unlink+rename) and can read stale data
+          // 在以下情况下延迟外部元数据应用：
+          // 1. 会话正在积极处理中（代理正在运行），或者
+          // 2. 会话刚刚通过编程方式写入（set_session_status/labels 工具）
+          //    — fs.watch 在原子写入（unlink+rename）期间触发，可能读到过期数据
           const hasWriteGuard = managed._metadataWriteGuardUntil && Date.now() < managed._metadataWriteGuardUntil
           if (managed.isProcessing || hasWriteGuard) {
             managed.pendingExternalMetadata = header
@@ -1657,8 +1744,8 @@ export class SessionManager implements ISessionManager {
           }
         }
 
-        // Always notify automation system — it does its own diffing and needs
-        // to see both self-writes and external changes for event matching.
+        // 始终通知自动化系统——它自己会做差异比较，并且需要
+        // 同时看到自身写入和外部变更，以便进行事件匹配。
         const automationSystem = this.automationSystems.get(managed.workspace.rootPath)
         if (automationSystem) {
           automationSystem.updateSessionMetadata(sessionId, {
@@ -1678,14 +1765,14 @@ export class SessionManager implements ISessionManager {
     watcher.start()
     this.configWatchers.set(workspaceRootPath, watcher)
 
-    // Initialize AutomationSystem for this workspace (includes scheduler, handlers, and event logging)
+    // 为此工作空间初始化 AutomationSystem（包含调度器、处理器和事件日志）
     if (!this.automationSystems.has(workspaceRootPath)) {
       const automationSystem = new AutomationSystem({
         workspaceRootPath,
         workspaceId,
         enableScheduler: true,
         onPromptsReady: async (prompts) => {
-          // Execute prompt automations by creating new sessions
+          // 通过创建新会话来执行提示词自动化
           const settled = await Promise.allSettled(
             prompts.map((pending) =>
               this.executePromptAutomation({
@@ -1704,7 +1791,7 @@ export class SessionManager implements ISessionManager {
             )
           )
 
-          // Write enriched history entries (with session IDs and prompt summaries)
+          // 写入增强后的历史记录条目（包含会话 ID 和提示词摘要）
           for (const [idx, result] of settled.entries()) {
             const pending = prompts[idx]
             if (!pending.matcherId) continue
@@ -1736,8 +1823,8 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Manually notify the ConfigWatcher of a file change.
-   * Workaround for Bun's fs.watch on Linux not detecting atomic renames.
+   * 手动通知 ConfigWatcher 文件已变更。
+   * 解决 Bun 的 fs.watch 在 Linux 上无法检测原子重命名的问题。
    */
   notifyConfigFileChange(workspaceRootPath: string, relativePath: string): void {
     const watcher = this.configWatchers.get(workspaceRootPath)
@@ -1745,7 +1832,7 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Reload sources for all sessions in a workspace, skipping those currently processing.
+   * 重新加载工作空间中所有会话的源，跳过正在处理的会话。
    */
   private async reloadSourcesForWorkspace(workspaceRootPath: string): Promise<void> {
     for (const [_, managed] of this.sessions) {
@@ -1807,31 +1894,31 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Reload sources for a session with an active agent.
-   * Called by ConfigWatcher when source files change on disk.
-   * If agent is null (session hasn't sent any messages), skip - fresh build happens on next message.
+   * 为拥有活跃 agent 的会话重新加载源。
+   * 由 ConfigWatcher 在源文件磁盘变更时调用。
+   * 如果 agent 为 null（会话尚未发送任何消息），则跳过——下次消息发送时会进行全新构建。
    */
   private async reloadSessionSources(managed: ManagedSession): Promise<void> {
-    if (!managed.agent) return  // No agent = nothing to update (fresh build on next message)
+    if (!managed.agent) return  // 没有 agent = 无需更新（下次消息发送时全新构建）
 
     const workspaceRootPath = managed.workspace.rootPath
     sessionLog.info(`Reloading sources for session ${managed.id}`)
 
-    // Reload all sources from disk (craft-agents-docs is always available as MCP server)
+    // 从磁盘重新加载所有源（craft-agents-docs 始终作为 MCP 服务器可用）
     const allSources = loadAllSources(workspaceRootPath)
     managed.agent.setAllSources(allSources)
 
-    // Rebuild MCP and API servers for session's enabled sources
+    // 为会话启用的源重新构建 MCP 和 API 服务器
     const enabledSlugs = managed.enabledSourceSlugs || []
     const enabledSources = allSources.filter(s =>
       enabledSlugs.includes(s.config.slug) && isSourceUsable(s)
     )
-    // Pass session path so large API responses can be saved to session folder
+    // 传入会话路径，以便大型 API 响应可以保存到会话文件夹中
     const sessionPath = getSessionStoragePath(workspaceRootPath, managed.id)
     const { mcpServers, apiServers } = await buildServersFromSources(enabledSources, sessionPath, managed.tokenRefreshManager, managed.agent?.getSummarizeCallback())
     const intendedSlugs = enabledSources.map(s => s.config.slug)
 
-    // Update bridge-mcp-server config/credentials for backends that need it
+    // 更新 bridge-mcp-server 的配置/凭据，供需要它们的后端使用
     await applyBridgeUpdates(managed.agent, sessionPath, enabledSources, mcpServers, managed.id, workspaceRootPath, 'source reload', managed.poolServer?.url)
 
     await managed.agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
@@ -1840,34 +1927,34 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Reinitialize authentication environment variables.
-   * Call this after onboarding or settings changes to pick up new credentials.
+   * 重新初始化认证环境变量。
+   * 在完成引导或设置变更后调用，以获取新的凭据。
    *
-   * SECURITY NOTE: These env vars are propagated to the SDK subprocess via options.ts.
-   * Bun's automatic .env loading is disabled in the subprocess (--env-file=/dev/null)
-   * to prevent a user's project .env from injecting ANTHROPIC_API_KEY and overriding
-   * OAuth auth — Claude Code prioritizes API key over OAuth token when both are set.
-   * See: https://github.com/lukilabs/craft-agents-oss/issues/39
+   * 安全说明：这些环境变量通过 options.ts 传播到 SDK 子进程。
+   * 子进程中禁用了 Bun 的自动 .env 加载（--env-file=/dev/null），
+   * 以防止用户项目的 .env 注入 ANTHROPIC_API_KEY 并覆盖 OAuth 认证——
+   * 当两者都设置时，Claude Code 优先使用 API key 而非 OAuth token。
+   * 参见：https://github.com/lukilabs/craft-agents-oss/issues/39
    */
   /**
-   * Reinitialize authentication environment variables.
+   * 重新初始化认证环境变量。
    *
-   * Uses the default LLM connection to determine which credentials to set.
+   * 使用默认的 LLM 连接来决定设置哪些凭据。
    *
-   * @param connectionSlug - Optional connection slug to use (overrides default)
+   * @param connectionSlug - 可选的连接标识（覆盖默认连接）
    */
   async reinitializeAuth(connectionSlug?: string): Promise<void> {
     try {
       const manager = getCredentialManager()
 
-      // Get the connection to use (explicit parameter or default)
+      // 获取要使用的连接（显式参数或默认连接）
       const slug = connectionSlug || getDefaultLlmConnection()
       if (!slug) {
         sessionLog.warn('No LLM connection slug available for reinitializeAuth')
       }
       const connection = slug ? getLlmConnection(slug) : null
 
-      // Restore managed auth env vars to their baseline before applying this connection.
+      // 在应用此连接之前，将受管理的认证环境变量恢复为基线值。
       resetManagedAnthropicAuthEnvVars()
 
       if (!connection) {
@@ -1878,20 +1965,20 @@ export class SessionManager implements ISessionManager {
 
       sessionLog.info(`Reinitializing auth for connection: ${slug} (${connection.authType})`)
 
-      // Resolve auth env vars via shared utility (provider-agnostic)
+      // 通过共享工具解析认证环境变量（与提供商无关）
       const result = await resolveAuthEnvVars(connection, slug!, manager, getValidClaudeOAuthToken)
 
       if (!result.success) {
         sessionLog.error(`Auth resolution failed for ${slug}: ${result.warning}`)
       } else {
-        // Apply resolved env vars to process.env
+        // 将解析后的环境变量应用到 process.env
         for (const [key, value] of Object.entries(result.envVars)) {
           process.env[key] = value
         }
         sessionLog.info(`Auth env vars set for connection: ${slug}`)
       }
 
-      // Reset cached summarization client so it picks up new credentials/base URL
+      // 重置缓存的摘要客户端，使其获取新的凭据/基础 URL
       resetSummarizationClient()
     } catch (error) {
       sessionLog.error('Failed to reinitialize auth:', error)
@@ -1901,32 +1988,32 @@ export class SessionManager implements ISessionManager {
 
   async initialize(): Promise<void> {
     try {
-      // Backfill missing `models` arrays on existing LLM connections
+      // 回填现有 LLM 连接上缺失的 `models` 数组
       migrateLegacyLlmConnectionsConfig()
 
-      // Fix defaultLlmConnection if it points to a non-existent connection
+      // 修复指向不存在连接的 defaultLlmConnection
       migrateOrphanedDefaultConnections()
 
-      // Migrate legacy credentials to LLM connection format (one-time migration)
-      // This ensures credentials saved before LLM connections are available via the new system
+      // 将旧版凭据迁移为 LLM 连接格式（一次性迁移）
+      // 确保在 LLM 连接之前保存的凭据可以通过新系统使用
       await migrateLegacyCredentials()
 
-      // Set up authentication environment variables (critical for SDK to work)
+      // 设置认证环境变量（对 SDK 正常工作至关重要）
       await this.reinitializeAuth()
 
-      // Eagerly activate ConfigWatcher + AutomationSystem for every workspace so
-      // the scheduler and event handlers start at boot — not lazily on first
-      // client connect. This is critical for headless servers where no UI may
-      // ever connect, yet scheduled/event-driven automations must still fire.
+      // 主动为每个工作空间激活 ConfigWatcher + AutomationSystem，以便
+      // 调度器和事件处理器在启动时就开始运行——而不是等到首次
+      // 客户端连接时才惰性启动。这对于无头服务器至关重要，因为可能永远没有 UI
+      // 连接，但定时/事件驱动的自动化仍需触发。
       const workspaces = getWorkspaces()
       for (const workspace of workspaces) {
         this.setupConfigWatcher(workspace.rootPath, workspace.id)
       }
 
-      // Load existing sessions from disk
+      // 从磁盘加载现有会话
       this.loadSessionsFromDisk()
 
-      // Signal that initialization is complete — IPC handlers waiting on initGate will proceed
+      // 发出初始化完成的信号——等待 initGate 的 IPC 处理器将开始执行
       this.initGate.markReady()
     } catch (error) {
       this.initGate.markFailed(error)
@@ -1934,34 +2021,33 @@ export class SessionManager implements ISessionManager {
     }
   }
 
-  // Load all existing sessions from disk into memory (metadata only - messages are lazy-loaded)
+  // 从磁盘将所有现有会话加载到内存中（仅元数据——消息是惰性加载的）
   private loadSessionsFromDisk(): void {
     try {
       const workspaces = getWorkspaces()
       let totalSessions = 0
 
-      // Iterate over each workspace and load its sessions
+      // 遍历每个工作空间并加载其会话
       for (const workspace of workspaces) {
         const workspaceRootPath = workspace.rootPath
         const sessionMetadata = listStoredSessions(workspaceRootPath)
-        // Load workspace config once per workspace for default working directory
+        // 每个工作空间加载一次工作空间配置，以获取默认工作目录
         const wsConfig = loadWorkspaceConfig(workspaceRootPath)
         const wsDefaultWorkingDir = wsConfig?.defaults?.workingDirectory
 
         for (const meta of sessionMetadata) {
-          // Create managed session from metadata only (messages lazy-loaded on demand)
-          // This dramatically reduces memory usage at startup - messages are loaded
-          // when getSession() is called for a specific session
+          // 仅从元数据创建受管会话（消息按需惰性加载）
+          // 这大大减少了启动时的内存使用——消息仅在
+          // 调用 getSession() 获取特定会话时才会加载
           const managed = createManagedSession(meta, workspace, {
-            // The header carries the session's explicit source selection (persisted at
-            // creation / by setSessionSources). Seed it now so the renderer's very first
-            // session list shows the right chips — sessions without one hydrate any legacy
-            // body value on message load (see hydrateMessagesForColdPersist).
+            // header 携带了 session 的显式 source 选择（在创建时 / setSessionSources 时持久化）。
+            // 现在就注入，让渲染器的第一个 session 列表就显示正确的 chip ——
+            // 没有 source 选择的 session 会在加载消息时注入任何 legacy body 值（见 hydrateMessagesForColdPersist）。
             enabledSourceSlugs: meta.enabledSourceSlugs,
             workingDirectory: meta.workingDirectory ?? wsDefaultWorkingDir,
           })
 
-          // Migration: clear orphaned llmConnection references (e.g., after connection was deleted)
+          // 迁移：清除孤立的 llmConnection 引用（例如，在连接被删除后）
           if (managed.llmConnection) {
             const conn = resolveSessionConnection(managed.llmConnection, undefined)
             if (!conn) {
@@ -1971,8 +2057,8 @@ export class SessionManager implements ISessionManager {
             }
           }
 
-          // Initialize mode-manager state for restored sessions even before agent creation.
-          // This keeps diagnostics/effective mode aligned with persisted session metadata.
+          // 即使在创建 agent 之前，也为恢复的会话初始化 mode-manager 状态。
+          // 这确保诊断/有效模式与持久化的会话元数据保持一致。
           setPermissionMode(meta.id, managed.permissionMode ?? 'ask', { changedBy: 'restore' })
           if (managed.previousPermissionMode) {
             hydratePreviousPermissionMode(meta.id, managed.previousPermissionMode)
@@ -1980,7 +2066,7 @@ export class SessionManager implements ISessionManager {
 
           this.sessions.set(meta.id, managed)
 
-          // Initialize session metadata in AutomationSystem for diffing
+          // 在 AutomationSystem 中初始化会话元数据，用于差异比较
           const automationSystem = this.automationSystems.get(workspaceRootPath)
           if (automationSystem) {
             automationSystem.setInitialSessionMetadata(meta.id, {
@@ -2002,23 +2088,21 @@ export class SessionManager implements ISessionManager {
     }
   }
 
-  // Suppress fs.watch metadata-revert events for the window in which our own
-  // atomic write completes. See onSessionMetadataChange.
+  // 在我们自己的原子写入完成的时间窗口内，抑制 fs.watch 的元数据恢复事件。
+  // 参见 onSessionMetadataChange。
   private setMetadataWriteGuard(managed: ManagedSession): void {
     managed._metadataWriteGuardUntil = Date.now() + METADATA_WRITE_GUARD_MS
   }
 
   /**
-   * Persist a session to disk (async, with debouncing in the persistence queue).
+   * 将会话持久化到磁盘（异步，在持久化队列中带有去抖）。
    *
-   * Cold-session path: if messages haven't been lazy-loaded yet, hydrate them
-   * synchronously from the JSONL first — otherwise the snapshot we enqueue
-   * would write `messages: []` over the real messages on disk. Hydration
-   * deliberately does NOT touch persistent metadata fields (name, labels,
-   * sessionStatus, llmConnection, ...) because the caller may have just
-   * mutated them; the in-memory mutation must win over what's on disk.
-   * `loadStoredSession` is synchronous (sync fs reads), so the entire path
-   * stays sync — no microtask race window between the load and the enqueue.
+   * 冷会话路径：如果消息尚未惰性加载，则先从 JSONL 同步加载它们——
+   * 否则我们入队的快照会用 `messages: []` 覆盖磁盘上的真实消息。
+   * 加载故意不触及持久化元数据字段（name, labels, sessionStatus, llmConnection, ...），
+   * 因为调用者可能刚刚修改了它们；内存中的变更必须优先于磁盘上的数据。
+   * `loadStoredSession` 是同步的（同步 fs 读取），因此整个路径保持同步——
+   * 在加载和入队之间没有微任务竞态窗口。
    */
   private persistSession(managed: ManagedSession): void {
     if (!managed.messagesLoaded) {
@@ -2027,20 +2111,20 @@ export class SessionManager implements ISessionManager {
     this.enqueuePersist(managed)
   }
 
-  // Cold-persist hydration. Mirrors the messages/queue-recovery half of
-  // loadMessagesFromDisk but skips the metadata field syncs. Sets
-  // messagesLoaded=true so subsequent persistSession calls take the fast path.
-  // Subsequent ensureMessagesLoaded calls also short-circuit, which is fine —
-  // queue recovery has already run here.
+  // 冷持久化加载。镜像了 loadMessagesFromDisk 的消息/队列恢复部分，
+  // 但跳过了元数据字段同步。设置
+  // messagesLoaded=true，以便后续的 persistSession 调用走快速路径。
+  // 后续的 ensureMessagesLoaded 调用也会短路，这没问题——
+  // 队列恢复已经在这里执行过了。
   private hydrateMessagesForColdPersist(managed: ManagedSession): void {
     sessionLog.debug(`Cold-load triggered for persistSession on ${managed.id}`)
     const stored = loadStoredSession(managed.workspace.rootPath, managed.id)
     if (stored) {
       managed.messages = (stored.messages || []).map(storedToMessage)
       managed.tokenUsage = stored.tokenUsage
-      // Deferred-load fields (intentionally undefined after startup, see
-      // loadSessionsFromDisk). Populate from disk only if not already set in
-      // memory — a caller may have mutated them via setSessionSources etc.
+      // 延迟加载的字段（启动后有意为 undefined，参见
+      // loadSessionsFromDisk）。仅当内存中尚未设置时，才从磁盘填充——
+      // 调用者可能已通过 setSessionSources 等方法修改了它们。
       if (managed.enabledSourceSlugs === undefined) managed.enabledSourceSlugs = stored.enabledSourceSlugs
       if (managed.lastReadMessageId === undefined) managed.lastReadMessageId = stored.lastReadMessageId
       if (managed.hasUnread === undefined) managed.hasUnread = stored.hasUnread
@@ -2049,7 +2133,7 @@ export class SessionManager implements ISessionManager {
       if (managed.transferredSessionSummary === undefined) managed.transferredSessionSummary = stored.transferredSessionSummary
       if (managed.transferredSessionSummaryApplied === undefined) managed.transferredSessionSummaryApplied = stored.transferredSessionSummaryApplied
 
-      // Queue recovery: find orphaned queued messages from crash/restart and re-queue them.
+      // 队列恢复：查找因崩溃/重启而遗留的孤立排队消息，并重新入队。
       const orphanedQueued = managed.messages.filter(m =>
         m.role === 'user' && m.isQueued === true
       )
@@ -2075,12 +2159,12 @@ export class SessionManager implements ISessionManager {
     managed.messagesLoaded = true
   }
 
-  // Build the StoredSession snapshot and hand it to the persistence queue.
-  // Caller must ensure `managed.messagesLoaded` is true.
+  // 构建 StoredSession 快照并将其交给持久化队列。
+  // 调用者必须确保 `managed.messagesLoaded` 为 true。
   private enqueuePersist(managed: ManagedSession): void {
     try {
-      // Filter out transient status messages (progress indicators like "Compacting...")
-      // Error messages are now persisted with rich fields for diagnostics
+      // 过滤掉瞬态状态消息（进度指示器，如“压缩中...”）
+      // 错误消息现在使用丰富的字段进行持久化，以便诊断
       const persistableMessages = managed.messages.filter(m =>
         m.role !== 'status'
       )
@@ -2094,31 +2178,31 @@ export class SessionManager implements ISessionManager {
         tokenUsage: managed.tokenUsage ?? DEFAULT_TOKEN_USAGE,
       } as StoredSession
 
-      // Queue for async persistence with debouncing
+      // 加入异步持久化队列（带去抖）
       sessionPersistenceQueue.enqueue(storedSession)
     } catch (error) {
       sessionLog.error(`Failed to queue session ${managed.id} for persistence:`, error)
     }
   }
 
-  // Flush a specific session immediately (call on session close/switch).
-  // Cold-persist hydration is synchronous, so by the time we reach here the
-  // queue already has an entry whenever persistSession was just called.
+  // 立即刷新特定会话（在会话关闭/切换时调用）。
+  // 冷持久化加载是同步的，因此当我们到达这里时，
+  // 只要刚刚调用了 persistSession，队列中就已经有一个条目。
   async flushSession(sessionId: string): Promise<void> {
     await sessionPersistenceQueue.flush(sessionId)
   }
 
-  // Flush all pending sessions (call on app quit).
+  // 刷新所有待处理的会话（在应用退出时调用）。
   async flushAllSessions(): Promise<void> {
     await sessionPersistenceQueue.flushAll()
   }
 
   // ============================================
-  // Unified Auth Request Helpers
+  // 统一认证请求辅助函数
   // ============================================
 
   /**
-   * Get human-readable description for auth request
+   * 获取认证请求的人类可读描述
    */
   private getAuthRequestDescription(request: AuthRequest): string {
     switch (request.type) {
@@ -2136,7 +2220,7 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Format auth result message to send back to agent
+   * 格式化要发送回 agent 的认证结果消息
    */
   private formatAuthResultMessage(result: AuthResult): string {
     if (result.success) {
@@ -2154,8 +2238,8 @@ export class SessionManager implements ISessionManager {
 
 
   /**
-   * Complete an auth request and send result back to agent
-   * This updates the auth message status and sends a faked user message
+   * 完成认证请求并将结果发送回 agent
+   * 这会更新认证消息状态并发送一条伪造的用户消息
    */
   async completeAuthRequest(sessionId: string, result: AuthResult): Promise<void> {
     const managed = this.sessions.get(sessionId)
@@ -2164,7 +2248,7 @@ export class SessionManager implements ISessionManager {
       return
     }
 
-    // Find and update the pending auth-request message
+    // 查找并更新待处理的认证请求消息
     const authMessage = managed.messages.find(m =>
       m.role === 'auth-request' &&
       m.authRequestId === result.requestId &&
@@ -2179,7 +2263,7 @@ export class SessionManager implements ISessionManager {
       authMessage.authWorkspace = result.workspace
     }
 
-    // Emit auth_completed event to update UI
+    // 触发 auth_completed 事件以更新 UI
     this.sendEvent({
       type: 'auth_completed',
       sessionId,
@@ -2189,14 +2273,14 @@ export class SessionManager implements ISessionManager {
       error: result.error,
     }, managed.workspace.id)
 
-    // Create faked user message with result
+    // 创建包含结果的伪造用户消息
     const resultContent = this.formatAuthResultMessage(result)
 
-    // Clear pending auth state
+    // 清除待处理的认证状态
     managed.pendingAuthRequestId = undefined
     managed.pendingAuthRequest = undefined
 
-    // Auto-enable the source in the session after successful auth
+    // 认证成功后，在会话中自动启用该源
     if (result.success && result.sourceSlug) {
       const slugSet = new Set(managed.enabledSourceSlugs || [])
       if (!slugSet.has(result.sourceSlug)) {
@@ -2205,14 +2289,14 @@ export class SessionManager implements ISessionManager {
         sessionLog.info(`Auto-enabled source ${result.sourceSlug} in session ${sessionId} after auth`)
       }
 
-      // Clear any refresh cooldown so the source is immediately usable
+      // 清除任何刷新冷却时间，以便该源立即可用
       managed.tokenRefreshManager.clearCooldown(result.sourceSlug)
     }
 
-    // Persist session with updated auth message and enabled sources
+    // 使用更新后的认证消息和已启用的源持久化会话
     this.persistSession(managed)
 
-    // Update bridge-mcp-server config/credentials for backends that need it
+    // 更新 bridge-mcp-server 的配置/凭据，供需要它们的后端使用
     if (result.success && result.sourceSlug && managed.agent) {
       const workspaceRootPath = managed.workspace.rootPath
       const sessionPath = getSessionStoragePath(workspaceRootPath, managed.id)
@@ -2227,16 +2311,16 @@ export class SessionManager implements ISessionManager {
       await applyBridgeUpdates(managed.agent, sessionPath, enabledSources, mcpServers, managed.id, workspaceRootPath, 'source auth', managed.poolServer?.url)
     }
 
-    // Send the result as a new message to resume conversation
-    // Use empty arrays for attachments since this is a system-generated message
+    // 将结果作为新消息发送，以恢复对话
+    // 由于这是系统生成的消息，附件使用空数组
     await this.sendMessage(sessionId, resultContent, [], [], {})
 
     sessionLog.info(`Auth request completed for ${result.sourceSlug}: ${result.success ? 'success' : 'failed'}`)
   }
 
   /**
-   * Handle credential input from the UI (for non-OAuth auth)
-   * Called when user submits credentials via the inline form
+   * 处理来自 UI 的凭据输入（用于非 OAuth 认证）
+   * 当用户通过内联表单提交凭据时调用
    */
   async handleCredentialInput(
     sessionId: string,
@@ -2266,13 +2350,13 @@ export class SessionManager implements ISessionManager {
     }
 
     try {
-      // Store credentials using existing workspace ID extraction pattern
+      // 使用现有的工作空间 ID 提取模式存储凭据
       const credManager = getCredentialManager()
-      // Extract workspace ID from root path (last segment of path)
+      // 从根路径提取工作空间 ID（路径的最后一段）
       const wsId = basename(managed.workspace.rootPath) || managed.workspace.id
 
       if (request.mode === 'basic') {
-        // Store value as JSON string {username, password} - credential-manager.ts parses it for basic auth
+        // 将值存储为 JSON 字符串 {username, password}——credential-manager.ts 会解析它以进行基本认证
         await credManager.set(
           { type: 'source_basic', workspaceId: wsId, sourceId: request.sourceSlug },
           { value: JSON.stringify({ username: response.username, password: response.password }) }
@@ -2283,24 +2367,24 @@ export class SessionManager implements ISessionManager {
           { value: response.value! }
         )
       } else if (request.mode === 'multi-header') {
-        // Store multi-header credentials as JSON { "DD-API-KEY": "...", "DD-APPLICATION-KEY": "..." }
+        // 将多标头凭据存储为 JSON { "DD-API-KEY": "...", "DD-APPLICATION-KEY": "..." }
         await credManager.set(
           { type: 'source_apikey', workspaceId: wsId, sourceId: request.sourceSlug },
           { value: JSON.stringify(response.headers) }
         )
       } else {
-        // header or query - both use API key storage
+        // header 或 query——两者都使用 API key 存储
         await credManager.set(
           { type: 'source_apikey', workspaceId: wsId, sourceId: request.sourceSlug },
           { value: response.value! }
         )
       }
 
-      // Update source config to mark as authenticated
+      // 更新源配置以标记为已认证
       const { markSourceAuthenticated } = await import('@craft-agent/shared/sources')
       markSourceAuthenticated(managed.workspace.rootPath, request.sourceSlug)
 
-      // Mark source as unseen so fresh guide is injected on next message
+      // 将源标记为未读，以便在下一条消息时注入新的指南
       if (managed.agent) {
         managed.agent.markSourceUnseen(request.sourceSlug)
       }
@@ -2355,7 +2439,7 @@ export class SessionManager implements ISessionManager {
 
     return {
       automationCount,
-      // SchedulerService is running if the system was created with enableScheduler
+      // 如果系统是使用 enableScheduler 创建的，则 SchedulerService 正在运行
       schedulerRunning: !automationSystem.isDisposed(),
     }
   }
@@ -2384,19 +2468,19 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Reload all sessions from disk.
-   * Used after importing sessions to refresh the in-memory session list.
+   * 从磁盘重新加载所有会话。
+   * 在导入会话后使用，以刷新内存中的会话列表。
    */
   reloadSessions(): void {
     this.loadSessionsFromDisk()
   }
 
   getSessions(workspaceId?: string): Session[] {
-    // Returns session metadata only - messages are NOT included to save memory
-    // Use getSession(id) to load messages for a specific session
+    // 仅返回会话元数据——不包含消息以节省内存
+    // 使用 getSession(id) 加载特定会话的消息
     let sessions = Array.from(this.sessions.values())
 
-    // Filter by workspace if specified (used when switching workspaces)
+    // 如果指定了工作空间，则按工作空间过滤（在切换工作空间时使用）
     if (workspaceId) {
       sessions = sessions.filter(m => m.workspace.id === workspaceId)
     }
@@ -2407,8 +2491,8 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Aggregate unread state across all workspaces.
-   * Excludes hidden and archived sessions from counts/indicators.
+   * 聚合所有工作空间的未读状态。
+   * 从计数/指示器中排除隐藏和归档的会话。
    */
   getUnreadSummary(): UnreadSummary {
     const byWorkspace: Record<string, number> = {}
@@ -2438,9 +2522,9 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Refresh badge count from current unread state.
-   * Called by renderer on mount — ensures badge is set even if the initial
-   * emitUnreadSummaryChanged() fired before the renderer was ready.
+   * 根据当前未读状态刷新徽章计数。
+   * 由渲染器在挂载时调用——确保即使在初始的
+   * emitUnreadSummaryChanged() 在渲染器就绪之前触发，徽章也能被设置。
    */
   refreshBadge(): void {
     const summary = this.getUnreadSummary()
@@ -2448,45 +2532,44 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Broadcast global unread summary to all workspace windows.
+   * 向所有工作空间窗口广播全局未读摘要。
    */
   private emitUnreadSummaryChanged(): void {
     const summary = this.getUnreadSummary()
 
-    // Update badge via runtime hook — host decides whether/how to render badges
+    // 通过运行时钩子更新徽章——宿主决定是否以及如何渲染徽章
     sessionRuntimeHooks.updateBadgeCount(summary.totalUnreadSessions)
 
     if (!this.eventSink) return
 
-    // Broadcast to renderers for UI updates (session list dots, etc.)
+    // 广播给渲染器以更新 UI（会话列表圆点等）
     this.eventSink(RPC_CHANNELS.sessions.UNREAD_SUMMARY_CHANGED, { to: 'all' }, summary)
   }
 
   /**
-   * Get a single session by ID with all messages loaded.
-   * Used for lazy loading session messages when session is selected.
-   * Messages are loaded from disk on first access to reduce memory usage.
+   * 通过 ID 获取单个会话，并加载所有消息。
+   * 用于在选中会话时惰性加载会话消息。
+   * 消息在首次访问时从磁盘加载，以减少内存使用。
    */
   async getSession(sessionId: string): Promise<Session | null> {
     const m = this.sessions.get(sessionId)
     if (!m) return null
 
-    // Lazy-load messages from disk if not yet loaded
+    // 如果尚未加载，则从磁盘惰性加载消息
     await this.ensureMessagesLoaded(m)
 
     return managedToSession(m, { messages: m.messages })
   }
 
   /**
-   * Ensure messages are loaded for a managed session.
-   * Uses promise deduplication to prevent race conditions when multiple
-   * concurrent calls (e.g., rapid session switches + message send) try
-   * to load messages simultaneously.
+   * 确保受管会话的消息已加载。
+   * 使用 Promise 去重来防止当多个并发调用（例如，快速切换会话 + 发送消息）
+   * 同时尝试加载消息时出现竞态条件。
    */
   private async ensureMessagesLoaded(managed: ManagedSession): Promise<void> {
     if (managed.messagesLoaded) return
 
-    // Deduplicate concurrent loads - return existing promise if already loading
+    // 去重并发加载——如果正在加载中，则返回现有的 promise
     const existingPromise = this.messageLoadingPromises.get(managed.id)
     if (existingPromise) {
       return existingPromise
@@ -2503,7 +2586,7 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Internal: Load messages from disk storage into the managed session.
+   * 内部：从磁盘存储加载消息到受管会话。
    */
   private async loadMessagesFromDisk(managed: ManagedSession): Promise<void> {
     const storedSession = loadStoredSession(managed.workspace.rootPath, managed.id)
@@ -2511,25 +2594,25 @@ export class SessionManager implements ISessionManager {
       managed.messages = (storedSession.messages || []).map(storedToMessage)
       managed.tokenUsage = storedSession.tokenUsage
       managed.lastReadMessageId = storedSession.lastReadMessageId
-      managed.hasUnread = storedSession.hasUnread  // Explicit unread flag for NEW badge state machine
+      managed.hasUnread = storedSession.hasUnread  // 用于 NEW 徽章状态机的显式未读标志
       managed.enabledSourceSlugs = storedSession.enabledSourceSlugs
       managed.sharedUrl = storedSession.sharedUrl
       managed.sharedId = storedSession.sharedId
-      // Sync name from disk - ensures title persistence across lazy loading
+      // 从磁盘同步名称——确保在惰性加载后标题持久化
       managed.name = storedSession.name
-      // Restore LLM connection state - ensures correct provider on resume
+      // 恢复 LLM 连接状态——确保在恢复时使用正确的提供商
       if (storedSession.llmConnection) {
         managed.llmConnection = storedSession.llmConnection
       }
       if (storedSession.connectionLocked) {
         managed.connectionLocked = storedSession.connectionLocked
       }
-      // Sync transferred session summary state from disk
+      // 从磁盘同步已转移的会话摘要状态
       managed.transferredSessionSummary = storedSession.transferredSessionSummary
       managed.transferredSessionSummaryApplied = storedSession.transferredSessionSummaryApplied
       sessionLog.debug(`Lazy-loaded ${managed.messages.length} messages for session ${managed.id}`)
 
-      // Queue recovery: find orphaned queued messages from crash/restart and re-queue them
+      // 队列恢复：查找因崩溃/重启而遗留的孤立排队消息，并重新入队
       const orphanedQueued = managed.messages.filter(m =>
         m.role === 'user' && m.isQueued === true
       )
@@ -2539,13 +2622,13 @@ export class SessionManager implements ISessionManager {
           managed.messageQueue.push({
             message: msg.content,
             messageId: msg.id,
-            attachments: undefined,  // Attachments already stored on disk
+            attachments: undefined,  // 附件已存储在磁盘上
             storedAttachments: msg.attachments,
             options: undefined,
           })
         }
-        // Process queue when session becomes active (will be triggered by first message or interaction)
-        // Use setImmediate to avoid blocking the load and allow session state to settle
+        // 当会话变为活跃时处理队列（将在第一条消息或交互时触发）
+        // 使用 setImmediate 以避免阻塞加载，并让会话状态稳定下来
         if (!managed.isProcessing && managed.messageQueue.length > 0) {
           setImmediate(() => {
             this.processNextQueuedMessage(managed.id)
@@ -2557,7 +2640,7 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Get the filesystem path to a session's folder
+   * 获取会话文件夹的文件系统路径
    */
   getSessionPath(sessionId: string): string | null {
     const managed = this.sessions.get(sessionId)
@@ -2579,33 +2662,33 @@ export class SessionManager implements ISessionManager {
       throw new Error(`Workspace ${workspaceId} not found`)
     }
 
-    // Get new session defaults from workspace config (with global fallback)
-    // Options.permissionMode overrides the workspace default (used by EditPopover for auto-execute)
+    // 从工作空间配置获取新会话默认值（带有全局回退）
+    // Options.permissionMode 覆盖工作空间默认值（由 EditPopover 用于自动执行）
     const workspaceRootPath = workspace.rootPath
     const wsConfig = loadWorkspaceConfig(workspaceRootPath)
     const globalDefaults = loadConfigDefaults()
 
-    // Read permission mode from workspace config, fallback to global defaults
+    // 从工作空间配置读取权限模式，回退到全局默认值
     const defaultPermissionMode = options?.permissionMode
       ?? wsConfig?.defaults?.permissionMode
       ?? globalDefaults.workspaceDefaults.permissionMode
 
     const userDefaultWorkingDir = wsConfig?.defaults?.workingDirectory || undefined
-    // Resolve thinking level with caller-first precedence, matching permissionMode above:
-    //   caller override → workspace default → global default.
-    // normalizeThinkingLevel() tolerates undefined/unknown inputs.
+    // 以调用者优先的顺序解析思考级别，与上面的 permissionMode 一致：
+    //   调用者覆盖 → 工作区默认 → 全局默认。
+    // normalizeThinkingLevel() 能容忍 undefined/unknown 输入。
     const defaultThinkingLevel =
       normalizeThinkingLevel(options?.thinkingLevel)
       ?? normalizeThinkingLevel(wsConfig?.defaults?.thinkingLevel)
       ?? getDefaultThinkingLevel()
-    // Get default model from workspace config (used when no session-specific model is set)
+    // 从工作区配置获取默认模型（当未设置会话特定模型时使用）
     const defaultModel = wsConfig?.defaults?.model
-    // Get default enabled sources from workspace config
+    // 从工作区配置获取默认启用的数据源
     const defaultEnabledSourceSlugs = options?.enabledSourceSlugs ?? wsConfig?.defaults?.enabledSourceSlugs
 
-    // Resolve model tier hints ('fast' / 'default') to actual model IDs.
-    // EditPopover uses tier hints instead of hardcoded Anthropic model names
-    // so the right model is selected regardless of the active LLM provider.
+    // 将模型层级提示（'fast' / 'default'）解析为实际的模型 ID。
+    // EditPopover 使用层级提示而非硬编码的 Anthropic 模型名称
+    // 以便无论当前使用哪个 LLM 提供商，都能选择正确的模型。
     let resolvedModelOption = options?.model || defaultModel
     if (resolvedModelOption === 'fast' || resolvedModelOption === 'default') {
       const tierConnection = resolveSessionConnection(
@@ -2621,7 +2704,7 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // Resolve backend target early for branching policy checks.
+    // 提前解析后端目标，用于分支策略检查。
     const targetBackendContext = resolveBackendContext({
       sessionConnectionSlug: options?.llmConnection,
       workspaceDefaultConnectionSlug: wsConfig?.defaults?.defaultLlmConnection,
@@ -2631,26 +2714,24 @@ export class SessionManager implements ISessionManager {
       ?? (targetBackendContext.provider === 'pi' ? 'pi' : 'anthropic')
     const targetPiAuthProvider = targetBackendContext.connection?.piAuthProvider
 
-    // Resolve working directory from options:
-    // - 'user_default' or undefined: Use workspace's configured default
-    // - 'none': No working directory (empty string means session folder only)
-    // - Absolute path: Use as-is
+    // 从选项中解析工作目录：
+    // - 'user_default' 或 undefined：使用工作区配置的默认值
+    // - 'none'：无工作目录（空字符串表示仅会话文件夹）
+    // - 绝对路径：按原样使用
     let resolvedWorkingDir: string | undefined
     if (options?.workingDirectory === 'none') {
-      resolvedWorkingDir = undefined  // No working directory
+      resolvedWorkingDir = undefined  // 无工作目录
     } else if (options?.workingDirectory === 'user_default' || options?.workingDirectory === undefined) {
       resolvedWorkingDir = userDefaultWorkingDir
     } else {
       resolvedWorkingDir = options.workingDirectory
     }
 
-    // Resolve project binding. When a projectId is provided and the project has a
-    // workingDirectory configured, inherit it (only when the caller didn't pass an
-    // explicit override). This lets "+ New session in {project}" reuse the project's
-    // bound directory without duplicating logic on the renderer side.
-    // Subtasks inherit the parent's project when the caller didn't bind one explicitly —
-    // a child of a project-bound task belongs to that project (board quick-add passes none),
-    // so project-scoped filtering sees the whole task family.
+    // 解析项目绑定。当提供了 projectId 且该项目配置了 workingDirectory 时，
+    // 继承它（仅当调用方没有传入显式覆盖时）。这样"+ 在 {project} 中新建 session"
+    // 就能复用项目绑定的目录，而无需在渲染器侧重复逻辑。
+    // 子任务在调用方没有显式绑定时继承父任务的项目 —— 项目绑定的任务的子任务属于该项目
+    //（看板快速添加不传 projectId），因此项目级过滤能看到整个任务家族。
     const inheritedProjectId = options?.parentSessionId
       ? this.sessions.get(options.parentSessionId)?.projectId
       : undefined
@@ -2660,8 +2741,8 @@ export class SessionManager implements ISessionManager {
       const { loadProjectById } = await import('@craft-agent/shared/projects')
       const project = loadProjectById(workspaceRootPath, requestedProjectId)
       if (!project) {
-        // An EXPLICIT binding to a missing project is a caller bug; an inherited one
-        // (parent's project deleted since) just no-ops rather than failing the child.
+        // 显式绑定到一个不存在的项目是调用方的 bug；继承的绑定
+        //（父任务的项目后来被删除）则直接跳过，而不是让子任务失败。
         if (options?.projectId) {
           throw new Error(`Project ${options.projectId} not found in workspace ${workspaceId}`)
         }
@@ -2676,8 +2757,8 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // Validate branch request up-front so branch metadata is only set for valid branches.
-    // This prevents creating sessions that claim to be branched but don't have copied history.
+    // 预先验证分支请求，确保分支元数据仅设置在有效的分支上。
+    // 这防止创建声称已分支但没有复制历史记录的会话。
     let validatedBranch: {
       sourceSessionId: string
       sourceMessageId: string
@@ -2713,7 +2794,7 @@ export class SessionManager implements ISessionManager {
           throw new Error('Invalid branch request: source session belongs to a different workspace')
         }
 
-        // Flush source session to disk to ensure latest message list is available for branch copy.
+        // 将源会话刷新到磁盘，确保分支复制时可获取最新的消息列表。
         this.persistSession(sourceManaged)
         await sessionPersistenceQueue.flush(sourceManaged.id)
       }
@@ -2765,8 +2846,8 @@ export class SessionManager implements ISessionManager {
         throw new Error(`Invalid branch request: message ${options.branchFromMessageId} not found in source session`)
       }
 
-      // New branches always use strict provider-level SDK fork semantics.
-      // Seeded mode remains only for legacy sessions created before strict fork was enforced.
+      // 新分支始终使用严格的提供商级 SDK fork 语义。
+      // Seeded 模式仅保留给在强制严格 fork 之前创建的旧会话。
       const branchContextStrategy: 'sdk-fork' | 'seeded-fresh-session' = 'sdk-fork'
 
       const branchFromSdkSessionId = branchContextStrategy === 'sdk-fork'
@@ -2775,16 +2856,16 @@ export class SessionManager implements ISessionManager {
       const branchFromSessionPath = branchContextStrategy === 'sdk-fork'
         ? getSessionStoragePath(workspaceRootPath, options.branchFromSessionId)
         : undefined
-      // Capture parent's sdkCwd so the child SDK subprocess can find the parent's
-      // session file (stored under ~/.claude/projects/{cwd-hash}/).
+      // 捕获父进程的 sdkCwd，以便子 SDK 子进程能找到父进程的
+      // 会话文件（存储在 ~/.claude/projects/{cwd-hash}/ 下）。
       const branchFromSdkCwd = branchContextStrategy === 'sdk-fork'
         ? (sourceManaged?.sdkCwd || sourceSession.sdkCwd)
         : undefined
 
-      // Provider-native branch anchor at branch point.
-      // - Claude: assistant message UUID (resumeSessionAt), but only when anchor lineage
-      //   matches the parent SDK session being resumed.
-      // - Pi: session entry ID loaded from sidecar (pi-turn-anchors.json)
+      // 分支点处的提供商原生分支锚点。
+      // - Claude：assistant 消息 UUID（resumeSessionAt），但仅当锚点谱系
+      //   与正在恢复的父 SDK 会话匹配时。
+      // - Pi：从 sidecar（pi-turn-anchors.json）加载的会话条目 ID
       const branchMessage = sourceSession.messages[branchIdx]
       let branchFromSdkTurnId: string | undefined
       if (branchContextStrategy === 'sdk-fork') {
@@ -2865,7 +2946,7 @@ export class SessionManager implements ISessionManager {
       })
     }
 
-    // Use storage layer to create and persist the session
+    // 使用存储层创建并持久化会话
     const storedSession = await createStoredSession(workspaceRootPath, {
       name: options?.name,
       permissionMode: defaultPermissionMode,
@@ -2886,7 +2967,7 @@ export class SessionManager implements ISessionManager {
       enabledSourceSlugs: options?.enabledSourceSlugs,
     })
 
-    // Branch: copy messages from source session up to and including the branch point
+    // 分支：从源会话复制消息，直到并包括分支点
     if (validatedBranch) {
       const branchedStored = loadStoredSession(workspaceRootPath, storedSession.id)
       if (!branchedStored) {
@@ -2895,10 +2976,10 @@ export class SessionManager implements ISessionManager {
 
       const sourceMessages = validatedBranch.sourceSession.messages.slice(0, validatedBranch.branchIdx + 1)
 
-      // Re-map embedded paths: source messages were loaded with expandSessionPath(sourceDir),
-      // so they contain absolute paths to the *source* session directory. When saved to the
-      // branch session, makeSessionPathPortable uses the *branch* dir — which won't match.
-      // Fix: replace source dir paths with branch dir paths so tokenization works on save.
+      // 重新映射嵌入的路径：源消息是使用 expandSessionPath(sourceDir) 加载的，
+      // 因此它们包含指向*源*会话目录的绝对路径。当保存到
+      // 分支会话时，makeSessionPathPortable 使用*分支*目录——这会导致不匹配。
+      // 修复：将源目录路径替换为分支目录路径，以便保存时 tokenization 正常工作。
       const sourceDir = normalizePath(getSessionStoragePath(workspaceRootPath, validatedBranch.sourceSessionId))
       const branchDir = normalizePath(getSessionStoragePath(workspaceRootPath, storedSession.id))
       if (sourceDir !== branchDir) {
@@ -2925,10 +3006,10 @@ export class SessionManager implements ISessionManager {
       }
       await saveStoredSession(branchedStored)
 
-      // Propagate the Pi turn-anchor sidecar into the branch so a downstream
-      // branch can still resolve anchors for messages copied here from the
-      // source. Without this step, branch-of-branch silently falls back to
-      // full-history fork — see craft-agents-oss#782.
+      // 将 Pi 的 turn-anchor sidecar 传播到分支中，以便下游
+      // 分支仍然可以解析从此处复制的消息的锚点。
+      // 没有这一步，分支的分支会静默回退到
+      // 全历史 fork——参见 craft-agents-oss#782。
       if (
         validatedBranch.branchContextStrategy === 'sdk-fork' &&
         validatedBranch.sourceProvider === 'pi'
@@ -2949,12 +3030,12 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // Resolve connection/provider/auth/model using the provider-agnostic backend resolver.
-    // Reuse precomputed target context so branch validation and session construction share the same target identity.
+    // 使用与提供商无关的后端解析器解析连接/提供商/认证/模型。
+    // 重用预先计算的目标上下文，使分支验证和会话构建共享相同的目标标识。
     const resolvedContext = targetBackendContext
     const resolvedModel = resolvedContext.resolvedModel
 
-    // Log mini agent session creation
+    // 记录迷你 agent 会话创建
     if (options?.systemPromptPreset === 'mini' || options?.model) {
       sessionLog.info(`🤖 Creating mini agent session: model=${resolvedModel}, systemPromptPreset=${options?.systemPromptPreset}`)
     }
@@ -2976,19 +3057,19 @@ export class SessionManager implements ISessionManager {
       branchFromSdkCwd: validatedBranch?.branchFromSdkCwd,
       branchFromSdkTurnId: validatedBranch?.branchFromSdkTurnId,
       branchSeedApplied: validatedBranch ? validatedBranch.branchContextStrategy === 'sdk-fork' : undefined,
-      messagesLoaded: !isBranch,  // Branched sessions: lazy-load messages from JSONL
+      messagesLoaded: !isBranch,  // 分支会话：从 JSONL 惰性加载消息
     })
 
-    // Eagerly load messages for branched sessions so the renderer gets the full
-    // conversation immediately (needed for scroll-to-bottom on panel open)
+    // 为分支会话急切加载消息，以便渲染器能立即获取完整的
+    // 对话内容（面板打开时滚动到底部所需）
     if (isBranch) {
       await this.ensureMessagesLoaded(managed)
 
       const requiresBranchPreflight = managed.branchContextStrategy === 'sdk-fork'
       if (requiresBranchPreflight) {
-        // Enforce branch correctness at creation time.
-        // A branch is only valid if backend context can be established now,
-        // not deferred to the first user message.
+        // 在创建时强制执行分支正确性。
+        // 分支仅在当前能建立后端上下文时才有效，
+        // 而不是推迟到第一条用户消息。
         try {
           await this.getOrCreateAgent(managed)
           await managed.agent!.ensureBranchReady()
@@ -3025,8 +3106,8 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // Initialize mode-manager state immediately to avoid UI/enforcement races
-    // before the agent instance is lazily created.
+    // 立即初始化 mode-manager 状态，以避免在 agent 实例
+    // 被惰性创建之前出现 UI/执行竞争。
     setPermissionMode(storedSession.id, managed.permissionMode ?? 'ask', { changedBy: 'restore' })
     if (managed.previousPermissionMode) {
       hydratePreviousPermissionMode(storedSession.id, managed.previousPermissionMode)
@@ -3034,7 +3115,7 @@ export class SessionManager implements ISessionManager {
 
     this.sessions.set(storedSession.id, managed)
 
-    // Initialize session metadata in AutomationSystem for diffing
+    // 在 AutomationSystem 中初始化会话元数据以进行差异比较
     const automationSystem = this.automationSystems.get(workspaceRootPath)
     if (automationSystem) {
       automationSystem.setInitialSessionMetadata(storedSession.id, {
@@ -3132,32 +3213,26 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Refresh an existing agent's runtime config in place when the session's
-   * resolved connection signature has drifted from what the agent was created
-   * with. No-ops when the agent doesn't exist, when the signature still
-   * matches, or when the agent is mid-stream (the gate is `agent.isProcessing()`
-   * — `managed.isProcessing` is not used because `sendMessage` flips it before
-   * calling `getOrCreateAgent`, which would make every send-path refresh dead
-   * code).
+   * 当会话的已解析连接签名与创建 agent 时的签名不一致时，就地刷新现有 agent 的运行时配置。
+   * 如果 agent 不存在、签名仍然匹配或 agent 正在处理中（门控条件是 `agent.isProcessing()`——
+   * 不使用 `managed.isProcessing`，因为 `sendMessage` 在调用 `getOrCreateAgent` 之前会翻转它，
+   * 这会使每个发送路径的刷新成为死代码），则不执行任何操作。
    *
-   * Concurrency: per-session serialization via `agentRefreshLocks`. A second
-   * caller (e.g. `sendMessage` arriving mid-`SAVE`-refresh) awaits the
-   * in-flight refresh, then re-evaluates from the post-refresh state — so the
-   * subsequent `agent.chat()` is sent only after the subprocess has applied
-   * the runtime update (or the agent has been disposed for recreation).
+   * 并发控制：通过 `agentRefreshLocks` 实现每个会话的序列化。第二个调用者
+   *（例如在 `SAVE` 刷新期间到达的 `sendMessage`）等待正在进行的刷新完成，
+   * 然后从刷新后的状态重新评估——因此后续的 `agent.chat()` 仅在子进程应用了
+   * 运行时更新（或 agent 已被销毁以重新创建）之后才发送。
    *
-   * The helper distinguishes two kinds of drift:
-   *   - Restart-required (provider/auth/slug/piAuthProvider): goes straight
-   *     to dispose + recreate because `update_runtime_config` cannot fully
-   *     re-route credential/provider state in a live subprocess.
-   *   - In-place safe (model/baseUrl/customEndpoint/customModels): attempts
-   *     `agent.updateRuntimeConfig` and falls back to dispose if the backend
-   *     can't apply the update.
+   * 该辅助函数区分两种漂移：
+   *   - 需要重启（provider/auth/slug/piAuthProvider）：直接销毁并重新创建，
+   *     因为 `update_runtime_config` 无法在运行的子进程中完全重新路由凭据/提供商状态。
+   *   - 可原地安全更新（model/baseUrl/customEndpoint/customModels）：尝试
+   *     `agent.updateRuntimeConfig`，如果后端无法应用更新，则回退到销毁。
    */
   private async tryRefreshAgentRuntime(managed: ManagedSession, reason: string): Promise<void> {
-    // Serialize against any in-flight refresh on this session. The waiter
-    // doesn't propagate the prior call's errors — those are logged at the
-    // origin call site.
+    // 针对此会话上任何正在进行的刷新进行序列化。等待者
+    // 不会传播先前调用的错误——这些错误会在
+    // 原始调用点记录。
     const inflight = this.agentRefreshLocks.get(managed.id)
     if (inflight) {
       await inflight.catch(() => undefined)
@@ -3205,17 +3280,17 @@ export class SessionManager implements ISessionManager {
       restartRequired,
       reason,
     )
-    // Track the work so concurrent callers serialize. Swallow errors on the
-    // tracked promise — the awaiter shouldn't get someone else's exception;
-    // errors are logged inside `runAgentRuntimeRefresh`.
+    // 跟踪工作，以便并发调用者序列化。吞掉跟踪的 promise 上的错误——
+    // 等待者不应得到其他人的异常；
+    // 错误在 `runAgentRuntimeRefresh` 内部记录。
     const tracked = work.then(() => undefined, () => undefined)
     this.agentRefreshLocks.set(managed.id, tracked)
     try {
       await work
     } finally {
-      // Concurrent callers awaited `tracked` before reaching this point and
-      // each registered their own work serially, so the slot is always ours
-      // to clear when our own work resolves.
+      // 并发调用者在到达此点之前已经等待了 `tracked`，
+      // 并且每个都串行注册了自己的工作，因此当我们的工作解析时，
+      // 该槽位始终由我们清除。
       if (this.agentRefreshLocks.get(managed.id) === tracked) {
         this.agentRefreshLocks.delete(managed.id)
       }
@@ -3278,10 +3353,9 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Push a connection's runtime updates (e.g. `supportsImages` toggle) to every
-   * active session that uses it. Called from the `llmConnections.SAVE` handler
-   * so capability changes reach live Pi subprocesses immediately instead of
-   * waiting for the next send to lazily notice the signature drift.
+   * 将连接的运行时更新（例如 `supportsImages` 切换）推送到所有使用它的活动会话。
+   * 从 `llmConnections.SAVE` 处理程序调用，以便能力变更能立即到达正在运行的 Pi 子进程，
+   * 而不是等待下一次发送时惰性地发现签名漂移。
    */
   async refreshConnectionRuntime(connectionSlug: string): Promise<void> {
     for (const managed of this.sessions.values()) {
@@ -3295,19 +3369,31 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Get or create agent for a session (lazy loading)
-   * Creates the appropriate backend agent based on LLM connection.
+   * 懒加载/创建会话对应的 Agent 后端实例。
    *
-   * Provider resolution order:
-   * 1. session.llmConnection (locked after first message)
+   * 这是 Agent 子进程的“工厂方法”：
+   * 1. 先根据签名判断当前 runtime config 是否漂移，需要热更新或重建；
+   * 2. 解析 LLM connection（会话级 → workspace 默认 → 全局默认）；
+   * 3. 第一次创建时锁定 connection（`connectionLocked = true`），并持久化；
+   * 4. 构建 enabled sources 的 MCP / API server 配置；
+   * 5. 创建 `McpClientPool` 和可选的 HTTP pool server（供外部 SDK 子进程连接）；
+   * 6. 通过 `createBackendFromResolvedContext` 创建 provider-specific 后端（Claude / Pi）；
+   * 7. 注册各类回调：调试日志、认证、权限、计划提交、子会话生成、source 激活等。
+   *
+   * 与 Go 的类比：
+   * - 类似于 Go 里根据配置 new 一个 `Agent` 接口实现，并把事件回调注册进去；
+   * - `await` 相当于等待初始化完成，Go 里可能是 `agent.Initialize(ctx)`。
+   *
+   * Provider 解析顺序：
+   * 1. session.llmConnection（第一条消息后锁定）
    * 2. workspace.defaults.defaultLlmConnection
    * 3. global defaultLlmConnection
-   * 4. fallback: no connection configured
+   * 4. fallback：未配置 connection
    */
   private async getOrCreateAgent(managed: ManagedSession): Promise<AgentInstance> {
-    // Refresh runtime config in-place when the connection has drifted since
-    // the agent was created. May null out `managed.agent` if the in-place
-    // refresh fails, in which case the create branch below rebuilds it.
+    // 当连接自 agent 创建以来发生漂移时，就地刷新运行时配置。
+    // 如果就地刷新失败，可能会将 `managed.agent` 置为 null，
+    // 在这种情况下，下面的创建分支会重建它。
     await this.tryRefreshAgentRuntime(managed, 'send-path refresh')
 
     const workspaceConfig = loadWorkspaceConfig(managed.workspace.rootPath)
@@ -3329,15 +3415,15 @@ export class SessionManager implements ISessionManager {
     if (!managed.agent) {
       const end = perf.start('agent.create', { sessionId: managed.id })
 
-      // Lock the connection after first resolution
-      // This ensures the session always uses the same provider
+      // 首次解析后锁定连接
+      // 这确保会话始终使用相同的提供商
       if (connection && !managed.connectionLocked) {
         managed.llmConnection = connection.slug
         managed.connectionLocked = true
         sessionLog.info(`Locked session ${managed.id} to connection "${connection.slug}"`)
         this.persistSession(managed)
 
-        // Keep renderer session capabilities in sync when auto-locking the connection.
+        // 自动锁定连接时，保持渲染器会话能力同步。
         this.sendEvent({
           type: 'connection_changed',
           sessionId: managed.id,
@@ -3353,18 +3439,18 @@ export class SessionManager implements ISessionManager {
         sessionLog.warn(`No LLM connection found for session ${managed.id}, using default anthropic provider`)
       }
 
-      // Set session directory for tool metadata cross-process sharing.
-      // The SDK subprocess reads CRAFT_SESSION_DIR to write tool-metadata.json;
-      // the main process reads it via toolMetadataStore.setSessionDir().
+      // 设置会话目录，用于工具元数据的跨进程共享。
+      // SDK 子进程读取 CRAFT_SESSION_DIR 以写入 tool-metadata.json；
+      // 主进程通过 toolMetadataStore.setSessionDir() 读取它。
       const sessionDirForMetadata = getSessionStoragePath(managed.workspace.rootPath, managed.id)
       process.env.CRAFT_SESSION_DIR = sessionDirForMetadata
       toolMetadataStore.setSessionDir(sessionDirForMetadata)
 
-      // Set up agentReady promise so title generation can await agent creation
+      // 设置 agentReady promise，以便标题生成可以等待 agent 创建
       managed.agentReady = new Promise<void>(r => { managed.agentReadyResolve = r })
 
       // ============================================================
-      // Common setup: sources, MCP pool, session config
+      // 通用设置：数据源、MCP 池、会话配置
       // ============================================================
 
       const sessionPath = getSessionStoragePath(managed.workspace.rootPath, managed.id)
@@ -3374,33 +3460,33 @@ export class SessionManager implements ISessionManager {
         enabledSlugs.includes(s.config.slug) && isSourceUsable(s)
       )
 
-      // Build server configs for enabled sources
+      // 为启用的数据源构建服务器配置
       const { mcpServers, apiServers } = await buildServersFromSources(enabledSources, sessionPath, managed.tokenRefreshManager)
 
-      // Create centralized MCP client pool (all backends use it)
+      // 创建集中式 MCP 客户端池（所有后端都使用它）
       managed.mcpPool = new McpClientPool({ debug: (msg) => sessionLog.debug(msg), workspaceRootPath: managed.workspace.rootPath, sessionPath })
 
-      // Backends that run as external subprocesses need an HTTP pool server
+      // 作为外部子进程运行的后端需要一个 HTTP 池服务器
       let poolServerUrl: string | undefined
       if (backendContext.capabilities.needsHttpPoolServer) {
         managed.poolServer = new McpPoolServer(managed.mcpPool, { debug: (msg) => sessionLog.debug(msg) })
         managed.mcpPool.onToolsChanged = () => managed.poolServer?.notifyToolsChanged()
         poolServerUrl = await managed.poolServer.start()
-        await managed.mcpPool.sync(mcpServers) // Ensure pool has tools before SDK connects
+        await managed.mcpPool.sync(mcpServers) // 确保在 SDK 连接之前池中已有工具
       }
 
-      // Per-session env overrides
+      // 每个会话的环境变量覆盖
       const miniModel = connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined
       const envOverrides: Record<string, string> = {
         CRAFT_WORKSPACE_PATH: managed.workspace.rootPath,
-        // Pass mini model to SDK subprocess so built-in tools like WebFetch
-        // use the correct model for summarization (instead of hardcoded Haiku)
+        // 将 mini 模型传递给 SDK 子进程，以便 WebFetch 等内置工具
+        // 使用正确的模型进行摘要（而不是硬编码的 Haiku）
         ...(miniModel ? { ANTHROPIC_DEFAULT_HAIKU_MODEL: miniModel } : {}),
       }
       managed.envOverrides = envOverrides
 
       // ============================================================
-      // Common session + callback config (identical for all backends)
+      // 通用会话 + 回调配置（所有后端相同）
       // ============================================================
 
       const sessionConfig = {
@@ -3425,7 +3511,7 @@ export class SessionManager implements ISessionManager {
 
       const onSdkSessionIdUpdate = (sdkSessionId: string) => {
         managed.sdkSessionId = sdkSessionId
-        // Retire branch-only fork metadata now that child session is established
+        // 子会话已建立，现在移除仅用于分支的 fork 元数据
         if (managed.branchFromSdkSessionId) {
           sessionLog.info(`Branch fork established for ${managed.id}: child=${sdkSessionId}, retiring parent fork metadata (parent=${managed.branchFromSdkSessionId})`)
           managed.branchFromSdkSessionId = undefined
@@ -3517,7 +3603,7 @@ export class SessionManager implements ISessionManager {
       }
 
       // ============================================================
-      // Construct backend via factory
+      // 通过工厂构造后端
       // ============================================================
 
       managed.agent = createBackendFromResolvedContext({
@@ -3540,21 +3626,21 @@ export class SessionManager implements ISessionManager {
         mcpPool: managed.mcpPool,
         poolServerUrl,
         envOverrides,
-        // Claude-specific
+        // Claude 特有
         isHeadless: !AGENT_FLAGS.defaultModesEnabled,
-        skipConfigWatcher: true, // Server owns workspace-level ConfigWatcher — don't duplicate in agents
+        skipConfigWatcher: true, // 服务器拥有工作区级别的 ConfigWatcher——不要在 agent 中重复创建
         automationSystem: this.automationSystems.get(managed.workspace.rootPath),
         systemPromptPreset: managed.systemPromptPreset,
         debugMode: _platform?.isDebugMode ? { enabled: true, logFilePath: _platform.getLogFilePath?.() } : undefined,
         enable1MContext: await (async () => { const { getEnable1MContext } = await import('@craft-agent/shared/config/storage'); return getEnable1MContext(); })(),
-        // Image resize callback — prevents oversized images from entering conversation history
+        // 图片大小调整回调——防止过大的图片进入对话历史
         onImageResize: async (filePath: string, maxSizeBytes: number): Promise<string | null> => {
           try {
             const buffer = await readFile(filePath)
             const result = await resizeImageForAPI(buffer, { maxSizeBytes })
             if (!result) return null
 
-            // Write to session tmp directory (cleaned up with session)
+            // 写入会话临时目录（随会话一起清理）
             const sessionTmpDir = join(sessionPath, 'tmp')
             await mkdir(sessionTmpDir, { recursive: true })
             const ext = result.format === 'jpeg' ? 'jpg' : 'png'
@@ -3568,7 +3654,7 @@ export class SessionManager implements ISessionManager {
             return null
           }
         },
-        // Source configs for postInit() — backends set up their own bridge/config
+        // postInit() 的源配置——后端设置自己的桥接/配置
         initialSources: {
           enabledSources,
           mcpServers,
@@ -3581,7 +3667,7 @@ export class SessionManager implements ISessionManager {
       sessionLog.info(`Created ${provider} agent for session ${managed.id} (model: ${backendContext.resolvedModel})${managed.sdkSessionId ? ' (resuming)' : ''}`)
 
       // ============================================================
-      // Post-construction: debug callback, auth callback, postInit()
+      // 构造后：调试回调、认证回调、postInit()
       // ============================================================
 
       managed.agent.onDebug = (msg: string) => {
@@ -3602,14 +3688,14 @@ export class SessionManager implements ISessionManager {
             sessionLog.info('Tool blocked by permission mode', payload)
             return
           } catch {
-            // fall through to plain logging when payload parsing fails
+            // 当有效载荷解析失败时，回退到普通日志记录
           }
         }
 
         sessionLog.info(msg)
       }
 
-      // Unified auth callback — replaces per-backend onChatGptAuthRequired/onGithubAuthRequired
+      // 统一认证回调——替换每个后端的 onChatGptAuthRequired/onGithubAuthRequired
       managed.agent.onBackendAuthRequired = (reason: string) => {
         sessionLog.warn(`Backend auth required for session ${managed.id}: ${reason}`)
         this.sendEvent({
@@ -3620,7 +3706,7 @@ export class SessionManager implements ISessionManager {
         }, managed.workspace.id)
       }
 
-      // Run post-init (auth injection) — each backend handles its own
+      // 运行后初始化（认证注入）——每个后端处理自己的
       const postInitResult = await managed.agent.postInit()
       if (postInitResult.authWarning) {
         sessionLog.warn(`Auth warning for session ${managed.id}: ${postInitResult.authWarning}`)
@@ -3632,19 +3718,19 @@ export class SessionManager implements ISessionManager {
         }, managed.workspace.id)
       }
 
-      // Wire up large response handling in the MCP pool (all backends)
+      // 在 MCP 池中连接大响应处理（所有后端）
       if (managed.mcpPool && managed.agent) {
         managed.mcpPool.setSummarizeCallback(managed.agent.getSummarizeCallback())
       }
 
-      // Wire up browser pane tools — merge BrowserPaneFns into session callbacks
-      // so browser_* tools can delegate to BrowserPaneManager.
+      // 连接浏览器面板工具——将 BrowserPaneFns 合并到会话回调中
+      // 以便 browser_* 工具可以委托给 BrowserPaneManager。
       //
-      // Always register when EITHER a local BPM is set OR an RPC server is
-      // available (which lets `getBrowserPaneManagerForSession` lazily build a
-      // RemoteBrowserPaneManager). Calls fail per-method with
-      // BROWSER_NO_CAPABLE_CLIENT if no desktop client is connected, instead
-      // of "tool unavailable".
+      // 当本地 BPM 已设置或 RPC 服务器可用时始终注册
+      //（这允许 `getBrowserPaneManagerForSession` 惰性构建
+      // RemoteBrowserPaneManager）。如果未连接桌面客户端，每个方法的调用会失败并返回
+      // BROWSER_NO_CAPABLE_CLIENT，而不是
+      // 返回“工具不可用”。
       sessionLog.info('[browser-pane] BPF gate check', {
         sessionId: managed.id,
         hasLocalBpm: !!this.browserPaneManager,
@@ -3952,10 +4038,10 @@ export class SessionManager implements ISessionManager {
         })
       }
 
-      // Signal that the agent instance is ready (unblocks title generation)
+      // 发出信号表示 agent 实例已就绪（解除标题生成的阻塞）
       managed.agentReadyResolve?.()
 
-      // Set up permission handler to forward requests to renderer
+      // 设置权限处理程序，将请求转发给渲染器
       managed.agent.onPermissionRequest = (request: {
         requestId: string;
         toolName: string;
@@ -4034,12 +4120,12 @@ export class SessionManager implements ISessionManager {
         }, managed.workspace.id)
       }
 
-      // Note: Credential requests now flow through onAuthRequest (unified auth flow)
-      // The legacy onCredentialRequest callback has been removed from CraftAgent
-      // Auth refresh for mid-session token expiry is handled by the error handler in sendMessage
-      // which destroys/recreates the agent to get fresh credentials
+      // 注意：凭据请求现在通过 onAuthRequest（统一认证流程）
+      // 旧的 onCredentialRequest 回调已从 CraftAgent 中移除
+      // 会话中令牌过期的认证刷新由 sendMessage 中的错误处理程序处理
+      // 它会销毁/重新创建 agent 以获取新凭据
 
-      // Set up mode change handlers
+      // 设置模式变更处理程序
       managed.agent.onPermissionModeChange = (mode) => {
         if (managed.permissionMode === mode) {
           return
@@ -4067,14 +4153,14 @@ export class SessionManager implements ISessionManager {
         }, managed.workspace.id)
       }
 
-      // Wire up onPlanSubmitted to add plan message to conversation
+      // 连接 onPlanSubmitted，将计划消息添加到对话中
       managed.agent.onPlanSubmitted = async (planPath) => {
         sessionLog.info(`Plan submitted for session ${managed.id}:`, planPath)
         try {
-          // Read the plan file content
+          // 读取计划文件内容
           const planContent = await readFile(planPath, 'utf-8')
 
-          // Mark the SubmitPlan tool message as completed (it won't get a tool_result due to forceAbort)
+          // 将 SubmitPlan 工具消息标记为已完成（由于 forceAbort，它不会收到 tool_result）
           const submitPlanMsg = managed.messages.find(
             m => m.toolName?.includes('SubmitPlan') && m.toolStatus === 'executing'
           )
@@ -4084,7 +4170,7 @@ export class SessionManager implements ISessionManager {
             submitPlanMsg.toolResult = 'Plan submitted for review'
           }
 
-          // Create a plan message
+          // 创建计划消息
           const planMessage = {
             id: `plan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             role: 'plan' as const,
@@ -4093,37 +4179,37 @@ export class SessionManager implements ISessionManager {
             planPath,
           }
 
-          // Add to session messages
+          // 添加到会话消息中
           managed.messages.push(planMessage)
 
-          // Update lastMessageRole for badge display
+          // 更新 lastMessageRole 用于徽章显示
           managed.lastMessageRole = 'plan'
 
-          // Send event to renderer
+          // 向渲染器发送事件
           this.sendEvent({
             type: 'plan_submitted',
             sessionId: managed.id,
             message: planMessage,
           }, managed.workspace.id)
 
-          // Interrupt execution - plan presentation is a stopping point
-          // The user needs to review and respond before continuing
+          // 中断执行——计划展示是一个停止点
+          // 用户需要审查并回复后才能继续
           if (managed.isProcessing && managed.agent) {
             sessionLog.info(`Interrupting for plan submission in session ${managed.id}`)
             managed.agent.interruptForHandoff(AbortReason.PlanSubmitted)
             this.setProcessing(managed, false)
 
-            // Release browser overlay + session binding because the agent is no longer running.
-            // Plan submission pauses execution until user review, so browser ownership should not remain locked.
+            // 释放浏览器覆盖层和会话绑定，因为 agent 不再运行。
+            // 计划提交会暂停执行直到用户审查，因此浏览器所有权不应保持锁定。
             await releaseBrowserOwnershipOnForcedStop(
               (sid) => this.getBrowserPaneManagerForSession(sid),
               managed.id,
             )
 
-            // Send complete event so renderer knows processing stopped (include tokenUsage for real-time updates)
+            // 发送完成事件，让渲染器知道处理已停止（包含 tokenUsage 用于实时更新）
             this.sendEvent({ type: 'complete', sessionId: managed.id, tokenUsage: managed.tokenUsage, backgroundTasksAlive: this.keepBackgroundTasksAlive }, managed.workspace.id)
 
-            // Persist session state
+            // 持久化会话状态
             this.persistSession(managed)
           }
         } catch (error) {
@@ -4131,11 +4217,11 @@ export class SessionManager implements ISessionManager {
         }
       }
 
-      // Wire up onAuthRequest to add auth message to conversation and pause execution
+      // 连接 onAuthRequest，将认证消息添加到对话中并暂停执行
       managed.agent.onAuthRequest = (request) => {
         sessionLog.info(`Auth request for session ${managed.id}:`, request.type, request.sourceSlug)
 
-        // Create auth-request message
+        // 创建认证请求消息
         const authMessage: Message = {
           id: generateMessageId(),
           role: 'auth-request',
@@ -4146,7 +4232,7 @@ export class SessionManager implements ISessionManager {
           authSourceSlug: request.sourceSlug,
           authSourceName: request.sourceName,
           authStatus: 'pending',
-          // Copy type-specific fields for credentials
+          // 复制凭据的类型特定字段
           ...(request.type === 'credential' && {
             authCredentialMode: request.mode,
             authLabels: request.labels,
@@ -4159,30 +4245,30 @@ export class SessionManager implements ISessionManager {
           }),
         }
 
-        // Add to session messages
+        // 添加到会话消息中
         managed.messages.push(authMessage)
 
-        // Store pending auth request for later resolution
+        // 存储待处理的认证请求，以便后续解析
         managed.pendingAuthRequestId = request.requestId
         managed.pendingAuthRequest = request
 
-        // Interrupt execution (like SubmitPlan)
+        // 中断执行（类似 SubmitPlan）
         if (managed.isProcessing && managed.agent) {
           sessionLog.info(`Interrupting for auth request in session ${managed.id}`)
           managed.agent.interruptForHandoff(AbortReason.AuthRequest)
           this.setProcessing(managed, false)
 
-          // Release browser overlay + session binding because the agent is paused awaiting user auth.
+          // 释放浏览器覆盖层和会话绑定，因为 agent 已暂停等待用户认证。
           void releaseBrowserOwnershipOnForcedStop(
             (sid) => this.getBrowserPaneManagerForSession(sid),
             managed.id,
           )
 
-          // Send complete event so renderer knows processing stopped (include tokenUsage for real-time updates)
+          // 发送完成事件，让渲染器知道处理已停止（包含 tokenUsage 用于实时更新）
           this.sendEvent({ type: 'complete', sessionId: managed.id, tokenUsage: managed.tokenUsage, backgroundTasksAlive: this.keepBackgroundTasksAlive }, managed.workspace.id)
         }
 
-        // Emit auth_request event to renderer
+        // 向渲染器发出 auth_request 事件
         this.sendEvent({
           type: 'auth_request',
           sessionId: managed.id,
@@ -4190,14 +4276,14 @@ export class SessionManager implements ISessionManager {
           request: request,
         }, managed.workspace.id)
 
-        // Persist session state
+        // 持久化会话状态
         this.persistSession(managed)
 
-        // OAuth flow is client-driven via performOAuth() (preload).
-        // The UI calls window.electronAPI.performOAuth() when user clicks "Sign in".
+        // OAuth 流程由客户端通过 performOAuth()（preload）驱动。
+        // 当用户点击“登录”时，UI 调用 window.electronAPI.performOAuth()。
       }
 
-      // Wire up onSpawnSession to create independent sessions from agent tool calls
+      // 连接 onSpawnSession，从 agent 工具调用创建独立会话
       managed.agent.onSpawnSession = async (request) => {
         sessionLog.info(`Spawn session request from session ${managed.id}:`, request.name || '(unnamed)')
 
@@ -4215,7 +4301,7 @@ export class SessionManager implements ISessionManager {
           parentSessionId: managed.id,
         })
 
-        // Build FileAttachment[] from paths (if any)
+        // 从路径构建 FileAttachment[]（如果有）
         let fileAttachments: FileAttachment[] | undefined
         if (request.attachments?.length) {
           const attachments: FileAttachment[] = []
@@ -4239,9 +4325,9 @@ export class SessionManager implements ISessionManager {
           if (attachments.length > 0) fileAttachments = attachments
         }
 
-        // (session_created is emitted by createSession above.)
+        // （session_created 事件由上方的 createSession 发出。）
 
-        // Fire and forget — send the message but don't await completion
+        // 触发后即忘——发送消息但不等待完成
         this.sendMessage(session.id, request.prompt, fileAttachments).catch(err => {
           sessionLog.error(`Failed to send message to spawned session ${session.id}:`, err)
         })
@@ -4255,7 +4341,7 @@ export class SessionManager implements ISessionManager {
         }
       }
 
-      // Wire up session self-management tools (set_session_labels, set_session_status, etc.)
+      // 接入会话自我管理工具（set_session_labels、set_session_status 等）
       mergeSessionScopedToolCallbacks(managed.id, {
         setSessionLabelsFn: async (sessionId: string | undefined, labels: string[]) => {
           await this.setSessionLabels(sessionId ?? managed.id, labels)
@@ -4289,7 +4375,7 @@ export class SessionManager implements ISessionManager {
 
           let sessions = this.getSessions(managed.workspace.id)
 
-          // Filter
+          // 过滤
           if (options?.status) {
             sessions = sessions.filter(s => s.sessionStatus === options.status)
           }
@@ -4301,7 +4387,7 @@ export class SessionManager implements ISessionManager {
             sessions = sessions.filter(s => s.name?.toLowerCase().includes(needle))
           }
 
-          // Sort
+          // 排序
           const sortBy = options?.sortBy ?? 'recent'
           if (sortBy === 'recent') {
             sessions.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
@@ -4313,7 +4399,7 @@ export class SessionManager implements ISessionManager {
 
           const total = sessions.length
 
-          // Paginate
+          // 分页
           const page = sessions.slice(offset, offset + limit)
 
           return {
@@ -4356,17 +4442,17 @@ export class SessionManager implements ISessionManager {
           const allStatuses = statusConfig.statuses
           const available = allStatuses.map(s => s.id)
 
-          // Exact ID match
+          // 精确 ID 匹配
           const byId = allStatuses.find(s => s.id === status)
           if (byId) return { resolved: byId.id, available, category: byId.category }
-          // Case-insensitive label → ID
+          // 不区分大小写的标签 → ID
           const byLabel = allStatuses.find(s => s.label.toLowerCase() === status.toLowerCase())
           if (byLabel) return { resolved: byLabel.id, available, category: byLabel.category }
 
           return { resolved: null, available }
         },
         sendAgentMessageFn: async (sessionId: string, message: string, attachments?: Array<{ path: string; name?: string }>) => {
-          // Build FileAttachment[] from paths (same pattern as spawn_session)
+          // 从路径构建 FileAttachment[]（与 spawn_session 相同的模式）
           let fileAttachments: FileAttachment[] | undefined
           if (attachments?.length) {
             const builtAttachments: FileAttachment[] = []
@@ -4411,14 +4497,14 @@ export class SessionManager implements ISessionManager {
               reason: 'Activation failed — source may be unusable (disabled/unauthenticated) or server build failed. Check session logs.',
             }
           }
-          // Both backends need the current turn to end before new tools are visible:
-          // Claude SDK freezes mcpServers at query() start; Pi only picks up new proxy
-          // tool defs on the next handlePrompt (`toolsChanged` flag in pi-agent-server).
-          // Mark a pending restart on the agent — ClaudeAgent/PiAgent consume it after
-          // the next tool_result, yield source_activated, and forceAbort. The
-          // `source_activated` handler in this class then schedules a server-side
-          // resend of the original user message with a "[{slug} activated]" suffix —
-          // landing in a fresh turn with tools live (craft-agents-oss#804).
+          // 两个后端都需要当前轮次结束后新工具才可见：
+          // Claude SDK 在 query() 启动时冻结 mcpServers；Pi 仅拾取新的代理
+          // 在下一个 handlePrompt 上的工具定义（pi-agent-server 中的 `toolsChanged` 标志）。
+          // 在代理上标记待处理的重启 — ClaudeAgent/PiAgent 在
+          // 下一个 tool_result 后消费它，生成 source_activated 并 forceAbort。
+          // 此类中的 `source_activated` 处理程序随后安排服务器端
+          // 重新发送原始用户消息，并附加 "[{slug} activated]" 后缀 —
+          // 最终进入一个工具已生效的新轮次（craft-agents-oss#804）。
           const userMessage = managed.agent?.getCurrentTurnUserMessage?.() ?? ''
           if (userMessage) {
             managed.agent?.setPendingSourceActivationRestart({ sourceSlug, userMessage })
@@ -4427,29 +4513,27 @@ export class SessionManager implements ISessionManager {
         },
       })
 
-      // WS2 keep-alive: forward background task events that arrive BETWEEN turns
-      // (idle — no chat() generator consuming) into the normal event pipeline, so
-      // the running-task registry + renderer chips reflect a completion even when
-      // it lands while the session is idle. During a turn these events flow through
-      // the chat() generator as usual; this only covers the idle gap. No-op unless
-      // the backend supports a persistent cross-turn query (Claude keep-alive).
+      // WS2 keep-alive：把 turn 之间到达（空闲 —— 没有 chat() 生成器在消费）的后台任务事件
+      // 转发到正常的事件管道中，使运行中任务注册表 + 渲染器 chip 即使在 session 空闲时也能
+      // 反映出完成。在 turn 进行期间这些事件照常通过 chat() 生成器流动；这里只覆盖空闲的间隙。
+      // 仅在后端支持持久跨 turn 查询（Claude keep-alive）时生效，否则为 no-op。
       managed.agent.setBackgroundEventSink?.((event: AgentEvent) => {
         void this.processEvent(managed, event)
       })
 
-      // Wire up onSourceActivationRequest to auto-enable sources when agent tries to use them
+      // 接入 onSourceActivationRequest，以便在代理尝试使用源时自动启用它们
       managed.agent.onSourceActivationRequest = async (sourceSlug: string): Promise<boolean> => {
         sessionLog.info(`Source activation request for session ${managed.id}:`, sourceSlug)
 
         const workspaceRootPath = managed.workspace.rootPath
 
-        // Check if source is already enabled
+        // 检查源是否已启用
         if (managed.enabledSourceSlugs?.includes(sourceSlug)) {
           sessionLog.info(`Source ${sourceSlug} already in enabledSourceSlugs, checking server status`)
-          // Source is in the list but server might not be active (e.g., build failed previously)
+          // 源在列表中，但服务器可能未激活（例如，之前构建失败）
         }
 
-        // Load the source to check if it exists and is ready
+        // 加载源以检查其是否存在且就绪
         const sources = getSourcesBySlugs(workspaceRootPath, [sourceSlug])
         if (sources.length === 0) {
           sessionLog.warn(`Source ${sourceSlug} not found in workspace`)
@@ -4458,26 +4542,26 @@ export class SessionManager implements ISessionManager {
 
         const source = sources[0]
 
-        // Check if source is usable (enabled and authenticated if auth is required)
+        // 检查源是否可用（已启用且如果需要认证则已通过认证）
         if (!isSourceUsable(source)) {
           sessionLog.warn(`Source ${sourceSlug} is not usable (disabled or requires authentication)`)
           return false
         }
 
-        // Track whether we added this slug (for rollback on failure)
+        // 跟踪我们是否添加了此 slug（用于失败时回滚）
         const slugSet = new Set(managed.enabledSourceSlugs || [])
         const wasAlreadyEnabled = slugSet.has(sourceSlug)
 
-        // Add to enabled sources if not already there
+        // 如果尚未添加，则添加到已启用的源中
         if (!wasAlreadyEnabled) {
           slugSet.add(sourceSlug)
           managed.enabledSourceSlugs = Array.from(slugSet)
           sessionLog.info(`Added source ${sourceSlug} to session enabled sources`)
         }
 
-        // Build server configs for all enabled sources
+        // 为所有已启用的源构建服务器配置
         const allEnabledSources = getSourcesBySlugs(workspaceRootPath, managed.enabledSourceSlugs || [])
-        // Pass session path so large API responses can be saved to session folder
+        // 传递会话路径，以便大型 API 响应可以保存到会话文件夹
         const sessionPath = getSessionStoragePath(workspaceRootPath, managed.id)
         const { mcpServers, apiServers, errors } = await buildServersFromSources(allEnabledSources, sessionPath, managed.tokenRefreshManager, managed.agent?.getSummarizeCallback())
 
@@ -4485,11 +4569,11 @@ export class SessionManager implements ISessionManager {
           sessionLog.warn(`Source build errors during auto-enable:`, errors)
         }
 
-        // Check if our target source was built successfully
+        // 检查我们的目标源是否构建成功
         const sourceBuilt = sourceSlug in mcpServers || sourceSlug in apiServers
         if (!sourceBuilt) {
           sessionLog.warn(`Source ${sourceSlug} failed to build`)
-          // Only remove if WE added it (not if it was already there)
+          // 仅在我们添加时才移除（如果原本就在那里则不操作）
           if (!wasAlreadyEnabled) {
             slugSet.delete(sourceSlug)
             managed.enabledSourceSlugs = Array.from(slugSet)
@@ -4497,22 +4581,22 @@ export class SessionManager implements ISessionManager {
           return false
         }
 
-        // Apply source servers to the agent
+        // 将源服务器应用到代理
         const intendedSlugs = allEnabledSources
           .filter(isSourceUsable)
           .map(s => s.config.slug)
 
-        // Update bridge-mcp-server config/credentials for backends that need it
+        // 为需要它的后端更新 bridge-mcp-server 配置/凭据
         await applyBridgeUpdates(managed.agent!, sessionPath, allEnabledSources, mcpServers, managed.id, workspaceRootPath, 'source enable', managed.poolServer?.url)
 
         await managed.agent!.setSourceServers(mcpServers, apiServers, intendedSlugs)
 
         sessionLog.info(`Auto-enabled source ${sourceSlug} for session ${managed.id}`)
 
-        // Persist session with updated enabled sources
+        // 使用更新后的已启用源持久化会话
         this.persistSession(managed)
 
-        // Notify renderer of source change
+        // 通知渲染器源已更改
         this.sendEvent({
           type: 'sources_changed',
           sessionId: managed.id,
@@ -4522,12 +4606,12 @@ export class SessionManager implements ISessionManager {
         return true
       }
 
-      // NOTE: Source reloading is now handled by ConfigWatcher callbacks
-      // which detect filesystem changes and update all affected sessions.
-      // See setupConfigWatcher() for the full reload logic.
+      // 注意：源重新加载现在由 ConfigWatcher 回调处理
+      // 它检测文件系统更改并更新所有受影响的会话。
+      // 完整的重新加载逻辑请参见 setupConfigWatcher()。
 
-      // Apply session-scoped permission mode to the newly created agent
-      // This ensures the UI toggle state is reflected in the agent before first message
+      // 将会话范围的权限模式应用于新创建的代理
+      // 这确保 UI 切换状态在第一条消息之前反映在代理中
       if (managed.permissionMode) {
         setPermissionMode(managed.id, managed.permissionMode, { changedBy: 'restore' })
         if (managed.previousPermissionMode) {
@@ -4554,13 +4638,13 @@ export class SessionManager implements ISessionManager {
     const managed = this.sessions.get(sessionId)
     if (managed) {
       managed.isFlagged = true
-      // Persist in-memory state directly to avoid race with pending queue writes
+      // 直接持久化内存状态，以避免与待处理队列写入的竞争
       this.persistSession(managed)
       await this.flushSession(managed.id)
-      // Notify all windows for this workspace
+      // 通知此工作区的所有窗口
       this.sendEvent({ type: 'session_flagged', sessionId }, managed.workspace.id)
-      // Workaround: Bun's fs.watch({ recursive: true }) on Linux doesn't track
-      // directories created after the watcher started.
+      // 解决方法：Bun 的 fs.watch({ recursive: true }) 在 Linux 上不跟踪
+      // 监视器启动后创建的目录。
       // https://github.com/oven-sh/bun/issues/15939
       const watcher = this.configWatchers.get(managed.workspace.rootPath)
       watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
@@ -4571,13 +4655,13 @@ export class SessionManager implements ISessionManager {
     const managed = this.sessions.get(sessionId)
     if (managed) {
       managed.isFlagged = false
-      // Persist in-memory state directly to avoid race with pending queue writes
+      // 直接持久化内存状态，以避免与待处理队列写入的竞争
       this.persistSession(managed)
       await this.flushSession(managed.id)
-      // Notify all windows for this workspace
+      // 通知此工作区的所有窗口
       this.sendEvent({ type: 'session_unflagged', sessionId }, managed.workspace.id)
-      // Workaround: Bun's fs.watch({ recursive: true }) on Linux doesn't track
-      // directories created after the watcher started.
+      // 解决方法：Bun 的 fs.watch({ recursive: true }) 在 Linux 上不跟踪
+      // 监视器启动后创建的目录。
       // https://github.com/oven-sh/bun/issues/15939
       const watcher = this.configWatchers.get(managed.workspace.rootPath)
       watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
@@ -4589,10 +4673,10 @@ export class SessionManager implements ISessionManager {
     if (managed) {
       managed.isArchived = true
       managed.archivedAt = Date.now()
-      // Persist in-memory state directly to avoid race with pending queue writes
+      // 直接持久化内存状态，以避免与待处理队列写入的竞争
       this.persistSession(managed)
       await this.flushSession(managed.id)
-      // Notify all windows for this workspace
+      // 通知此工作区的所有窗口
       this.sendEvent({ type: 'session_archived', sessionId }, managed.workspace.id)
       this.emitUnreadSummaryChanged()
     }
@@ -4603,10 +4687,10 @@ export class SessionManager implements ISessionManager {
     if (managed) {
       managed.isArchived = false
       managed.archivedAt = undefined
-      // Persist in-memory state directly to avoid race with pending queue writes
+      // 直接持久化内存状态，以避免与待处理队列写入的竞争
       this.persistSession(managed)
       await this.flushSession(managed.id)
-      // Notify all windows for this workspace
+      // 通知此工作区的所有窗口
       this.sendEvent({ type: 'session_unarchived', sessionId }, managed.workspace.id)
       this.emitUnreadSummaryChanged()
     }
@@ -4617,13 +4701,13 @@ export class SessionManager implements ISessionManager {
     if (managed) {
       managed.sessionStatus = sessionStatus
       this.setMetadataWriteGuard(managed)
-      // Persist in-memory state directly to avoid race with pending queue writes
+      // 直接持久化内存状态，以避免与待处理队列写入的竞争
       this.persistSession(managed)
       await this.flushSession(managed.id)
-      // Notify all windows for this workspace
+      // 通知此工作区的所有窗口
       this.sendEvent({ type: 'session_status_changed', sessionId, sessionStatus }, managed.workspace.id)
-      // Workaround: Bun's fs.watch({ recursive: true }) on Linux doesn't track
-      // directories created after the watcher started.
+      // 解决方法：Bun 的 fs.watch({ recursive: true }) 在 Linux 上不跟踪
+      // 监视器启动后创建的目录。
       // https://github.com/oven-sh/bun/issues/15939
       const watcher = this.configWatchers.get(managed.workspace.rootPath)
       watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
@@ -4631,9 +4715,9 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Set the LLM connection for a session.
-   * Can only be changed before the first message is sent (connection is locked after).
-   * This determines which LLM provider/backend will be used for this session.
+   * 设置会话的 LLM 连接。
+   * 只能在发送第一条消息之前更改（之后连接将被锁定）。
+   * 这决定了此会话将使用哪个 LLM 提供商/后端。
    */
   async setSessionConnection(sessionId: string, connectionSlug: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
@@ -4642,13 +4726,13 @@ export class SessionManager implements ISessionManager {
       throw new Error(`Session ${sessionId} not found`)
     }
 
-    // Only allow changing connection before first message (session hasn't started)
+    // 仅允许在第一条消息之前更改连接（会话尚未开始）
     if (managed.messages && managed.messages.length > 0) {
       sessionLog.warn(`setSessionConnection: cannot change connection after session has started (${sessionId})`)
       throw new Error('Cannot change connection after session has started')
     }
 
-    // Validate connection exists
+    // 验证连接是否存在
     const { getLlmConnection } = await import('@craft-agent/shared/config/storage')
     const connection = getLlmConnection(connectionSlug)
     if (!connection) {
@@ -4657,12 +4741,12 @@ export class SessionManager implements ISessionManager {
     }
 
     managed.llmConnection = connectionSlug
-    // Persist in-memory state directly to avoid race with pending queue writes
+    // 直接持久化内存状态，以避免与待处理队列写入的竞争
     this.persistSession(managed)
     await this.flushSession(managed.id)
     sessionLog.info(`Set LLM connection for session ${sessionId} to ${connectionSlug}`)
 
-    // Notify UI that connection changed (triggers capabilities refresh)
+    // 通知 UI 连接已更改（触发能力刷新）
     this.sendEvent({
       type: 'connection_changed',
       sessionId,
@@ -4672,13 +4756,13 @@ export class SessionManager implements ISessionManager {
   }
 
   // ============================================
-  // Pending Plan Execution (Accept & Compact)
+  // 待处理的计划执行（接受并压缩）
   // ============================================
 
   /**
-   * Set pending plan execution state.
-   * Called when user clicks "Accept & Compact" to persist the plan path
-   * so execution can resume after compaction (even if page reloads).
+   * 设置待处理的计划执行状态。
+   * 当用户点击“接受并压缩”时调用，以持久化计划路径，
+   * 以便执行可以在压缩后恢复（即使页面重新加载）。
    */
   async setPendingPlanExecution(sessionId: string, planPath: string, draftInputSnapshot?: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
@@ -4689,9 +4773,9 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Mark compaction as complete for pending plan execution.
-   * Called when compaction_complete event fires - allows reload recovery
-   * to know that compaction finished and plan can be executed.
+   * 标记待处理计划执行的压缩已完成。
+   * 当 compression_complete 事件触发时调用 - 允许重新加载恢复
+   * 知道压缩已完成，计划可以执行。
    */
   async markCompactionComplete(sessionId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
@@ -4702,9 +4786,9 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Mark pending plan execution as already dispatched from the UI.
-   * This prevents reload recovery from double-submitting the same plan if
-   * sending succeeded but cleanup failed due a reconnect/disconnect.
+   * 标记待处理的计划执行已从 UI 分派。
+   * 这防止重新加载恢复在发送成功但因重新连接/断开连接而清理失败时
+   * 重复提交相同的计划。
    */
   async markPendingPlanExecutionDispatched(sessionId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
@@ -4715,9 +4799,9 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Clear pending plan execution state.
-   * Called after plan execution is triggered, on new user message,
-   * or when the pending execution is no longer relevant.
+   * 清除待处理的计划执行状态。
+   * 在计划执行触发后、收到新用户消息时，
+   * 或待处理执行不再相关时调用。
    */
   async clearPendingPlanExecution(sessionId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
@@ -4728,8 +4812,8 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Get pending plan execution state for a session.
-   * Used on reload/init to check if we need to resume plan execution.
+   * 获取会话的待处理计划执行状态。
+   * 在重新加载/初始化时使用，以检查是否需要恢复计划执行。
    */
   getPendingPlanExecution(sessionId: string): { planPath: string; draftInputSnapshot?: string; awaitingCompaction: boolean; executionDispatched: boolean } | null {
     const managed = this.sessions.get(sessionId)
@@ -4738,11 +4822,10 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Dispatch a plan approval for a session, equivalent to the desktop
-   * "Accept plan" button. Switches the session out of Explore mode (safe)
-   * into allow-all if needed so the plan can execute without per-tool
-   * prompts, then sends the approval message through the normal sendMessage
-   * path.
+   * 为会话分派计划批准，等同于桌面端的
+   * “接受计划”按钮。如果需要，将会话从探索模式（安全）
+   * 切换到允许所有模式，以便计划无需每个工具的提示即可执行，
+   * 然后通过正常的 sendMessage 路径发送批准消息。
    */
   async acceptPlan(sessionId: string, _planPath?: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
@@ -4759,12 +4842,12 @@ export class SessionManager implements ISessionManager {
   }
 
   // ============================================
-  // Session Sharing
+  // 会话共享
   // ============================================
 
   /**
-   * Share session to the web viewer
-   * Uploads session data and returns shareable URL
+   * 将会话共享到 Web 查看器
+   * 上传会话数据并返回可共享的 URL
    */
   async shareToViewer(sessionId: string): Promise<import('@craft-agent/shared/protocol').ShareResult> {
     const managed = this.sessions.get(sessionId)
@@ -4772,12 +4855,12 @@ export class SessionManager implements ISessionManager {
       return { success: false, error: 'Session not found' }
     }
 
-    // Signal async operation start for shimmer effect
+    // 信号异步操作开始（用于闪烁效果）
     managed.isAsyncOperationOngoing = true
     this.sendEvent({ type: 'async_operation', sessionId, isOngoing: true }, managed.workspace.id)
 
     try {
-      // Load session directly from disk (already in correct format)
+      // 直接从磁盘加载会话（已经是正确的格式）
       const storedSession = loadStoredSession(managed.workspace.rootPath, sessionId)
       if (!storedSession) {
         return { success: false, error: 'Session file not found' }
@@ -4800,7 +4883,7 @@ export class SessionManager implements ISessionManager {
 
       const data = await response.json() as { id: string; url: string }
 
-      // Store shared info in session
+      // 将会话中的共享信息存储
       managed.sharedUrl = data.url
       managed.sharedId = data.id
       const workspaceRootPath = managed.workspace.rootPath
@@ -4810,22 +4893,22 @@ export class SessionManager implements ISessionManager {
       })
 
       sessionLog.info(`Session ${sessionId} shared at ${data.url}`)
-      // Notify all windows for this workspace
+      // 通知此工作区的所有窗口
       this.sendEvent({ type: 'session_shared', sessionId, sharedUrl: data.url }, managed.workspace.id)
       return { success: true, url: data.url }
     } catch (error) {
       sessionLog.error('Share error:', error)
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
     } finally {
-      // Signal async operation end
+      // 信号异步操作结束
       managed.isAsyncOperationOngoing = false
       this.sendEvent({ type: 'async_operation', sessionId, isOngoing: false }, managed.workspace.id)
     }
   }
 
   /**
-   * Update an existing shared session
-   * Re-uploads session data to the same URL
+   * 更新现有的共享会话
+   * 将会话数据重新上传到相同的 URL
    */
   async updateShare(sessionId: string): Promise<import('@craft-agent/shared/protocol').ShareResult> {
     const managed = this.sessions.get(sessionId)
@@ -4836,12 +4919,12 @@ export class SessionManager implements ISessionManager {
       return { success: false, error: 'Session not shared' }
     }
 
-    // Signal async operation start for shimmer effect
+    // 信号异步操作开始（用于闪烁效果）
     managed.isAsyncOperationOngoing = true
     this.sendEvent({ type: 'async_operation', sessionId, isOngoing: true }, managed.workspace.id)
 
     try {
-      // Load session directly from disk (already in correct format)
+      // 直接从磁盘加载会话（已经是正确的格式）
       const storedSession = loadStoredSession(managed.workspace.rootPath, sessionId)
       if (!storedSession) {
         return { success: false, error: 'Session file not found' }
@@ -4868,15 +4951,15 @@ export class SessionManager implements ISessionManager {
       sessionLog.error('Update share error:', error)
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
     } finally {
-      // Signal async operation end
+      // 信号异步操作结束
       managed.isAsyncOperationOngoing = false
       this.sendEvent({ type: 'async_operation', sessionId, isOngoing: false }, managed.workspace.id)
     }
   }
 
   /**
-   * Revoke a shared session
-   * Deletes from viewer and clears local shared state
+   * 撤销共享会话
+   * 从查看器中删除并清除本地共享状态
    */
   async revokeShare(sessionId: string): Promise<import('@craft-agent/shared/protocol').ShareResult> {
     const managed = this.sessions.get(sessionId)
@@ -4887,7 +4970,7 @@ export class SessionManager implements ISessionManager {
       return { success: false, error: 'Session not shared' }
     }
 
-    // Signal async operation start for shimmer effect
+    // 信号异步操作开始（用于闪烁效果）
     managed.isAsyncOperationOngoing = true
     this.sendEvent({ type: 'async_operation', sessionId, isOngoing: true }, managed.workspace.id)
 
@@ -4903,7 +4986,7 @@ export class SessionManager implements ISessionManager {
         return { success: false, error: 'Failed to revoke share' }
       }
 
-      // Clear shared info
+      // 清除共享信息
       delete managed.sharedUrl
       delete managed.sharedId
       const workspaceRootPath = managed.workspace.rootPath
@@ -4913,27 +4996,27 @@ export class SessionManager implements ISessionManager {
       })
 
       sessionLog.info(`Session ${sessionId} share revoked`)
-      // Notify all windows for this workspace
+      // 通知此工作区的所有窗口
       this.sendEvent({ type: 'session_unshared', sessionId }, managed.workspace.id)
       return { success: true }
     } catch (error) {
       sessionLog.error('Revoke error:', error)
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
     } finally {
-      // Signal async operation end
+      // 信号异步操作结束
       managed.isAsyncOperationOngoing = false
       this.sendEvent({ type: 'async_operation', sessionId, isOngoing: false }, managed.workspace.id)
     }
   }
 
   // ============================================
-  // Session Sources
+  // 会话源
   // ============================================
 
   /**
-   * Update session's enabled sources
-   * If agent exists, builds and applies servers immediately.
-   * Otherwise, servers will be built fresh on next message.
+   * 更新会话的已启用源
+   * 如果代理存在，则立即构建并应用服务器。
+   * 否则，服务器将在下一条消息时全新构建。
    */
   async setSessionSources(sessionId: string, sourceSlugs: string[]): Promise<void> {
     const managed = this.sessions.get(sessionId)
@@ -4944,8 +5027,8 @@ export class SessionManager implements ISessionManager {
     const workspaceRootPath = managed.workspace.rootPath
     sessionLog.info(`Setting sources for session ${sessionId}:`, sourceSlugs)
 
-    // Clean up credential cache for sources being disabled (security)
-    // This removes decrypted tokens from disk when sources are no longer active
+    // 清除正在禁用的源的凭据缓存（安全）
+    // 当源不再活跃时，这会从磁盘中移除解密的令牌
     const previousSlugs = new Set(managed.enabledSourceSlugs || [])
     const newSlugs = new Set(sourceSlugs)
     const disabledSlugs = [...previousSlugs].filter(prevSlug => !newSlugs.has(prevSlug))
@@ -4957,27 +5040,27 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // Store the selection
+    // 存储选择
     managed.enabledSourceSlugs = sourceSlugs
 
-    // If agent exists, build and apply servers immediately
+    // 如果代理存在，则立即构建并应用服务器
     if (managed.agent) {
       const sources = getSourcesBySlugs(workspaceRootPath, sourceSlugs)
-      // Pass session path so large API responses can be saved to session folder
+      // 传递会话路径，以便大型 API 响应可以保存到会话文件夹
       const sessionPath = getSessionStoragePath(workspaceRootPath, sessionId)
       const { mcpServers, apiServers, errors } = await buildServersFromSources(sources, sessionPath, managed.tokenRefreshManager, managed.agent.getSummarizeCallback())
       if (errors.length > 0) {
         sessionLog.warn(`Source build errors:`, errors)
       }
 
-      // Set all sources for context (agent sees full list with descriptions, including built-ins)
+      // 设置所有源以供上下文使用（代理看到包含描述和内置源的完整列表）
       const allSources = loadAllSources(workspaceRootPath)
       managed.agent.setAllSources(allSources)
 
-      // Set active source servers (tools are only available from these)
+      // 设置活跃的源服务器（工具仅来自这些源）
       const intendedSlugs = sources.filter(isSourceUsable).map(s => s.config.slug)
 
-      // Update bridge-mcp-server config/credentials for backends that need it
+      // 为需要它的后端更新 bridge-mcp-server 配置/凭据
       const usableSources = sources.filter(isSourceUsable)
       await applyBridgeUpdates(managed.agent, sessionPath, usableSources, mcpServers, managed.id, workspaceRootPath, 'source config change', managed.poolServer?.url)
 
@@ -4986,10 +5069,10 @@ export class SessionManager implements ISessionManager {
       sessionLog.info(`Applied ${Object.keys(mcpServers).length} MCP + ${Object.keys(apiServers).length} API sources to active agent (${allSources.length} total)`)
     }
 
-    // Persist the session with updated sources
+    // 使用更新后的源持久化会话
     this.persistSession(managed)
 
-    // Notify renderer of the source change
+    // 通知渲染器源已更改
     this.sendEvent({
       type: 'sources_changed',
       sessionId,
@@ -5000,7 +5083,7 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Get the enabled source slugs for a session
+   * 获取会话的已启用源 slug
    */
   getSessionSources(sessionId: string): string[] {
     const managed = this.sessions.get(sessionId)
@@ -5008,14 +5091,14 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Get the last final assistant message ID from a list of messages
-   * A "final" message is one where:
-   * - role === 'assistant' AND
-   * - isIntermediate !== true (not commentary between tool calls)
-   * Returns undefined if no final assistant message exists
+   * 从消息列表中获取最后一条最终的助手消息 ID
+   * “最终”消息是指：
+   * - role === 'assistant' 且
+   * - isIntermediate !== true（不是工具调用之间的评论）
+   * 如果不存在最终的助手消息，则返回 undefined
    */
   private getLastFinalAssistantMessageId(messages: Message[]): string | undefined {
-    // Iterate backwards to find the most recent final assistant message
+    // 向后迭代以查找最近的最终助手消息
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i]
       if (msg.role === 'assistant' && !msg.isIntermediate) {
@@ -5026,10 +5109,9 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Read a session's final assistant message TEXT (in-process output reader for
-   * the Tasks Conductor). `getLastFinalAssistantMessageId` is private and returns
-   * an id; this wraps it to return the message content. Never exposed to agents —
-   * child node output is read here, not via any tool/RPC.
+   * 读取 session 最终的 assistant 消息文本（Tasks Conductor 的进程内输出读取器）。
+   * `getLastFinalAssistantMessageId` 是私有的并返回一个 id；这里包装它来返回消息内容。
+   * 不对 agent 暴露 —— 子节点输出在这里读取，而非通过任何工具/RPC。
    */
   getSessionFinalText(sessionId: string): string | undefined {
     const managed = this.sessions.get(sessionId)
@@ -5040,14 +5122,14 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Set which session the user is actively viewing.
-   * Called when user navigates to a session. Used to determine whether to mark
-   * new messages as unread - if user is viewing, don't mark unread.
+   * 设置用户正在主动查看的会话。
+   * 当用户导航到会话时调用。用于确定是否将新消息标记为未读 -
+   * 如果用户正在查看，则不标记为未读。
    */
   setActiveViewingSession(sessionId: string | null, workspaceId: string): void {
     if (sessionId) {
       this.activeViewingSession.set(workspaceId, sessionId)
-      // When user starts viewing a session that's not processing, clear unread
+      // 当用户开始查看未在处理中的会话时，清除未读
       const managed = this.sessions.get(sessionId)
       if (managed && !managed.isProcessing && managed.hasUnread) {
         this.markSessionRead(sessionId)
@@ -5058,36 +5140,36 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Clear active viewing session for a workspace.
-   * Called when all windows leave a workspace to ensure read/unread state is correct.
+   * 清除工作区的活动查看会话。
+   * 当所有窗口离开工作区时调用，以确保读/未读状态正确。
    */
   clearActiveViewingSession(workspaceId: string): void {
     this.activeViewingSession.delete(workspaceId)
   }
 
   /**
-   * Check if a session is currently being viewed by the user
+   * 检查用户当前是否正在查看会话
    */
   private isSessionBeingViewed(sessionId: string, workspaceId: string): boolean {
     return this.activeViewingSession.get(workspaceId) === sessionId
   }
 
   /**
-   * Mark a session as read by setting lastReadMessageId and clearing hasUnread.
-   * Called when user navigates to a session (and it's not processing).
+   * 通过设置 lastReadMessageId 并清除 hasUnread 将会话标记为已读。
+   * 当用户导航到会话（且未在处理中）时调用。
    */
   async markSessionRead(sessionId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed) return
 
-    // Only mark as read if not currently processing
-    // (user is viewing but we want to wait for processing to complete)
+    // 仅当当前未在处理中时才标记为已读
+    // （用户正在查看，但我们希望等待处理完成）
     if (managed.isProcessing) return
 
     let needsPersist = false
     const updates: { lastReadMessageId?: string; hasUnread?: boolean } = {}
 
-    // Update lastReadMessageId for legacy/manual unread functionality
+    // 更新 lastReadMessageId 以实现旧版/手动未读功能
     if (managed.messages.length > 0) {
       const lastFinalId = this.getLastFinalAssistantMessageId(managed.messages)
       if (lastFinalId && managed.lastReadMessageId !== lastFinalId) {
@@ -5097,14 +5179,14 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // Clear hasUnread flag (primary source of truth for NEW badge)
+    // 清除 hasUnread 标志（NEW 徽章的主要真实来源）
     if (managed.hasUnread) {
       managed.hasUnread = false
       updates.hasUnread = false
       needsPersist = true
     }
 
-    // Persist changes
+    // 持久化更改
     if (needsPersist) {
       const workspaceRootPath = managed.workspace.rootPath
       await updateSessionMetadata(workspaceRootPath, sessionId, updates)
@@ -5113,15 +5195,15 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Mark a session as unread by setting hasUnread flag.
-   * Called when user manually marks a session as unread via context menu.
+   * 通过设置 hasUnread 标志将会话标记为未读。
+   * 当用户通过上下文菜单手动将会话标记为未读时调用。
    */
   async markSessionUnread(sessionId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (managed) {
       managed.hasUnread = true
       managed.lastReadMessageId = undefined
-      // Persist to disk
+      // 持久化到磁盘
       const workspaceRootPath = managed.workspace.rootPath
       await updateSessionMetadata(workspaceRootPath, sessionId, { hasUnread: true, lastReadMessageId: undefined })
       this.emitUnreadSummaryChanged()
@@ -5129,8 +5211,8 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Mark all non-hidden, non-archived sessions in a workspace as read.
-   * Called from "Mark All Read" context menu on "All Sessions".
+   * 将工作区中所有非隐藏、非归档的会话标记为已读。
+   * 从“所有会话”上的“全部标记为已读”上下文菜单调用。
    */
   async markAllSessionsRead(workspaceId: string): Promise<void> {
     const updates: Promise<void>[] = []
@@ -5155,10 +5237,10 @@ export class SessionManager implements ISessionManager {
     if (managed) {
       managed.name = name
       this.persistSession(managed)
-      // Notify renderer of the name change
+      // 通知渲染器名称已更改
       this.sendEvent({ type: 'title_generated', sessionId, title: name }, managed.workspace.id)
-      // Workaround: Bun's fs.watch({ recursive: true }) on Linux doesn't track
-      // directories created after the watcher started.
+      // 解决方法：Bun 的 fs.watch({ recursive: true }) 在 Linux 上不跟踪
+      // 监视器启动后创建的目录。
       // https://github.com/oven-sh/bun/issues/15939
       const watcher = this.configWatchers.get(managed.workspace.rootPath)
       watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
@@ -5166,9 +5248,9 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Regenerate the session title based on recent messages.
-   * Uses the last few user messages to capture what the session has evolved into.
-   * Automatically uses the same provider as the session (Claude or OpenAI).
+   * 根据最近的消息重新生成会话标题。
+   * 使用最后几条用户消息来捕捉会话的演变内容。
+   * 自动使用与会话相同的提供商（Claude 或 OpenAI）。
    */
   async refreshTitle(sessionId: string): Promise<{ success: boolean; title?: string; error?: string }> {
     sessionLog.info(`refreshTitle called for session ${sessionId}`)
@@ -5178,10 +5260,10 @@ export class SessionManager implements ISessionManager {
       return { success: false, error: 'Session not found' }
     }
 
-    // Ensure messages are loaded from disk (lazy loading support)
+    // 确保消息已从磁盘加载（支持延迟加载）
     await this.ensureMessagesLoaded(managed)
 
-    // Select a spread of user messages (first, middle, last) to capture the session's purpose
+    // 选择一组分布的用户消息（第一条、中间、最后一条）以捕捉会话的目的
     const allUserContents = managed.messages
       .filter((m) => m.role === 'user')
       .map((m) => m.content)
@@ -5194,15 +5276,15 @@ export class SessionManager implements ISessionManager {
       return { success: false, error: 'No user messages to generate title from' }
     }
 
-    // Get the most recent assistant response
+    // 获取最近的助手响应
     const lastAssistantMsg = managed.messages
       .filter((m) => m.role === 'assistant' && !m.isIntermediate)
       .slice(-1)[0]
 
     const assistantResponse = lastAssistantMsg?.content ?? ''
 
-    // Resolve title language from the explicitly persisted UI language (disk-backed,
-    // race-free vs. main-process i18n async hydration); undefined => auto-detect (#885).
+    // 从显式持久化的 UI 语言解析标题语言（磁盘支持，
+    // 无竞争 vs. 主进程 i18n 异步水合）；undefined => 自动检测（#885）。
     const titleLanguage = resolveTitleLanguageName()
     const titleOptions = { language: titleLanguage }
     sessionLog.info(`[refreshTitle] language at call time`, {
@@ -5212,7 +5294,7 @@ export class SessionManager implements ISessionManager {
       titleLanguage: titleLanguage ?? null,
     })
 
-    // Use existing agent or create temporary one
+    // 使用现有代理或创建临时代理
     let agent: AgentInstance | null = managed.agent
     let isTemporary = false
 
@@ -5250,10 +5332,10 @@ export class SessionManager implements ISessionManager {
     sessionLog.info(`refreshTitle: Calling agent.regenerateTitle...`)
 
 
-    // Notify renderer that title regeneration has started (for shimmer effect)
+    // 通知渲染器标题重新生成已开始（用于闪烁效果）
     managed.isAsyncOperationOngoing = true
     this.sendEvent({ type: 'async_operation', sessionId, isOngoing: true }, managed.workspace.id)
-    // Keep legacy event for backward compatibility
+    // 保留旧版事件以实现向后兼容
     this.sendEvent({ type: 'title_regenerating', sessionId, isRegenerating: true }, managed.workspace.id)
 
     try {
@@ -5262,38 +5344,38 @@ export class SessionManager implements ISessionManager {
       if (title) {
         managed.name = title
         this.persistSession(managed)
-        // title_generated will also clear isRegeneratingTitle via the event handler
+        // title_generated 也会通过事件处理程序清除 isRegeneratingTitle
         this.sendEvent({ type: 'title_generated', sessionId, title }, managed.workspace.id)
         sessionLog.info(`Refreshed title for session ${sessionId}: "${title}"`)
         return { success: true, title }
       }
-      // Failed to generate - clear regenerating state
+      // 生成失败 - 清除正在重新生成的状态
       this.sendEvent({ type: 'title_regenerating', sessionId, isRegenerating: false }, managed.workspace.id)
       return { success: false, error: 'Failed to generate title' }
     } catch (error) {
-      // Error occurred - clear regenerating state
+      // 发生错误 - 清除正在重新生成的状态
       this.sendEvent({ type: 'title_regenerating', sessionId, isRegenerating: false }, managed.workspace.id)
       const message = error instanceof Error ? error.message : 'Unknown error'
       sessionLog.error(`Failed to refresh title for session ${sessionId}:`, error)
       return { success: false, error: message }
     } finally {
-      // Clean up temporary agent
+      // 清理临时代理
       if (isTemporary && agent) {
         agent.destroy()
       }
-      // Signal async operation end
+      // 信号异步操作结束
       managed.isAsyncOperationOngoing = false
       this.sendEvent({ type: 'async_operation', sessionId, isOngoing: false }, managed.workspace.id)
     }
   }
 
   /**
-   * Update the working directory for a session.
+   * 更新会话的工作目录。
    *
-   * If no messages have been sent yet (no SDK interaction), also updates sdkCwd
-   * so the SDK will use the new path for transcript storage. This prevents the
-   * confusing "bash shell runs from a different directory" warning when the user
-   * changes the working directory before their first message.
+   * 如果尚未发送任何消息（无 SDK 交互），则同时更新 sdkCwd，
+   * 以便 SDK 使用新路径进行转录存储。这可以防止用户在
+   * 发送第一条消息之前更改工作目录时出现令人困惑的
+   * “bash shell 从不同目录运行”警告。
    */
   updateWorkingDirectory(sessionId: string, path: string): void {
     const managed = this.sessions.get(sessionId)
@@ -5311,12 +5393,12 @@ export class SessionManager implements ISessionManager {
 
       managed.workingDirectory = path
 
-      // Invalidate filesystem caches that depend on working directory
+      // 使依赖于工作目录的文件系统缓存失效
       invalidateContextFileCache(path)
       invalidateSkillsCache()
 
-      // Check if we can also update sdkCwd (safe if no SDK interaction yet)
-      // Conditions: no messages sent AND no agent created yet (no SDK session)
+      // 检查是否也可以更新 sdkCwd（如果尚无 SDK 交互则安全）
+      // 条件：未发送消息且尚未创建代理（无 SDK 会话）
       const shouldUpdateSdkCwd =
         managed.messages.length === 0 &&
         !managed.sdkSessionId &&
@@ -5327,45 +5409,45 @@ export class SessionManager implements ISessionManager {
         sessionLog.info(`Session ${sessionId}: sdkCwd updated to ${path} (no prior interaction)`)
       }
 
-      // Also update the agent's session config if agent exists
+      // 如果代理存在，也更新代理的会话配置
       if (managed.agent) {
         managed.agent.updateWorkingDirectory(path)
-        // If agent exists but conditions still allow sdkCwd update (edge case),
-        // update the agent's sdkCwd as well
+        // 如果代理存在但条件仍允许 sdkCwd 更新（边缘情况），
+        // 同时更新 agent 的 sdkCwd
         if (shouldUpdateSdkCwd) {
           managed.agent.updateSdkCwd(path)
         }
       }
 
       this.persistSession(managed)
-      // Notify renderer of the working directory change
+      // 通知渲染器工作目录已变更
       this.sendEvent({ type: 'working_directory_changed', sessionId, workingDirectory: path }, managed.workspace.id)
     }
   }
 
   /**
-   * Update the model for a session
-   * Pass null to clear the session-specific model (will use global config)
-   * @param connection - Optional LLM connection slug (only applied if not already locked)
+   * 更新会话的模型
+   * 传入 null 可清除会话专属模型（将使用全局配置）
+   * @param connection - 可选的 LLM 连接标识（仅在未锁定时生效）
    */
   async updateSessionModel(sessionId: string, workspaceId: string, model: string | null, connection?: string): Promise<void> {
     sessionLog.info(`[updateSessionModel] sessionId=${sessionId}, model=${model}, connection=${connection}`)
     const managed = this.sessions.get(sessionId)
     if (managed) {
       managed.model = model ?? undefined
-      // Also update connection if provided and not already locked
+      // 如果提供了连接且尚未锁定，也一并更新
       if (connection && !managed.connectionLocked) {
         managed.llmConnection = connection
       }
-      // Persist to disk (include connection if it was updated)
+      // 持久化到磁盘（如果连接已更新则包含连接信息）
       const updates: { model?: string; llmConnection?: string } = { model: model ?? undefined }
       if (connection && !managed.connectionLocked) {
         updates.llmConnection = connection
       }
       await updateSessionMetadata(managed.workspace.rootPath, sessionId, updates)
-      // Update agent model if it already exists (takes effect on next query)
+      // 如果 agent 模型已存在则更新（下次查询时生效）
       if (managed.agent) {
-        // Fallback chain: session model > workspace default > connection default
+        // 回退链：会话模型 > 工作区默认值 > 连接默认值
         const wsConfig = loadWorkspaceConfig(managed.workspace.rootPath)
         const sessionConn = resolveSessionConnection(managed.llmConnection, wsConfig?.defaults?.defaultLlmConnection)
         const effectiveModel = model ?? wsConfig?.defaults?.model ?? sessionConn?.defaultModel!
@@ -5374,15 +5456,15 @@ export class SessionManager implements ISessionManager {
       } else {
         sessionLog.info(`[updateSessionModel] No agent yet, model will apply on next agent creation`)
       }
-      // Notify renderer of the model change
+      // 通知渲染器模型已变更
       this.sendEvent({ type: 'session_model_changed', sessionId, model }, managed.workspace.id)
       sessionLog.info(`Session ${sessionId} model updated to: ${model ?? '(global config)'}`)
     }
   }
 
   /**
-   * Update the content of a specific message in a session
-   * Used by preview window to save edited content back to the original message
+   * 更新会话中指定消息的内容
+   * 预览窗口使用此方法将编辑后的内容保存回原始消息
    */
   updateMessageContent(sessionId: string, messageId: string, content: string): void {
     const managed = this.sessions.get(sessionId)
@@ -5397,15 +5479,15 @@ export class SessionManager implements ISessionManager {
       return
     }
 
-    // Update the message content
+    // 更新消息内容
     message.content = content
-    // Persist the updated session
+    // 持久化更新后的会话
     this.persistSession(managed)
     sessionLog.info(`Updated message ${messageId} content in session ${sessionId}`)
   }
 
   /**
-   * Add an annotation to a message and persist the session.
+   * 为消息添加注解并持久化会话。
    */
   addMessageAnnotation(sessionId: string, messageId: string, annotation: NonNullable<Message['annotations']>[number]): void {
     const managed = this.sessions.get(sessionId)
@@ -5466,7 +5548,7 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Patch an existing annotation on a message.
+   * 修补消息上的现有注解。
    */
   updateMessageAnnotation(
     sessionId: string,
@@ -5545,7 +5627,7 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Remove an annotation from a message and persist the session.
+   * 从消息中移除注解并持久化会话。
    */
   removeMessageAnnotation(sessionId: string, messageId: string, annotationId: string): void {
     const managed = this.sessions.get(sessionId)
@@ -5578,18 +5660,18 @@ export class SessionManager implements ISessionManager {
       return
     }
 
-    // Get workspace slug before deleting
+    // 删除前获取工作区标识
     const workspaceRootPath = managed.workspace.rootPath
 
-    // If processing is in progress, force-abort via Query.close() and wait for cleanup
+    // 如果正在处理中，通过 Query.close() 强制中止并等待清理完成
     if (managed.isProcessing && managed.agent) {
       managed.agent.forceAbort(AbortReason.UserStop)
-      // Brief wait for the query to finish tearing down before we delete session files.
-      // Prevents file corruption from overlapping writes during rapid delete operations.
+      // 短暂等待查询完成拆卸，然后再删除会话文件
+      // 防止快速删除操作期间因重叠写入导致文件损坏
       await new Promise(resolve => setTimeout(resolve, 100))
     }
 
-    // Revoke share if session was shared (prevent orphaned viewer copies)
+    // 如果会话已共享则撤销共享（防止产生孤立的查看者副本）
     if (managed.sharedId) {
       try {
         const { VIEWER_URL } = await import('@craft-agent/shared/branding')
@@ -5607,7 +5689,7 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // Clean up delta flush timers to prevent orphaned timers
+    // 清理增量刷新定时器，防止产生孤立定时器
     const timer = this.deltaFlushTimers.get(sessionId)
     if (timer) {
       clearTimeout(timer)
@@ -5617,34 +5699,34 @@ export class SessionManager implements ISessionManager {
     this.clearAdminRememberApprovalsForSession(sessionId)
     this.clearPendingPermissionRequestsForSession(sessionId)
 
-    // Cancel any pending persistence write (session is being deleted, no need to save)
+    // 取消任何待处理的持久化写入（会话正在删除，无需保存）
     sessionPersistenceQueue.cancel(sessionId)
 
-    // Clean up session-scoped tool callbacks to prevent memory accumulation
+    // 清理会话范围内的工具回调，防止内存累积
     unregisterSessionScopedToolCallbacks(sessionId)
 
-    // Destroy browser instances bound to this session
+    // 销毁绑定到此会话的浏览器实例
     const sessionBpm = this.getBrowserPaneManagerForSession(sessionId)
     if (sessionBpm) {
       sessionBpm.destroyForSession(sessionId)
     }
-    // Drop the per-session remote bridge + host-client pin on destroy.
+    // 销毁时删除会话级别的远程桥接和主机客户端固定引用
     this.remoteBpms.delete(sessionId)
     this.browserHostByCanvas.delete(sessionId)
 
-    // Dispose agent to clean up ConfigWatchers, event listeners, MCP connections
+    // 释放 agent 以清理 ConfigWatchers、事件监听器、MCP 连接
     if (managed.agent) {
       managed.agent.dispose()
     }
 
-    // Stop pool server (HTTP MCP server for external SDK subprocesses)
+    // 停止池服务器（用于外部 SDK 子进程的 HTTP MCP 服务器）
     if (managed.poolServer) {
       managed.poolServer.stop().catch(err => {
         sessionLog.warn(`Failed to stop pool server for ${sessionId}: ${err instanceof Error ? err.message : err}`)
       })
     }
 
-    // Cancel any pending source-activation auto-retry timer (craft-agents-oss#804).
+    // 取消任何待处理的源激活自动重试定时器 (craft-agents-oss#804)
     if (managed.autoRetryTimer) {
       clearTimeout(managed.autoRetryTimer)
       managed.autoRetryTimer = undefined
@@ -5653,23 +5735,52 @@ export class SessionManager implements ISessionManager {
 
     this.sessions.delete(sessionId)
 
-    // Clean up session metadata in AutomationSystem (prevents memory leak)
+    // 清理 AutomationSystem 中的会话元数据（防止内存泄漏）
     const automationSystem = this.automationSystems.get(workspaceRootPath)
     if (automationSystem) {
       automationSystem.removeSessionMetadata(sessionId)
     }
 
-    // Delete from disk too
+    // 同时从磁盘删除
     deleteStoredSession(workspaceRootPath, sessionId)
 
-    // Notify all windows for this workspace that the session was deleted
+    // 通知该工作区的所有窗口会话已被删除
     this.sendEvent({ type: 'session_deleted', sessionId }, managed.workspace.id)
     this.emitUnreadSummaryChanged()
 
-    // Clean up attachments directory (handled by deleteStoredSession for workspace-scoped storage)
+    // 清理附件目录（由工作区范围存储的 deleteStoredSession 处理）
     sessionLog.info(`Deleted session ${sessionId}`)
   }
 
+  /**
+   * 发送消息：会话生命周期的核心入口。
+   *
+   * 处理流程：
+   * 1. 确保消息已懒加载（`ensureMessagesLoaded`）；
+   * 2. 如果当前正在处理（`isProcessing === true`）：
+   *    - 根据 connection 的 `midStreamBehavior` 决定 steer（中途改向）或 queue（排队）；
+   *    - steer 成功则直接把消息插入当前 turn；
+   *    - steer 失败或 queue 策略则把消息加入 `messageQueue`，设置 `wasInterrupted`，
+   *      等当前 turn 结束后再重放。
+   * 3. 如果空闲：
+   *    - 创建用户消息并持久化到磁盘（#616：在通知 UI "accepted" 前必须先落盘）；
+   *    - 首次用户消息时生成临时标题并异步生成 AI 标题；
+   *    - 预启用 skill 所需的 sources；
+   *    - 刷新过期 OAuth token；
+   *    - `getOrCreateAgent` 获取/创建 Agent；
+   *    - 调用 `agent.chat()` 进入事件循环；
+   *    - 对每个事件调用 `processEvent`；
+   *    - 收到 `complete` 事件或异常时进入 `onProcessingStopped`。
+   *
+   * 与 Go 的类比：
+   * - 这就像一个 `SendMessage(ctx, req) error` 的 RPC handler；
+   * - `for await (const event of chatIterator)` 类似 Go 里 `for event := range agent.Stream()`。
+   *
+   * Agent 开发关键点：
+   * - 用户消息必须先写磁盘再 ack，防止服务器崩溃导致消息丢失；
+   * - `processingGeneration` 用于防止旧 turn 的 finally 块覆盖新 turn 的状态；
+   * - 认证过期时会走 `attemptAuthRetry`：销毁 Agent、刷新 token、重发上一条消息。
+   */
   async sendMessage(
     sessionId: string,
     message: string,
@@ -5679,18 +5790,16 @@ export class SessionManager implements ISessionManager {
     existingMessageId?: string,
     _isAuthRetry?: boolean,
     /**
-     * Internal hook fired after the user message has been pushed to
-     * `managed.messages` and persisted to disk, but before the model-streaming
-     * work begins. The RPC handler uses this to send a synchronous "accepted"
-     * ack to the client so a crash mid-stream doesn't lose the user message
-     * (#616). Pre-persist errors still reject the outer promise as before.
+     * 内部钩子，在用户消息已推送到 `managed.messages` 并持久化到磁盘后、
+     * 模型流式处理开始前触发。RPC 处理器使用此钩子向客户端发送同步的“已接受”
+     * 确认，以便流处理中途崩溃不会丢失用户消息 (#616)。
+     * 预持久化错误仍会像之前一样拒绝外部 promise。
      */
     onAck?: (messageId: string) => void,
     /**
-     * Optional transport context. The `sessions.sendMessage` RPC handler passes
-     * `{ callerClientId: ctx.clientId }` so the SM can pin the desktop client
-     * that should host this session's browser tools. Pass undefined when calling
-     * directly (tests, intra-server flows) to leave the existing pin in place.
+     * 可选的传输上下文。`sessions.sendMessage` RPC 处理器传递
+     * `{ callerClientId: ctx.clientId }`，以便 SM 可以固定应托管此会话浏览器工具的桌面客户端。
+     * 直接调用时（测试、服务器内部流程）传入 undefined 以保持现有固定不变。
      */
     rpcContext?: { callerClientId?: string },
   ): Promise<void> {
@@ -5700,39 +5809,39 @@ export class SessionManager implements ISessionManager {
     }
     this.setLastMessageClientId(sessionId, rpcContext?.callerClientId)
 
-    // Source-activation auto-retry dedup (craft-agents-oss#804). When the server
-    // has just scheduled or committed a "[<slug> activated]" retry, drop a matching
-    // duplicate that arrives from a legacy renderer still running the client-side
-    // auto_retry. The first matching caller wins (server timer or legacy RPC,
-    // whichever arrives first), subsequent matching calls within the deadline drop.
+    // 源激活自动重试去重 (craft-agents-oss#804)。当服务器
+    // 刚刚调度或提交了“[<slug> activated]”重试时，丢弃来自仍在运行客户端端
+    // auto_retry 的旧版渲染器的匹配
+    // 重复项。第一个匹配的调用者获胜（服务器定时器或旧版 RPC，
+    // 以先到者为准），截止时间内后续匹配的调用将被丢弃。
     if (claimAutoRetryPending(managed, message) === 'drop') {
       sessionLog.info(`sendMessage: dropped duplicate source-activation retry for ${sessionId}`)
       return
     }
 
-    // Clear any pending plan execution state when a new user message is sent.
-    // This acts as a safety valve - if the user moves on, we don't want to
-    // auto-execute an old plan later.
+    // 发送新用户消息时清除任何待处理的计划执行状态。
+    // 这充当安全阀——如果用户继续前进，我们不希望
+    // 稍后自动执行旧计划。
     await clearStoredPendingPlanExecution(managed.workspace.rootPath, sessionId)
 
-    // Ensure messages are loaded before we try to add new ones
+    // 确保在尝试添加新消息之前已加载消息
     await this.ensureMessagesLoaded(managed)
 
-    // If currently processing, behavior depends on the connection's
-    // `midStreamBehavior` (resolved via {@link resolveMidStreamBehavior},
-    // defaults to provider-appropriate value):
+    // 如果当前正在处理，行为取决于连接的
+    // `midStreamBehavior`（通过 {@link resolveMidStreamBehavior} 解析，
+    // 默认为适合提供商的值）：
     //
-    // - 'steer': try to deliver into the in-flight turn. Pi steers natively;
-    //   Claude emulates via PreToolUse hook. If `redirect()` returns false
-    //   (Claude with no live query, or backend can't steer), the backend has
-    //   already called forceAbort(Redirect) and we queue for replay.
-    // - 'queue': hold the message untouched; the current turn keeps running
-    //   to natural completion; replay as a new turn afterwards. NO call to
-    //   `agent.redirect()`, NO forceAbort, NO interruption.
+    // - 'steer': 尝试传递到正在进行的轮次中。Pi 原生支持转向；
+    //   Claude 通过 PreToolUse 钩子模拟。如果 `redirect()` 返回 false
+    //   （Claude 没有实时查询，或后端无法转向），后端已
+    //   调用 forceAbort(Redirect) 并且我们将其排队等待重放。
+    // - 'queue': 保持消息不变；当前轮次继续运行
+    //   直到自然完成；然后作为新轮次重放。不调用
+    //   `agent.redirect()`，不 forceAbort，不中断。
     if (managed.isProcessing) {
       const connection = resolveSessionConnection(managed.llmConnection, undefined)
-      // Fallback to 'steer' when no connection is resolvable — preserves
-      // today's exact behavior (call redirect, take whatever it returns).
+      // 当无法解析连接时回退到 'steer'——保留
+      // 当前的确切行为（调用 redirect，接受其返回的任何值）。
       const behavior = connection ? resolveMidStreamBehavior(connection) : 'steer'
 
       const agent = managed.agent
@@ -5740,7 +5849,7 @@ export class SessionManager implements ISessionManager {
       if (behavior === 'steer') {
         steered = agent?.redirect(message) ?? false
       }
-      // For 'queue': skip redirect entirely. The current turn is undisturbed.
+      // 对于 'queue'：完全跳过 redirect。当前轮次不受干扰。
 
       sessionLog.info('mid-stream send', {
         sessionId,
@@ -5751,7 +5860,7 @@ export class SessionManager implements ISessionManager {
         connectionSlug: connection?.slug,
       })
 
-      // Create user message for UI
+      // 为 UI 创建用户消息
       const userMessage: Message = {
         id: generateMessageId(),
         role: 'user',
@@ -5765,8 +5874,8 @@ export class SessionManager implements ISessionManager {
       }
       managed.messages.push(userMessage)
 
-      // Emit to UI — 'accepted' iff a steer succeeded; 'queued' otherwise
-      // (covers both queue-direct and queue-after-abort paths).
+      // 发送到 UI——如果转向成功则为 'accepted'；否则为 'queued'
+      // （涵盖 queue-direct 和 queue-after-abort 两种路径）。
       this.sendEvent({
         type: 'user_message',
         sessionId,
@@ -5776,61 +5885,60 @@ export class SessionManager implements ISessionManager {
       }, managed.workspace.id)
 
       if (!steered) {
-        // Push for FIFO replay on next onProcessingStopped tick. Same shape
-        // for both queue-direct (current turn still running) and
-        // queue-after-abort (backend already aborted) — the replay path in
-        // processNextQueuedMessage is identical.
+        // 推入 FIFO 队列，等待下次 onProcessingStopped 触发时重放。形状
+        // 对于 queue-direct（当前轮次仍在运行）和
+        // queue-after-abort（后端已中止）相同——processNextQueuedMessage 中的
+        // 重放路径完全相同。
         managed.messageQueue.push({ message, attachments, storedAttachments, options, messageId: userMessage.id, optimisticMessageId: options?.optimisticMessageId })
         managed.wasInterrupted = true
       }
 
       this.persistSession(managed)
-      // Force a synchronous flush so the user message is genuinely on disk
-      // before we tell the renderer "accepted" — `persistSession` only
-      // enqueues with a 500ms debounce. (#616 reliability fix.)
+      // 强制同步刷新，以便用户消息真正写入磁盘
+      // 然后才告诉渲染器“已接受”——`persistSession` 仅
+      // 以 500ms 防抖入队。(#616 可靠性修复。)
       await this.flushSession(managed.id)
       onAck?.(userMessage.id)
       return
     }
 
-    // Add user message with stored attachments for persistence
-    // Skip if existingMessageId is provided (message was already created when queued)
+    // 添加带有已存储附件的用户消息以进行持久化
+    // 如果提供了 existingMessageId 则跳过（消息在排队时已创建）
     let userMessage: Message
     if (existingMessageId) {
-      // Find existing message (already added when queued)
+      // 查找现有消息（排队时已添加）
       userMessage = managed.messages.find(m => m.id === existingMessageId)!
       if (!userMessage) {
         throw new Error(`Existing message ${existingMessageId} not found`)
       }
     } else {
-      // Create new message
+      // 创建新消息
       userMessage = {
         id: generateMessageId(),
         role: 'user',
         content: message,
         timestamp: this.monotonic(),
-        attachments: storedAttachments, // Include for persistence (has thumbnailBase64)
-        badges: options?.badges,  // Include content badges (sources, skills with embedded icons)
-        // Hidden system-generated messages reach the model but never render as a
-        // transcript bubble (e.g. background-task-completion nudge).
+        attachments: storedAttachments, // 包含用于持久化的内容（有 thumbnailBase64）
+        badges: options?.badges,  // 包含内容徽章（来源、带有嵌入图标的技能）
+        // hidden 系统生成消息会到达模型，但绝不渲染为消息气泡（例如后台任务完成的提醒）。
         ...(options?.hidden ? { hidden: true } : {}),
       }
       managed.messages.push(userMessage)
 
-      // Update lastMessageRole for badge display. Skip for hidden messages so the
-      // session-list preview isn't briefly driven by an invisible system nudge.
+      // 更新 lastMessageRole 以显示徽章。hidden 消息跳过此项，
+      // 以免会话列表预览被一条不可见的系统提醒短暂驱动。
       if (!options?.hidden) {
         managed.lastMessageRole = 'user'
       }
 
-      // Persist + flush before announcing — the user message must be
-      // genuinely on disk before we tell the renderer "accepted", and
-      // `persistSession` is debounced (500ms). #616.
+      // 在宣布之前持久化并刷新——用户消息必须
+      // 真正写入磁盘，然后才能告诉渲染器“已接受”，并且
+      // `persistSession` 是防抖的（500ms）。#616。
       this.persistSession(managed)
       await this.flushSession(managed.id)
       onAck?.(userMessage.id)
 
-      // Emit user_message event so UI can confirm the optimistic message
+      // 发送 user_message 事件，以便 UI 可以确认乐观消息
       this.sendEvent({
         type: 'user_message',
         sessionId,
@@ -5839,13 +5947,13 @@ export class SessionManager implements ISessionManager {
         optimisticMessageId: options?.optimisticMessageId
       }, managed.workspace.id)
 
-      // If this is the first user message and no title exists, set one immediately
-      // AI generation will enhance it later, but we always have a title from the start
-      // Automation sessions (triggeredBy set) already have a title and skip AI generation entirely
+      // 如果这是第一条用户消息且没有标题，则立即设置一个
+      // AI 生成稍后会优化它，但我们始终从一开始就有标题
+      // 自动化会话（设置了 triggeredBy）已有标题，完全跳过 AI 生成
       const isFirstUserMessage = managed.messages.filter(m => m.role === 'user').length === 1
       if (isFirstUserMessage && !managed.name && !managed.triggeredBy) {
-        // Replace bracket mentions with their display labels (e.g. [skill:ws:commit] -> "Commit")
-        // so titles show human-readable names instead of raw IDs
+        // 将括号提及替换为其显示标签（例如 [skill:ws:commit] -> "Commit"）
+        // 以便标题显示人类可读的名称而不是原始 ID
         let titleSource = message
         if (options?.badges) {
           for (const badge of options.badges) {
@@ -5854,12 +5962,12 @@ export class SessionManager implements ISessionManager {
             }
           }
         }
-        // Sanitize: strip any remaining bracket mentions, XML blocks, tags
+        // 清理：去除任何剩余的括号提及、XML 块、标签
         const sanitized = sanitizeForTitle(titleSource)
         const initialTitle = sanitized.slice(0, 50) + (sanitized.length > 50 ? '…' : '')
         managed.name = initialTitle
         this.persistSession(managed)
-        // Flush immediately so disk is authoritative before notifying renderer
+        // 立即刷新，以便在通知渲染器之前磁盘数据是权威的
         await this.flushSession(managed.id)
         this.sendEvent({
           type: 'title_generated',
@@ -5867,15 +5975,15 @@ export class SessionManager implements ISessionManager {
           title: initialTitle,
         }, managed.workspace.id)
 
-        // Generate AI title asynchronously using agent's SDK
-        // (waits briefly for agent creation if needed)
+        // 使用 agent 的 SDK 异步生成 AI 标题
+        // （如果需要，短暂等待 agent 创建）
         this.generateTitle(managed, message)
       }
     }
 
-    // Evaluate auto-label rules against the user message (common path for both
-    // fresh and queued messages). Scans regex patterns configured on labels,
-    // then merges any new matches into the session's label array.
+    // 针对用户消息评估自动标签规则（新鲜消息和排队消息的
+    // 通用路径）。扫描标签上配置的正则表达式模式，
+    // 然后将任何新匹配项合并到会话的标签数组中。
     try {
       const labelTree = listLabels(managed.workspace.rootPath)
       const autoMatches = evaluateAutoLabels(message, labelTree)
@@ -5906,29 +6014,29 @@ export class SessionManager implements ISessionManager {
     managed.processingGeneration++
     managed.turnStartFinalMessageId = this.getLastFinalAssistantMessageId(managed.messages)
 
-    // Reset auth retry flag for this new message (allows one retry per message)
-    // IMPORTANT: Skip reset if this is an auth retry call - the flag is already true
-    // and resetting it would allow infinite retry loops
-    // Note: authRetryInProgress is NOT reset here - it's managed by the retry logic
+    // 为此新消息重置身份验证重试标志（每条消息允许一次重试）
+    // 重要：如果这是身份验证重试调用，则跳过重置——该标志已为 true
+    // 重置它会导致无限重试循环
+    // 注意：authRetryInProgress 此处不重置——它由重试逻辑管理
     if (!_isAuthRetry) {
       managed.authRetryAttempted = false
     }
 
-    // Store message/attachments for potential retry after auth refresh
-    // (SDK subprocess caches token at startup, so if it expires mid-session,
-    // we need to recreate the agent and retry the message)
+    // 存储消息/附件，以便在身份验证刷新后可能重试
+    // （SDK 子进程在启动时缓存令牌，因此如果它在会话期间过期，
+    // 我们需要重新创建 agent 并重试消息）
     managed.lastSentMessage = message
     managed.lastSentAttachments = attachments
     managed.lastSentStoredAttachments = storedAttachments
     managed.lastSentOptions = options
 
-    // Capture the generation to detect if a new request supersedes this one.
-    // This prevents the finally block from clobbering state when a follow-up message arrives.
+    // 捕获生成标识，以检测新请求是否取代了此请求。
+    // 这可以防止当后续消息到达时，finally 块破坏状态。
     const myGeneration = managed.processingGeneration
 
-    // Pre-enable sources required by invoked skills (Issue #249)
-    // This eliminates the two-turn penalty where the agent discovers missing sources at runtime.
-    // Uses targeted loadSkillBySlug() instead of loadAllSkills() to avoid O(N) filesystem scans.
+    // 预启用被调用技能所需的来源（Issue #249）
+    // 这消除了 agent 在运行时发现缺少来源的两轮惩罚。
+    // 使用有针对性的 loadSkillBySlug() 而不是 loadAllSkills() 以避免 O(N) 文件系统扫描。
     if (options?.skillSlugs?.length) {
       try {
         const workspaceRoot = managed.workspace.rootPath
@@ -5984,17 +6092,17 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // Start perf span for entire sendMessage flow
+    // 为整个 sendMessage 流程启动性能跨度
     const sendSpan = perf.span('session.sendMessage', { sessionId })
 
     const workspaceRootPath = managed.workspace.rootPath
     const enabledSlugs = managed.enabledSourceSlugs ?? []
     const hasSources = enabledSlugs.length > 0
 
-    // Load enabled sources up-front so we can refresh tokens BEFORE getOrCreateAgent
-    // runs its internal cold-session build. Otherwise that build sees stale tokens
-    // and emits AUTH_REQUIRED, causing a brief "needs_auth" UI flicker before the
-    // post-build refresh restores state (#710).
+    // 预先加载已启用的来源，以便在 getOrCreateAgent
+    // 运行其内部冷会话构建之前刷新令牌。否则该构建会看到过时的令牌
+    // 并发出 AUTH_REQUIRED，导致在
+    // 构建后刷新恢复状态之前出现短暂的“needs_auth”UI 闪烁 (#710)。
     const sources: LoadedSource[] = hasSources
       ? getSourcesBySlugs(workspaceRootPath, enabledSlugs)
       : []
@@ -6009,21 +6117,21 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // Get or create the agent (lazy loading). Its internal cold-session build at
-    // ~L2956 now sees fresh tokens (or correctly-needs_auth failed sources, since
-    // ensureFreshToken mirrors the disk write to source.config in-memory).
+    // 获取或创建 agent（延迟加载）。其内部冷会话构建在
+    // ~L2956 处现在看到的是新令牌（或正确需要身份验证的失败来源，因为
+    // ensureFreshToken 将磁盘写入镜像到内存中的 source.config）。
     const agent = await this.getOrCreateAgent(managed)
     sendSpan.mark('agent.ready')
 
-    // Always set all sources for context (even if none are enabled), including built-ins
+    // 始终设置所有来源以提供上下文（即使没有启用），包括内置来源
     const allSources = loadAllSources(workspaceRootPath)
     agent.setAllSources(allSources)
     sendSpan.mark('sources.loaded')
 
-    // Apply source servers if any are enabled
+    // 如果启用了任何来源服务器，则应用它们
     if (hasSources) {
       const sessionPath = getSessionStoragePath(workspaceRootPath, sessionId)
-      // Single fresh build — tokens already refreshed above.
+      // 单次全新构建——令牌已在上方刷新。
       const { mcpServers, apiServers, errors } = await buildServersFromSources(sources, sessionPath, managed.tokenRefreshManager, agent.getSummarizeCallback())
       if (errors.length > 0) {
         sessionLog.warn(`Source build errors:`, errors)
@@ -6048,26 +6156,26 @@ export class SessionManager implements ISessionManager {
       sessionLog.info('Agent model:', agent.getModel())
       sessionLog.info('process.cwd():', process.cwd())
 
-      // Process the message through the agent
+      // 通过 agent 处理消息
       sessionLog.info('Calling agent.chat()...')
       if (attachments?.length) {
         sessionLog.info('Attachments:', attachments.length)
       }
 
-      // Skills mentioned via @mentions are handled by the SDK's Skill tool.
-      // The UI layer (extractBadges in mentions.ts) injects fully-qualified names
-      // in the rawText, and canUseTool in craft-agent.ts provides a fallback
-      // to qualify short names. No transformation needed here.
+      // 通过 @提及 提到的技能由 SDK 的 Skill 工具处理。
+      // UI 层（mentions.ts 中的 extractBadges）在 rawText 中注入完全限定名称，
+      // 而 craft-agent.ts 中的 canUseTool 提供回退
+      // 以限定短名称。此处无需转换。
 
-      // Ensure main process reads tool metadata from the correct session directory.
-      // This must be set before each chat() call since multiple sessions share the process.
+      // 确保主进程从正确的会话目录读取工具元数据。
+      // 必须在每次 chat() 调用之前设置，因为多个会话共享该进程。
       const chatSessionDir = getSessionStoragePath(workspaceRootPath, sessionId)
       toolMetadataStore.setSessionDir(chatSessionDir)
 
-      // Inject interruption context so the LLM knows the previous turn was cut short.
-      // Uses <system-reminder> tags so the LLM treats it as transient system guidance
-      // rather than part of the user's message content. The original message is stored
-      // in session JSONL (line ~3952); this only affects the SDK's in-process context.
+      // 注入中断上下文，以便 LLM 知道上一轮被截断。
+      // 使用 <system-reminder> 标签，以便 LLM 将其视为临时系统指导，
+      // 而不是用户消息内容的一部分。原始消息存储在
+      // 会话 JSONL 中（第 ~3952 行）；这仅影响 SDK 的进程内上下文。
       let effectiveMessage = message
       if (managed.wasInterrupted) {
         effectiveMessage = `${message}\n\n<system-reminder>The previous assistant response was interrupted by the user and may be incomplete. Do not repeat or continue the interrupted response unless asked. Focus on the new message above.</system-reminder>`
@@ -6100,7 +6208,7 @@ export class SessionManager implements ISessionManager {
       sessionLog.info('Got chat iterator, starting iteration...')
 
       for await (const event of chatIterator) {
-        // Log events (skip noisy text_delta)
+        // 记录事件（跳过嘈杂的 text_delta）
         if (event.type !== 'text_delta') {
           if (event.type === 'tool_start') {
             sessionLog.info(`tool_start: ${event.toolName} (${event.toolUseId})`)
@@ -6111,39 +6219,39 @@ export class SessionManager implements ISessionManager {
           }
         }
 
-        // Process the event first
+        // 首先处理事件
         await this.processEvent(managed, event)
 
-        // Fallback: Capture SDK session ID if the onSdkSessionIdUpdate callback didn't fire.
-        // Primary capture happens in getOrCreateAgent() via onSdkSessionIdUpdate callback,
-        // which immediately flushes to disk. This fallback handles edge cases where the
-        // callback might not fire (e.g., SDK version mismatch, callback not supported).
+        // 回退：如果 onSdkSessionIdUpdate 回调未触发，则捕获 SDK 会话 ID。
+        // 主要捕获发生在 getOrCreateAgent() 中，通过 onSdkSessionIdUpdate 回调，
+        // 该回调会立即刷新到磁盘。此回退处理回调可能
+        // 不触发的边缘情况（例如，SDK 版本不匹配，不支持回调）。
         if (!managed.sdkSessionId) {
           const sdkId = agent.getSessionId()
           if (sdkId) {
             managed.sdkSessionId = sdkId
             sessionLog.info(`Captured SDK session ID via fallback: ${sdkId}`)
-            // Also flush here since we're in fallback mode
+            // 由于处于回退模式，也在此处刷新
             this.persistSession(managed)
             sessionPersistenceQueue.flush(managed.id)
           }
         }
 
-        // Handle complete event - SDK always sends this (even after interrupt)
-        // This is the central place where processing ends
+        // 处理 complete 事件——SDK 始终发送此事件（即使在中断后）
+        // 这是处理结束的中心位置
         if (event.type === 'complete') {
-          // Skip normal completion handling if auth retry is in progress
-          // The retry will handle its own completion
+          // 如果身份验证重试正在进行，则跳过正常的完成处理
+          // 重试将处理其自身的完成
           if (managed.authRetryInProgress) {
             sessionLog.info('Chat completed but auth retry is in progress, skipping normal completion handling')
             sendSpan.mark('chat.complete.auth_retry_pending')
             sendSpan.end()
-            return  // Exit function - retry will handle completion
+            return  // 退出函数——重试将处理完成
           }
 
-          // Auth/plan handoff paths already stopped processing and emitted a complete
-          // event to the renderer. Ignore the backend's trailing complete to avoid
-          // double cleanup and duplicate UI completion events.
+          // 身份验证/计划交接路径已停止处理并向渲染器发出 complete
+          // 事件。忽略后端的尾部 complete 以避免
+          // 双重清理和重复的 UI 完成事件。
           if (!managed.isProcessing) {
             sessionLog.info('Chat completed after explicit handoff/stop; skipping normal completion handling')
             sendSpan.mark('chat.complete.already_stopped')
@@ -6153,21 +6261,21 @@ export class SessionManager implements ISessionManager {
 
           sessionLog.info('Chat completed via complete event')
 
-          // Check if we got an assistant response in this turn
-          // If not, the SDK may have hit context limits or other issues
+          // 检查本轮是否收到了助手响应
+          // 如果没有，SDK 可能遇到了上下文限制或其他问题
           const lastAssistantMsg = [...managed.messages].reverse().find(m =>
             m.role === 'assistant' && !m.isIntermediate
           )
           const lastUserMsg = [...managed.messages].reverse().find(m => m.role === 'user')
 
-          // If the last user message is newer than any assistant response, we got no reply
-          // This can happen due to context overflow or API issues
+          // 如果最后一条用户消息比任何助手响应都新，则说明没有收到回复
+          // 可能由上下文溢出或 API 问题导致
           if (lastUserMsg && (!lastAssistantMsg || lastUserMsg.timestamp > lastAssistantMsg.timestamp)) {
             sessionLog.warn(`Session ${sessionId} completed without assistant response - possible context overflow or API issue`)
 
-            // Check if there's a captured API error that explains the silent failure.
-            // Pass explicit session path to avoid reading from the wrong session
-            // (_sessionDir singleton can be clobbered by concurrent sessions).
+            // 检查是否有捕获到的 API 错误可以解释静默失败
+            // 传入显式会话路径，避免读取错误的会话
+            // （_sessionDir 单例可能被并发会话覆盖）
             const sessionErrorPath = getSessionStoragePath(managed.workspace.rootPath, managed.id)
             const apiError = getLastApiError(sessionErrorPath)
 
@@ -6209,16 +6317,16 @@ export class SessionManager implements ISessionManager {
           sendSpan.mark('chat.complete')
           sendSpan.end()
           this.onProcessingStopped(sessionId, 'complete')
-          return  // Exit function, skip finally block (onProcessingStopped handles cleanup)
+          return  // 退出函数，跳过 finally 块（onProcessingStopped 处理清理）
         }
 
-        // NOTE: We no longer break early on !isProcessing or stopRequested.
-        // After soft interrupt (forceAbort), the backend sets turnComplete=true which causes
-        // the generator to yield remaining queued events and then complete naturally.
-        // This ensures we don't lose in-flight messages.
+        // 注意：我们不再因 !isProcessing 或 stopRequested 而提前中断
+        // 软中断（forceAbort）后，后端设置 turnComplete=true，导致
+        // 生成器产出剩余排队事件，然后自然完成
+        // 这确保我们不会丢失正在传输的消息
       }
 
-      // Loop exited - either via complete event (normal) or generator ended after soft interrupt
+      // 循环退出——要么通过 complete 事件（正常），要么生成器在软中断后结束
       if (!managed.isProcessing) {
         sessionLog.info('Chat loop exited after explicit handoff/stop')
         sendSpan.mark('chat.exit.already_stopped')
@@ -6230,7 +6338,7 @@ export class SessionManager implements ISessionManager {
         sessionLog.info('Chat loop exited unexpectedly')
       }
     } catch (error) {
-      // Check if this is an abort error (expected when interrupted)
+      // 检查是否为中止错误（中断时预期出现）
       const isAbortError = error instanceof Error && (
         error.name === 'AbortError' ||
         error.message === 'Request was aborted.' ||
@@ -6238,7 +6346,7 @@ export class SessionManager implements ISessionManager {
       )
 
       if (isAbortError) {
-        // Extract abort reason if available (safety net for unexpected abort propagation)
+        // 提取中止原因（如有）（防止意外中止传播的安全网）
         const reason = (error as DOMException).cause as AbortReason | undefined
 
         sessionLog.info(`Chat aborted (reason: ${reason || 'unknown'})`)
@@ -6246,9 +6354,9 @@ export class SessionManager implements ISessionManager {
         sendSpan.setMetadata('abort_reason', reason || 'unknown')
         sendSpan.end()
 
-        // UI handoff paths (plan submission, auth request) handle their own cleanup
-        // by setting isProcessing = false directly. All other abort reasons route
-        // through onProcessingStopped for queue draining.
+        // UI 交接路径（计划提交、认证请求）自行处理清理
+        // 通过直接设置 isProcessing = false。所有其他中止原因
+        // 都通过 onProcessingStopped 进行队列排空
         if (reason === AbortReason.UserStop || reason === AbortReason.Redirect || reason === undefined) {
           this.onProcessingStopped(sessionId, 'interrupted')
         }
@@ -6257,7 +6365,7 @@ export class SessionManager implements ISessionManager {
         sessionLog.error('Error message:', error instanceof Error ? error.message : String(error))
         sessionLog.error('Error stack:', error instanceof Error ? error.stack : 'No stack')
 
-        // Report chat/SDK errors via runtime hooks (Electron can forward to Sentry)
+        // 通过运行时钩子报告聊天/SDK 错误（Electron 可转发到 Sentry）
         sessionRuntimeHooks.captureException(error, { errorSource: 'chat', sessionId })
 
         sendSpan.mark('chat.error')
@@ -6268,13 +6376,13 @@ export class SessionManager implements ISessionManager {
           sessionId,
           error: error instanceof Error ? error.message : 'Unknown error'
         }, managed.workspace.id)
-        // Handle error via centralized handler
+        // 通过集中式处理器处理错误
         this.onProcessingStopped(sessionId, 'error')
       }
     } finally {
-      // Only handle cleanup for unexpected exits (loop break without complete event)
-      // Normal completion returns early after calling onProcessingStopped
-      // Errors are handled in catch block
+      // 仅处理意外退出的清理（循环中断但没有 complete 事件）
+      // 正常完成在调用 onProcessingStopped 后提前返回
+      // 错误在 catch 块中处理
       if (managed.isProcessing && managed.processingGeneration === myGeneration) {
         sessionLog.info('Finally block cleanup - unexpected exit')
         sendSpan.mark('chat.unexpected_exit')
@@ -6287,43 +6395,43 @@ export class SessionManager implements ISessionManager {
   async cancelProcessing(sessionId: string, silent = false): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed?.isProcessing) {
-      return // Not processing, nothing to cancel
+      return // 未在处理中，无需取消
     }
 
     sessionLog.info('Cancelling processing for session:', sessionId, silent ? '(silent)' : '')
 
-    // Collect queued message text for input restoration before clearing
+    // 收集排队消息文本，以便在清除前恢复输入
     const queuedTexts = managed.messageQueue.map(q => q.message)
 
-    // Collect queued message IDs so we can remove them from the messages array
-    // (they were added when sendMessage was called during processing)
+    // 收集排队消息 ID，以便从消息数组中移除它们
+    // （它们在处理期间调用 sendMessage 时被添加）
     const queuedMessageIds = new Set(
       managed.messageQueue.map(q => q.messageId).filter((id): id is string => !!id)
     )
 
-    // Clear queue - user explicitly stopped, don't process queued messages
+    // 清除队列——用户显式停止，不处理排队消息
     managed.messageQueue = []
 
-    // Remove queued user messages from the persisted messages array
+    // 从持久化消息数组中移除排队的用户消息
     if (queuedMessageIds.size > 0) {
       managed.messages = managed.messages.filter(m => !queuedMessageIds.has(m.id))
     }
 
-    // Signal intent to stop - let the event loop drain remaining events before clearing isProcessing
-    // This prevents losing in-flight messages after soft interrupt
+    // 发出停止意图——让事件循环在清除 isProcessing 前排空剩余事件
+    // 这防止软中断后丢失正在传输的消息
     managed.stopRequested = true
 
-    // Track interruption so the next user message gets a context note
-    // telling the LLM the previous response was cut short
+    // 跟踪中断，以便下一条用户消息获得上下文提示
+    // 告知 LLM 之前的响应被截断
     managed.wasInterrupted = true
 
-    // Force-abort via Query.close() - sends soft interrupt to the backend
+    // 通过 Query.close() 强制中止——向后端发送软中断
     if (managed.agent) {
       managed.agent.forceAbort(AbortReason.UserStop)
     }
 
-    // Only show "Response interrupted" message when user explicitly clicked Stop
-    // Silent mode is used when redirecting (sending new message while processing)
+    // 仅在用户显式点击停止时显示“响应已中断”消息
+    // 静默模式用于重定向（在处理中发送新消息）
     if (!silent) {
       const interruptedMessage: Message = {
         id: generateMessageId(),
@@ -6336,21 +6444,21 @@ export class SessionManager implements ISessionManager {
         type: 'interrupted',
         sessionId,
         message: interruptedMessage,
-        // Include queued texts so the UI can restore them to the input field
+        // 包含排队文本，以便 UI 可以将其恢复到输入字段
         ...(queuedTexts.length > 0 ? { queuedMessages: queuedTexts } : {}),
       }, managed.workspace.id)
     } else {
-      // Still send interrupted event but without the message (for UI state update)
+      // 仍然发送中断事件，但不带消息（用于 UI 状态更新）
       this.sendEvent({
         type: 'interrupted',
         sessionId,
-        // Include queued texts so the UI can restore them to the input field
+        // 包含排队文本，以便 UI 可以将其恢复到输入字段
         ...(queuedTexts.length > 0 ? { queuedMessages: queuedTexts } : {}),
       }, managed.workspace.id)
     }
 
-    // Safety timeout: if event loop doesn't complete within 5 seconds, force cleanup
-    // This handles cases where the generator gets stuck
+    // 安全超时：如果事件循环在 5 秒内未完成，则强制清理
+    // 这处理生成器卡住的情况
     setTimeout(() => {
       if (managed.stopRequested && managed.isProcessing) {
         sessionLog.warn('Generator did not complete after stop request, forcing cleanup')
@@ -6358,14 +6466,14 @@ export class SessionManager implements ISessionManager {
       }
     }, 5000)
 
-    // NOTE: We don't clear isProcessing or send complete event here anymore.
-    // The event loop will drain remaining events and call onProcessingStopped when done.
+    // 注意：我们不再在此处清除 isProcessing 或发送 complete 事件
+    // 事件循环将排空剩余事件，并在完成时调用 onProcessingStopped
   }
 
   /**
-   * Attempt auth retry: refresh token, destroy agent, resend last message.
-   * Shared by both typed_error and plain error auth-retry paths.
-   * Returns true if retry was initiated, false if conditions not met.
+   * 尝试认证重试：刷新令牌、销毁代理、重新发送最后一条消息
+   * 由 typed_error 和普通错误认证重试路径共享
+   * 如果重试已启动则返回 true，如果条件不满足则返回 false
    */
   private attemptAuthRetry(
     sessionId: string,
@@ -6379,7 +6487,7 @@ export class SessionManager implements ISessionManager {
     managed.authRetryAttempted = true
     managed.authRetryInProgress = true
 
-    // Emit lightweight info so the user sees progress instead of a scary red error
+    // 发出轻量级信息，让用户看到进度而不是可怕的红色错误
     this.sendEvent({
       type: 'info',
       sessionId,
@@ -6389,15 +6497,15 @@ export class SessionManager implements ISessionManager {
 
     setImmediate(async () => {
       try {
-        // 1. Reset summarization client so it picks up fresh credentials
+        // 1. 重置摘要客户端，使其获取新凭据
         sessionLog.info(`[auth-retry] Resetting summarization client for session ${sessionId}`)
         resetSummarizationClient()
 
-        // 2. Destroy the agent — the new agent's postInit() will refresh auth
+        // 2. 销毁代理——新代理的 postInit() 将刷新认证
         sessionLog.info(`[auth-retry] Destroying agent for session ${sessionId}`)
         managed.agent = null
 
-        // 3. Retry the message
+        // 3. 重试消息
         const retryMessage = managed.lastSentMessage
         const retryAttachments = managed.lastSentAttachments
         const retryStoredAttachments = managed.lastSentStoredAttachments
@@ -6407,8 +6515,8 @@ export class SessionManager implements ISessionManager {
           sessionLog.info(`[auth-retry] Retrying message for session ${sessionId}`)
           this.setProcessing(managed, false)
 
-          // Remove the user message that was added for this failed attempt
-          // so we don't get duplicate messages when retrying
+          // 移除为此失败尝试添加的用户消息
+          // 以便重试时不会出现重复消息
           const lastUserMsgIndex = managed.messages.findLastIndex(m => m.role === 'user')
           if (lastUserMsgIndex !== -1) {
             managed.messages.splice(lastUserMsgIndex, 1)
@@ -6423,7 +6531,7 @@ export class SessionManager implements ISessionManager {
             retryStoredAttachments,
             retryOptions,
             undefined,  // existingMessageId
-            true        // _isAuthRetry - prevents infinite retry loop
+            true        // _isAuthRetry - 防止无限重试循环
           )
           sessionLog.info(`[auth-retry] Retry completed for session ${sessionId}`)
         } else {
@@ -6455,14 +6563,14 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Listeners for the in-process session-completion seam (see SessionCompletionEvent).
-   * Used by the Tasks Conductor; empty until something subscribes, so zero overhead otherwise.
+   * 进程内会话完成接缝的监听器（见 SessionCompletionEvent）。
+   * 供 Tasks Conductor 使用；在有人订阅之前为空，因此零开销。
    */
   private sessionCompletionListeners = new Set<(evt: SessionCompletionEvent) => void>()
 
   /**
-   * Subscribe to in-process session completion (Tasks Conductor seam).
-   * Returns an unsubscribe function. Not a renderer event; not agent-facing.
+   * 订阅进程内的会话完成（Tasks Conductor 接缝）。
+   * 返回一个取消订阅函数。不是渲染器事件；不对 agent 暴露。
    */
   onSessionComplete(listener: (evt: SessionCompletionEvent) => void): () => void {
     this.sessionCompletionListeners.add(listener)
@@ -6483,11 +6591,22 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Central handler for when processing stops (any reason).
-   * Single source of truth for cleanup and queue processing.
+   * 处理停止后的统一清理与队列调度入口。
+   * 单一事实来源。
    *
-   * @param sessionId - The session that stopped processing
-   * @param reason - Why processing stopped ('complete' | 'interrupted' | 'error')
+   * 这是会话生命周期的“收尾函数”，任何原因导致 Agent 停止后都会进入这里：
+   * 1. 重置 `isProcessing`、`stopRequested`；
+   * 2. 清理浏览器面板 overlay（但保留窗口所有权，除非队列已空）；
+   * 3. 根据用户是否正在查看本会话，更新未读状态；
+   * 4. mini agent 自动标记为 done；
+   * 5. 应用处理期间被延迟的外部元数据更新；
+   * 6. 如果 `messageQueue` 非空，调用 `processNextQueuedMessage` 重放下一条；
+   * 7. 如果队列为空，释放浏览器窗口绑定并向前端发送 `complete` 事件；
+   * 8. 持久化会话。
+   *
+   * 与 Go 的类比：
+   * - 类似 Go 里一个 `defer cleanup()` 或 `finally` 块，负责状态机收尾；
+   * - 这里的“队列”类似 Go 的 channel，但用数组 + setImmediate 模拟异步消费。
    */
   private async onProcessingStopped(
     sessionId: string,
@@ -6498,9 +6617,9 @@ export class SessionManager implements ISessionManager {
 
     sessionLog.info(`Processing stopped for session ${sessionId}: ${reason}`)
 
-    // 1. Cleanup state
+    // 1. 清理状态
     this.setProcessing(managed, false)
-    managed.stopRequested = false  // Reset for next turn
+    managed.stopRequested = false  // 为下一轮重置
 
     // 1b. Orphan backstop: with the default per-turn subprocess model, any
     // background sub-agent still marked `running` dies when this turn's
@@ -6512,9 +6631,9 @@ export class SessionManager implements ISessionManager {
     const turnStartFinalMessageId = managed.turnStartFinalMessageId
     managed.turnStartFinalMessageId = undefined
 
-    // Clear agent control overlay between turns. The session keeps browser
-    // ownership (boundSessionId) — only the visual overlay is removed.
-    // Full unbind happens below when the queue is empty (session truly done).
+    // 在轮次之间清除代理控制覆盖层。会话保留浏览器
+    // 所有权（boundSessionId）——仅移除视觉覆盖层
+    // 当队列为空时（会话真正结束），在下方进行完全解绑
     const turnBpm = this.getBrowserPaneManagerForSession(sessionId)
     if (turnBpm) {
       // Same guard as the queue-empty teardown below: a remote BPM throw on a
@@ -6526,21 +6645,21 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // 2. Handle unread state based on whether user is viewing this session
-    //    This is the explicit state machine for NEW badge:
-    //    - If user is viewing: mark as read (they saw it complete)
-    //    - If user is NOT viewing: mark as unread (they have new content)
-    //    IMPORTANT: only apply this when the turn produced a NEW final assistant message.
+    // 2. 根据用户是否正在查看此会话处理未读状态
+    //    这是 NEW 徽章的显式状态机：
+    //    - 如果用户正在查看：标记为已读（他们看到它完成）
+    //    - 如果用户未查看：标记为未读（他们有新内容）
+    //    重要：仅当该轮产生了新的最终助手消息时应用此逻辑
     const isViewing = this.isSessionBeingViewed(sessionId, managed.workspace.id)
     const currentFinalMessageId = this.getLastFinalAssistantMessageId(managed.messages)
     const didReceiveNewFinalMessage = !!currentFinalMessageId && currentFinalMessageId !== turnStartFinalMessageId
 
     if (reason === 'complete' && didReceiveNewFinalMessage) {
       if (isViewing) {
-        // User is watching - mark as read immediately
+        // 用户正在观看——立即标记为已读
         await this.markSessionRead(sessionId)
       } else {
-        // User is not watching - mark as unread for NEW badge
+        // 用户未观看——标记为未读以显示 NEW 徽章
         if (!managed.hasUnread) {
           managed.hasUnread = true
           await updateSessionMetadata(managed.workspace.rootPath, sessionId, { hasUnread: true })
@@ -6549,15 +6668,15 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // 3. Auto-complete mini agent sessions to avoid session list clutter
-    //    Mini agents are spawned from EditPopovers for quick config edits
-    //    and should automatically move to 'done' when finished
+    // 3. 自动完成迷你代理会话，避免会话列表杂乱
+    //    迷你代理从 EditPopovers 生成，用于快速配置编辑
+    //    完成后应自动移至“完成”状态
     if (reason === 'complete' && managed.systemPromptPreset === 'mini' && managed.sessionStatus !== 'done') {
       sessionLog.info(`Auto-completing mini agent session ${sessionId}`)
       await this.setSessionStatus(sessionId, 'done')
     }
 
-    // 4. Apply deferred external metadata updates captured while processing.
+    // 4. 应用处理期间捕获的延迟外部元数据更新
     if (managed.pendingExternalMetadata) {
       const pendingHeader = managed.pendingExternalMetadata
       managed.pendingExternalMetadata = undefined
@@ -6565,14 +6684,14 @@ export class SessionManager implements ISessionManager {
       this.applyExternalSessionMetadata(managed, pendingHeader)
     }
 
-    // 5. Check queue and process or complete
+    // 5. 检查队列并处理或完成
     if (managed.messageQueue.length > 0) {
-      // Has queued messages - process next
+      // 有排队消息——处理下一条
       this.processNextQueuedMessage(sessionId)
     } else {
-      // Session is truly done — release browser ownership.
-      // The window stays alive (hidden) and becomes reusable by future sessions.
-      // On the next turn, getOrCreateForSession() will re-bind it.
+      // 会话真正结束——释放浏览器所有权
+      // 窗口保持存活（隐藏）并可被未来会话重用
+      // 在下一轮，getOrCreateForSession() 将重新绑定它
       const doneBpm = this.getBrowserPaneManagerForSession(sessionId)
       if (doneBpm) {
         // Teardown must never block completion. On a headless/WebUI server the BPM is
@@ -6587,16 +6706,15 @@ export class SessionManager implements ISessionManager {
         }
       }
 
-      // No queue - emit complete to UI (include tokenUsage and hasUnread for state updates)
+      // 无队列——向 UI 发出 complete 事件（包含 tokenUsage 和 hasUnread 用于状态更新）
       this.sendEvent({
         type: 'complete',
         sessionId,
         tokenUsage: managed.tokenUsage,
-        hasUnread: managed.hasUnread,  // Propagate unread state to renderer
-        // WS2: when keep-alive keeps the persistent query open across turns, the
-        // turn ending does NOT kill background sub-agents. Tell the renderer so its
-        // chip orphan-backstop does not falsely flip live tasks to `orphaned`; a
-        // real `task_completed` will arrive when the agent actually finishes.
+        hasUnread: managed.hasUnread,  // 将未读状态传播到渲染器
+        // WS2：当 keep-alive 使持久查询跨 turn 保持开启时，turn 结束不会杀死后台子 agent。
+        // 告诉渲染器这一点，使其 chip 的孤儿兜底机制不会错误地把活跃任务翻转为 `orphaned`；
+        // 真正的 `task_completed` 会在 agent 实际完成时到达。
         backgroundTasksAlive: this.keepBackgroundTasksAlive,
       }, managed.workspace.id)
 
@@ -6615,13 +6733,19 @@ export class SessionManager implements ISessionManager {
       })
     }
 
-    // 6. Always persist
+    // 6. 始终持久化
     this.persistSession(managed)
   }
 
   /**
-   * Process the next message in the queue.
-   * Called by onProcessingStopped when queue has messages.
+   * 消费消息队列中的下一条消息。
+   *
+   * 当前 turn 结束后，如果队列里还有消息，就弹出第一条，更新其状态为 processing，
+   * 然后通过 `setImmediate` 异步调用 `sendMessage` 进行重放。
+   *
+   * 与 Go 的类比：
+   * - 类似 Go 里一个 `for msg := range queue` 的消费者；
+   * - `setImmediate` 把递归调用推迟到下一个事件循环 tick，避免调用栈过深。
    */
   private processNextQueuedMessage(sessionId: string): void {
     const managed = this.sessions.get(sessionId)
@@ -6634,11 +6758,11 @@ export class SessionManager implements ISessionManager {
       queueLengthAfterShift: managed.messageQueue.length,
     })
 
-    // Update UI: queued → processing
+    // 更新 UI：queued → processing
     if (next.messageId) {
       const existingMessage = managed.messages.find(m => m.id === next.messageId)
       if (existingMessage) {
-        // Clear isQueued flag and persist - prevents re-queueing if crash during processing
+        // 清除 isQueued 标志并持久化——防止处理期间崩溃导致重新排队
         existingMessage.isQueued = false
         this.persistSession(managed)
 
@@ -6652,7 +6776,7 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // Process message (use setImmediate to allow current stack to clear)
+    // 处理消息（使用 setImmediate 允许当前堆栈清空）
     setImmediate(() => {
       this.sendMessage(
         sessionId,
@@ -6667,10 +6791,10 @@ export class SessionManager implements ISessionManager {
           messageId: next.messageId,
           error: err instanceof Error ? err.message : String(err),
         })
-        // Report queued message failures via runtime hooks
+        // 通过运行时钩子报告排队消息失败
         sessionRuntimeHooks.captureException(err, { errorSource: 'chat-queue', sessionId })
-        // Surface a typed error so the UI can show a clear, actionable banner
-        // instead of a generic "Unknown error" (#616).
+        // 暴露一个类型化错误，以便 UI 可以显示清晰、可操作的横幅
+        // 而不是通用的“未知错误”（#616）
         this.sendEvent({
           type: 'typed_error',
           sessionId,
@@ -6683,7 +6807,7 @@ export class SessionManager implements ISessionManager {
             originalError: err instanceof Error ? err.message : String(err),
           },
         }, managed.workspace.id)
-        // Call onProcessingStopped to handle cleanup and check for more queued messages
+        // 调用 onProcessingStopped 处理清理并检查更多排队消息
         this.onProcessingStopped(sessionId, 'error')
       })
     })
@@ -6697,37 +6821,37 @@ export class SessionManager implements ISessionManager {
 
     sessionLog.info(`Killing shell ${shellId} for session: ${sessionId}`)
 
-    // Try to kill the actual process using the stored command
+    // 尝试使用存储的命令杀死实际进程
     const command = managed.backgroundShellCommands.get(shellId)
     if (command) {
       try {
-        // Use pkill to find and kill processes matching the command
-        // The -f flag matches against the full command line
+        // 使用 pkill 查找并杀死匹配命令的进程
+        // -f 标志匹配完整命令行
         const { exec } = await import('child_process')
         const { promisify } = await import('util')
         const execAsync = promisify(exec)
 
-        // Escape the command for use in pkill pattern
-        // We search for the unique command string in process args
+        // 转义命令以用于 pkill 模式
+        // 我们在进程参数中搜索唯一的命令字符串
         const escapedCommand = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
         sessionLog.info(`Attempting to kill process with command: ${command.slice(0, 100)}...`)
 
-        // Use pgrep first to find the PID, then kill it
-        // This is safer than pkill -f which can match too broadly
+        // 先使用 pgrep 查找 PID，然后杀死它
+        // 这比 pkill -f 更安全，后者可能匹配范围过广
         try {
           const { stdout } = await execAsync(`pgrep -f "${escapedCommand}"`)
           const pids = stdout.trim().split('\n').filter(Boolean)
 
           if (pids.length > 0) {
             sessionLog.info(`Found ${pids.length} process(es) to kill: ${pids.join(', ')}`)
-            // Kill each process
+            // 杀死每个进程
             for (const pid of pids) {
               try {
                 await execAsync(`kill -TERM ${pid}`)
                 sessionLog.info(`Sent SIGTERM to process ${pid}`)
               } catch (killErr) {
-                // Process may have already exited
+                // 进程可能已退出
                 sessionLog.warn(`Failed to kill process ${pid}: ${killErr}`)
               }
             }
@@ -6735,11 +6859,11 @@ export class SessionManager implements ISessionManager {
             sessionLog.info(`No processes found matching command`)
           }
         } catch (pgrepErr) {
-          // pgrep returns exit code 1 when no processes found, which is fine
+          // pgrep 在未找到进程时返回退出码 1，这没问题
           sessionLog.info(`No matching processes found (pgrep returned no results)`)
         }
 
-        // Clean up the stored command
+        // 清理存储的命令
         managed.backgroundShellCommands.delete(shellId)
       } catch (err) {
         sessionLog.error(`Error killing shell process: ${err}`)
@@ -6748,7 +6872,7 @@ export class SessionManager implements ISessionManager {
       sessionLog.warn(`No command stored for shell ${shellId}, cannot kill process`)
     }
 
-    // Always emit shell_killed to remove from UI regardless of process kill success
+    // 无论进程杀死是否成功，始终发出 shell_killed 以从 UI 中移除
     this.sendEvent({
       type: 'shell_killed',
       sessionId,
@@ -6759,11 +6883,10 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Evict stale entries from both background-task maps to bound memory.
-   * - backgroundTaskOutputs: completed outputs older than 1h (existing behavior).
-   * - backgroundTaskRegistry: terminal/orphaned entries older than 1h. Running
-   *   entries are never evicted here (they are resolved on completion or orphaned
-   *   at turn end).
+   * 从两个后台任务 map 中驱逐过期条目以限制内存。
+   * - backgroundTaskOutputs：超过 1 小时的已完成输出（既有行为）。
+   * - backgroundTaskRegistry：超过 1 小时的终止/孤儿条目。running 条目
+   *   从不在这里驱逐（它们在完成时或 turn 结束标记为孤儿时被处理）。
    */
   private evictStaleBackgroundTasks(managed: ManagedSession): void {
     const ONE_HOUR = 3_600_000
@@ -6782,16 +6905,15 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Mark still-running background tasks for a session as `orphaned`.
+   * 把 session 中仍在运行的后台任务标记为 `orphaned`。
    *
-   * Called when a turn finishes (onProcessingStopped). With the default per-turn
-   * subprocess model, background sub-agents die when the query/subprocess is torn
-   * down at turn end, but their terminal notifications may never arrive (or arrive
-   * only on a later turn's subprocess). Marking them `orphaned` here keeps a
-   * "status?" query truthful — it must never report a dead task as "running".
+   * 在一个 turn 结束时（onProcessingStopped）调用。在默认的每 turn 子进程模型下，
+   * 后台子 agent 在 turn 结束时随查询/子进程被销毁而死亡，但它们的终止通知可能永远不会到达
+   *（或只在一个后续 turn 的子进程上到达）。在这里把它们标记为 `orphaned` 保持了"状态如何？"查询的
+   * 诚实性 —— 它绝不能把一个已死的任务报告为"running"。
    *
-   * No-op once WS2 keep-alive is enabled: with a persistent query the tasks
-   * genuinely outlive the turn, so `keepBackgroundTasksAlive` short-circuits this.
+   * 一旦启用 WS2 keep-alive 就变为 no-op：有了持久查询，任务确实能活过 turn，
+   * 因此 `keepBackgroundTasksAlive` 会短路此方法。
    */
   private markOrphanedBackgroundTasks(sessionId: string): void {
     if (this.keepBackgroundTasksAlive) return
@@ -6814,10 +6936,9 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Enumerate background tasks for a session for a "status?" query.
-   * Returns the main-process registry snapshot — the real source of truth across
-   * subprocess boundaries (the SDK's in-subprocess task tools cannot see tasks
-   * from a prior, torn-down subprocess).
+   * 为"状态如何？"查询枚举 session 的后台任务。
+   * 返回主进程注册表快照 —— 跨子进程边界的真正事实来源
+   *（SDK 的进程内任务工具看不到来自已销毁的先前子进程的任务）。
    */
   listBackgroundTasks(sessionId: string): RunningBackgroundTask[] {
     const managed = this.sessions.get(sessionId)
@@ -6828,17 +6949,17 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Get output from a background task
+   * 获取后台任务的输出
    *
-   * Looks up the output file stored when a task_completed event was received,
-   * reads its contents, and returns them. Falls back to the SDK-provided summary
-   * if the file cannot be read.
+   * 查找收到 task_completed 事件时存储的输出文件，
+   * 读取其内容并返回。如果文件无法读取，
+   * 则回退到 SDK 提供的摘要
    *
-   * @param taskId - The task or shell ID
-   * @returns Task output content, or null if task not found
+   * @param taskId - 任务或 shell ID
+   * @returns 任务输出内容，如果未找到任务则返回 null
    */
   async getTaskOutput(taskId: string): Promise<string | null> {
-    // O(1) lookup via taskOutputIndex
+    // 通过 taskOutputIndex 进行 O(1) 查找
     const sessionId = this.taskOutputIndex.get(taskId)
     if (!sessionId) {
       sessionLog.info(`No output found for task: ${taskId} (task may still be running)`)
@@ -6848,7 +6969,7 @@ export class SessionManager implements ISessionManager {
     const managed = this.sessions.get(sessionId)
     const info = managed?.backgroundTaskOutputs.get(taskId)
     if (!info) {
-      // Index out of sync — clean up stale entry
+      // 索引不同步——清理过期条目
       this.taskOutputIndex.delete(taskId)
       return null
     }
@@ -6856,20 +6977,20 @@ export class SessionManager implements ISessionManager {
     sessionLog.info(`Found output for task ${taskId}: file=${info.outputFile}, status=${info.status}`)
     try {
       const content = await readFile(info.outputFile, 'utf-8')
-      // Delete after successful read to prevent memory leak
+      // 成功读取后删除，防止内存泄漏
       managed!.backgroundTaskOutputs.delete(taskId)
       this.taskOutputIndex.delete(taskId)
       return content
     } catch (err) {
       sessionLog.error(`Failed to read task output file: ${info.outputFile}`, err)
-      // Fall back to SDK-provided summary
+      // 回退到 SDK 提供的摘要
       return info.summary || null
     }
   }
 
   /**
-   * Respond to a pending permission request
-   * Returns true if the response was delivered, false if agent/session is gone
+   * 响应待处理的权限请求
+   * 如果响应已送达则返回 true，如果代理/会话已消失则返回 false
    */
   respondToPermission(
     sessionId: string,
@@ -6889,7 +7010,7 @@ export class SessionManager implements ISessionManager {
         })
         if (!brokerResult.ok) {
           sessionLog.warn(`Admin approval rejected by broker for ${requestId}: ${brokerResult.reason}`)
-          // Broker rejection should fail closed.
+          // 代理拒绝应默认失败关闭
           managed.agent.respondToPermission(requestId, false, false)
           return false
         }
@@ -6909,15 +7030,15 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Respond to a pending credential request
-   * Returns true if the response was delivered, false if no pending request found
+   * 响应待处理的凭据请求
+   * 如果响应已送达则返回 true，如果未找到待处理请求则返回 false
    *
-   * Supports both:
-   * - New unified auth flow (via handleCredentialInput)
-   * - Legacy callback flow (via pendingCredentialResolvers)
+   * 支持：
+   * - 新的统一认证流程（通过 handleCredentialInput）
+   * - 旧的回调流程（通过 pendingCredentialResolvers）
    */
   async respondToCredential(sessionId: string, requestId: string, response: import('@craft-agent/shared/protocol').CredentialResponse): Promise<boolean> {
-    // First, check if this is a new unified auth flow request
+    // 首先，检查这是否是新的统一认证流程请求
     const managed = this.sessions.get(sessionId)
     if (managed?.pendingAuthRequest && managed.pendingAuthRequest.requestId === requestId) {
       sessionLog.info(`Credential response (unified flow) for ${requestId}: cancelled=${response.cancelled}`)
@@ -6925,7 +7046,7 @@ export class SessionManager implements ISessionManager {
       return true
     }
 
-    // Fall back to legacy callback flow
+    // 回退到旧的回调流程
     const resolver = this.pendingCredentialResolvers.get(requestId)
     if (resolver) {
       sessionLog.info(`Credential response (legacy flow) for ${requestId}: cancelled=${response.cancelled}`)
@@ -6939,7 +7060,7 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Set the permission mode for a session ('safe', 'ask', 'allow-all')
+   * 设置会话的权限模式（'safe'、'ask'、'allow-all'）
    */
   setSessionPermissionMode(sessionId: string, mode: PermissionMode): void {
     const managed = this.sessions.get(sessionId)
@@ -6948,8 +7069,8 @@ export class SessionManager implements ISessionManager {
       const diagnosticsBefore = getPermissionModeDiagnostics(sessionId)
       const previousEffectiveMode = diagnosticsBefore.permissionMode
 
-      // No-op only when BOTH managed state and mode-manager state already match.
-      // If managed state matches but diagnostics drifted, heal authoritative mode state.
+      // 仅当托管状态和模式管理器状态都已匹配时才无操作
+      // 如果托管状态匹配但诊断信息漂移，修复权威模式状态
       if (previousManagedMode === mode && previousEffectiveMode === mode) {
         return
       }
@@ -6965,10 +7086,10 @@ export class SessionManager implements ISessionManager {
         })
       }
 
-      // Update in-memory managed mode first
+      // 首先更新内存中的托管模式
       managed.permissionMode = mode
 
-      // Reconcile mode-manager state for this specific session.
+      // 为此特定会话协调模式管理器状态
       if (previousEffectiveMode !== mode) {
         const changedBy = previousManagedMode === mode ? 'restore' : 'user'
         setPermissionMode(sessionId, mode, { changedBy })
@@ -6984,7 +7105,7 @@ export class SessionManager implements ISessionManager {
         changedAt: diagnostics.lastChangedAt,
       })
 
-      // Forward to the agent instance so backends can propagate mode changes downstream.
+      // 转发到代理实例，以便后端可以将模式更改向下游传播
       if (managed.agent) {
         managed.agent.setPermissionMode(mode)
       }
@@ -6999,14 +7120,14 @@ export class SessionManager implements ISessionManager {
         previousPermissionMode: diagnostics.previousPermissionMode,
         transitionDisplay: diagnostics.transitionDisplay,
       }, managed.workspace.id)
-      // Persist to disk
+      // 持久化到磁盘
       this.persistSession(managed)
     }
   }
 
   /**
-   * Get authoritative permission mode diagnostics for a session.
-   * Used by renderer to reconcile optimistic/stale mode state.
+   * 获取会话的权威权限模式诊断信息
+   * 由渲染器用于协调乐观/过时的模式状态
    */
   getSessionPermissionModeState(sessionId: string): {
     permissionMode: PermissionMode
@@ -7021,14 +7142,14 @@ export class SessionManager implements ISessionManager {
 
     let diagnostics = getPermissionModeDiagnostics(sessionId)
 
-    // Hydrate persisted transition context when mode-manager has been reset (e.g. app restart).
+    // 当模式管理器已重置时（例如应用重启），水合持久化的转换上下文
     if (managed.previousPermissionMode && !diagnostics.previousPermissionMode) {
       hydratePreviousPermissionMode(sessionId, managed.previousPermissionMode)
       diagnostics = getPermissionModeDiagnostics(sessionId)
     }
 
-    // Heal restore races where mode-manager still has default state while
-    // session metadata already has a persisted non-default mode.
+    // 修复恢复竞争条件，其中模式管理器仍具有默认状态，而
+    // 会话元数据已具有持久化的非默认模式
     if (managed.permissionMode && diagnostics.permissionMode !== managed.permissionMode) {
       sessionLog.warn('Permission mode diagnostics mismatch, reconciling to managed session mode', {
         sessionId,
@@ -7057,8 +7178,8 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Set labels for a session (additive tags, many-per-session).
-   * Labels are IDs referencing workspace labels/config.json.
+   * 为会话设置标签（附加标签，每个会话多个）
+   * 标签是引用工作区标签/config.json 的 ID
    */
   async setSessionLabels(sessionId: string, labels: string[]): Promise<void> {
     const managed = this.sessions.get(sessionId)
@@ -7071,11 +7192,11 @@ export class SessionManager implements ISessionManager {
         sessionId: managed.id,
         labels: managed.labels,
       }, managed.workspace.id)
-      // Persist in-memory state directly to avoid race with pending queue writes
+      // 直接持久化内存状态，避免与待处理队列写入竞争
       this.persistSession(managed)
       await this.flushSession(managed.id)
-      // Workaround: Bun's fs.watch({ recursive: true }) on Linux doesn't track
-      // directories created after the watcher started.
+      // 解决方法：Bun 在 Linux 上的 fs.watch({ recursive: true }) 不跟踪
+      // 监视器启动后创建的目录
       // https://github.com/oven-sh/bun/issues/15939
       const watcher = this.configWatchers.get(managed.workspace.rootPath)
       watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
@@ -7083,15 +7204,14 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Apply the reserved Task labeling to a session. Every task gets its own ITEM label —
-   * a child of the root "Task" label named `TASK-<slug>-<N>` (plain boolean, no value) —
-   * and the task's whole family carries that same item label, so one label filters one
-   * task. Top-level sessions mint a fresh item label from their name; a session with
-   * `parentSessionId` inherits the parent's item label — and a parent that lacks one (a
-   * plain chat gaining its first subtask) is labeled in the same pass, so "becoming a
-   * task" holds by construction. Idempotent: a session already carrying an item label
-   * keeps it. Returns the resolved ITEM label id — slugs can collide-shift, so callers
-   * MUST use it rather than deriving ids themselves.
+   * 对 session 应用保留的 Task 标签。每个任务都有自己的 ITEM 标签 ——
+   * 一个名为 `TASK-<slug>-<N>` 的根 "Task" 标签的子标签（普通布尔标签，无值）——
+   * 并且任务的整个家族都携带同一个 item 标签，因此一个标签就能过滤一个任务。
+   * 顶级 session 根据自己的名称铸造新的 item 标签；带 `parentSessionId` 的 session
+   * 继承父任务的 item 标签 —— 而一个没有 item 标签的父任务（一个刚获得第一个子任务的
+   * 普通对话）会在同一轮中被标记，因此"成为一个任务"在构造上就成立。幂等：已携带
+   * item 标签的 session 保持不变。返回解析出的 ITEM 标签 id —— slug 可能因碰撞而偏移，
+   * 因此调用方必须使用它，而不是自己推导 id。
    */
   async applyTaskLabel(
     sessionId: string,
@@ -7130,9 +7250,9 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Bind or unbind a session to/from a workspace project.
-   * Pass `null` to unbind. The session's working directory is NOT changed retroactively —
-   * the project binding is only used as a default for newly created sessions.
+   * 绑定或解绑 session 到/从一个 workspace 项目。
+   * 传入 `null` 即可解绑。session 的工作目录不会被追溯更改 ——
+   * 项目绑定仅用作新建 session 的默认值。
    */
   async setSessionProjectId(sessionId: string, projectId: string | null): Promise<void> {
     const managed = this.sessions.get(sessionId)
@@ -7154,8 +7274,8 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Set the kanban board column for a session ('todo' | 'in-progress' | 'done').
-   * Pass `null` to clear (board falls back to the default column). Independent of sessionStatus.
+   * 设置 session 的看板列（'todo' | 'in-progress' | 'done'）。
+   * 传入 `null` 清除（看板回退到默认列）。与 sessionStatus 独立。
    */
   async setKanbanColumn(sessionId: string, column: string | null): Promise<void> {
     const managed = this.sessions.get(sessionId)
@@ -7165,8 +7285,8 @@ export class SessionManager implements ISessionManager {
 
       this.persistSession(managed)
       await this.flushSession(managed.id)
-      // Self-writes don't re-emit through the file watcher (kanbanColumn isn't in the header
-      // signature), so push a live metadata event for the board to consume.
+      // 自行写入不会通过文件监视器重新发出（kanbanColumn 不在 header 签名中），
+      // 因此推送一个实时元数据事件供看板消费。
       this.sendEvent({ type: 'session_metadata_changed', sessionId, changes: { kanbanColumn: column ?? undefined } }, managed.workspace.id)
       const watcher = this.configWatchers.get(managed.workspace.rootPath)
       watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
@@ -7174,8 +7294,8 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Record the total DAG node count on a Conductor orchestrator session. The board uses this as a
-   * stable progress denominator so it doesn't grow as child sessions are spawned lazily at dispatch.
+   * 在 Conductor 编排器 session 上记录 DAG 节点总数。看板用它作为稳定的进度分母，
+   * 这样在子 session 于调度时惰性派生时它就不会增长。
    */
   async setTaskNodeCount(sessionId: string, count: number): Promise<void> {
     const managed = this.sessions.get(sessionId)
@@ -7185,8 +7305,8 @@ export class SessionManager implements ISessionManager {
 
       this.persistSession(managed)
       await this.flushSession(managed.id)
-      // Self-writes don't re-emit through the file watcher (taskNodeCount isn't in the header
-      // signature), so push a live metadata event so the progress denominator updates immediately.
+      // 自行写入不会通过文件监视器重新发出（taskNodeCount 不在 header 签名中），
+      // 因此推送一个实时元数据事件，使进度分母立即更新。
       this.sendEvent({ type: 'session_metadata_changed', sessionId, changes: { taskNodeCount: count } }, managed.workspace.id)
       const watcher = this.configWatchers.get(managed.workspace.rootPath)
       watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
@@ -7194,16 +7314,13 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Promote a hidden generate-time orchestrator (`taskDraft`) into the real, board-visible
-   * orchestrator for `taskSlug`. This is the single narrow path that lets "Generate → Create & Run"
-   * reuse the draft session instead of minting a second top-level tile (#bug1).
+   * 将隐藏的生成时编排器（`taskDraft`）提升为 `taskSlug` 对应的真正、看板可见的编排器。
+   * 这是让"生成 → 创建并运行"复用草稿 session 而非另起一个顶级卡片的唯一狭窄路径（#bug1）。
    *
-   * Returns `true` on success (including an idempotent re-adopt of the same slug). Returns `false`
-   * — leaving the session untouched — when the session is missing, isn't a draft, or is already
-   * bound to a *different* slug. Callers fall back to `createSession` on `false`.
+   * 成功时返回 `true`（包括对同一 slug 的幂等重新采纳）。当 session 不存在、不是草稿、或
+   * 已经绑定到*不同的* slug 时返回 `false` —— session 保持不变。调用方在 `false` 时回退到 `createSession`。
    *
-   * Deliberately does NOT touch tools/sources/capabilities: the orchestrator keeps everything it
-   * was created with so it can still author/verify the run.
+   * 故意不触碰 tools/sources/capabilities：编排器保留创建时的一切，以便它仍能编写/验证运行。
    */
   async adoptGeneratedTaskOrchestrator(
     sessionId: string,
@@ -7215,8 +7332,8 @@ export class SessionManager implements ISessionManager {
       sessionLog.warn('adoptGeneratedTaskOrchestrator: session not found', { sessionId, taskSlug })
       return false
     }
-    // Idempotency: already bound to this slug → no-op success. Bound to a different slug → refuse,
-    // so a stale draft ref can't hijack an unrelated orchestrator.
+    // 幂等性：已绑定到该 slug → no-op 成功。绑定到不同 slug → 拒绝，
+    // 这样一个过时的草稿引用就不能劫持一个无关的编排器。
     if (managed.taskSlug) {
       if (managed.taskSlug === taskSlug) return true
       sessionLog.warn('adoptGeneratedTaskOrchestrator: slug mismatch, refusing to rebind', {
@@ -7224,15 +7341,15 @@ export class SessionManager implements ISessionManager {
       })
       return false
     }
-    // Only hidden generate-time drafts are eligible. A non-draft session without a slug isn't a
-    // generate orchestrator and must not be silently captured.
+    // 只有隐藏的生成时草稿才符合条件。一个没有 slug 的非草稿 session 不是
+    // 生成编排器，绝不能被静默捕获。
     if (!managed.taskDraft) {
       sessionLog.warn('adoptGeneratedTaskOrchestrator: session is not a task draft', { sessionId, taskSlug })
       return false
     }
 
-    // What actually changes — so we fire canonical live-updates (agent + caches + per-field events)
-    // only when needed. With generate now seeding model/connection/mode, these are usually all false.
+    // 实际变更的内容 —— 这样我们只在需要时才触发规范的实时更新（agent + 缓存 + 逐字段事件）。
+    // 由于 generate 现在会注入 model/connection/mode，这些通常都为 false。
     const modelChanged = Boolean(reconcile?.model && reconcile.model !== managed.model)
     const connectionChanged = Boolean(
       reconcile?.llmConnection && !managed.connectionLocked && reconcile.llmConnection !== managed.llmConnection,
@@ -7240,9 +7357,9 @@ export class SessionManager implements ISessionManager {
     const cwdChanged = Boolean(reconcile?.workingDirectory && reconcile.workingDirectory !== managed.workingDirectory)
     const modeChanged = Boolean(reconcile?.permissionMode && reconcile.permissionMode !== managed.permissionMode)
 
-    // Promote task metadata (no canonical mutator for these). Connection is set directly because
-    // setSessionConnection() refuses a session that has already sent messages (a generate draft has);
-    // the connection_changed event below keeps the renderer in sync.
+    // 提升 task 元数据（这些没有规范的修改器）。Connection 直接设置，因为
+    // setSessionConnection() 会拒绝已发送过消息的 session（生成草稿已经发过）；
+    // 下方的 connection_changed 事件保持渲染器同步。
     managed.taskSlug = taskSlug
     managed.taskDraft = false
     if (reconcile?.projectId !== undefined) managed.projectId = reconcile.projectId
@@ -7250,9 +7367,9 @@ export class SessionManager implements ISessionManager {
     const renamed = Boolean(reconcile?.name && reconcile.name !== managed.name)
     if (renamed) managed.name = reconcile!.name!
 
-    // Route model / cwd / permission mode through the canonical mutators so the LIVE agent, caches,
-    // and per-field events stay consistent — not just the on-disk metadata (the split-brain the
-    // follow-up review flagged). Each targets only the changed field; persist below captures the mode.
+    // 通过规范的修改器路由 model / cwd / 权限模式，使 LIVE agent、缓存和逐字段事件保持一致
+    // —— 而不只是磁盘上的元数据（后续 review 标记的脑裂问题）。每个只针对变更的字段；
+    // 下方的 persist 捕获了 mode。
     if (modelChanged) await this.updateSessionModel(sessionId, managed.workspace.id, reconcile!.model!)
     if (cwdChanged) this.updateWorkingDirectory(sessionId, reconcile!.workingDirectory!)
     if (modeChanged) this.setSessionPermissionMode(sessionId, reconcile!.permissionMode!)
@@ -7261,9 +7378,9 @@ export class SessionManager implements ISessionManager {
     this.persistSession(managed)
     await this.flushSession(managed.id)
 
-    // One-shot board promotion: clearing taskDraft (sent as `false`, never `undefined` — undefined
-    // is dropped over the JSON wire) reveals the already-announced tile; taskSlug/projectId
-    // reconcile its metadata. `false` is falsy for the board's `if (meta.taskDraft)` skip.
+    // 一次性看板提升：清除 taskDraft（以 `false` 发送，绝不是 `undefined` ——
+    // undefined 在 JSON 传输中被丢弃）让已宣布的卡片显现；taskSlug/projectId
+    // 调和它的元数据。`false` 对看板的 `if (meta.taskDraft)` 跳过逻辑来说是 falsy 的。
     const changes: { taskDraft: boolean; taskSlug: string; projectId?: string } = { taskDraft: false, taskSlug }
     if (reconcile?.projectId !== undefined) changes.projectId = reconcile.projectId
     this.sendEvent({ type: 'session_metadata_changed', sessionId, changes }, managed.workspace.id)
@@ -7285,20 +7402,18 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * User-initiated bind of an *existing, visible* session (e.g. a quick-add tile) to a task slug.
+   * 用户发起的把一个*已存在、可见*的 session（如快速添加的卡片）绑定到 task slug。
    *
-   * This is distinct from {@link adoptGeneratedTaskOrchestrator}, which is the narrow draft-only
-   * promotion path. A quick-add tile is a normal non-draft session with no `taskSlug`; the draft
-   * guard there correctly refuses it, so the editor's "save this spec onto this tile" flow needs
-   * its own path. The guard in the adopt method stays untouched.
+   * 这与 {@link adoptGeneratedTaskOrchestrator} 不同，后者是仅限草稿的狭窄提升路径。
+   * 快速添加卡片是一个没有 `taskSlug` 的普通非草稿 session；adopt 方法中的草稿守卫会正确地
+   * 拒绝它，因此编辑器的"把 spec 保存到该卡片"流程需要自己的路径。adopt 方法中的守卫保持不变。
    *
-   * Returns `true` on success (including an idempotent re-bind of the same slug). Returns `false`
-   * — leaving the session untouched — when the session is missing or already bound to a *different*
-   * slug. Callers MUST treat `false` as a hard error and must NOT fall back to creating a fresh
-   * orchestrator (that would mint a duplicate tile).
+   * 成功时返回 `true`（包括对同一 slug 的幂等重新绑定）。当 session 不存在或已绑定到*不同的*
+   * slug 时返回 `false` —— session 保持不变。调用方必须把 `false` 当作硬错误，且绝不能回退到
+   * 创建新编排器（那会产生重复卡片）。
    *
-   * Unlike adopt, this reconciles `llmConnection` too (a fresh create sets it; adopt skips it) so
-   * the bound tile doesn't render a stale backend.
+   * 与 adopt 不同，这里也会调和 `llmConnection`（全新 create 会设置它；adopt 跳过它），
+   * 使绑定的卡片不会渲染出一个过时的后端。
    */
   async bindExistingSessionToTask(
     sessionId: string,
@@ -7318,8 +7433,8 @@ export class SessionManager implements ISessionManager {
       return false
     }
 
-    // What actually changes — so we fire canonical live-updates (agent + caches + per-field events)
-    // only when needed. A quick-add tile is already live, so these keep its running agent in step.
+    // 实际变更的内容 —— 这样我们只在需要时才触发规范的实时更新（agent + 缓存 + 逐字段事件）。
+    // 快速添加卡片已经是活跃的，因此这些让它运行中的 agent 保持同步。
     const modelChanged = Boolean(reconcile?.model && reconcile.model !== managed.model)
     const connectionChanged = Boolean(
       reconcile?.llmConnection && !managed.connectionLocked && reconcile.llmConnection !== managed.llmConnection,
@@ -7327,9 +7442,9 @@ export class SessionManager implements ISessionManager {
     const cwdChanged = Boolean(reconcile?.workingDirectory && reconcile.workingDirectory !== managed.workingDirectory)
     const modeChanged = Boolean(reconcile?.permissionMode && reconcile.permissionMode !== managed.permissionMode)
 
-    // Promote task metadata (no canonical mutator for these). Connection is set directly because
-    // setSessionConnection() refuses a session that has already sent messages (a quick-add tile has);
-    // the connection_changed event below keeps the renderer in sync.
+    // 提升 task 元数据（这些没有规范的修改器）。Connection 直接设置，因为
+    // setSessionConnection() 会拒绝已发送过消息的 session（快速添加卡片已经发过）；
+    // 下方的 connection_changed 事件保持渲染器同步。
     managed.taskSlug = taskSlug
     managed.taskDraft = false
     if (reconcile?.projectId !== undefined) managed.projectId = reconcile.projectId
@@ -7337,9 +7452,8 @@ export class SessionManager implements ISessionManager {
     const renamed = Boolean(reconcile?.name && reconcile.name !== managed.name)
     if (renamed) managed.name = reconcile!.name!
 
-    // Route model / cwd / permission mode through the canonical mutators so the LIVE agent, caches,
-    // and per-field events stay consistent — not just the on-disk metadata (the split-brain the
-    // follow-up review flagged). updateSessionModel emits session_model_changed itself.
+    // 通过规范的修改器路由 model / cwd / 权限模式，使 LIVE agent、缓存和逐字段事件保持一致
+    // —— 而不只是磁盘上的元数据（后续 review 标记的脑裂问题）。updateSessionModel 自己发出 session_model_changed。
     if (modelChanged) await this.updateSessionModel(sessionId, managed.workspace.id, reconcile!.model!)
     if (cwdChanged) this.updateWorkingDirectory(sessionId, reconcile!.workingDirectory!)
     if (modeChanged) this.setSessionPermissionMode(sessionId, reconcile!.permissionMode!)
@@ -7369,39 +7483,39 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Set the thinking level for a session. See {@link ThinkingLevel} for valid values.
-   * This is sticky and persisted across messages.
+   * 设置会话的思考级别。有效值请参见 {@link ThinkingLevel}。
+   * 此设置是粘性的，并在消息之间持久化。
    */
   setSessionThinkingLevel(sessionId: string, level: ThinkingLevel): void {
     const managed = this.sessions.get(sessionId)
     if (managed) {
-      // Update thinking level in managed session
+      // 更新托管会话中的思考级别
       managed.thinkingLevel = level
 
-      // Update the agent's thinking level if it exists
+      // 更新代理的思考级别（如果存在）
       if (managed.agent) {
         managed.agent.setThinkingLevel(level)
       }
 
       sessionLog.info(`Session ${sessionId}: thinking level set to ${level}`)
-      // Persist to disk
+      // 持久化到磁盘
       this.persistSession(managed)
     }
   }
 
   /**
-   * Generate an AI title for a session from the user's first message.
-   * Uses the agent's generateTitle() method which handles provider-specific SDK calls.
-   * If no agent exists, creates a temporary one using the session's connection.
+   * 根据用户的第一条消息为会话生成 AI 标题
+   * 使用代理的 generateTitle() 方法，该方法处理特定提供商的 SDK 调用
+   * 如果不存在代理，则使用会话的连接创建一个临时代理
    */
   private async generateTitle(managed: ManagedSession, userMessage: string): Promise<void> {
     sessionLog.info(`[generateTitle] Starting for session ${managed.id}`)
 
-    // Use existing agent or create temporary one
+    // 使用现有代理或创建临时代理
     let agent: AgentInstance | null = managed.agent
     let isTemporary = false
 
-    // Wait briefly for agent to be created (it's created concurrently)
+    // 短暂等待代理创建（它是并发创建的）
     if (!agent) {
       let attempts = 0
       while (!managed.agent && attempts < 10) {
@@ -7411,7 +7525,7 @@ export class SessionManager implements ISessionManager {
       agent = managed.agent
     }
 
-    // If still no agent, create a temporary one using the session's connection
+    // 如果仍然没有代理，使用会话的连接创建一个临时代理
     if (!agent && managed.llmConnection) {
       try {
         const connection = getLlmConnection(managed.llmConnection)
@@ -7443,7 +7557,7 @@ export class SessionManager implements ISessionManager {
     }
 
     try {
-      // Race-free language resolution from persisted UI language; undefined => auto-detect (#885).
+      // 从持久化 UI 语言进行无竞争的语言解析；undefined 表示自动检测（#885）
       const titleLanguage = resolveTitleLanguageName()
       sessionLog.info(`[generateTitle] language at call time`, {
         sessionId: managed.id,
@@ -7455,11 +7569,11 @@ export class SessionManager implements ISessionManager {
       if (title) {
         managed.name = title
         this.persistSession(managed)
-        // Flush immediately to ensure disk is up-to-date before notifying renderer.
-        // This prevents race condition where lazy loading reads stale disk data
-        // (the persistence queue has a 500ms debounce).
+        // 立即刷新以确保在通知渲染器之前磁盘是最新的
+        // 这防止了延迟加载读取过时磁盘数据的竞争条件
+        // （持久化队列有 500ms 的去抖）
         await this.flushSession(managed.id)
-        // Now safe to notify renderer - disk is authoritative
+        // 现在可以安全地通知渲染器——磁盘是权威的
         this.sendEvent({ type: 'title_generated', sessionId: managed.id, title }, managed.workspace.id)
         sessionLog.info(`Generated title for session ${managed.id}: "${title}"`)
       } else {
@@ -7468,7 +7582,7 @@ export class SessionManager implements ISessionManager {
     } catch (error) {
       sessionLog.error(`Failed to generate title for session ${managed.id}:`, error)
 
-      // Surface quota/auth errors to the user — these indicate the main chat call will also fail
+      // 向用户暴露配额/认证错误——这些表明主聊天调用也会失败
       const errorMsg = error instanceof Error ? error.message : String(error)
       if (errorMsg.includes('quota') || errorMsg.includes('429') || errorMsg.includes('401') || errorMsg.includes('insufficient')) {
         this.sendEvent({
@@ -7484,13 +7598,31 @@ export class SessionManager implements ISessionManager {
         }, managed.workspace.id)
       }
     } finally {
-      // Clean up temporary agent
+      // 清理临时代理
       if (isTemporary && agent) {
         agent.destroy()
       }
     }
   }
 
+  /**
+   * 事件总线：把 Agent 子进程的事件翻译为 UI 事件并持久化。
+   *
+   * 处理的主要事件类型：
+   * - `text_delta`：流式文本增量，进入批处理队列（`queueDelta`）降低 IPC 频率；
+   * - `text_complete`：Assistant 回复完成，写入 `messages`，更新未读相关字段；
+   * - `tool_start` / `tool_result`：工具调用开始/结束，更新消息列表并发送给 UI；
+   * - `status` / `info`：状态提示，如 Compaction 完成；
+   * - `error` / `typed_error`：错误处理，认证错误会触发 `attemptAuthRetry`；
+   * - `task_backgrounded` / `task_progress` / `task_completed`：后台任务事件透传；
+   * - `shell_backgrounded`：记录后台 shell 命令，供 `killShell` 使用；
+   * - `source_activated`：source  mid-turn 激活后自动重发原消息；
+   * - `complete` / `usage_update`：token 使用统计更新。
+   *
+   * 与 Go 的类比：
+   * - 类似 Go 里一个 `switch event.Type` 的事件分发器；
+   * - `this.sendEvent(...)` 相当于向消息总线/前端推送事件。
+   */
   private async processEvent(managed: ManagedSession, event: AgentEvent): Promise<void> {
     const sessionId = managed.id
     const workspaceId = managed.workspace.id
@@ -7498,12 +7630,12 @@ export class SessionManager implements ISessionManager {
     switch (event.type) {
       case 'text_delta':
         managed.streamingText += event.text
-        // Queue delta for batched sending (performance: reduces IPC from 50+/sec to ~20/sec)
+        // 排队增量以进行批量发送（性能：从 50+/秒减少到约 20/秒）
         this.queueDelta(sessionId, workspaceId, event.text, event.turnId)
         break
 
       case 'text_complete': {
-        // Flush any pending deltas before sending complete (ensures renderer has all content)
+        // 在发送 complete 之前刷新所有待处理的增量（确保渲染器拥有所有内容）
         this.flushDelta(sessionId, workspaceId)
 
         const assistantMessage: Message = {
@@ -7518,15 +7650,15 @@ export class SessionManager implements ISessionManager {
         managed.messages.push(assistantMessage)
         managed.streamingText = ''
 
-        // Update lastMessageRole and lastFinalMessageId for badge/unread display (only for final messages)
+        // 更新 lastMessageRole 和 lastFinalMessageId 用于徽章/未读显示（仅限最终消息）
         if (!event.isIntermediate) {
           managed.lastMessageRole = 'assistant'
           managed.lastFinalMessageId = assistantMessage.id
 
           const sessionPath = getSessionStoragePath(managed.workspace.rootPath, sessionId)
 
-          // Claude branch-cutoff support: persist message UUID + SDK session lineage in sidecar.
-          // Used to guard resumeSessionAt so we only send anchors valid for the parent SDK session.
+          // Claude 分支截断支持：在 sidecar 中持久化消息 UUID + SDK 会话谱系
+          // 用于保护 resumeSessionAt，确保我们只发送对父 SDK 会话有效的锚点
           if (event.turnId && managed.sdkSessionId && isClaudeMessageUuid(event.turnId)) {
             try {
               await saveClaudeTurnAnchor(sessionPath, assistantMessage.id, managed.sdkSessionId, event.turnId)
@@ -7535,10 +7667,10 @@ export class SessionManager implements ISessionManager {
             }
           }
 
-          // Pi branch-cutoff support: remember the SDK message id → Craft
-          // assistant message id mapping. The actual anchor arrives as a
-          // separate `pi_turn_anchor` event one microtask later — the SDK
-          // updates its leaf only AFTER firing message_end (see #782).
+          // Pi 分支截断支持：记住 SDK 消息 ID 到 Craft
+          // 助手消息 ID 的映射。实际锚点在一个微任务后作为
+          // 单独的 `pi_turn_anchor` 事件到达——SDK
+          // 仅在触发 message_end 后更新其叶子（参见 #782）
           if (event.sdkMessageId) {
             let cache = managed.piSdkMessageToCraftMessage
             if (!cache) {
@@ -7546,8 +7678,8 @@ export class SessionManager implements ISessionManager {
               managed.piSdkMessageToCraftMessage = cache
             }
             cache.set(event.sdkMessageId, assistantMessage.id)
-            // Prune oldest entries when over the cap. Map preserves insertion
-            // order, so the first key is the oldest.
+            // 当超过上限时修剪最旧的条目。Map 保留插入顺序
+            // 排序，第一个键是最旧的。
             if (cache.size > PI_SDK_MESSAGE_ID_CACHE_LIMIT) {
               const oldest = cache.keys().next().value
               if (oldest !== undefined) cache.delete(oldest)
@@ -7557,17 +7689,17 @@ export class SessionManager implements ISessionManager {
 
         this.sendEvent({ type: 'text_complete', sessionId, text: event.text, isIntermediate: event.isIntermediate, turnId: event.turnId, parentToolUseId: event.parentToolUseId, timestamp: assistantMessage.timestamp, messageId: assistantMessage.id }, workspaceId)
 
-        // Persist session after complete message to prevent data loss on quit
+        // 在完整消息后持久化会话，防止退出时数据丢失
         this.persistSession(managed)
         break
       }
 
       case 'pi_turn_anchor': {
-        // Follow-up to a `text_complete` from the Pi backend, carrying the
-        // correct leaf id captured AFTER the SDK appended its assistant entry
-        // (the synchronous `message_end` listener could not see it — #782).
-        // Look up the Craft assistant message id by SDK message id and
-        // persist the anchor to the sidecar.
+        // 对来自 Pi 后端的 `text_complete` 的后续处理，携带
+        // 在 SDK 追加其助手条目后捕获的正确叶子 ID
+        // （同步的 `message_end` 监听器无法看到它 — #782）。
+        // 通过 SDK 消息 ID 查找 Craft 助手消息 ID，并
+        // 将锚点持久化到 sidecar。
         const cache = managed.piSdkMessageToCraftMessage
         const craftMessageId = cache?.get(event.sdkMessageId)
         if (!craftMessageId) {
@@ -7584,12 +7716,12 @@ export class SessionManager implements ISessionManager {
       }
 
       case 'tool_start': {
-        // Format tool input paths to relative for better readability
+        // 将工具输入路径格式化为相对路径，以提高可读性
         const formattedToolInput = formatToolInputPaths(event.input)
 
-        // Resolve call_llm model for TurnCard badge display.
-        // Resolve call_llm model short names to full IDs for display.
-        // Note: Pi sessions override the model in PiEventAdapter (call_llm always uses miniModel).
+        // 解析 call_llm 模型，用于 TurnCard 徽章显示。
+        // 将 call_llm 模型短名称解析为完整 ID 以进行显示。
+        // 注意：Pi 会话会覆盖 PiEventAdapter 中的模型（call_llm 始终使用 miniModel）。
         if (event.toolName === 'mcp__session__call_llm' && formattedToolInput?.model) {
           const shortName = String(formattedToolInput.model)
           const modelDef = MODEL_REGISTRY.find(m => m.id === shortName)
@@ -7600,8 +7732,8 @@ export class SessionManager implements ISessionManager {
           }
         }
 
-        // Resolve tool display metadata (icon, displayName) for skills/sources
-        // Only resolve when we have input (second event for SDK dual-event pattern)
+        // 解析工具显示元数据（图标、displayName），用于技能/来源
+        // 仅在有输入时解析（SDK 双事件模式的第二个事件）
         const workspaceRootPath = managed.workspace.rootPath
         let toolDisplayMeta: ToolDisplayMeta | undefined
         if (formattedToolInput && Object.keys(formattedToolInput).length > 0) {
@@ -7609,50 +7741,50 @@ export class SessionManager implements ISessionManager {
           toolDisplayMeta = await resolveToolDisplayMeta(event.toolName, formattedToolInput, workspaceRootPath, allSources)
         }
 
-        // Check if a message with this toolUseId already exists FIRST
-        // SDK sends two events per tool: first from stream_event (empty input),
-        // second from assistant message (complete input)
+        // 首先检查是否已存在具有此 toolUseId 的消息
+        // SDK 为每个工具发送两个事件：第一个来自 stream_event（输入为空），
+        // 第二个来自 assistant message（输入完整）
         const existingStartMsg = managed.messages.find(m => m.toolUseId === event.toolUseId)
         const isDuplicateEvent = !!existingStartMsg
 
-        // Use parentToolUseId directly from the event — CraftAgent resolves this
-        // from SDK's parent_tool_use_id (authoritative, handles parallel Tasks correctly).
-        // No stack or map needed; the event carries the correct parent from the start.
+        // 直接从事件中使用 parentToolUseId — CraftAgent 解析此
+        // 来自 SDK 的 parent_tool_use_id（权威来源，正确处理并行任务）。
+        // 不需要栈或映射；事件从一开始就携带了正确的父级。
         const parentToolUseId = event.parentToolUseId
 
-        // Track if we need to send an event to the renderer
-        // Send on: first occurrence OR when we have new input data to update
+        // 跟踪是否需要向渲染器发送事件
+        // 发送时机：首次出现 或 有新输入数据需要更新时
         let shouldSendEvent = !isDuplicateEvent
 
         if (existingStartMsg) {
-          // Update existing message with complete input (second event has full input)
+          // 用完整输入更新现有消息（第二个事件包含完整输入）
           if (formattedToolInput && Object.keys(formattedToolInput).length > 0) {
             const hadInputBefore = existingStartMsg.toolInput && Object.keys(existingStartMsg.toolInput).length > 0
             existingStartMsg.toolInput = formattedToolInput
-            // Send update event if we're adding input that wasn't there before
+            // 如果添加了之前没有的输入，则发送更新事件
             if (!hadInputBefore) {
               shouldSendEvent = true
             }
           }
-          // Also set parent if not already set
+          // 如果尚未设置父级，也设置父级
           if (parentToolUseId && !existingStartMsg.parentToolUseId) {
             existingStartMsg.parentToolUseId = parentToolUseId
           }
-          // Set toolDisplayMeta if not already set (has base64 icon for viewer)
+          // 如果尚未设置 toolDisplayMeta（包含供查看器使用的 base64 图标）
           if (toolDisplayMeta && !existingStartMsg.toolDisplayMeta) {
             existingStartMsg.toolDisplayMeta = toolDisplayMeta
           }
-          // Update toolIntent if not already set (second event has intent from complete input)
+          // 如果尚未设置 toolIntent，则更新（第二个事件包含来自完整输入的意图）
           if (event.intent && !existingStartMsg.toolIntent) {
             existingStartMsg.toolIntent = event.intent
           }
-          // Update toolDisplayName if not already set
+          // 如果尚未设置 toolDisplayName，则更新
           if (event.displayName && !existingStartMsg.toolDisplayName) {
             existingStartMsg.toolDisplayName = event.displayName
           }
         } else {
-          // Add tool message immediately (will be updated on tool_result)
-          // This ensures tool calls are persisted even if they don't complete
+          // 立即添加工具消息（将在 tool_result 时更新）
+          // 这确保工具调用即使未完成也会被持久化
           const toolStartMessage: Message = {
             id: generateMessageId(),
             role: 'tool',
@@ -7664,15 +7796,15 @@ export class SessionManager implements ISessionManager {
             toolStatus: 'executing',
             toolIntent: event.intent,
             toolDisplayName: event.displayName,
-            toolDisplayMeta,  // Includes base64 icon for viewer compatibility
+            toolDisplayMeta,  // 包含供查看器兼容性使用的 base64 图标
             turnId: event.turnId,
             parentToolUseId,
           }
           managed.messages.push(toolStartMessage)
         }
 
-        // Activate browser agent control overlay on actionable browser tool starts.
-        // Skip browser_tool help/release commands to avoid pointless overlay flashes.
+        // 在可操作的浏览器工具启动时激活浏览器代理控制覆盖层。
+        // 跳过 browser_tool 帮助/释放命令，以避免无意义的覆盖层闪烁。
         const shouldActivateOverlay = shouldActivateBrowserOverlay(
           event.toolName,
           formattedToolInput,
@@ -7680,7 +7812,7 @@ export class SessionManager implements ISessionManager {
 
         const overlayBpm = this.getBrowserPaneManagerForSession(sessionId)
         if (overlayBpm && shouldActivateOverlay) {
-          // Ensure first browser action in a turn gets an instance before overlay activation.
+          // 确保一轮中的第一个浏览器操作在覆盖层激活前获得一个实例。
           overlayBpm.getOrCreateForSession(sessionId, { workspaceId })
 
           const resolvedDisplayName = toolDisplayMeta?.displayName
@@ -7693,7 +7825,7 @@ export class SessionManager implements ISessionManager {
           )
         }
 
-        // Send event to renderer on first occurrence OR when input data is updated
+        // 在首次出现或输入数据更新时向渲染器发送事件
         if (shouldSendEvent) {
           const timestamp = existingStartMsg?.timestamp ?? this.monotonic()
           this.sendEvent({
@@ -7704,7 +7836,7 @@ export class SessionManager implements ISessionManager {
             toolInput: formattedToolInput ?? {},
             toolIntent: event.intent,
             toolDisplayName: event.displayName,
-            toolDisplayMeta,  // Includes base64 icon for viewer compatibility
+            toolDisplayMeta,  // 包含供查看器兼容性使用的 base64 图标
             turnId: event.turnId,
             parentToolUseId,
             timestamp,
@@ -7714,46 +7846,46 @@ export class SessionManager implements ISessionManager {
       }
 
       case 'tool_result': {
-        // toolName comes directly from CraftAgent (resolved via ToolIndex)
+        // toolName 直接来自 CraftAgent（通过 ToolIndex 解析）
         const toolName = event.toolName || 'unknown'
 
-        // Format absolute paths to relative paths for better readability
+        // 将绝对路径格式化为相对路径，以提高可读性
         const rawFormattedResult = event.result ? formatPathsToRelative(event.result) : ''
 
-        // Safety net: prevent massive tool results from bloating session JSONL (protects all backends)
-        const MAX_PERSISTED_RESULT_CHARS = 200_000 // ~50K tokens
+        // 安全网：防止大量工具结果使会话 JSONL 膨胀（保护所有后端）
+        const MAX_PERSISTED_RESULT_CHARS = 200_000 // 约 50K 个 token
         const formattedResult = rawFormattedResult.length > MAX_PERSISTED_RESULT_CHARS
           ? rawFormattedResult.slice(0, MAX_PERSISTED_RESULT_CHARS) +
             `\n\n[Truncated for storage: ${rawFormattedResult.length.toLocaleString()} chars total]`
           : rawFormattedResult
 
-        // Some backends omit explicit isError but still prefix with [ERROR].
+        // 某些后端省略了显式的 isError，但仍以 [ERROR] 为前缀。
         const inferredError = event.isError === true || /^\s*(\[ERROR\]|Error:|error:)/.test(formattedResult)
 
-        // Update existing tool message (created on tool_start) instead of creating new one
+        // 更新现有的工具消息（在 tool_start 时创建），而不是创建新消息
         const existingToolMsg = managed.messages.find(m => m.toolUseId === event.toolUseId)
-        // Track if already completed to avoid sending duplicate events
+        // 跟踪是否已完成，以避免发送重复事件
         const wasAlreadyComplete = existingToolMsg?.toolStatus === 'completed'
 
         sessionLog.info(`RESULT MATCH: toolUseId=${event.toolUseId}, found=${!!existingToolMsg}, toolName=${existingToolMsg?.toolName || toolName}, wasComplete=${wasAlreadyComplete}`)
 
-        // parentToolUseId comes from CraftAgent (SDK-authoritative) or existing message
+        // parentToolUseId 来自 CraftAgent（SDK 权威来源）或现有消息
         const parentToolUseId = existingToolMsg?.parentToolUseId || event.parentToolUseId
 
         if (existingToolMsg) {
-          // Keep lightweight status text in `content` and store full payload in `toolResult` only.
+          // 在 `content` 中保留轻量级状态文本，并将完整负载仅存储在 `toolResult` 中。
           existingToolMsg.toolResult = formattedResult
           existingToolMsg.toolStatus = inferredError ? 'error' : 'completed'
           existingToolMsg.isError = inferredError
-          // If message doesn't have parent set, use event's parentToolUseId
+          // 如果消息未设置父级，则使用事件的 parentToolUseId
           if (!existingToolMsg.parentToolUseId && event.parentToolUseId) {
             existingToolMsg.parentToolUseId = event.parentToolUseId
           }
         } else {
-          // No matching tool_start found — create message from result.
-          // This is normal for background subagent child tools where tool_result arrives
-          // without a prior tool_start. If tool_start arrives later, findToolMessage will
-          // locate this message by toolUseId and update it with input/intent/displayMeta.
+          // 未找到匹配的 tool_start — 从结果创建消息。
+          // 这对于后台子代理的子工具来说是正常的，其中 tool_result 到达
+          // 而没有先前的 tool_start。如果 tool_start 稍后到达，findToolMessage 将
+          // 通过 toolUseId 定位此消息，并用输入/意图/displayMeta 更新它。
           sessionLog.info(`RESULT WITHOUT START: toolUseId=${event.toolUseId}, toolName=${toolName} (creating message from result)`)
           const fallbackWorkspaceRootPath = managed.workspace.rootPath
           const fallbackSources = loadAllSources(fallbackWorkspaceRootPath)
@@ -7775,11 +7907,11 @@ export class SessionManager implements ISessionManager {
           managed.messages.push(toolMessage)
         }
 
-        // Send event to renderer if: (a) first completion, or (b) result content changed
-        // (e.g., safety net auto-completed with empty result, then real result arrived later)
+        // 向渲染器发送事件，如果：(a) 首次完成，或 (b) 结果内容已更改
+        // （例如，安全网用空结果自动完成，然后真实结果稍后到达）
         const resultChanged = wasAlreadyComplete && formattedResult && existingToolMsg?.toolResult !== formattedResult
         if (!wasAlreadyComplete || resultChanged) {
-          // Use existing tool message timestamp, or fallback message timestamp for ordering
+          // 使用现有工具消息的时间戳，或用于排序的回退消息时间戳
           const toolResultTimestamp = existingToolMsg?.timestamp ?? (managed.messages.find(m => m.toolUseId === event.toolUseId)?.timestamp)
           this.sendEvent({
             type: 'tool_result',
@@ -7794,9 +7926,9 @@ export class SessionManager implements ISessionManager {
           }, workspaceId)
         }
 
-        // Safety net: when a parent Task completes, mark all its still-pending child tools as completed.
-        // This handles the case where child tool_result events never arrive (e.g., subagent internal tools
-        // whose results aren't surfaced through the parent stream).
+        // 安全网：当父任务完成时，将其所有仍待处理的子工具标记为已完成。
+        // 这处理了子工具 tool_result 事件从未到达的情况（例如，子代理内部工具
+        // 其结果未通过父流公开）。
         if (isParentTaskTool(toolName) || toolName === 'TaskOutput') {
           const pendingChildren = managed.messages.filter(
             m => m.parentToolUseId === event.toolUseId
@@ -7819,7 +7951,7 @@ export class SessionManager implements ISessionManager {
           }
         }
 
-        // Persist session after tool completes to prevent data loss on quit
+        // 在工具完成后持久化会话，以防止退出时数据丢失
         this.persistSession(managed)
         break
       }
@@ -7837,8 +7969,8 @@ export class SessionManager implements ISessionManager {
         const isCompactionComplete = event.message.startsWith('Compacted')
         const infoTimestamp = this.monotonic()
 
-        // Persist compaction messages so they survive reload
-        // Other info messages are transient (just sent to renderer)
+        // 持久化压缩消息，以便它们在重新加载后仍然存在
+        // 其他信息消息是瞬态的（仅发送给渲染器）
         if (isCompactionComplete) {
           const compactionMessage: Message = {
             id: generateMessageId(),
@@ -7849,15 +7981,15 @@ export class SessionManager implements ISessionManager {
           }
           managed.messages.push(compactionMessage)
 
-          // Mark compaction complete in the session state.
-          // This is done here (backend) rather than in the renderer so it's
-          // not affected by CMD+R during compaction. The frontend reload
-          // recovery will see awaitingCompaction=false and trigger execution.
+          // 在会话状态中标记压缩完成。
+          // 这在此处（后端）完成，而不是在渲染器中，这样它
+          // 就不会受到压缩期间 CMD+R 的影响。前端重新加载
+          // 恢复将看到 awaitingCompaction=false 并触发执行。
           void markStoredCompactionComplete(managed.workspace.rootPath, sessionId)
           sessionLog.info(`Session ${sessionId}: compaction complete, marked pending plan ready`)
 
-          // Emit usage_update so the context count badge refreshes immediately
-          // after compaction, without waiting for the next message
+          // 发出 usage_update 以便上下文计数徽章立即刷新
+          // 在压缩之后，无需等待下一条消息
           if (managed.tokenUsage) {
             this.sendEvent({
               type: 'usage_update',
@@ -7881,21 +8013,21 @@ export class SessionManager implements ISessionManager {
       }
 
       case 'error': {
-        // Skip errors after handoff (plan submission, auth request) — the SDK may emit
-        // an error from the interrupted query after we've already stopped processing.
+        // 跳过交接后的错误（计划提交、认证请求）— SDK 可能会在
+        // 我们已经停止处理后，从被中断的查询中发出错误。
         if (!managed.isProcessing) {
           sessionLog.info('Skipping error event after handoff/stop:', event.message)
           break
         }
 
-        // Skip abort errors - these are expected when force-aborting via Query.close()
+        // 跳过中止错误 — 这些在通过 Query.close() 强制中止时是预期的
         if (event.message.includes('aborted') || event.message.includes('AbortError')) {
           sessionLog.info('Skipping abort error event (expected during interrupt)')
           break
         }
 
-        // Defensive: detect auth-expiry text in plain errors that weren't classified
-        // as typed_error (e.g. Pi SDK error path or future provider changes).
+        // 防御性：在未被分类为 typed_error 的普通错误中检测认证过期文本
+        // （例如 Pi SDK 错误路径或未来的提供商更改）。
         const lowerErr = event.message.toLowerCase()
         const isPlainAuthError =
           lowerErr.includes('token is expired') ||
@@ -7907,7 +8039,7 @@ export class SessionManager implements ISessionManager {
           break
         }
 
-        // AgentEvent uses `message` not `error`
+        // AgentEvent 使用 `message` 而不是 `error`
         const errorMessage: Message = {
           id: generateMessageId(),
           role: 'error',
@@ -7920,43 +8052,43 @@ export class SessionManager implements ISessionManager {
       }
 
       case 'typed_error':
-        // Skip errors after handoff (plan submission, auth request)
+        // 跳过交接后的错误（计划提交、认证请求）
         if (!managed.isProcessing) {
           sessionLog.info('Skipping typed_error event after handoff/stop:', event.error.message || event.error.title)
           break
         }
 
-        // Skip abort errors - these are expected when force-aborting via Query.close()
+        // 跳过中止错误 — 这些在通过 Query.close() 强制中止时是预期的
         const typedErrorMsg = event.error.message || event.error.title || ''
         if (typedErrorMsg.includes('aborted') || typedErrorMsg.includes('AbortError')) {
           sessionLog.info('Skipping typed abort error event (expected during interrupt)')
           break
         }
-        // Typed errors have structured information - send both formats for compatibility
+        // 类型化错误具有结构化信息 — 发送两种格式以保持兼容性
         sessionLog.info('typed_error:', JSON.stringify(event.error, null, 2))
 
-        // Check for auth errors that can be retried by refreshing the token
-        // The SDK subprocess caches the token at startup, so if it expires mid-session,
-        // we get invalid_api_key errors. We can fix this by:
-        // 1. Resetting the summarization client cache
-        // 2. Destroying the agent (new agent's postInit() refreshes the token)
-        // 3. Retrying the message
+        // 检查可通过刷新令牌重试的认证错误
+        // SDK 子进程在启动时缓存令牌，因此如果它在会话期间过期，
+        // 我们会收到 invalid_api_key 错误。我们可以通过以下方式修复：
+        // 1. 重置摘要客户端缓存
+        // 2. 销毁代理（新代理的 postInit() 会刷新令牌）
+        // 3. 重试消息
         const isAuthError = event.error.code === 'invalid_api_key' ||
           event.error.code === 'expired_oauth_token'
 
         if (isAuthError && this.attemptAuthRetry(sessionId, managed, workspaceId, event.error.code)) {
-          // Don't add error message or send to renderer - we're handling it via retry
+          // 不添加错误消息或发送给渲染器 — 我们通过重试来处理它
           break
         }
 
-        // Build rich error message with all diagnostic fields for persistence and UI display
+        // 构建包含所有诊断字段的丰富错误消息，用于持久化和 UI 显示
         const typedErrorMessage: Message = {
           id: generateMessageId(),
           role: 'error',
-          // Combine title and message for content display (handles undefined gracefully)
+          // 组合标题和消息以进行内容显示（优雅地处理 undefined）
           content: [event.error.title, event.error.message].filter(Boolean).join(': ') || 'An error occurred',
           timestamp: this.monotonic(),
-          // Rich error fields for diagnostics and retry functionality
+          // 用于诊断和重试功能的丰富错误字段
           errorCode: event.error.code,
           errorTitle: event.error.title,
           errorDetails: event.error.details,
@@ -7964,7 +8096,7 @@ export class SessionManager implements ISessionManager {
           errorCanRetry: event.error.canRetry,
         }
         managed.messages.push(typedErrorMessage)
-        // Send typed_error event with full structure for renderer to handle
+        // 发送带有完整结构的 typed_error 事件，供渲染器处理
         this.sendEvent({
           type: 'typed_error',
           sessionId,
@@ -7982,9 +8114,8 @@ export class SessionManager implements ISessionManager {
         break
 
       case 'task_backgrounded':
-        // Record in the running-task registry so a cross-subprocess "status?"
-        // query can enumerate live tasks (WS3). The renderer still shows the
-        // chip via its own atom; this is the main-process source of truth.
+        // 记录到运行中任务注册表，使跨子进程的"状态如何？"查询能枚举活跃任务（WS3）。
+        // 渲染器仍通过自己的 atom 显示 chip；这里是主进程的事实来源。
         if (managed) {
           managed.backgroundTaskRegistry.set(event.taskId, {
             taskId: event.taskId,
@@ -7993,7 +8124,7 @@ export class SessionManager implements ISessionManager {
             startTime: Date.now(),
             status: 'running',
             turnId: event.turnId,
-            // Workflow launches carry a wf_ id + a live sub-agent completion count.
+            // Workflow 启动携带一个 wf_ id + 一个实时的子 agent 完成计数。
             ...(event.workflowId ? { workflowId: event.workflowId } : {}),
             ...(event.kind === 'workflow' ? { agentsCompleted: 0 } : {}),
           })
@@ -8004,7 +8135,7 @@ export class SessionManager implements ISessionManager {
             turnId: event.turnId,
           })
         }
-        // Forward background task event directly to renderer
+        // 直接将后台任务事件转发给渲染器
         this.sendEvent({
           ...event,
           sessionId,
@@ -8012,10 +8143,9 @@ export class SessionManager implements ISessionManager {
         break
 
       case 'workflow_agent_completed':
-        // One sub-agent of a running Workflow finished (SubagentStop, attributed
-        // by wf_ id). Bump the owning workflow chip's completed count so the user
-        // sees live fan-out progress. Lightweight: registry counter + renderer
-        // forward, no persistence (this can fire dozens of times per workflow).
+        // 一个运行中 Workflow 的子 agent 完成了（SubagentStop，按 wf_ id 归因）。
+        // 递增所属 workflow chip 的完成计数，让用户看到实时的扇出进度。
+        // 轻量级：注册表计数器 + 渲染器转发，无持久化（这可能在每个 workflow 中触发数十次）。
         if (managed) {
           for (const info of managed.backgroundTaskRegistry.values()) {
             if (info.workflowId && info.workflowId === event.workflowId) {
@@ -8031,11 +8161,10 @@ export class SessionManager implements ISessionManager {
         break
 
       case 'task_progress':
-        // Update elapsed/last-progress on the registry entry (best-effort — the
-        // async-by-default path may not emit progress; the renderer derives
-        // elapsed from startTime as a fallback).
+        // 更新注册表条目的 elapsed/last-progress（尽力而为 —— async-by-default 路径
+        // 可能不发出 progress；渲染器以 startTime 为回退来推导 elapsed）。
         if (managed) {
-          // task_progress is keyed by toolUseId, not taskId — find the entry.
+          // task_progress 以 toolUseId 为键，而非 taskId —— 找到对应条目。
           for (const info of managed.backgroundTaskRegistry.values()) {
             if (info.toolUseId && info.toolUseId === event.toolUseId) {
               info.elapsedSeconds = event.elapsedSeconds
@@ -8044,7 +8173,7 @@ export class SessionManager implements ISessionManager {
             }
           }
         }
-        // Forward background task event directly to renderer
+        // 直接将后台任务事件转发给渲染器
         this.sendEvent({
           ...event,
           sessionId,
@@ -8052,12 +8181,10 @@ export class SessionManager implements ISessionManager {
         break
 
       case 'task_completed': {
-        // Capture whether we'd already recorded a terminal result for this task
-        // BEFORE mutating state below, so the idle auto-surface (further down)
-        // fires at most once even if a duplicate terminal notification arrives.
-        // A Workflow's completion notification may key on either the returned
-        // Task ID (the registry key) or the wf_ run id, so fall back to a
-        // workflowId match before giving up.
+        // 在下方变更状态之前，捕获我们是否已为该任务记录过终止结果，
+        // 这样即使收到重复的终止通知，空闲自动浮现（更下方）最多也只触发一次。
+        // Workflow 的完成通知可能以返回的 Task ID（注册表键）或 wf_ run id 为键，
+        // 因此在放弃前回退到 workflowId 匹配。
         const priorEntry = managed
           ? (managed.backgroundTaskRegistry.get(event.taskId)
             ?? [...managed.backgroundTaskRegistry.values()].find(t => t.workflowId === event.taskId))
@@ -8066,7 +8193,7 @@ export class SessionManager implements ISessionManager {
           ? priorEntry.status !== 'running'
           : this.taskOutputIndex.has(event.taskId)
 
-        // Store output for later retrieval via getTaskOutput()
+        // 存储输出，以便稍后通过 getTaskOutput() 检索
         if (managed) {
           managed.backgroundTaskOutputs.set(event.taskId, {
             outputFile: event.outputFile || '',
@@ -8074,22 +8201,20 @@ export class SessionManager implements ISessionManager {
             status: event.status,
             completedAt: Date.now(),
           })
-          // O(1) index for getTaskOutput() — avoids scanning all sessions
+          // getTaskOutput() 的 O(1) 索引 — 避免扫描所有会话
           this.taskOutputIndex.set(event.taskId, sessionId)
 
-          // Resolve the running-task registry entry to its terminal status so a
-          // later "status?" query reflects reality instead of a stale "running".
-          // Match by taskId, or by workflowId (a workflow may complete under its
-          // wf_ run id rather than the returned Task ID).
+          // 把运行中任务注册表条目解析为终止状态，使后续的"状态如何？"查询反映现实，
+          // 而非过时的"running"。按 taskId 或 workflowId 匹配
+          //（一个 workflow 可能在其 wf_ run id 而非返回的 Task ID 下完成）。
           const running = managed.backgroundTaskRegistry.get(event.taskId)
             ?? [...managed.backgroundTaskRegistry.values()].find(t => t.workflowId === event.taskId)
           if (running) {
             running.status = event.status
             running.completedAt = Date.now()
           } else {
-            // Terminal notification for a task we never saw backgrounded (e.g.
-            // it completed in the same subprocess before task_backgrounded was
-            // matched). Record it so status queries are still truthful.
+            // 对一个我们从没看到转入后台的任务的终止通知（例如它在 task_backgrounded
+            // 被匹配之前就在同一子进程内完成了）。记录它，使状态查询仍然诚实。
             managed.backgroundTaskRegistry.set(event.taskId, {
               taskId: event.taskId,
               startTime: Date.now(),
@@ -8105,7 +8230,7 @@ export class SessionManager implements ISessionManager {
 
           this.evictStaleBackgroundTasks(managed)
         }
-        // Forward to renderer for UI update
+        // 转发给渲染器以进行 UI 更新
         this.sendEvent({
           ...event,
           sessionId,
@@ -8151,12 +8276,12 @@ export class SessionManager implements ISessionManager {
       }
 
       case 'shell_backgrounded':
-        // Store the command for later process killing
+        // 存储命令，以便稍后终止进程
         if (event.command && managed) {
           managed.backgroundShellCommands.set(event.shellId, event.command)
           sessionLog.info(`Stored command for shell ${event.shellId}: ${event.command.slice(0, 50)}...`)
         }
-        // Forward to renderer
+        // 转发给渲染器
         this.sendEvent({
           ...event,
           sessionId,
@@ -8164,11 +8289,11 @@ export class SessionManager implements ISessionManager {
         break
 
       case 'source_activated': {
-        // A source was auto-activated mid-turn. The server schedules a re-send of the
-        // original message with a "[<slug> activated]" suffix so headless deployments
-        // (WebUI, docker server) chain activations the same way the renderer used to.
-        // The renderer still receives the event to render activation feedback, but no
-        // longer fires its own auto_retry (see processor.ts).
+        // 一个来源在轮次中被自动激活。服务器会安排重新发送
+        // 原始消息，并附加 "[<slug> activated]" 后缀，以便无头部署
+        // （WebUI、docker 服务器）以与渲染器过去相同的方式链接激活。
+        // 渲染器仍然接收事件以呈现激活反馈，但不再
+        // 触发自己的 auto_retry（参见 processor.ts）。
         sessionLog.info(`Source "${event.sourceSlug}" activated for session ${sessionId}, scheduling auto-retry`)
 
         this.sendEvent({
@@ -8189,9 +8314,9 @@ export class SessionManager implements ISessionManager {
         const messageWithSuffix = `${originalMessage}\n\n[${event.sourceSlug} activated]`
         const messageCountAtSchedule = managed.messages.length
 
-        // Stash the retry payload so a duplicate sendMessage from a legacy renderer
-        // (mixed-version rollout: new server + v0.9.5 Electron client) gets deduped.
-        // 2s window covers WS latency tail on flaky mobile / proxy links.
+        // 暂存重试负载，以便来自旧版渲染器的重复 sendMessage
+        // （混合版本发布：新服务器 + v0.9.5 Electron 客户端）被去重。
+        // 2 秒窗口覆盖了不稳定的移动/代理链路上的 WS 延迟尾部。
         managed.autoRetryPending = {
           content: messageWithSuffix,
           deadlineMs: Date.now() + 2000,
@@ -8204,17 +8329,17 @@ export class SessionManager implements ISessionManager {
           if (!current) return
           current.autoRetryTimer = undefined
 
-          // If a user follow-up arrived in the 100ms window, skip — they preempted us.
+          // 如果用户在 100 毫秒窗口内发送了后续消息，则跳过 — 他们抢先了。
           if (current.messages.length > messageCountAtSchedule) {
             sessionLog.info(`Auto-retry skipped for ${sessionId}: follow-up message arrived first`)
             current.autoRetryPending = undefined
             return
           }
 
-          // Note: do NOT clear autoRetryPending here — sendMessage() needs to see it
-          // so a legacy renderer's duplicate RPC arriving ~50ms later gets dropped.
-          // The pending slot is cleared by the deadline check in sendMessage, by the
-          // next matching sendMessage that drops as a duplicate, or by session deletion.
+          // 注意：不要在此处清除 autoRetryPending — sendMessage() 需要看到它
+          // 以便旧版渲染器大约 50 毫秒后到达的重复 RPC 被丢弃。
+          // 待处理槽位由 sendMessage 中的截止时间检查清除，由
+          // 下一个作为重复项丢弃的匹配 sendMessage 清除，或由会话删除清除。
           this.sendMessage(sessionId, messageWithSuffix).catch(err => {
             sessionLog.error(`Auto-retry sendMessage failed for ${sessionId}:`, err)
           })
@@ -8223,10 +8348,10 @@ export class SessionManager implements ISessionManager {
       }
 
       case 'complete':
-        // Complete event from CraftAgent - accumulate usage from this turn
-        // Actual 'complete' sent to renderer comes from the finally block in sendMessage
+        // 来自 CraftAgent 的完成事件 — 累加本轮的使用量
+        // 发送给渲染器的实际 'complete' 来自 sendMessage 中的 finally 块
         if (event.usage) {
-          // Initialize tokenUsage if not set
+          // 如果未设置，则初始化 tokenUsage
           if (!managed.tokenUsage) {
             managed.tokenUsage = {
               inputTokens: 0,
@@ -8236,17 +8361,17 @@ export class SessionManager implements ISessionManager {
               costUsd: 0,
             }
           }
-          // inputTokens = current context size (full conversation sent this turn), NOT accumulated
-          // Each API call sends the full conversation history, so we use the latest value
+          // inputTokens = 当前上下文大小（本轮发送的完整对话），非累加
+          // 每次 API 调用都会发送完整的对话历史，因此我们使用最新值
           managed.tokenUsage.inputTokens = event.usage.inputTokens
-          // outputTokens and costUsd are accumulated across all turns (total session usage)
+          // outputTokens 和 costUsd 在所有轮次中累加（总会话使用量）
           managed.tokenUsage.outputTokens += event.usage.outputTokens
           managed.tokenUsage.totalTokens = managed.tokenUsage.inputTokens + managed.tokenUsage.outputTokens
           managed.tokenUsage.costUsd += event.usage.costUsd ?? 0
-          // Cache tokens reflect current state, not accumulated
+          // 缓存令牌反映当前状态，非累加
           managed.tokenUsage.cacheReadTokens = event.usage.cacheReadTokens ?? 0
           managed.tokenUsage.cacheCreationTokens = event.usage.cacheCreationTokens ?? 0
-          // Update context window (use latest value - may change if model switches)
+          // 更新上下文窗口（使用最新值 — 如果模型切换，可能会改变）
           if (event.usage.contextWindow) {
             managed.tokenUsage.contextWindow = event.usage.contextWindow
           }
@@ -8254,8 +8379,8 @@ export class SessionManager implements ISessionManager {
         break
 
       case 'usage_update':
-        // Real-time usage update for context display during processing
-        // Update managed session's tokenUsage with latest context size
+        // 处理期间用于上下文显示的实时使用量更新
+        // 使用最新的上下文大小更新托管会话的 tokenUsage
         if (event.usage) {
           if (!managed.tokenUsage) {
             managed.tokenUsage = {
@@ -8266,13 +8391,13 @@ export class SessionManager implements ISessionManager {
               costUsd: 0,
             }
           }
-          // Update only inputTokens (current context size) - other fields accumulate on complete
+          // 仅更新 inputTokens（当前上下文大小）— 其他字段在 complete 时累加
           managed.tokenUsage.inputTokens = event.usage.inputTokens
           if (event.usage.contextWindow) {
             managed.tokenUsage.contextWindow = event.usage.contextWindow
           }
 
-          // Send to renderer for immediate UI update
+          // 发送给渲染器以进行即时 UI 更新
           this.sendEvent({
             type: 'usage_update',
             sessionId: managed.id,
@@ -8285,15 +8410,15 @@ export class SessionManager implements ISessionManager {
         break
 
       case 'steer_undelivered':
-        // Steer message was not delivered (no PreToolUse fired before turn ended).
-        // Re-queue it so it's sent as a normal message on the next turn.
+        // Steer 消息未送达（在轮次结束前未触发 PreToolUse）。
+        // 重新排队，以便在下一轮作为普通消息发送。
         sessionLog.info(`Steer message undelivered, re-queuing for session ${sessionId}`)
         managed.messageQueue.push({ message: event.message })
         managed.wasInterrupted = true
         break
 
-      // Note: working_directory_changed is user-initiated only (via updateWorkingDirectory),
-      // the agent no longer has a change_working_directory tool
+      // 注意：working_directory_changed 仅由用户发起（通过 updateWorkingDirectory），
+      // 代理不再拥有 change_working_directory 工具
     }
   }
 
@@ -8312,22 +8437,29 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Queue a text delta for batched sending (performance optimization)
-   * Instead of sending 50+ IPC events per second, batches deltas and flushes every 50ms
+   * 文本增量批处理队列。
+   *
+   * Agent 流式输出时可能每秒产生几十个 `text_delta`；如果每条都 IPC 到前端，
+   * 会造成渲染线程高负载。这里把同一会话的增量合并，每 `DELTA_BATCH_INTERVAL_MS`
+   *（默认 50ms）刷新一次，可把 IPC 频率从 50+/sec 降到约 20/sec。
+   *
+   * 与 Go 的类比：
+   * - 类似 Go 里一个带超时 flush 的 `bytes.Buffer` + `time.After`；
+   * - `setTimeout` 相当于一个一次性定时器，类似 `time.NewTimer`。
    */
   private queueDelta(sessionId: string, workspaceId: string, delta: string, turnId?: string): void {
     const existing = this.pendingDeltas.get(sessionId)
     if (existing) {
-      // Append to existing batch
+      // 追加到现有批次
       existing.delta += delta
-      // Keep the latest turnId (should be the same, but just in case)
+      // 保留最新的 turnId（应该相同，但以防万一）
       if (turnId) existing.turnId = turnId
     } else {
-      // Start new batch
+      // 开始新批次
       this.pendingDeltas.set(sessionId, { delta, turnId })
     }
 
-    // Schedule flush if not already scheduled
+    // 如果尚未调度，则调度刷新
     if (!this.deltaFlushTimers.has(sessionId)) {
       const timer = setTimeout(() => {
         this.flushDelta(sessionId, workspaceId)
@@ -8337,18 +8469,21 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Flush any pending deltas for a session (sends batched IPC event)
-   * Called on timer or when streaming ends (text_complete)
+   * 刷新文本增量批次。
+   *
+   * 触发时机：
+   * - `queueDelta` 设置的 50ms 定时器到期；
+   * - `text_complete` 时立即 flush，避免完整消息前还有未发送的增量。
    */
   private flushDelta(sessionId: string, workspaceId: string): void {
-    // Clear the timer
+    // 清除定时器
     const timer = this.deltaFlushTimers.get(sessionId)
     if (timer) {
       clearTimeout(timer)
       this.deltaFlushTimers.delete(sessionId)
     }
 
-    // Send batched delta if any
+    // 如果有，则发送批量的 delta
     const pending = this.pendingDeltas.get(sessionId)
     if (pending && pending.delta) {
       this.sendEvent({
@@ -8362,12 +8497,11 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Execute a prompt automation by creating a new session and sending the prompt.
+   * 通过创建新会话并发送提示来执行提示自动化。
    *
-   * The options-object form replaced the previous positional-args signature
-   * once the param list outgrew readability — `thinkingLevel` was the trigger.
-   * When `thinkingLevel` is omitted, `createSession` falls back to the
-   * workspace default (then DEFAULT_THINKING_LEVEL).
+   * 当参数列表超出可读性时，选项对象形式取代了之前的位置参数签名 —
+   * `thinkingLevel` 是触发因素。
+   * 当省略 `thinkingLevel` 时，`createSession` 会回退到工作区默认值（然后是 DEFAULT_THINKING_LEVEL）。
    */
   async executePromptAutomation(
     input: ExecutePromptAutomationInput,
@@ -8387,7 +8521,7 @@ export class SessionManager implements ISessionManager {
       waitForCompletion,
     } = input
 
-    // Warn if llmConnection was specified but doesn't resolve
+    // 如果指定了 llmConnection 但无法解析，则发出警告
     if (llmConnection) {
       const connection = resolveSessionConnection(llmConnection)
       if (!connection) {
@@ -8395,19 +8529,19 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // Resolve @mentions to source/skill slugs
+    // 将 @提及 解析为来源/技能 slug
     const resolved = mentions ? this.resolveAutomationMentions(workspaceRootPath, mentions) : undefined
 
-    // Ensure labels exist in workspace config before assigning to session
+    // 在将会话分配给工作区配置之前，确保标签存在于其中
     const resolvedLabels = labels?.length
       ? ensureLabelsExist(workspaceRootPath, labels)
       : labels
 
-    // Use automation name if provided, otherwise fall back to prompt snippet
+    // 如果提供了自动化名称，则使用它，否则回退到提示片段
     const fallback = `Automation: ${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}`
     const sessionName = automationName || fallback
 
-    // Create a new session for this automation
+    // 为此自动化创建一个新会话
     const session = await this.createSession(workspaceId, {
       name: sessionName,
       labels: resolvedLabels,
@@ -8418,21 +8552,21 @@ export class SessionManager implements ISessionManager {
       thinkingLevel,
     })
 
-    // Populate triggeredBy metadata so title generation is explicitly skipped
-    // and the session is identifiable as automation-initiated after reload
+    // 填充 triggeredBy 元数据，以便显式跳过标题生成
+    // 并且会话在重新加载后可被识别为自动化发起的
     const managed = this.sessions.get(session.id)
     if (managed) {
       managed.triggeredBy = { automationName, timestamp: Date.now() }
       this.persistSession(managed)
     }
 
-    // (session_created is emitted by createSession above; triggeredBy is set synchronously
-    // before the renderer's hydrate round-trip resolves, so it is observed.)
+    // （session_created 事件由上方的 createSession 发出；triggeredBy 在渲染器的
+    // hydrate 往返解析之前同步设置，因此会被观察到。）
 
-    // Bind the new session to its Telegram forum topic if the matcher
-    // declared `telegramTopic`. Done before `sendMessage` so the first
-    // assistant tokens already route through the bound topic. Failure
-    // is logged inside the binder; the session continues unbound.
+    // 如果匹配器声明了 `telegramTopic`，则将新会话绑定到其 Telegram 论坛主题。
+    // 在 `sendMessage` 之前完成，以便第一个
+    // 助手令牌已经通过绑定的主题路由。失败
+    // 在绑定器内部记录；会话继续未绑定状态。
     if (this.automationBinder && telegramTopic && telegramTopic.trim().length > 0) {
       try {
         await this.automationBinder({
@@ -8449,12 +8583,11 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // Send the prompt.
-    // Test runs pass `waitForCompletion: false` so we return as soon as the
-    // session exists and the prompt is dispatched — otherwise the RPC blocks
-    // until the entire turn (including tool calls) finishes and trips the 30s
-    // client timeout (craft-agents-oss#943). The session streams live either
-    // way; a background failure surfaces in the session UI and is logged here.
+    // 发送 prompt。
+    // 测试运行传入 `waitForCompletion: false`，这样我们在 session 存在且 prompt 已派发后
+    // 就立即返回 —— 否则 RPC 会阻塞到整个 turn（含工具调用）结束，触发 30s 客户端超时
+    //（craft-agents-oss#943）。无论哪种方式 session 都会实时流式输出；
+    // 后台失败会浮现在 session UI 中并在此处记录日志。
     if (waitForCompletion === false) {
       void this.sendMessage(session.id, prompt, undefined, undefined, {
         skillSlugs: resolved?.skillSlugs,
@@ -8467,6 +8600,7 @@ export class SessionManager implements ISessionManager {
       return { sessionId: session.id }
     }
 
+    // 发送提示
     await this.sendMessage(session.id, prompt, undefined, undefined, {
       skillSlugs: resolved?.skillSlugs,
     })
@@ -8475,7 +8609,7 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Resolve @mentions in automation prompts to source and skill slugs
+   * 将自动化提示中的 @提及 解析为来源和技能 slug
    */
   private resolveAutomationMentions(workspaceRootPath: string, mentions: string[]): { sourceSlugs: string[]; skillSlugs: string[] } | undefined {
     const sources = loadWorkspaceSources(workspaceRootPath)
@@ -8497,7 +8631,7 @@ export class SessionManager implements ISessionManager {
   }
 
   // ============================================
-  // Export / Import / Dispatch
+  // 导出 / 导入 / 分发
   // ============================================
 
   private async generateRemoteTransferSummary(managed: ManagedSession): Promise<string | null> {
@@ -8627,13 +8761,13 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Export a session as a portable SessionBundle.
+   * 将会话导出为可移植的 SessionBundle。
    *
-   * Steps:
-   * 1. Validate session exists and resolve its workspace
-   * 2. If session is processing, refuse (caller must stop it first)
-   * 3. Flush pending persistence writes
-   * 4. Serialize session directory into a bundle
+   * 步骤：
+   * 1. 验证会话存在并解析其工作区
+   * 2. 如果会话正在处理中，则拒绝（调用者必须先停止它）
+   * 3. 刷新待处理的持久化写入
+   * 4. 将会话目录序列化为一个 bundle
    */
   async exportSession(sessionId: string, workspaceId: string): Promise<SessionBundle | null> {
     const managed = this.sessions.get(sessionId)
@@ -8652,7 +8786,7 @@ export class SessionManager implements ISessionManager {
       return null
     }
 
-    // Flush pending writes to ensure JSONL is up to date
+    // 刷新待写入数据，确保 JSONL 文件为最新状态
     this.persistSession(managed)
     await sessionPersistenceQueue.flush(sessionId)
 
@@ -8666,15 +8800,15 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Import a session bundle into a target workspace.
+   * 将会话包导入目标工作区。
    *
-   * Steps:
-   * 1. Validate bundle structure and target workspace
-   * 2. Generate new session ID (fork) or use original (move)
-   * 3. Create session directory and write JSONL + files
-   * 4. Register session in-memory
-   * 5. Emit session_created event
-   * 6. Return new session ID and compatibility warnings
+   * 步骤：
+   * 1. 验证包结构及目标工作区
+   * 2. 生成新会话 ID（分支）或使用原 ID（移动）
+   * 3. 创建会话目录并写入 JSONL 及文件
+   * 4. 在内存中注册会话
+   * 5. 触发 session_created 事件
+   * 6. 返回新会话 ID 及兼容性警告
    */
   async importSession(
     workspaceId: string,
@@ -8697,28 +8831,28 @@ export class SessionManager implements ISessionManager {
     const warnings: string[] = []
     const workspaceRootPath = workspace.rootPath
 
-    // Determine session ID
+    // 确定会话 ID
     const sessionId = mode === 'move'
       ? bundle.session.header.id
       : generateSessionId(workspaceRootPath)
 
-    // Check for ID collision on move
+    // 移动时检查 ID 冲突
     if (mode === 'move' && this.sessions.has(sessionId)) {
       throw new Error(`Session ${sessionId} already exists in target workspace`)
     }
 
-    // Create session directory with all subdirectories
+    // 创建包含所有子目录的会话目录
     const sessionDir = ensureSessionDir(workspaceRootPath, sessionId)
 
-    // Build the stored session from bundle data
+    // 根据包数据构建存储的会话
     const header = bundle.session.header
     const storedSession: StoredSession = {
       id: sessionId,
       workspaceRootPath,
-      sdkSessionId: header.sdkSessionId, // Preserved initially; fork logic below may clear it
-      // Always regenerate sdkCwd for the target workspace.
-      // The source sdkCwd points to a path on the originating server
-      // which doesn't exist here (cross-server transfer).
+      sdkSessionId: header.sdkSessionId, // 初始保留；后续分支逻辑可能清除
+      // 始终为目标工作区重新生成 sdkCwd。
+      // 源 sdkCwd 指向原始服务器上的路径
+      // 该路径在当前服务器上不存在（跨服务器传输）。
       sdkCwd: getSessionStoragePath(workspaceRootPath, sessionId),
       name: header.name,
       createdAt: header.createdAt,
@@ -8742,21 +8876,21 @@ export class SessionManager implements ISessionManager {
       tokenUsage: header.tokenUsage ?? DEFAULT_TOKEN_USAGE,
     }
 
-    // Fork-specific: set up SDK branching if branchInfo provided
+    // 分支专用：若提供 branchInfo，则设置 SDK 分支
     if (mode === 'fork' && bundle.branchInfo) {
       storedSession.branchFromSdkSessionId = bundle.branchInfo.sdkSessionId
       storedSession.branchFromSdkTurnId = bundle.branchInfo.sdkTurnId
       storedSession.branchFromSdkCwd = bundle.branchInfo.sdkCwd
     }
 
-    // Fork-specific: clear sharing state and attempt resume-first strategy
+    // 分支专用：清除共享状态并尝试恢复优先策略
     if (mode === 'fork') {
       storedSession.sharedUrl = undefined
       storedSession.sharedId = undefined
 
-      // Resume-first: try to find a compatible LLM connection on the target workspace.
-      // If found and the session has an sdkSessionId, preserve it for API-level resume.
-      // If not, clear SDK state and fall back to transferred session summary.
+      // 恢复优先：尝试在目标工作区找到兼容的 LLM 连接。
+      // 若找到且会话有 sdkSessionId，则保留以支持 API 级恢复。
+      // 若未找到，则清除 SDK 状态并回退到已传输的会话摘要。
       const sourceProviderType = header.llmConnection
         ? getLlmConnection(header.llmConnection)?.providerType
         : undefined
@@ -8765,12 +8899,12 @@ export class SessionManager implements ISessionManager {
         : null
 
       if (compatibleConnection && storedSession.sdkSessionId) {
-        // Resume path: compatible credentials exist — preserve SDK session ID
+        // 恢复路径：存在兼容凭据——保留 SDK 会话 ID
         sessionLog.info(`[import] Fork: compatible ${sourceProviderType} connection "${compatibleConnection}" found — preserving sdkSessionId for resume`)
         storedSession.llmConnection = compatibleConnection
         storedSession.connectionLocked = false
       } else {
-        // Summary path: no compatible connection or no SDK session — clear for fresh start
+        // 摘要路径：无兼容连接或无 SDK 会话——清除以重新开始
         if (storedSession.llmConnection) {
           sessionLog.info(`[import] Fork: no compatible ${sourceProviderType ?? 'unknown'} connection — clearing, will use summary context`)
         }
@@ -8778,14 +8912,14 @@ export class SessionManager implements ISessionManager {
         storedSession.llmConnection = undefined
         storedSession.connectionLocked = false
       }
-      // Clear thinking level so the session inherits the workspace default
+      // 清除思考级别，使会话继承工作区默认值
       storedSession.thinkingLevel = undefined
-      // Clear working directory — the source path won't exist on a different server.
-      // The user can set a new cwd after the session is transferred.
+      // 清除工作目录——源路径在另一台服务器上不存在。
+      // 用户可在会话传输后设置新的 cwd。
       storedSession.workingDirectory = undefined
     }
 
-    // Check source compatibility (before writing JSONL so fixes are persisted)
+    // 检查源兼容性（在写入 JSONL 之前，以便修复得以持久化）
     if (storedSession.enabledSourceSlugs?.length) {
       const availableSources = loadWorkspaceSources(workspaceRootPath)
       const availableSlugs = new Set(availableSources.map(s => s.config.slug))
@@ -8796,7 +8930,7 @@ export class SessionManager implements ISessionManager {
       }
     }
 
-    // Check LLM connection compatibility for move mode (fork already cleared above)
+    // 检查移动模式下的 LLM 连接兼容性（分支模式已在上方清除）
     if (mode === 'move' && storedSession.llmConnection) {
       sessionLog.info(`[import] Checking LLM connection: "${storedSession.llmConnection}"`)
       const conn = resolveSessionConnection(storedSession.llmConnection, undefined)
@@ -8812,17 +8946,17 @@ export class SessionManager implements ISessionManager {
       sessionLog.info('[import] No LLM connection in bundle — will use default')
     }
 
-    // Write JSONL file (after compatibility checks so remapped values are persisted)
+    // 写入 JSONL 文件（在兼容性检查之后，以便重映射的值持久化）
     const sessionFile = getSessionFilePath(workspaceRootPath, sessionId)
     sessionLog.info(`[import] Writing JSONL: ${sessionFile} (llmConnection=${storedSession.llmConnection ?? 'default'}, messages=${storedSession.messages.length})`)
     writeSessionJsonl(sessionFile, storedSession)
 
-    // Write all bundle files (attachments, plans, data, downloads, etc.)
-    // Uses restoreFiles() for path traversal, size, and base64 validation.
+    // 写入所有包文件（附件、计划、数据、下载等）
+    // 使用 restoreFiles() 进行路径遍历、大小及 base64 校验。
     restoreFiles(sessionDir, bundle.files)
 
-    // Register in-memory — pass session metadata without messages to avoid
-    // StoredMessage[] vs Message[] type mismatch, then convert messages separately
+    // 在内存中注册——传递不含消息的会话元数据以避免
+    // StoredMessage[] 与 Message[] 类型不匹配，然后单独转换消息
     const { messages: bundleMessages, ...sessionMeta } = storedSession
     const managed = createManagedSession(sessionMeta, workspace, {
       messagesLoaded: true,
@@ -8837,7 +8971,7 @@ export class SessionManager implements ISessionManager {
 
     this.sessions.set(sessionId, managed)
 
-    // Initialize automation metadata
+    // 初始化自动化元数据
     const automationSystem = this.automationSystems.get(workspaceRootPath)
     if (automationSystem) {
       automationSystem.setInitialSessionMetadata(sessionId, {
@@ -8849,7 +8983,7 @@ export class SessionManager implements ISessionManager {
       })
     }
 
-    // Built by hand (not via createSession), so announce it explicitly.
+    // 手动构建的（非 createSession 创建），因此显式宣布。
     this.notifySessionCreated(workspaceId, sessionId)
 
     sessionLog.info(`[import] Complete: sessionId=${sessionId}, transferredSummary=${managed.transferredSessionSummary ? `${managed.transferredSessionSummary.length} chars` : 'none'}, applied=${managed.transferredSessionSummaryApplied}, warnings=${warnings.length > 0 ? warnings.join('; ') : 'none'}`)
@@ -8857,8 +8991,8 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Find an LLM connection on this server that matches the given provider type.
-   * Checks workspace default first, then falls back to any matching connection.
+   * 查找此服务器上与给定提供者类型匹配的 LLM 连接。
+   * 优先检查工作区默认连接，然后回退到任何匹配的连接。
    */
   private findCompatibleLlmConnection(workspaceRootPath: string, providerType: string): string | null {
     const wsConfig = loadWorkspaceConfig(workspaceRootPath)
@@ -8867,27 +9001,27 @@ export class SessionManager implements ISessionManager {
       const conn = getLlmConnection(defaultSlug)
       if (conn?.providerType === providerType) return defaultSlug
     }
-    // Fall back: any connection with matching provider type
+    // 回退：任何匹配提供者类型的连接
     const connections = getLlmConnections()
     const match = connections.find(c => c.providerType === providerType)
     return match?.slug ?? null
   }
 
   /**
-   * Clean up all resources held by the SessionManager.
-   * Should be called on app shutdown to prevent resource leaks.
+   * 清理 SessionManager 持有的所有资源。
+   * 应在应用关闭时调用，以防止资源泄漏。
    */
   cleanup(): void {
     sessionLog.info('Cleaning up resources...')
 
-    // Stop all ConfigWatchers (file system watchers)
+    // 停止所有 ConfigWatcher（文件系统监视器）
     for (const [path, watcher] of this.configWatchers) {
       watcher.stop()
       sessionLog.info(`Stopped config watcher for ${path}`)
     }
     this.configWatchers.clear()
 
-    // Dispose all AutomationSystems (includes scheduler, handlers, and event loggers)
+    // 释放所有 AutomationSystem（包括调度器、处理器和事件记录器）
     for (const [workspacePath, automationSystem] of this.automationSystems) {
       try {
         automationSystem.dispose()
@@ -8898,19 +9032,19 @@ export class SessionManager implements ISessionManager {
     }
     this.automationSystems.clear()
 
-    // Clear all pending delta flush timers
+    // 清除所有待处理的增量刷新定时器
     for (const [sessionId, timer] of this.deltaFlushTimers) {
       clearTimeout(timer)
     }
     this.deltaFlushTimers.clear()
     this.pendingDeltas.clear()
 
-    // Clear pending credential resolvers (they won't be resolved, but prevents memory leak)
+    // 清除待处理的凭据解析器（它们不会被解析，但可防止内存泄漏）
     this.pendingCredentialResolvers.clear()
     this.pendingPermissionRequests.clear()
     this.adminRememberApprovals.clear()
 
-    // Clean up session-scoped tool callbacks for all sessions
+    // 清理所有会话的会话级工具回调
     for (const sessionId of this.sessions.keys()) {
       unregisterSessionScopedToolCallbacks(sessionId)
     }

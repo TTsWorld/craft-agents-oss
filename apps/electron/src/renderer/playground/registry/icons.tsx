@@ -1,9 +1,15 @@
+/**
+ * icons 注册项
+ *
+ * 这个文件把项目里的自定义 SVG/图标组件注册到 playground，方便预览不同尺寸和样式。
+ */
 import type { ComponentEntry } from './types'
 import { CraftAgentsLogo } from '@/components/icons/CraftAgentsLogo'
 import { CraftAgentsSymbol } from '@/components/icons/CraftAgentsSymbol'
 import { PanelLeftRounded } from '@/components/icons/PanelLeftRounded'
 import { SquarePenRounded } from '@/components/icons/SquarePenRounded'
 
+/** 图标组件注册列表。 */
 export const iconComponents: ComponentEntry[] = [
   {
     id: 'craft-agents-logo',

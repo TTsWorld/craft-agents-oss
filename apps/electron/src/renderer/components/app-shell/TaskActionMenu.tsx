@@ -1,3 +1,8 @@
+/**
+ * TaskActionMenu — React 组件
+ * 
+ * 所属目录：app-shell
+ */
 import * as React from 'react'
 import { useTranslation } from "react-i18next"
 import { ChevronDown, Square, ArrowUpRight, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react'
@@ -13,7 +18,7 @@ import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import type { BackgroundTask } from './ActiveTasksBar'
 
-/** Terminal data for overlay display */
+/** 终端浮层需要的数据 */
 export interface TerminalOverlayData {
   command: string
   output: string
@@ -21,7 +26,7 @@ export interface TerminalOverlayData {
   toolType: 'bash' | 'grep' | 'glob'
 }
 
-/** Format elapsed time in a compact way */
+/** 把秒数格式化成紧凑的已运行时间 */
 function formatElapsed(seconds: number): string {
   if (seconds < 60) return `${seconds}s`
   const minutes = Math.floor(seconds / 60)
@@ -34,32 +39,33 @@ function formatElapsed(seconds: number): string {
   return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
 }
 
-/** Shorten task ID for compact display (show first 8 chars) */
+/** 缩短任务 ID 用于紧凑展示（只显示前 8 位） */
 function shortenId(id: string): string {
   return id.length > 8 ? `${id.slice(0, 8)}...` : id
 }
 
+/** TaskActionMenuProps：组件 props 类型定义 */
 export interface TaskActionMenuProps {
-  /** Background task data */
+  /** 后台任务数据 */
   task: BackgroundTask
-  /** Session ID for opening preview windows */
+  /** 当前会话 ID，用于打开预览窗口 */
   sessionId: string
-  /** Callback when kill button is clicked */
+  /** 点击停止按钮时的回调 */
   onKillTask: (taskId: string) => void
-  /** Callback to insert message into input field */
+  /** 向输入框插入文本的回调 */
   onInsertMessage?: (text: string) => void
-  /** Callback to show terminal output overlay */
+  /** 显示终端输出浮层的回调 */
   onShowTerminalOverlay?: (data: TerminalOverlayData) => void
-  /** Additional class name */
+  /** 额外的 CSS 类名 */
   className?: string
 }
 
 /**
- * TaskActionMenu - Dropdown menu for background task actions
+ * TaskActionMenu - 后台任务的操作下拉菜单
  *
- * Provides contextual actions for background tasks:
- * - View Output: Opens task output in terminal overlay
- * - Stop Task: Kills shell tasks (agent tasks show warning)
+ * 提供的操作：
+ * - View Output：在终端浮层里查看任务输出
+ * - Stop Task：终止 shell 任务
  */
 export function TaskActionMenu({ task, sessionId, onKillTask, onInsertMessage, onShowTerminalOverlay, className }: TaskActionMenuProps) {
   const { t } = useTranslation()
@@ -67,15 +73,17 @@ export function TaskActionMenu({ task, sessionId, onKillTask, onInsertMessage, o
 
   const isTerminal = task.status !== 'running'
 
-  // Wall-clock timer for RUNNING tasks. The async-by-default agent path emits no
-  // task_progress events, so deriving elapsed from startTime (rather than relying
-  // on elapsedSeconds) keeps the chip ticking for every task type. Terminal chips
-  // freeze their elapsed at completedAt.
+  // 针对运行中（RUNNING）任务的实时计时器。异步的 agent 路径默认不发出
+  // task_progress 事件，因此从 startTime 推算已用时间（而非依赖
+  // elapsedSeconds）能让 chip 对所有任务类型持续计时。终态 chip 将已用时间
+  // 冻结在 completedAt。
   const [localElapsed, setLocalElapsed] = React.useState(() => {
+    // 用开始时间初始化
     return Math.floor((Date.now() - task.startTime) / 1000)
   })
 
   React.useEffect(() => {
+    // 只对运行中的任务启用本地秒表
     if (isTerminal) return
     const interval = setInterval(() => {
       setLocalElapsed(Math.floor((Date.now() - task.startTime) / 1000))
@@ -87,25 +95,25 @@ export function TaskActionMenu({ task, sessionId, onKillTask, onInsertMessage, o
     ? Math.max(0, Math.floor(((task.completedAt ?? Date.now()) - task.startTime) / 1000))
     : Math.max(localElapsed, task.elapsedSeconds)
 
-  // Prefer the human-readable intent over the opaque task ID for the chip label.
+  // 优先使用人类可读的 intent 作为 chip 标签，而非晦涩的任务 ID。
   const taskLabel = task.intent?.trim() ?? ''
 
   const handleViewOutput = async () => {
     try {
-      // Fetch task output via IPC (reads the file stored on task_completed).
+      // 通过 IPC 拉取任务输出（读取 task_completed 时存储的文件）。
       const output = await window.electronAPI.getTaskOutput(task.id)
 
       if (onShowTerminalOverlay) {
-        // Preferred path: show in the terminal overlay.
+        // 首选路径：在终端浮层中展示。
         onShowTerminalOverlay({
           command: task.intent || `${task.type} task`,
           output: output || t('chat.noOutputYet'),
           description: task.intent,
-          toolType: 'bash', // Use 'bash' for both shell and agent tasks
+          toolType: 'bash', // shell 和 agent 任务都按 bash 类型展示
         })
       } else if (output) {
-        // Fallback when no overlay handler is wired: copy the full output to the
-        // clipboard so it's still retrievable. (Running tasks have no output yet.)
+        // 当没有接入浮层处理程序时的回退方案：将完整输出复制到
+        // 剪贴板，确保内容仍可获取。（运行中的任务尚无输出。）
         await navigator.clipboard?.writeText(output)
         toast.success(t('toast.taskOutputCopied', 'Task output copied to clipboard'))
       } else {
@@ -172,12 +180,12 @@ export function TaskActionMenu({ task, sessionId, onKillTask, onInsertMessage, o
           )}
           title={chipTitle}
         >
-          {/* Status icon */}
+          {/* 状态图标 */}
           <div className="flex items-center justify-center shrink-0">
             <StatusIcon />
           </div>
 
-          {/* Type badge */}
+          {/* 任务类型 */}
           <span className="opacity-60">
             {task.type === 'workflow'
               ? t('chat.taskTypeWorkflow')
@@ -186,9 +194,8 @@ export function TaskActionMenu({ task, sessionId, onKillTask, onInsertMessage, o
                 : t('chat.taskTypeShell')}
           </span>
 
-          {/* Intent (the actual task description) — falls back to the shortened
-              task ID only when no intent was captured. Truncated so a long intent
-              can't blow up the chip; full text shown on hover. */}
+          {/* Intent（实际的任务描述）—— 仅当没有捕获到 intent 时才回退到
+              缩短的任务 ID。截断以防止过长的 intent 撑爆 chip；完整文本在 hover 时展示。 */}
           {taskLabel ? (
             <span className="opacity-80 truncate max-w-[220px]" title={taskLabel}>
               {taskLabel}
@@ -199,7 +206,7 @@ export function TaskActionMenu({ task, sessionId, onKillTask, onInsertMessage, o
             </span>
           )}
 
-          {/* Workflow fan-out progress: live count of completed sub-agents. */}
+          {/* 工作流扇出进度：已完成子代理的实时计数。 */}
           {task.type === 'workflow' && (task.agentsCompleted ?? 0) > 0 && (
             <span
               className="opacity-60 tabular-nums"
@@ -209,7 +216,7 @@ export function TaskActionMenu({ task, sessionId, onKillTask, onInsertMessage, o
             </span>
           )}
 
-          {/* Elapsed time, or terminal status word */}
+          {/* 已用时间，或终态状态文字 */}
           {task.status === 'running' ? (
             <span className="opacity-60 tabular-nums">
               {formatElapsed(displayElapsed)}
@@ -220,18 +227,18 @@ export function TaskActionMenu({ task, sessionId, onKillTask, onInsertMessage, o
             </span>
           )}
 
-          {/* Dropdown indicator */}
+          {/* 下拉箭头 */}
           <ChevronDown className="h-3.5 w-3.5 opacity-60 ml-auto" />
         </button>
       </DropdownMenuTrigger>
       <StyledDropdownMenuContent align="start" sideOffset={4}>
-        {/* View Output - Primary action */}
+        {/* 查看输出 - 主要操作 */}
         <StyledDropdownMenuItem onClick={handleViewOutput}>
           <ArrowUpRight />
           {t('chat.viewOutput')}
         </StyledDropdownMenuItem>
 
-        {/* Stop Task - Only show for shell tasks (inserts kill command into input) */}
+        {/* 停止任务 - 仅对 shell 任务显示 */}
         {task.type === 'shell' && (
           <>
             <StyledDropdownMenuSeparator />

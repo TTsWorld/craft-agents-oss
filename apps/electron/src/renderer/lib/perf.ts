@@ -1,17 +1,17 @@
 /**
- * Renderer-side Performance Instrumentation
+ * 渲染进程性能打点
  *
- * Tracks session switch timing from click to render complete.
- * Logs via electron-log to the main log file.
+ * 跟踪从用户点击会话到渲染完成的耗时。
+ * 通过 electron-log 输出到主日志文件。
  *
- * Usage:
- *   // In SessionList click handler:
+ * 用法：
+ *   // 在 SessionList 点击处理中：
  *   rendererPerf.startSessionSwitch(sessionId)
  *
- *   // In ChatTabPanel when session loads:
+ *   // 在 ChatTabPanel 会话加载完成时：
  *   rendererPerf.markSessionSwitch(sessionId, 'session.loaded')
  *
- *   // When render is complete:
+ *   // 渲染完成时：
  *   rendererPerf.endSessionSwitch(sessionId)
  */
 
@@ -27,19 +27,19 @@ interface SessionSwitchMetric {
   duration?: number
 }
 
-// Pending session switches (keyed by sessionId)
+// 正在进行的会话切换（按 sessionId 索引）
 const pendingSwitches = new Map<string, SessionSwitchMetric>()
 
-// Recent completed metrics for analysis
+// 最近完成的指标，用于分析
 const recentMetrics: SessionSwitchMetric[] = []
 const MAX_RECENT_METRICS = 50
 
-// Debug mode detection (matches main process pattern)
+// 调试模式开关（与主进程模式保持一致）
 let debugMode = false
 
 /**
- * Initialize perf tracking. Call this once on app startup.
- * In Electron renderer, we check if we're in dev mode.
+ * 初始化性能跟踪。应用启动时调用一次。
+ * 在 Electron 渲染进程中根据是否处于开发模式开启。
  */
 export function initRendererPerf(isDebug: boolean): void {
   debugMode = isDebug
@@ -49,21 +49,21 @@ export function initRendererPerf(isDebug: boolean): void {
 }
 
 /**
- * Check if perf tracking is enabled
+ * 检查性能跟踪是否已启用
  */
 export function isRendererPerfEnabled(): boolean {
   return debugMode
 }
 
 /**
- * Start tracking a session switch.
- * Call this when user clicks on a session in the list.
- * Clears any other pending switches (user navigated away before completion).
+ * 开始跟踪一次会话切换。
+ * 用户在会话列表中点击会话时调用。
+ * 会清空其他 pending 切换（表示用户在完成前就导航走了）。
  */
 export function startSessionSwitch(sessionId: string): void {
   if (!debugMode) return
 
-  // Clear any other pending switches - user navigated away before they completed
+  // 清空其他 pending 切换——用户在完成前又点了别处
   pendingSwitches.clear()
 
   const metric: SessionSwitchMetric = {
@@ -73,13 +73,13 @@ export function startSessionSwitch(sessionId: string): void {
   }
   pendingSwitches.set(sessionId, metric)
 
-  // Log the tap immediately (0ms elapsed) - shows the start of the flow
+  // 立即记录一次 0ms 的 tap 点，标记流程起点
   perfLog.info(`${sessionId.slice(0, 8)}... session-list.tap: 0.0ms`)
 }
 
 /**
- * Add a checkpoint mark during session switch.
- * Use for intermediate steps like 'session.loaded', 'agent.status', etc.
+ * 在会话切换过程中添加检查点。
+ * 可用于 'session.loaded'、'agent.status' 等中间步骤。
  */
 export function markSessionSwitch(sessionId: string, markName: string): void {
   if (!debugMode) return
@@ -94,8 +94,8 @@ export function markSessionSwitch(sessionId: string, markName: string): void {
 }
 
 /**
- * End session switch tracking and log final duration.
- * Call this when the chat display has fully rendered.
+ * 结束会话切换跟踪并输出总耗时。
+ * 在聊天界面完全渲染后调用。
  */
 export function endSessionSwitch(sessionId: string): number | null {
   if (!debugMode) return null
@@ -106,16 +106,16 @@ export function endSessionSwitch(sessionId: string): number | null {
   metric.endTime = performance.now()
   metric.duration = metric.endTime - metric.startTime
 
-  // Store in recent metrics
+  // 存入最近指标
   recentMetrics.push(metric)
   if (recentMetrics.length > MAX_RECENT_METRICS) {
     recentMetrics.shift()
   }
 
-  // Clean up pending
+  // 清理 pending
   pendingSwitches.delete(sessionId)
 
-  // Log completion with breakdown
+  // 输出带分阶段的完成日志
   const marksStr = metric.marks.map((m) => `${m.name}:${m.elapsed.toFixed(0)}ms`).join(' → ')
   perfLog.info(
     `Session switch complete: ${metric.duration.toFixed(1)}ms` +
@@ -126,14 +126,14 @@ export function endSessionSwitch(sessionId: string): number | null {
 }
 
 /**
- * Get recent session switch metrics for analysis
+ * 获取最近的会话切换指标，用于分析
  */
 export function getRecentMetrics(): SessionSwitchMetric[] {
   return [...recentMetrics]
 }
 
 /**
- * Get statistics for session switch times
+ * 获取会话切换耗时的统计信息
  */
 export function getSessionSwitchStats(): {
   count: number
@@ -165,14 +165,14 @@ export function getSessionSwitchStats(): {
 }
 
 /**
- * Clear all metrics
+ * 清空所有指标
  */
 export function clearMetrics(): void {
   pendingSwitches.clear()
   recentMetrics.length = 0
 }
 
-// Export as namespace for convenient usage
+// 以命名空间形式导出，方便使用
 export const rendererPerf = {
   init: initRendererPerf,
   isEnabled: isRendererPerfEnabled,

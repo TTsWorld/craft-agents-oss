@@ -1,10 +1,14 @@
 /**
- * WsRpcServer — WebSocket-based RPC server.
+ * WsRpcServer — 基于 WebSocket 的 RPC 服务器。
  *
- * Owns ALL transport concerns: connection lifecycle, handshake, heartbeat,
- * optional auth, request dispatching, and push routing.
+ * 这个类负责所有传输层事务：连接生命周期、握手、心跳、可选认证、请求分发、事件推送路由。
+ * 本地模式（127.0.0.1，无认证）和远程模式（0.0.0.0，有认证）都用同一个类。
  *
- * Same class used locally (127.0.0.1, no auth) and remotely (0.0.0.0, auth).
+ * 对后端工程师来说，可以把它理解为一个轻量版 gRPC server：
+ * - channel = 方法名
+ * - handle() = 注册 service
+ * - push() = 服务端广播/单播
+ * - invokeClient() = 服务端调用客户端能力
  */
 
 import { WebSocketServer, type WebSocket } from 'ws'
@@ -28,16 +32,18 @@ import { serializeEnvelope, deserializeEnvelope } from './codec'
 import { createLogger } from '@craft-agent/shared/utils'
 
 // ---------------------------------------------------------------------------
-// Client connection state
+// 客户端连接状态
 // ---------------------------------------------------------------------------
 
+/** 客户端事件缓冲区里的单条事件（seq + 序列化后的 JSON + 时间戳） */
 interface BufferedEvent {
   seq: number
-  /** Shared serialized envelope — one allocation referenced by all client buffers. */
+  /** 共享序列化后的 envelope，所有客户端缓冲区复用同一分配 */
   data: string
   timestamp: number
 }
 
+/** 已完成握手的客户端连接状态 */
 interface ClientConnection {
   id: string
   ws: WebSocket
@@ -46,14 +52,15 @@ interface ClientConnection {
   capabilities: Set<string>
   missedPongs: number
   alive: boolean
-  /** Ring buffer of recent events for replay on reconnect. */
+  /** 最近事件环形缓冲区，用于断线重连后回放 */
   eventBuffer: BufferedEvent[]
-  /** Highest per-client seq the client has acknowledged. */
+  /** 客户端已确认的最高 seq */
   lastAckedSeq: number
-  /** Highest per-client seq assigned to this client. */
+  /** 分配给该客户端的最高 seq */
   lastSentSeq: number
 }
 
+/** 服务端调用客户端能力时的等待状态 */
 interface PendingInvoke {
   clientId: string
   resolve: (value: any) => void
@@ -62,57 +69,56 @@ interface PendingInvoke {
 }
 
 // ---------------------------------------------------------------------------
-// Server options
+// 服务器选项
 // ---------------------------------------------------------------------------
 
+/** WSS 模式下需要的 TLS 配置（cert/key 必传） */
 export interface WsRpcTlsOptions {
-  /** PEM-encoded certificate (or Buffer). */
+  /** PEM 编码的证书（字符串或 Buffer） */
   cert: string | Buffer
-  /** PEM-encoded private key (or Buffer). */
+  /** PEM 编码的私钥（字符串或 Buffer） */
   key: string | Buffer
-  /** Optional PEM-encoded CA chain for client certificate verification. */
+  /** 可选的 CA 链，用于客户端证书校验 */
   ca?: string | Buffer
-  /** Optional passphrase for encrypted private keys. */
+  /** 加密私钥的密码 */
   passphrase?: string
 }
 
+/** WsRpcServer 构造选项 */
 export interface WsRpcServerOptions {
-  /** Host to bind to. Default: '127.0.0.1' */
+  /** 绑定主机，默认 127.0.0.1 */
   host?: string
-  /** Port to bind to. 0 = random available port. Default: 0 */
+  /** 绑定端口，0 表示随机可用端口，默认 0 */
   port?: number
-  /** Whether to require a bearer token on handshake. Default: false */
+  /** 是否要求握手时提供 bearer token，默认 false */
   requireAuth?: boolean
-  /** Token validator. Called when requireAuth is true. */
+  /** bearer token 校验函数（requireAuth 为 true 时使用） */
   validateToken?: (token: string) => Promise<boolean>
   /**
-   * Optional cookie-based session validator (for web UI auth).
-   * Called with the Cookie header from the HTTP upgrade request.
-   * If provided, a valid session cookie is accepted as an alternative to a bearer token.
+   * 可选的基于 cookie 的会话校验（给 WebUI 用）。
+   * 当提供时，有效的 session cookie 可作为 bearer token 的替代认证方式。
    */
   validateSessionCookie?: (cookieHeader: string | null) => Promise<boolean>
-  /** Server identity stamp on outgoing events. Default: 'local' */
+  /** 服务器标识，会出现在下发事件的 envelope.serverId 中，默认 'local' */
   serverId?: string
-  /** TLS configuration. When provided, the server listens on wss:// instead of ws://. */
+  /** TLS 配置；提供时监听 wss://，否则监听 ws:// */
   tls?: WsRpcTlsOptions
-  /** App version string, included in handshake_ack for client compatibility checks. */
+  /** 服务端版本号，握手时返回给客户端做兼容性检查 */
   serverVersion?: string
-  /** Maximum concurrent clients. 0 = unlimited. Default: 50 */
+  /** 最大并发客户端数，0 表示无限制，默认 50 */
   maxClients?: number
-  /** Called when a client completes handshake. */
+  /** 客户端完成握手后的回调 */
   onClientConnected?: (info: { clientId: string; webContentsId: number | null; workspaceId: string | null; capabilities: string[] }) => void
-  /** Called when a client disconnects. */
+  /** 客户端断开后的回调 */
   onClientDisconnected?: (clientId: string) => void
   /**
-   * Optional HTTP request handler for non-WebSocket requests.
-   * When provided, regular HTTP requests to the server's port are
-   * routed here instead of being rejected. This enables serving the
-   * WebUI from the same port as the WebSocket server.
-   * Must use Node.js HTTP callback signature (IncomingMessage, ServerResponse).
+   * 可选的非 WebSocket HTTP 请求处理器。
+   * 提供后，普通 HTTP 请求会交给它处理（例如在同一端口上服务 WebUI）。
    */
   httpHandler?: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => void
 }
 
+// 传输层日志
 const transportLog = createLogger('ws-rpc-server')
 
 // ---------------------------------------------------------------------------
@@ -120,19 +126,25 @@ const transportLog = createLogger('ws-rpc-server')
 // ---------------------------------------------------------------------------
 
 export class WsRpcServer implements RpcServer {
+  // 底层 server 实例
   private wss: WebSocketServer | null = null
   private httpServer: HttpServer | null = null
   private httpsServer: HttpsServer | null = null
+
+  // 客户端与 handler 集合
   private clients = new Map<string, ClientConnection>()
   private handlers = new Map<string, HandlerFn>()
   private pendingInvokes = new Map<string, PendingInvoke>()
+
+  // 运行时状态
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private _port = 0
   private _protocol: 'ws' | 'wss' = 'ws'
 
-  /** Recently disconnected clients retained for reconnect replay. */
+  /** 断线后保留的客户端，用于重连回放 */
   private disconnectedClients = new Map<string, { client: ClientConnection; timer: ReturnType<typeof setTimeout> }>()
 
+  // 构造时传入的只读配置
   private readonly host: string
   private readonly requestedPort: number
   private readonly requireAuth: boolean
@@ -146,6 +158,7 @@ export class WsRpcServer implements RpcServer {
   private readonly onClientDisconnected: WsRpcServerOptions['onClientDisconnected']
   private readonly httpHandler: WsRpcServerOptions['httpHandler']
 
+  /** 构造函数：保存配置，不立即监听（调用 listen() 后才会启动服务） */
   constructor(opts?: WsRpcServerOptions) {
     this.host = opts?.host ?? '127.0.0.1'
     this.requestedPort = opts?.port ?? 0
@@ -161,25 +174,29 @@ export class WsRpcServer implements RpcServer {
     this.httpHandler = opts?.httpHandler
   }
 
-  /** The actual port the server is listening on (available after listen()). */
+  /** 实际监听端口（listen 后才能拿到） */
   get port(): number {
     return this._port
   }
 
-  /** The protocol the server is using: 'wss' when TLS is configured, 'ws' otherwise. */
+  /** 当前协议：配置 TLS 为 'wss'，否则 'ws' */
   get protocol(): 'ws' | 'wss' {
     return this._protocol
   }
 
-  /** Number of currently connected (handshake-completed) clients. */
+  /** 当前已连接（完成握手）的客户端数量 */
   getConnectedClientCount(): number {
     return this.clients.size
   }
 
   // -------------------------------------------------------------------------
-  // RpcServer interface
+  // RpcServer 接口实现
   // -------------------------------------------------------------------------
 
+  /**
+   * 注册一个 RPC handler。
+   * 同一个 channel 不能重复注册（类似 gRPC 服务方法名冲突）。
+   */
   handle(channel: string, handler: HandlerFn): void {
     if (this.handlers.has(channel)) {
       throw new Error(`Handler already registered for channel: ${channel}`)
@@ -187,25 +204,33 @@ export class WsRpcServer implements RpcServer {
     this.handlers.set(channel, handler)
   }
 
+  /**
+   * 向指定目标推送事件。
+   * target 支持 all / workspace / client，同时会写入断线客户端的缓冲区以便重连回放。
+   */
   push(channel: string, target: PushTarget, ...args: any[]): void {
     const timestamp = Date.now()
 
+    // 推送给在线客户端
     for (const client of this.clients.values()) {
       if (!this.matchesTarget(client, target)) continue
       this.bufferAndMaybeSendEvent(client, channel, args, timestamp, true)
     }
 
+    // 也推送给断线但仍在保留窗口内的客户端，确保重连后能回放
     for (const { client } of this.disconnectedClients.values()) {
       if (!this.matchesTarget(client, target)) continue
       this.bufferAndMaybeSendEvent(client, channel, args, timestamp, false)
     }
   }
 
+  /** 指定客户端是否声明了某项能力 */
   hasClientCapability(clientId: string, capability: string): boolean {
     const client = this.clients.get(clientId)
     return !!client && client.capabilities.has(capability)
   }
 
+  /** 查找所有声明了某能力的在线客户端，可选按 workspaceId 过滤 */
   findClientsWithCapability(capability: string, opts?: { workspaceId?: string }): string[] {
     const results: string[] = []
     for (const [clientId, client] of this.clients) {
@@ -216,11 +241,14 @@ export class WsRpcServer implements RpcServer {
     return results
   }
 
+  /**
+   * 调用某个客户端的能力（服务端 → 客户端的 RPC）。
+   * 如果客户端不在线或未声明该能力，会立即 reject。
+   */
   invokeClient(clientId: string, channel: string, ...args: any[]): Promise<any> {
     return new Promise((resolve, reject) => {
       const client = this.clients.get(clientId)
 
-      // Check connection
       if (!client) {
         const err = new Error(`Client not connected: ${clientId}`)
         ;(err as any).code = 'CLIENT_DISCONNECTED'
@@ -228,7 +256,6 @@ export class WsRpcServer implements RpcServer {
         return
       }
 
-      // Check capability
       if (!client.capabilities.has(channel)) {
         const err = new Error(`Client lacks capability: ${channel}`)
         ;(err as any).code = 'CAPABILITY_UNAVAILABLE'
@@ -258,15 +285,17 @@ export class WsRpcServer implements RpcServer {
   }
 
   // -------------------------------------------------------------------------
-  // Lifecycle
+  // 生命周期
   // -------------------------------------------------------------------------
 
+  /**
+   * 启动监听：根据配置选择 wss / ws+httpHandler / 纯 ws 模式。
+   * 返回 Promise，resolve 表示端口已就绪。
+   */
   async listen(): Promise<void> {
     return new Promise((resolve, reject) => {
       if (this.tlsOptions) {
-        // TLS mode: create HTTPS server, attach WebSocketServer to it.
-        // When httpHandler is set, regular HTTP requests are served by it
-        // (e.g. WebUI), while ws intercepts WebSocket upgrade requests.
+        // TLS 模式：先创建 HTTPS server，再把 WebSocketServer 挂载上去
         this._protocol = 'wss'
         this.httpsServer = createHttpsServer(
           {
@@ -291,7 +320,7 @@ export class WsRpcServer implements RpcServer {
           resolve()
         })
       } else if (this.httpHandler) {
-        // Plain WS + HTTP handler: create an HTTP server for both.
+        // 普通 WS + HTTP handler：共用一个 HTTP server
         this._protocol = 'ws'
         this.httpServer = createHttpServer(this.httpHandler)
         this.wss = new WebSocketServer({ server: this.httpServer })
@@ -307,7 +336,7 @@ export class WsRpcServer implements RpcServer {
           resolve()
         })
       } else {
-        // Plain WS mode, no HTTP handler
+        // 纯 WS 模式
         this._protocol = 'ws'
         this.wss = new WebSocketServer({
           host: this.host,
@@ -334,12 +363,16 @@ export class WsRpcServer implements RpcServer {
     })
   }
 
+  /**
+   * 关闭服务器：停止心跳、拒绝未完成调用、断开所有客户端、清理缓冲区。
+   * 关闭后实例不可再用。
+   */
   close(): void {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer)
       this.heartbeatTimer = null
     }
-    // Reject all pending invokes before tearing down connections
+    // 关闭前拒绝所有未完成的 invokeClient
     for (const [id, pending] of this.pendingInvokes) {
       clearTimeout(pending.timeout)
       const err = new Error('Server shutting down')
@@ -351,7 +384,6 @@ export class WsRpcServer implements RpcServer {
       client.ws.terminate()
     }
     this.clients.clear()
-    // Clean up disconnected client timers
     for (const entry of this.disconnectedClients.values()) {
       clearTimeout(entry.timer)
     }
@@ -365,11 +397,16 @@ export class WsRpcServer implements RpcServer {
   }
 
   // -------------------------------------------------------------------------
-  // Connection handling
+  // 连接处理
   // -------------------------------------------------------------------------
 
+  /**
+   * 新 WebSocket 连接入口。
+   * 负责容量控制、握手超时、协议版本校验、认证、重连回放、新连接建立，
+   * 以及握手后 request/response/sequence_ack 的消息路由。
+   */
   private onConnection(ws: WebSocket, upgradeRequestCookie: string | null): void {
-    // Reject if at capacity
+    // 容量控制
     if (this.maxClients > 0 && this.clients.size >= this.maxClients) {
       transportLog.warn('Connection rejected: at capacity', {
         maxClients: this.maxClients,
@@ -382,7 +419,7 @@ export class WsRpcServer implements RpcServer {
     let handshakeCompleted = false
     let handshakeTimeout: ReturnType<typeof setTimeout> | null = null
 
-    // Give the client 5 seconds to send a handshake
+    // 5 秒内必须完成握手
     handshakeTimeout = setTimeout(() => {
       if (!handshakeCompleted) {
         ws.close(4001, 'Handshake timeout')
@@ -409,7 +446,7 @@ export class WsRpcServer implements RpcServer {
           handshakeTimeout = null
         }
 
-        // Protocol version check (required)
+        // 协议主版本号必须一致
         if (!envelope.protocolVersion || typeof envelope.protocolVersion !== 'string') {
           this.sendError(ws, envelope.id, 'PROTOCOL_VERSION_UNSUPPORTED',
             `Missing protocolVersion. Server protocol ${PROTOCOL_VERSION}`)
@@ -426,16 +463,14 @@ export class WsRpcServer implements RpcServer {
           return
         }
 
-        // Auth check — bearer token OR session cookie (web UI)
+        // 认证：bearer token 或 session cookie
         if (this.requireAuth) {
           let authenticated = false
 
-          // 1. Try bearer token (standard path)
           if (envelope.token && this.validateToken) {
             authenticated = await this.validateToken(envelope.token)
           }
 
-          // 2. Fallback: try session cookie from HTTP upgrade request (web UI path)
           if (!authenticated && this.validateSessionCookie && upgradeRequestCookie) {
             authenticated = await this.validateSessionCookie(upgradeRequestCookie)
           }
@@ -448,24 +483,18 @@ export class WsRpcServer implements RpcServer {
           }
         }
 
-        // ── Reconnect attempt ──
+        // ── 重连尝试 ──
         if (envelope.reconnectClientId && envelope.lastSeq != null) {
           const entry = this.disconnectedClients.get(envelope.reconnectClientId)
           if (entry) {
             const prevClient = entry.client
 
-            // Identity must match (workspace + webContentsId)
+            // 身份必须匹配（workspace + webContentsId）
             const identityMatch =
               prevClient.workspaceId === (envelope.workspaceId ?? null) &&
               prevClient.webContentsId === (envelope.webContentsId ?? null)
 
             if (identityMatch) {
-              // Valid reconnect — prepare client state but do NOT add to
-              // this.clients yet. The client stays in disconnectedClients
-              // during replay so that push() can't interleave new events
-              // between replayed ones. (Currently safe due to Node.js
-              // single-threading, but this ordering makes the invariant
-              // explicit and future-proof.)
               clearTimeout(entry.timer)
 
               prevClient.ws = ws
@@ -473,9 +502,6 @@ export class WsRpcServer implements RpcServer {
               prevClient.missedPongs = 0
               handshakeCompleted = true
 
-              // Determine replay vs stale using the per-client delivery sequence.
-              // Retained buffers continue collecting events while the client is disconnected,
-              // but TTL eviction still applies during the reconnect window.
               this.evictBuffer(prevClient)
 
               const lastSeq = envelope.lastSeq as number
@@ -499,7 +525,7 @@ export class WsRpcServer implements RpcServer {
                 }
                 this.safeSend(ws, serializeEnvelope(ack))
 
-                // Replay missed events in order
+                // 按顺序回放丢失事件
                 for (const event of replayEvents) {
                   this.safeSend(ws, event.data)
                 }
@@ -510,7 +536,7 @@ export class WsRpcServer implements RpcServer {
                   lastSeq,
                 })
               } else {
-                // Buffer evicted — client must full-refresh
+                // 缓冲区已清理，客户端需要全量刷新
                 const ack: MessageEnvelope = {
                   id: envelope.id,
                   type: 'handshake_ack',
@@ -531,8 +557,7 @@ export class WsRpcServer implements RpcServer {
                 })
               }
 
-              // Atomic state transition: move from disconnected → active
-              // AFTER replay is complete so push() can't target this client mid-replay.
+              // 回放完成后再把客户端从 disconnected 移回 active，避免 push 穿插新事件
               this.disconnectedClients.delete(envelope.reconnectClientId)
               this.clients.set(prevClient.id, prevClient)
 
@@ -546,15 +571,14 @@ export class WsRpcServer implements RpcServer {
               return
             }
 
-            // Identity mismatch — fall through to fresh connect
             transportLog.warn('Reconnect identity mismatch', {
               reconnectClientId: envelope.reconnectClientId,
             })
           }
-          // reconnectClientId not found — fall through to fresh connect
+          // reconnectClientId 找不到或身份不匹配 → 按新连接处理
         }
 
-        // ── Normal fresh connect ──
+        // ── 普通新连接 ──
         const clientId = randomUUID()
         const client: ClientConnection = {
           id: clientId,
@@ -571,7 +595,6 @@ export class WsRpcServer implements RpcServer {
         this.clients.set(clientId, client)
         handshakeCompleted = true
 
-        // Send handshake_ack
         const ack: MessageEnvelope = {
           id: envelope.id,
           type: 'handshake_ack',
@@ -582,7 +605,6 @@ export class WsRpcServer implements RpcServer {
         }
         this.safeSend(ws, serializeEnvelope(ack))
 
-        // Notify lifecycle listener
         transportLog.info('Client connected', {
           clientId,
           webContentsId: client.webContentsId,
@@ -599,7 +621,7 @@ export class WsRpcServer implements RpcServer {
         return
       }
 
-      // Post-handshake: find the client for this ws
+      // 握手后：找到这个 ws 对应的 client
       const client = this.findClientByWs(ws)
       if (!client) {
         ws.close(4006, 'Unknown client')
@@ -614,7 +636,7 @@ export class WsRpcServer implements RpcServer {
         const ackSeq = envelope.lastSeq
         if (typeof ackSeq === 'number' && ackSeq > client.lastAckedSeq) {
           client.lastAckedSeq = ackSeq
-          // Evict acknowledged events
+          // 清理已确认事件
           const buf = client.eventBuffer
           let removeCount = 0
           while (removeCount < buf.length && buf[removeCount]!.seq <= ackSeq) {
@@ -628,17 +650,21 @@ export class WsRpcServer implements RpcServer {
     })
 
     ws.on('error', () => {
-      // Connection errors are handled by the close event
+      // 连接错误由 close 事件处理
     })
   }
 
   // -------------------------------------------------------------------------
-  // Request dispatching
+  // 请求分发
   // -------------------------------------------------------------------------
 
-  /** Server-side timeout for RPC handler execution (ms). */
+  /** RPC handler 执行超时 */
   private static readonly HANDLER_TIMEOUT_MS = 60_000
 
+  /**
+   * 处理客户端发来的 RPC request。
+   * 查找 channel 对应的 handler，注入 RequestContext，带 60 秒超时，返回 response。
+   */
   private async onRequest(client: ClientConnection, envelope: MessageEnvelope): Promise<void> {
     const { channel, id, args } = envelope
 
@@ -683,20 +709,18 @@ export class WsRpcServer implements RpcServer {
   }
 
   // -------------------------------------------------------------------------
-  // Heartbeat
+  // 心跳
   // -------------------------------------------------------------------------
 
+  /** 启动心跳：定期 ping 客户端，未收到 pong 超过阈值则强制断开 */
   private startHeartbeat(): void {
     this.heartbeatTimer = setInterval(() => {
       for (const [, client] of this.clients) {
-        // Skip sockets that are already closing/closed (e.g. terminated on a previous tick)
         if (client.ws.readyState !== client.ws.OPEN) continue
 
         if (!client.alive) {
           client.missedPongs++
           if (client.missedPongs >= HEARTBEAT_MAX_MISSED) {
-            // Let the close handler (setupClientHandlers) handle all cleanup:
-            // clients.delete, buffer retention for reconnect, onClientDisconnected.
             client.ws.terminate()
             continue
           }
@@ -708,22 +732,22 @@ export class WsRpcServer implements RpcServer {
   }
 
   // -------------------------------------------------------------------------
-  // Helpers
+  // 辅助函数
   // -------------------------------------------------------------------------
 
-  /** Wire up close + pong handlers for a WebSocket ↔ ClientConnection pair. */
+  /** 为 WebSocket ↔ ClientConnection 配对设置 close + pong 处理器 */
   private setupClientHandlers(ws: WebSocket, client: ClientConnection): void {
     ws.on('close', () => {
       transportLog.info('Client disconnected', { clientId: client.id })
       this.clients.delete(client.id)
 
-      // Retain buffer for potential reconnect
+      // 保留缓冲区以便可能的重连
       const timer = setTimeout(() => {
         this.disconnectedClients.delete(client.id)
       }, DISCONNECTED_CLIENT_TTL_MS)
       this.disconnectedClients.set(client.id, { client, timer })
 
-      // Cap disconnectedClients to prevent unbounded growth
+      // 限制 disconnectedClients 数量，避免无界增长
       if (this.disconnectedClients.size > 50) {
         const oldestKey = this.disconnectedClients.keys().next().value
         if (oldestKey) {
@@ -743,7 +767,7 @@ export class WsRpcServer implements RpcServer {
     })
   }
 
-  /** Assign a per-client seq, retain the event for replay, and optionally send it immediately. */
+  /** 分配 seq、保留事件用于回放、按需立即发送 */
   private bufferAndMaybeSendEvent(
     client: ClientConnection,
     channel: string,
@@ -772,7 +796,7 @@ export class WsRpcServer implements RpcServer {
     }
   }
 
-  /** Evict stale/oversized entries from a client's event buffer via batch splice. */
+  /** 按 TTL 和大小清理客户端事件缓冲区 */
   private evictBuffer(client: ClientConnection): void {
     const buf = client.eventBuffer
     if (buf.length === 0) return
@@ -780,24 +804,22 @@ export class WsRpcServer implements RpcServer {
     const now = Date.now()
     let removeCount = 0
 
-    // Evict by TTL
     while (removeCount < buf.length &&
            now - buf[removeCount]!.timestamp > EVENT_BUFFER_TTL_MS) {
       removeCount++
     }
 
-    // Evict by size (keep at most EVENT_BUFFER_MAX_SIZE after TTL eviction)
     const remaining = buf.length - removeCount
     if (remaining > EVENT_BUFFER_MAX_SIZE) {
       removeCount += remaining - EVENT_BUFFER_MAX_SIZE
     }
 
-    // Single splice instead of O(n) shift loop
     if (removeCount > 0) {
       buf.splice(0, removeCount)
     }
   }
 
+  /** 判断某客户端是否匹配 push target（all / workspace / client，支持 exclude） */
   private matchesTarget(client: ClientConnection, target: PushTarget): boolean {
     switch (target.to) {
       case 'all':
@@ -812,7 +834,7 @@ export class WsRpcServer implements RpcServer {
     }
   }
 
-  /** Update a client's workspaceId (called after SWITCH_WORKSPACE so push routing stays correct). */
+  /** 更新客户端 workspaceId（切换工作区后调用，保证 push 路由正确） */
   updateClientWorkspace(clientId: string, workspaceId: string): void {
     const client = this.clients.get(clientId)
     if (client) {
@@ -820,6 +842,7 @@ export class WsRpcServer implements RpcServer {
     }
   }
 
+  /** 通过 WebSocket 实例查找对应的 ClientConnection */
   private findClientByWs(ws: WebSocket): ClientConnection | undefined {
     for (const client of this.clients.values()) {
       if (client.ws === ws) return client
@@ -827,7 +850,7 @@ export class WsRpcServer implements RpcServer {
     return undefined
   }
 
-  /** Handler/request errors — sent as type:'response' with error field. */
+  /** handler/request 级错误，以 response 形式返回 */
   private sendResponseError(
     ws: WebSocket, id: string, channel: string | undefined,
     code: ErrorCode, message: string,
@@ -841,7 +864,7 @@ export class WsRpcServer implements RpcServer {
     this.safeSend(ws, serializeEnvelope(envelope))
   }
 
-  /** Protocol-level errors only (handshake rejection, version mismatch). May close connection. */
+  /** 协议级错误（握手拒绝、版本不匹配），可能关闭连接 */
   private sendError(ws: WebSocket, id: string, code: ErrorCode, message: string): void {
     const envelope: MessageEnvelope = {
       id,
@@ -851,6 +874,7 @@ export class WsRpcServer implements RpcServer {
     this.safeSend(ws, serializeEnvelope(envelope))
   }
 
+  /** 处理客户端对 invokeClient 的 response，resolve/reject 等待中的 Promise */
   private onClientResponse(envelope: MessageEnvelope): void {
     const pending = this.pendingInvokes.get(envelope.id)
     if (!pending) return
@@ -868,6 +892,7 @@ export class WsRpcServer implements RpcServer {
     }
   }
 
+  /** 客户端断开时，拒绝所有发给它的未完成 invokeClient */
   private rejectPendingInvokesForClient(clientId: string): void {
     for (const [id, pending] of this.pendingInvokes) {
       if (pending.clientId !== clientId) continue
@@ -879,6 +904,7 @@ export class WsRpcServer implements RpcServer {
     }
   }
 
+  /** 仅在 socket 打开时发送数据；关闭中/已关闭则静默忽略 */
   private safeSend(ws: WebSocket, data: string): void {
     if (ws.readyState === ws.OPEN) {
       ws.send(data)

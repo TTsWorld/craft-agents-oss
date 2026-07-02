@@ -1,11 +1,11 @@
 /**
  * PreferencesPage
  *
- * Form-based editor for stored user preferences (~/.craft-agent/preferences.json).
- * Features:
- * - Fixed input fields for known preferences (name, timezone, location, language)
- * - Free-form textarea for notes
- * - Auto-saves on change with debouncing
+ * 基于表单的用户偏好编辑器（对应 ~/.craft-agent/preferences.json）。
+ * 功能：
+ * - 为已知偏好提供固定输入框（姓名、时区、位置）
+ * - 为备注提供自由文本区
+ * - 变更时自动保存，并做防抖处理
  */
 
 import * as React from 'react'
@@ -25,11 +25,13 @@ import {
 import { EditPopover, EditButton, getEditConfig } from '@/components/ui/EditPopover'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
 
+/** 页面元数据：设置导航中的“偏好设置”页面 */
 export const meta: DetailsPageMeta = {
   navigator: 'settings',
   slug: 'preferences',
 }
 
+/** 偏好设置表单状态 */
 interface PreferencesFormState {
   name: string
   timezone: string
@@ -46,7 +48,7 @@ const emptyFormState: PreferencesFormState = {
   notes: '',
 }
 
-// Parse JSON to form state
+// 将 JSON 解析为表单状态
 function parsePreferences(json: string): PreferencesFormState {
   try {
     const prefs = JSON.parse(json)
@@ -62,7 +64,7 @@ function parsePreferences(json: string): PreferencesFormState {
   }
 }
 
-// Serialize form state to JSON
+// 将表单状态序列化为 JSON
 function serializePreferences(state: PreferencesFormState): string {
   const prefs: Record<string, unknown> = {}
 
@@ -82,6 +84,7 @@ function serializePreferences(state: PreferencesFormState): string {
   return JSON.stringify(prefs, null, 2)
 }
 
+/** 偏好设置页面 */
 export default function PreferencesPage() {
   const { t } = useTranslation()
   const [formState, setFormState] = useState<PreferencesFormState>(emptyFormState)
@@ -92,12 +95,12 @@ export default function PreferencesPage() {
   const formStateRef = useRef(formState)
   const lastSavedRef = useRef<string | null>(null)
 
-  // Keep formStateRef in sync for use in cleanup
+  // 保持 formStateRef 与当前表单状态同步，供卸载清理逻辑使用
   useEffect(() => {
     formStateRef.current = formState
   }, [formState])
 
-  // Load stored user preferences on mount
+  // 挂载时加载已存储的用户偏好
   useEffect(() => {
     const load = async () => {
       try {
@@ -111,7 +114,7 @@ export default function PreferencesPage() {
         setFormState(emptyFormState)
       } finally {
         setIsLoading(false)
-        // Mark initial load as complete after a short delay
+        // 短暂延迟后标记初始加载完成
         setTimeout(() => {
           isInitialLoadRef.current = false
         }, 100)
@@ -120,17 +123,17 @@ export default function PreferencesPage() {
     load()
   }, [])
 
-  // Auto-save with debouncing
+  // 带防抖的自动保存
   useEffect(() => {
-    // Skip auto-save during initial load
+    // 初始加载期间跳过自动保存
     if (isInitialLoadRef.current || isLoading) return
 
-    // Clear any pending save
+    // 清除待执行的保存定时器
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current)
     }
 
-    // Debounce save by 500ms
+    // 500ms 防抖后保存
     saveTimeoutRef.current = setTimeout(async () => {
       try {
         const json = serializePreferences(formState)
@@ -152,18 +155,18 @@ export default function PreferencesPage() {
     }
   }, [formState, isLoading])
 
-  // Force save on unmount if there are unsaved changes
+  // 卸载时若存在未保存的变更则强制保存
   useEffect(() => {
     return () => {
-      // Clear any pending debounced save
+      // 清除待执行的防抖保存
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current)
       }
 
-      // Check if there are unsaved changes and save immediately
+      // 检查是否存在未保存的变更并立即保存
       const currentJson = serializePreferences(formStateRef.current)
       if (lastSavedRef.current !== currentJson && !isInitialLoadRef.current) {
-        // Fire and forget - we can't await in cleanup
+        // cleanup 中无法 await，直接触发保存
         window.electronAPI.writePreferences(currentJson).catch((err) => {
           console.error('Failed to save preferences on unmount:', err)
         })
@@ -192,7 +195,7 @@ export default function PreferencesPage() {
       <div className="flex-1 min-h-0 mask-fade-y">
         <ScrollArea className="h-full">
           <div className="px-5 py-7 max-w-3xl mx-auto space-y-8">
-          {/* Basic Info */}
+          {/* 基本信息 */}
           <SettingsSection
             title={t("settings.preferences.basicInfo")}
             description={t("settings.preferences.basicInfoDesc")}
@@ -217,7 +220,7 @@ export default function PreferencesPage() {
             </SettingsCard>
           </SettingsSection>
 
-          {/* Location */}
+          {/* 位置信息 */}
           <SettingsSection
             title={t("settings.preferences.location")}
             description={t("settings.preferences.locationDesc")}
@@ -242,12 +245,12 @@ export default function PreferencesPage() {
             </SettingsCard>
           </SettingsSection>
 
-          {/* Notes */}
+          {/* 备注 */}
           <SettingsSection
             title={t("settings.preferences.notes")}
             description={t("settings.preferences.notesDesc")}
             action={
-              // EditPopover for AI-assisted notes editing with "Edit File" as secondary action
+              // 用于 AI 辅助编辑备注的 EditPopover，次要操作为“编辑文件”
               preferencesPath ? (
                 <EditPopover
                   trigger={<EditButton />}

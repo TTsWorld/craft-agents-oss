@@ -1,3 +1,10 @@
+/**
+ * mobile-webui 注册项
+ *
+ * 这个文件把移动端 WebUI 的演示组件注册到 playground：AppMenu、SessionList、ChatDisplay。
+ * 用设备外壳（ bezel / status bar）模拟手机尺寸。
+ * 涉及概念：session（对话）、stream（流式回复）、permission mode（权限模式）。
+ */
 import type { ComponentEntry } from './types'
 import { AppMenuMobilePreview } from '../demos/mobile-webui/AppMenuMobilePreview'
 import { SessionListMobilePreview } from '../demos/mobile-webui/SessionListMobilePreview'
@@ -9,6 +16,7 @@ const DEVICE_OPTIONS = [
   { label: 'Pixel 8 (412×915)', value: 'pixel-8' },
 ]
 
+/** mobile-webui 组件注册列表。 */
 export const mobileWebUIComponents: ComponentEntry[] = [
   {
     id: 'mobile-webui-app-menu',

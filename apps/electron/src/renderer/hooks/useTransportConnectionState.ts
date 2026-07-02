@@ -2,13 +2,18 @@ import { useEffect, useRef, useState } from 'react'
 import type { TransportConnectionState } from '../../shared/types'
 
 /**
- * Debounce delay for non-connected states (ms).
- * Absorbs rapid state transitions within a single reconnect cycle
- * (e.g. reconnecting → failed → reconnecting) to prevent banner flicker.
- * Connected state surfaces immediately — no delay for good news.
+ * 非 connected 状态的防抖延迟（毫秒）。
+ * 用于吸收单次重连周期内的快速状态切换（如 reconnecting → failed → reconnecting），
+ * 避免顶部提示条闪烁。connected 状态立即展示，不延迟。
  */
 const DEBOUNCE_MS = 300
 
+/**
+ * 监听与后端的传输层连接状态。
+ *
+ * 远程模式（remote）下 Electron 与服务器之间通过 WebSocket/IPC 维持连接；
+ * 该 hook 把状态同步到 React 组件，用于显示断线/重连提示。
+ */
 export function useTransportConnectionState(): TransportConnectionState | null {
   const [state, setState] = useState<TransportConnectionState | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -24,7 +29,7 @@ export function useTransportConnectionState(): TransportConnectionState | null {
           setState(initial)
         }
       } catch {
-        // Best effort only — avoid crashing renderer if preload state is unavailable.
+        // 尽力而为：如果 preload 状态不可用，不要让渲染进程崩溃
       }
     }
 
@@ -33,7 +38,7 @@ export function useTransportConnectionState(): TransportConnectionState | null {
     const unsubscribe = window.electronAPI.onTransportConnectionStateChanged?.((next) => {
       if (!mounted) return
 
-      // Connected state surfaces immediately (no delay for good news)
+      // connected 状态立即展示（好消息不延迟）
       if (next.status === 'connected') {
         if (debounceRef.current) {
           clearTimeout(debounceRef.current)
@@ -43,8 +48,7 @@ export function useTransportConnectionState(): TransportConnectionState | null {
         return
       }
 
-      // Non-connected states: debounce to avoid flicker during
-      // rapid state transitions within a single reconnect cycle
+      // 非 connected 状态：防抖，避免单次重连周期内的闪烁
       if (debounceRef.current) clearTimeout(debounceRef.current)
       debounceRef.current = setTimeout(() => {
         debounceRef.current = null

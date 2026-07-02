@@ -1,5 +1,8 @@
 /**
- * WhatsAppConnectDialog — drives the Baileys QR-scan pairing flow from the UI.
+ * WhatsAppConnectDialog —— 驱动 Baileys 库的“扫码登录”配对流程。
+ *
+ * Baileys 是一个流行的 WhatsApp Web 客户端库；这里通过 Electron IPC
+ * 让主进程负责与 WhatsApp 服务器通信，渲染进程只负责展示二维码和状态。
  */
 
 import * as React from 'react'
@@ -38,10 +41,9 @@ export function WhatsAppConnectDialog({ open, onOpenChange, onConnected }: Whats
 
   React.useEffect(() => {
     if (!open || !activeWorkspaceId) return
-    // The main process broadcasts WhatsApp UI events to every renderer. If
-    // multiple workspaces are open and another one starts a QR flow, we'd
-    // receive its `qr`/`connected` frames and paint them here. Filter by
-    // workspaceId at the dialog boundary.
+    // 主进程会把 WhatsApp UI 事件广播给所有渲染进程；
+    // 如果多个工作空间同时打开，可能收到别人的 qr/connected 事件。
+    // 在对话框边界按 workspaceId 过滤，避免张冠李戴。
     const off = window.electronAPI.onWhatsAppEvent(({ workspaceId, event }) => {
       if (workspaceId !== activeWorkspaceId) return
       handleEvent(event)

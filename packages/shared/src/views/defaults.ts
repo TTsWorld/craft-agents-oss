@@ -1,15 +1,15 @@
 /**
  * Default Views
  *
- * Built-in views provided to new workspaces (or when views.json is missing).
- * Users can modify or remove these — they're just the starting point.
+ * 新 workspace（或缺少 views.json 时）使用的内置视图。
+ * 用户可以修改或删除它们 —— 这些只是初始默认值。
  */
 
 import type { ViewConfig } from './types.ts';
 
 /**
- * Default views seeded into views.json.
- * Each represents a common session state that users want to see at a glance.
+ * 返回要写入 views.json 的默认视图列表。
+ * 每个视图代表一种常见的 session 状态，方便用户一眼看到。
  */
 export function getDefaultViews(): ViewConfig[] {
   return [

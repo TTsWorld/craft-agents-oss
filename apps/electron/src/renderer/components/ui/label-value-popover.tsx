@@ -1,12 +1,13 @@
 /**
- * LabelValuePopover - Popover for editing a label's typed value or removing it.
+ * LabelValuePopover — 编辑 Label 类型值或移除 Label 的弹窗
  *
- * Opens when clicking a LabelBadge. Shows:
- * - Value editor input adapted to the label's valueType (number/string/date)
- * - "Remove" button to detach the label from the session
+ * Label 是给 Session 打标签用的元数据，比如优先级、截止日期等。
+ * 点击 LabelBadge 后弹出此组件：
+ * - 根据 valueType（number/string/date/link）显示不同的值编辑器
+ * - 提供“移除”按钮，把 Label 从 Session 上 detach
  *
- * Value changes are committed on Enter or blur; Escape cancels and closes.
- * Boolean labels (no valueType) show only the remove button.
+ * Enter 或失焦时提交修改；Escape 取消并关闭。
+ * 布尔类型 Label（没有 valueType）只显示移除按钮。
  */
 
 import * as React from 'react'
@@ -21,24 +22,25 @@ import { format, parse } from 'date-fns'
 import type { LabelConfig } from '@craft-agent/shared/labels'
 
 export interface LabelValuePopoverProps {
-  /** Label configuration (color, name, valueType) */
+  /** Label 配置（颜色、名称、值类型） */
   label: LabelConfig
-  /** Current raw value string */
+  /** 当前原始值字符串 */
   value?: string
-  /** Called when user commits a new value (Enter or blur) */
+  /** 用户提交新值时调用（Enter 或失焦） */
   onValueChange?: (newValue: string | undefined) => void
-  /** Called when user clicks "Remove" */
+  /** 用户点击“移除”时调用 */
   onRemove?: () => void
-  /** Controlled open state */
+  /** 受控的打开状态 */
   open: boolean
-  /** Open state change handler */
+  /** 打开状态变化回调 */
   onOpenChange: (open: boolean) => void
-  /** Session identifier for scoped focus restoration */
+  /** 所属 Session ID，用于关闭后把焦点还回原输入框 */
   sessionId?: string
-  /** The trigger element (typically a LabelBadge) */
+  /** 触发元素（通常是 LabelBadge） */
   children: React.ReactNode
 }
 
+/** Label 值编辑/移除弹窗 */
 export function LabelValuePopover({
   label,
   value,
@@ -50,15 +52,15 @@ export function LabelValuePopover({
   children,
 }: LabelValuePopoverProps) {
   const { t } = useTranslation()
-  // Local draft value — resets to prop value when popover opens
+  // 本地草稿值，弹窗打开时从 props.value 重置
   const [draft, setDraft] = React.useState(value ?? '')
-  // Whether the inline calendar picker is visible (date labels only)
+  // 是否显示内联日历选择器（仅 date 类型 Label）
   const [calendarOpen, setCalendarOpen] = React.useState(false)
   const inputRef = React.useRef<HTMLInputElement>(null)
   const removeButtonRef = React.useRef<HTMLButtonElement>(null)
 
-  // Sync draft when popover opens or value prop changes.
-  // For date labels with an existing YYYY-MM-DD value, show a human-readable form.
+  // 弹窗打开或 value 变化时同步草稿。
+  // 如果是 date 类型且已有 YYYY-MM-DD 值，显示成人类可读格式。
   React.useEffect(() => {
     if (open) {
       setCalendarOpen(false)
@@ -75,9 +77,11 @@ export function LabelValuePopover({
     }
   }, [open, value, label.valueType])
 
-  /** Move focus into the popover when it opens.
-   *  Labels with valueType → focus the value input; boolean labels → focus remove button.
-   *  Prevents Radix default so we control exactly what gets focused. */
+  /**
+   * 弹窗打开时自动移动焦点。
+   * 有 valueType 的 Label 聚焦到值输入框；布尔 Label 聚焦到移除按钮。
+   * 阻止 Radix 默认行为，以便精确控制焦点位置。
+   */
   const handleOpenAutoFocus = React.useCallback((e: Event) => {
     e.preventDefault()
     if (label.valueType) {
@@ -87,8 +91,10 @@ export function LabelValuePopover({
     }
   }, [label.valueType])
 
-  /** Restore focus to chat input after popover closes.
-   *  Matches the pattern used in ActiveOptionBadges. */
+  /**
+   * 弹窗关闭后把焦点还给聊天输入框。
+   * 与 ActiveOptionBadges 中的处理方式一致。
+   */
   const handleCloseAutoFocus = React.useCallback((e: Event) => {
     e.preventDefault()
     window.dispatchEvent(new CustomEvent('craft:focus-input', {
@@ -96,14 +102,14 @@ export function LabelValuePopover({
     }))
   }, [sessionId])
 
-  /** Commit the current draft value */
+  /** 提交当前草稿值 */
   const commitValue = React.useCallback(() => {
     const trimmed = draft.trim()
-    // Empty string means remove value (label becomes boolean-only)
+    // 空字符串表示清空值（Label 退化为纯布尔标签）
     onValueChange?.(trimmed || undefined)
   }, [draft, onValueChange])
 
-  /** Handle keyboard in the value input */
+  /** 值输入框的键盘处理 */
   const handleKeyDown = React.useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
@@ -117,16 +123,16 @@ export function LabelValuePopover({
   }, [commitValue, onOpenChange, value])
 
   /**
-   * For date labels: parse the draft text with chrono-node to get a resolved Date.
-   * Returns null if the text can't be parsed as a date.
+   * 对 date 类型 Label：用 chrono-node 解析草稿文本，得到解析后的 Date。
+   * 无法解析时返回 null。
    */
   const parsedDate = React.useMemo(() => {
     if (label.valueType !== 'date' || !draft.trim()) return null
     return parseDate(draft.trim())
   }, [label.valueType, draft])
 
-  // The date to highlight in the calendar: prefer the live-parsed draft,
-  // fall back to the committed value prop (YYYY-MM-DD format).
+  // 日历中高亮显示的日期：优先用实时解析出的 draft，
+  // 回退到已提交 value（YYYY-MM-DD 格式）。
   const calendarDate = React.useMemo(() => {
     if (parsedDate) return parsedDate
     if (label.valueType === 'date' && value) {
@@ -139,20 +145,20 @@ export function LabelValuePopover({
     return undefined
   }, [parsedDate, label.valueType, value])
 
-  /** Handle keyboard in the date input */
+  /** date 输入框的键盘处理 */
   const handleDateKeyDown = React.useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
       if (parsedDate) {
-        // Commit the resolved date and close
+        // 提交解析后的日期并关闭
         onValueChange?.(format(parsedDate, 'yyyy-MM-dd'))
         onOpenChange(false)
       } else if (!draft.trim()) {
-        // Empty input clears the value
+        // 空输入则清空值
         onValueChange?.(undefined)
         onOpenChange(false)
       }
-      // If unparseable non-empty text, keep popover open
+      // 无法解析的非空文本保持弹窗打开
     } else if (e.key === 'Escape') {
       e.preventDefault()
       setDraft(value ?? '')
@@ -173,15 +179,14 @@ export function LabelValuePopover({
         className="w-56 p-0"
         onOpenAutoFocus={handleOpenAutoFocus}
         onCloseAutoFocus={handleCloseAutoFocus}
-        // Stop pointer events from bubbling through React's synthetic event system.
-        // Without this, events inside the portaled popover bubble up the React tree
-        // to the session button's onMouseDown handler, causing unintended session selection.
+        // 阻止 pointer 事件冒泡到 React 合成事件树，
+        // 否则弹窗内的事件会冒到 Session 按钮的 onMouseDown，导致误选 Session。
         onPointerDown={(e) => e.stopPropagation()}
       >
-        {/* Date value editor — natural language input with nested calendar popover */}
+        {/* date 类型值编辑器：自然语言输入 + 嵌套日历弹窗 */}
         {label.valueType === 'date' && (
           <div className="px-1.5 py-1.5 border-b border-border/50">
-            {/* Text input with calendar popover trigger on the right */}
+            {/* 左侧文本输入，右侧日历图标触发嵌套 popover */}
             <div className="flex items-center gap-1">
                 <input
                   ref={inputRef}
@@ -191,7 +196,7 @@ export function LabelValuePopover({
                     setDraft(e.target.value)
                   }}
                   onKeyDown={(e) => {
-                    // ArrowDown opens the calendar (matches shadcn pattern)
+                    // 按 ↓ 打开日历（与 shadcn 一致）
                     if (e.key === 'ArrowDown') {
                       e.preventDefault()
                       setCalendarOpen(true)
@@ -200,7 +205,7 @@ export function LabelValuePopover({
                     }
                   }}
                   onBlur={() => {
-                    // Commit parsed date on blur, or clear if empty
+                    // 失焦时提交解析出的日期，空则清空
                     if (parsedDate) {
                       onValueChange?.(format(parsedDate, 'yyyy-MM-dd'))
                     } else if (!draft.trim()) {
@@ -215,7 +220,7 @@ export function LabelValuePopover({
                     'outline-none'
                   )}
                 />
-                {/* Calendar icon opens a nested popover with the date picker */}
+                {/* 日历图标打开嵌套的日期选择 popover */}
                 <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
                   <PopoverTrigger asChild>
                     <button
@@ -244,7 +249,7 @@ export function LabelValuePopover({
                       defaultMonth={calendarDate}
                       onSelect={(date) => {
                         if (date) {
-                          // Commit directly and update draft for display
+                          // 直接提交并更新草稿显示
                           onValueChange?.(format(date, 'yyyy-MM-dd'))
                           setDraft(format(date, 'MMMM d, yyyy'))
                           setCalendarOpen(false)
@@ -254,7 +259,7 @@ export function LabelValuePopover({
                   </PopoverContent>
                 </Popover>
             </div>
-            {/* Show the resolved date below the input when parsing succeeds */}
+            {/* 解析成功时在输入框下方显示解析结果 */}
             {parsedDate && (
               <div className="px-2 text-[11px] text-foreground/50">
                 {format(parsedDate, 'EEE, MMM d, yyyy')}
@@ -263,7 +268,7 @@ export function LabelValuePopover({
           </div>
         )}
 
-        {/* Non-date value editor (number/string) */}
+        {/* 非 date 类型的值编辑器（number/string/link） */}
         {label.valueType && label.valueType !== 'date' && (
           <div className="px-1.5 py-1.5 border-b border-border/50">
             <input
@@ -285,7 +290,7 @@ export function LabelValuePopover({
           </div>
         )}
 
-        {/* Actions — "Open link" (link labels only) shown above Remove */}
+        {/* 操作区：link 类型显示“打开链接”，下面是“移除” */}
         <div className="p-1">
           {label.valueType === 'link' && value && (
             <button

@@ -1,3 +1,8 @@
+/**
+ * CompactPermissionModeSelector - 紧凑/移动端的权限模式选择抽屉。
+ *
+ * 与桌面端 PermissionModeDropdown 样式保持一致，但用 Drawer 展示可选项，更适合触摸和窄视口。
+ */
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check } from 'lucide-react'
@@ -17,7 +22,7 @@ import {
 } from '@craft-agent/shared/agent/modes'
 
 // ============================================================================
-// Mode Icon (same SVG pattern as ActiveOptionBadges.PermissionModeIcon)
+// 模式图标（与 ActiveOptionBadges.PermissionModeIcon 使用同样的 SVG 模式）
 // ============================================================================
 
 function ModeIcon({ mode, className }: { mode: PermissionMode; className?: string }) {
@@ -38,7 +43,7 @@ function ModeIcon({ mode, className }: { mode: PermissionMode; className?: strin
 }
 
 // ============================================================================
-// Trigger chip styling per mode (matches desktop PermissionModeDropdown)
+// 每种模式的触发 chip 样式（与桌面端 PermissionModeDropdown 一致）
 // ============================================================================
 
 const MODE_STYLES: Record<PermissionMode, { className: string; shadowVar: string }> = {
@@ -65,7 +70,7 @@ const MODE_LABEL_KEYS: Record<PermissionMode, { name: string; short: string; des
 }
 
 // ============================================================================
-// Component
+// 组件
 // ============================================================================
 
 interface CompactPermissionModeSelectorProps {
@@ -73,13 +78,14 @@ interface CompactPermissionModeSelectorProps {
   onPermissionModeChange?: (mode: PermissionMode) => void
 }
 
+/** CompactPermissionModeSelector - 紧凑权限模式选择器 */
 export function CompactPermissionModeSelector({
   permissionMode,
   onPermissionModeChange,
 }: CompactPermissionModeSelectorProps) {
   const { t } = useTranslation()
   const [open, setOpen] = React.useState(false)
-  // Optimistic local state — updates immediately, syncs with prop
+  // 乐观本地状态：UI 立即更新，等 prop 同步
   const [optimisticMode, setOptimisticMode] = React.useState(permissionMode)
 
   React.useEffect(() => {

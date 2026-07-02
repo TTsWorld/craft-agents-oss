@@ -1,8 +1,9 @@
 /**
- * SkillAvatar - Thin wrapper around EntityIcon for skills.
+ * SkillAvatar — Skill（技能）头像组件
  *
- * Sets fallbackIcon={Zap} and delegates all rendering to EntityIcon.
- * Use `fluid` prop for fill-parent sizing (e.g., Info_Page.Hero).
+ * Skill 是带有 SKILL.md 说明文件、可被 Agent 调用的能力单元。
+ * 这个组件是 EntityIcon 的薄封装：设置默认 fallbackIcon 为 Zap，
+ * 并委托所有渲染给 EntityIcon。
  */
 
 import { Zap } from 'lucide-react'
@@ -12,18 +13,19 @@ import type { IconSize } from '@craft-agent/shared/icons'
 import type { LoadedSkill } from '../../../shared/types'
 
 interface SkillAvatarProps {
-  /** LoadedSkill object */
+  /** 已加载的 Skill 对象 */
   skill: LoadedSkill
-  /** Size variant */
+  /** 尺寸变体 */
   size?: IconSize
-  /** Fill parent container (h-full w-full). Overrides size. */
+  /** 是否填满父容器（h-full w-full），会覆盖 size */
   fluid?: boolean
-  /** Additional className overrides */
+  /** 额外 className */
   className?: string
-  /** Workspace ID for loading local icons */
+  /** 加载本地图标需要的 workspace ID */
   workspaceId?: string
 }
 
+/** Skill 头像 */
 export function SkillAvatar({ skill, size = 'md', fluid, className, workspaceId }: SkillAvatarProps) {
   const icon = useEntityIcon({
     workspaceId: workspaceId ?? '',

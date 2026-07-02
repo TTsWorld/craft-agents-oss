@@ -1,47 +1,43 @@
 /**
- * Model Fetcher — Centralized Model Discovery
+ * Model Fetcher — 集中式模型发现接口。
  *
- * Type-safe plugin interface for fetching available models from providers.
- * Each provider (Anthropic, Pi) implements ModelFetcher.
- * The ModelFetcherMap enforces at compile time that every fetchable provider
- * has a registered fetcher — adding a new LlmProviderType without a fetcher
- * causes a type error.
+ * 这是一个类型安全的插件接口：每个 LLM 提供商（Anthropic、Pi）都实现 ModelFetcher。
+ * ModelFetcherMap 在编译期保证每个可自动获取模型的 provider 都有对应的 fetcher；
+ * 如果新增了一种 LlmProviderType 但没注册 fetcher，TS 会直接报错。
  *
- * Compat providers (pi_compat) are excluded —
- * they point to arbitrary endpoints where users configure models manually.
+ * pi_compat（兼容/自定义端点）被排除在外，因为它们的端点是任意的，
+ * 需要用户手动配置模型列表。
  */
 
 import type { ModelDefinition } from './models';
 import type { LlmProviderType, LlmConnection } from './llm-connections';
 
 // ============================================================
-// Types
+// 类型定义
 // ============================================================
 
 /**
- * Providers that support automatic model fetching.
- * Compat providers are excluded — they point to arbitrary endpoints
- * (Ollama, OpenRouter, etc.) where users configure models manually.
+ * 支持自动拉取模型列表的提供商。
+ * pi_compat 被排除：它们指向 Ollama、OpenRouter 等任意端点，由用户手动配模型。
  *
- * Adding a new LlmProviderType without updating this type
- * will cause a compile error in the fetcher registry.
+ * 如果新增 LlmProviderType 但没有同步更新这里，会在 fetcher 注册处产生编译错误，
+ * 强制开发者补全实现。
  */
 export type FetchableProvider = Exclude<LlmProviderType,
   | 'pi_compat'
 >;
 
-/**
- * Result of a model fetch operation.
- */
+/** 一次模型拉取操作的结果 */
 export interface ModelFetchResult {
+  /** 拉取到的模型列表 */
   models: ModelDefinition[];
-  /** Which model the provider considers the default (optional) */
+  /** 提供商推荐的默认模型（可选） */
   serverDefault?: string;
 }
 
 /**
- * Credentials needed to fetch models from a provider.
- * The ModelRefreshService resolves these from the credential manager.
+ * 拉取模型时需要的凭据。
+ * ModelRefreshService 会从 credential manager 中解析出这些值。
  */
 export interface ModelFetcherCredentials {
   apiKey?: string;
@@ -51,15 +47,15 @@ export interface ModelFetcherCredentials {
 }
 
 /**
- * Plugin interface for provider-specific model discovery.
+ * 提供商专属的模型发现插件接口。
  *
- * Implementations live in apps/electron/src/main/model-fetchers/.
- * Each provider implements fetchModels() with its own SDK/API call.
+ * 具体实现位于 apps/electron/src/main/model-fetchers/。
+ * 每个 provider 用自己的 SDK/API 实现 fetchModels()，相当于 Go 里的接口实现。
  */
 export interface ModelFetcher {
   /**
-   * Fetch models from the provider API/SDK.
-   * Throws on failure — the ModelRefreshService handles fallback.
+   * 从提供商 API/SDK 拉取模型列表。
+   * 失败时抛异常，由 ModelRefreshService 负责兜底处理。
    */
   fetchModels(
     connection: LlmConnection,
@@ -67,14 +63,14 @@ export interface ModelFetcher {
   ): Promise<ModelFetchResult>;
 
   /**
-   * Refresh interval in milliseconds.
-   * 0 = fetch on auth/startup only, no periodic refresh.
+   * 自动刷新间隔（毫秒）。
+   * 0 表示只在授权/启动时拉取一次，不周期性刷新。
    */
   readonly refreshIntervalMs: number;
 }
 
 /**
- * Type-safe fetcher map. Every FetchableProvider MUST have a fetcher.
- * Adding a new LlmProviderType without registering a fetcher → compile error.
+ * 类型安全的 fetcher 映射表：每个 FetchableProvider 都必须有对应的 ModelFetcher。
+ * 新增 provider 没注册 fetcher 时，这里会产生编译错误。
  */
 export type ModelFetcherMap = Record<FetchableProvider, ModelFetcher>;

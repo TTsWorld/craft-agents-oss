@@ -1,7 +1,7 @@
 /**
- * RPC channel names — organized by domain namespace.
- * Wire-format strings (values) are the stable API contract.
- * Key paths are internal and may be reorganized freely.
+ * RPC 频道名称常量，按业务领域命名空间组织。
+ * 字符串值（value）是稳定的线上 API 契约；
+ * 嵌套键名只是内部组织方式，可随意重构。
  */
 export const RPC_CHANNELS = {
   remote: {
@@ -405,25 +405,25 @@ export const RPC_CHANNELS = {
     CHANGED: 'projects:changed',
   },
   messaging: {
-    // WhatsApp subprocess → Gateway (subprocess invokes on server)
+    // WhatsApp 子进程 → Gateway（子进程调用服务端）
     WA_REGISTER: 'messaging:wa:register',
     WA_INCOMING: 'messaging:wa:incoming',
     WA_BUTTON_PRESS: 'messaging:wa:buttonPress',
     WA_STATUS: 'messaging:wa:status',
     WA_QR: 'messaging:wa:qr',
-    // Gateway → WhatsApp subprocess (server invokes on client)
+    // Gateway → WhatsApp 子进程（服务端调用客户端）
     WA_SEND: 'messaging:wa:send',
     WA_SEND_BUTTONS: 'messaging:wa:sendButtons',
     WA_SEND_TYPING: 'messaging:wa:sendTyping',
     WA_SEND_FILE: 'messaging:wa:sendFile',
     WA_CONNECT: 'messaging:wa:connect',
     WA_DISCONNECT: 'messaging:wa:disconnect',
-    // Gateway → UI clients (broadcast)
+    // Gateway → UI 客户端（广播）
     BINDING_CHANGED: 'messaging:bindingChanged',
     PLATFORM_STATUS: 'messaging:platformStatus',
-    /** Broadcast when the workspace's pending-senders list mutates. */
+    /** workspace 待审批发送者列表变化时广播。 */
     PENDING_CHANGED: 'messaging:pendingChanged',
-    // UI ↔ Server (config/binding CRUD)
+    // UI ↔ Server（配置与绑定 CRUD）
     GET_CONFIG: 'messaging:getConfig',
     UPDATE_CONFIG: 'messaging:updateConfig',
     TEST_TELEGRAM: 'messaging:testTelegram',
@@ -436,16 +436,16 @@ export const RPC_CHANNELS = {
     GENERATE_CODE: 'messaging:generateCode',
     UNBIND: 'messaging:unbind',
     UNBIND_BINDING: 'messaging:unbindBinding',
-    /** Workspace-supergroup pairing (Telegram forum support). UI ↔ Server. */
+    /** Workspace 与 supergroup 配对（Telegram forum 支持）。UI ↔ Server。 */
     GENERATE_SUPERGROUP_CODE: 'messaging:generateSupergroupCode',
     GET_SUPERGROUP: 'messaging:getSupergroup',
     UNBIND_SUPERGROUP: 'messaging:unbindSupergroup',
-    // UI ↔ Server — WhatsApp pairing/connection flow (Baileys subprocess adapter)
+    // UI ↔ Server — WhatsApp 配对/连接流程（Baileys 子进程适配器）
     WA_START_CONNECT: 'messaging:wa:startConnect',
     WA_SUBMIT_PHONE: 'messaging:wa:submitPhone',
-    /** Broadcast to UI clients: QR string, pairing code, status, unavailable, error. */
+    /** 向 UI 客户端广播：QR 字符串、配对码、状态、不可用、错误等。 */
     WA_UI_EVENT: 'messaging:wa:uiEvent',
-    // UI ↔ Server — Access control (per-platform owners + per-binding allow-list)
+    // UI ↔ Server — 访问控制（平台级 owner + binding 白名单）
     GET_PLATFORM_OWNERS: 'messaging:access:getOwners',
     SET_PLATFORM_OWNERS: 'messaging:access:setOwners',
     GET_PLATFORM_ACCESS_MODE: 'messaging:access:getMode',
@@ -457,11 +457,11 @@ export const RPC_CHANNELS = {
   },
 } as const
 
-// IPC_CHANNELS compat alias removed — all consumers now use RPC_CHANNELS
+// IPC_CHANNELS 兼容别名已移除——所有调用方都改用 RPC_CHANNELS。
 
 /**
- * Flatten all channel string values from the nested RPC_CHANNELS object.
- * Used by the exhaustive routing test to ensure every channel is classified.
+ * 把嵌套的 RPC_CHANNELS 对象展平成所有频道字符串值数组。
+ * 穷尽性路由测试用它来确保每个 channel 都已被分类。
  */
 export function getAllChannelValues(): string[] {
   const values: string[] = []

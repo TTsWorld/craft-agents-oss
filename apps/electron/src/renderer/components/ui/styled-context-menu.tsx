@@ -1,3 +1,7 @@
+/**
+ * 样式化的右键菜单组件集合（StyledContextMenu）。
+ * 在基础 context-menu 之上封装统一的视觉风格，与 StyledDropdownMenu 保持一致。
+ */
 import * as React from "react"
 import * as ContextMenuPrimitive from "@radix-ui/react-context-menu"
 import {
@@ -13,23 +17,17 @@ import {
 } from "./context-menu"
 import { cn } from "@/lib/utils"
 
-/**
- * Styled Context Menu Components
- *
- * Pre-styled context menu components matching the StyledDropdownMenu style.
- * These wrap the base context-menu components with consistent styling.
- */
-
-// Re-export unchanged components
+// 原样重新导出无需二次封装的组件
 export { ContextMenu, ContextMenuTrigger }
 
-// Styled content - matches StyledDropdownMenuContent
+// 样式化内容区
 interface StyledContextMenuContentProps
   extends React.ComponentPropsWithoutRef<typeof ContextMenuContent> {
-  /** Minimum width - defaults to min-w-40 */
+  /** 最小宽度（默认 min-w-40）。 */
   minWidth?: string
 }
 
+/** 样式化右键菜单内容容器。 */
 export const StyledContextMenuContent = React.forwardRef<
   React.ComponentRef<typeof ContextMenuContent>,
   StyledContextMenuContentProps
@@ -46,13 +44,14 @@ export const StyledContextMenuContent = React.forwardRef<
 ))
 StyledContextMenuContent.displayName = "StyledContextMenuContent"
 
-// Styled menu item - matches StyledDropdownMenuItem
+// 样式化菜单项
 interface StyledContextMenuItemProps
   extends React.ComponentPropsWithoutRef<typeof ContextMenuItem> {
-  /** Destructive variant - red text */
+  /** destructive 变体使用红色文本。 */
   variant?: "default" | "destructive"
 }
 
+/** 样式化右键菜单项。 */
 export const StyledContextMenuItem = React.forwardRef<
   React.ComponentRef<typeof ContextMenuItem>,
   StyledContextMenuItemProps
@@ -70,7 +69,8 @@ export const StyledContextMenuItem = React.forwardRef<
 ))
 StyledContextMenuItem.displayName = "StyledContextMenuItem"
 
-// Styled separator - matches StyledDropdownMenuSeparator
+// 样式化分隔线
+/** 样式化右键菜单分隔线。 */
 export const StyledContextMenuSeparator = React.forwardRef<
   React.ComponentRef<typeof ContextMenuSeparator>,
   React.ComponentPropsWithoutRef<typeof ContextMenuSeparator>
@@ -83,10 +83,11 @@ export const StyledContextMenuSeparator = React.forwardRef<
 ))
 StyledContextMenuSeparator.displayName = "StyledContextMenuSeparator"
 
-// Re-export Sub for submenus
+// 子菜单根节点直接重命名导出
 export { ContextMenuSub as StyledContextMenuSub }
 
-// Styled sub-menu trigger - matches StyledDropdownMenuSubTrigger
+// 样式化子菜单触发项
+/** 样式化右键子菜单触发项。 */
 export const StyledContextMenuSubTrigger = React.forwardRef<
   React.ComponentRef<typeof ContextMenuSubTrigger>,
   React.ComponentPropsWithoutRef<typeof ContextMenuSubTrigger>
@@ -103,13 +104,14 @@ export const StyledContextMenuSubTrigger = React.forwardRef<
 ))
 StyledContextMenuSubTrigger.displayName = "StyledContextMenuSubTrigger"
 
-// Styled sub-menu content - matches StyledDropdownMenuSubContent
+// 样式化子菜单内容
 interface StyledContextMenuSubContentProps
   extends React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.SubContent> {
-  /** Minimum width - defaults to min-w-36 */
+  /** 最小宽度（默认 min-w-36）。 */
   minWidth?: string
 }
 
+/** 样式化右键子菜单内容。 */
 export const StyledContextMenuSubContent = React.forwardRef<
   React.ComponentRef<typeof ContextMenuPrimitive.SubContent>,
   StyledContextMenuSubContentProps

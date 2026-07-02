@@ -1,7 +1,12 @@
+/**
+ * Sonner Toaster —— 全局 Toast 通知组件
+ *
+ * 基于 sonner 库封装，跟随当前主题（light/dark），并隐藏默认图标以保持设计一致。
+ */
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 import { useTheme } from "@/context/ThemeContext"
 
-// Empty fragment to hide all toast icons
+// 空组件：用于隐藏所有 toast 图标
 const NoIcon = () => <></>
 
 const Toaster = ({ ...props }: ToasterProps) => {

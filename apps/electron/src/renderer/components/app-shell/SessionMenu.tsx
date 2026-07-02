@@ -1,15 +1,12 @@
 /**
- * SessionMenu - Shared menu content for session actions
+ * SessionMenu - 会话操作菜单内容。
  *
- * Used by:
- * - SessionList (dropdown via "..." button, context menu via right-click)
- * - ChatPage (title dropdown menu, desktop only — compact mode uses
- *   `CompactSessionMenu` which renders these same actions in a Drawer)
+ * 用于：
+ * - SessionList（“…” 按钮下拉、右键上下文菜单）
+ * - ChatPage（桌面端标题下拉菜单；紧凑模式使用 CompactSessionMenu）
  *
- * Renders menu items via `useMenuComponents()` so the same content works
- * inside DropdownMenu or ContextMenu primitives. Side-effect handlers and
- * optimistic label state come from `useSessionMenuActions`, shared with
- * the compact-mode drawer to keep behaviour in one place.
+ * 通过 useMenuComponents() 渲染，兼容 DropdownMenu 和 ContextMenu。
+ * 副作用处理与乐观标签状态来自 useSessionMenuActions，和紧凑抽屉共享，保持行为一致。
  */
 
 import * as React from 'react'
@@ -44,28 +41,30 @@ import { getSessionStatus, hasUnreadMeta, hasMessagesMeta } from '@/utils/sessio
 import { MessagingSessionMenuItem } from '@/components/messaging/MessagingSessionMenuItem'
 import { useSessionMenuActions } from '@/hooks/useSessionMenuActions'
 
+/** SessionMenu 项目选项类型 */
 export interface SessionMenuProjectOption {
   id: string
   slug: string
   name: string
 }
 
+/** SessionMenuProps：组件 props 类型定义 */
 export interface SessionMenuProps {
-  /** Session data — display state is derived from this */
+  /** 会话数据，显示状态从这里派生 */
   item: SessionMeta
-  /** Available todo states */
+  /** 可用工作状态列表 */
   sessionStatuses: SessionStatus[]
-  /** All available label configs (tree structure) for the labels submenu */
+  /** 可用标签配置树，用于标签子菜单 */
   labels?: LabelConfig[]
-  /** Callback when labels are toggled (receives full updated labels array) */
+  /** 标签切换回调，收到完整的更新后标签数组 */
   onLabelsChange?: (labels: string[]) => void
-  /** Whether multiple workspaces exist (enables "Send to Workspace" item) */
+  /** 是否存在多个工作区（为 true 时启用“发送到工作区”） */
   hasRemoteWorkspaces?: boolean
-  /** Workspace projects (omit to hide the submenu) */
+  /** 工作区项目列表（省略时隐藏项目子菜单） */
   projects?: SessionMenuProjectOption[]
-  /** Callback for binding/unbinding the session to a project. `null` = unbind. */
+  /** 绑定/解绑会话到项目的回调。`null` 表示解绑。 */
   onSetProjectId?: (projectId: string | null) => void
-  /** Callbacks */
+  /** 回调 */
   onRename: () => void
   onFlag: () => void
   onUnflag: () => void
@@ -79,8 +78,8 @@ export interface SessionMenuProps {
 }
 
 /**
- * SessionMenu - Renders the menu items for session actions
- * This is the content only, not wrapped in a DropdownMenu
+ * SessionMenu - 渲染会话操作菜单项。
+ * 只返回菜单内容，不包裹 DropdownMenu。
  */
 export function SessionMenu({
   item,
@@ -114,12 +113,12 @@ export function SessionMenu({
 
   const actions = useSessionMenuActions({ item, onLabelsChange })
 
-  // Get menu components from context (works with both DropdownMenu and ContextMenu)
+  // 从上下文获取菜单组件（兼容 DropdownMenu 和 ContextMenu）
   const { MenuItem, Separator, Sub, SubTrigger, SubContent } = useMenuComponents()
 
   return (
     <>
-      {/* Share/Shared based on shared state */}
+      {/* 分享/已分享：根据 sharedUrl 状态切换 */}
       {!sharedUrl ? (
         <MenuItem onClick={actions.share}>
           <CloudUpload className="h-3.5 w-3.5" />
@@ -143,7 +142,7 @@ export function SessionMenu({
         </Sub>
       )}
 
-      {/* Send to Workspace — visible when at least one other workspace exists */}
+      {/* 发送到工作区——存在其它工作区时显示 */}
       {hasRemoteWorkspaces && onSendToWorkspace && (
         <MenuItem onClick={onSendToWorkspace}>
           <Send className="h-3.5 w-3.5" />
@@ -151,12 +150,12 @@ export function SessionMenu({
         </MenuItem>
       )}
 
-      {/* Connect to Messaging — pairing code flow */}
+      {/* 连接消息平台——配对码流程 */}
       <MessagingSessionMenuItem sessionId={sessionId} />
 
       <Separator />
 
-      {/* Status submenu - includes all statuses plus Flag/Unflag at the bottom */}
+      {/* 状态子菜单 */}
       <Sub>
         <SubTrigger className="pr-2">
           <span style={{ color: getStateColor(currentSessionStatus, sessionStatuses) ?? 'var(--foreground)' }}>
@@ -179,7 +178,7 @@ export function SessionMenu({
         </SubContent>
       </Sub>
 
-      {/* Labels submenu - hierarchical label tree with nested sub-menus and toggle checkmarks */}
+      {/* 标签子菜单——层级树，带嵌套子菜单和勾选 */}
       {labels.length > 0 && (
         <Sub>
           <SubTrigger className="pr-2">
@@ -202,7 +201,7 @@ export function SessionMenu({
         </Sub>
       )}
 
-      {/* Projects submenu - workspace projects + "No project" to clear binding */}
+      {/* 项目子菜单——工作区项目 + “无项目”用于清除绑定 */}
       {projects.length > 0 && onSetProjectId && (
         <Sub>
           <SubTrigger className="pr-2">
@@ -230,7 +229,7 @@ export function SessionMenu({
         </Sub>
       )}
 
-      {/* Flag/Unflag */}
+      {/* 标记 / 取消标记 */}
       {!isFlagged ? (
         <MenuItem onClick={onFlag}>
           <Flag className="h-3.5 w-3.5 text-info" />
@@ -243,7 +242,7 @@ export function SessionMenu({
         </MenuItem>
       )}
 
-      {/* Archive/Unarchive */}
+      {/* 归档 / 取消归档 */}
       {!isArchived ? (
         <MenuItem onClick={onArchive}>
           <Archive className="h-3.5 w-3.5" />
@@ -256,7 +255,7 @@ export function SessionMenu({
         </MenuItem>
       )}
 
-      {/* Mark as Unread - only show if session has been read */}
+      {/* 标为未读——仅当会话有消息且当前不是未读时显示 */}
       {!_hasUnread && _hasMessages && (
         <MenuItem onClick={onMarkUnread}>
           <MailOpen className="h-3.5 w-3.5" />
@@ -266,13 +265,13 @@ export function SessionMenu({
 
       <Separator />
 
-      {/* Rename */}
+      {/* 重命名 */}
       <MenuItem onClick={onRename}>
         <Pencil className="h-3.5 w-3.5" />
         <span className="flex-1">{t("common.rename")}</span>
       </MenuItem>
 
-      {/* Regenerate Title - AI-generate based on recent messages */}
+      {/* 重新生成标题——基于最近消息 AI 生成 */}
       <MenuItem onClick={actions.refreshTitle}>
         <RefreshCw className="h-3.5 w-3.5" />
         <span className="flex-1">{t("sessionMenu.regenerateTitle")}</span>
@@ -280,25 +279,25 @@ export function SessionMenu({
 
       <Separator />
 
-      {/* Open in New Panel */}
+      {/* 在新面板打开 */}
       <MenuItem onClick={actions.openInNewPanel}>
         <Columns2 className="h-3.5 w-3.5" />
         <span className="flex-1">{t("sessionMenu.openInNewPanel")}</span>
       </MenuItem>
 
-      {/* Open in New Window */}
+      {/* 在新窗口打开 */}
       <MenuItem onClick={onOpenInNewWindow}>
         <AppWindow className="h-3.5 w-3.5" />
         <span className="flex-1">{t("sessionMenu.openInNewWindow")}</span>
       </MenuItem>
 
-      {/* Show in file manager */}
+      {/* 在文件管理器中显示 */}
       <MenuItem onClick={actions.showInFinder}>
         <FolderOpen className="h-3.5 w-3.5" />
         <span className="flex-1">{t("sessionMenu.showInFileManager", { fileManager: getFileManagerName() })}</span>
       </MenuItem>
 
-      {/* Copy Path */}
+      {/* 复制路径 */}
       <MenuItem onClick={actions.copyPath}>
         <Copy className="h-3.5 w-3.5" />
         <span className="flex-1">{t("sessionMenu.copyPath")}</span>
@@ -306,7 +305,7 @@ export function SessionMenu({
 
       <Separator />
 
-      {/* Delete */}
+      {/* 删除 */}
       <MenuItem onClick={onDelete} variant="destructive">
         <Trash2 className="h-3.5 w-3.5" />
         <span className="flex-1">{t("common.delete")}</span>

@@ -1,9 +1,8 @@
 /**
- * Webhook Execution Utilities
+ * Webhook 执行工具
  *
- * Shared webhook HTTP execution logic used by both the production WebhookHandler
- * and the RPC test handler. Centralizes timeout, body consumption, request building,
- * env var expansion, and retry logic so the two code paths can't diverge.
+ * 生产环境 WebhookHandler 和 RPC 测试 handler 共用的 HTTP 执行逻辑。
+ * 集中处理超时、响应体消费、请求构建、环境变量展开和重试，避免两条路径分叉。
  */
 
 import type { WebhookAction, WebhookActionResult } from './types.ts';
@@ -11,8 +10,8 @@ import { expandEnvVars } from './utils.ts';
 import { DEFAULT_WEBHOOK_METHOD, HISTORY_FIELD_MAX_LENGTH } from './constants.ts';
 
 /**
- * Redact a URL for safe logging. Webhook URLs may contain secrets
- * (e.g., Slack webhook paths). Keep scheme + host, truncate long paths.
+ * 对 URL 做脱敏，便于安全日志输出。
+ * Webhook URL 可能包含密钥（如 Slack webhook 路径），只保留 scheme + host，路径太长则截断。
  */
 export function redactUrl(url: string): string {
   try {
@@ -27,7 +26,7 @@ export function redactUrl(url: string): string {
 }
 
 /**
- * Create a webhook history entry for appending to the history JSONL file.
+ * 创建一条 webhook 历史记录，用于追加到历史 JSONL 文件。
  */
 export function createWebhookHistoryEntry(opts: {
   matcherId: string;
@@ -57,7 +56,7 @@ export function createWebhookHistoryEntry(opts: {
 }
 
 /**
- * Create a prompt-action history entry for appending to the history JSONL file.
+ * 创建一条 prompt 动作的历史记录，用于追加到历史 JSONL 文件。
  */
 export function createPromptHistoryEntry(opts: {
   matcherId: string;
@@ -77,9 +76,8 @@ export function createPromptHistoryEntry(opts: {
 }
 
 /**
- * Return a copy of a WebhookAction with all env-expandable string fields resolved.
- * Used before enqueueing for deferred retry so the retry scheduler doesn't need
- * the original event environment.
+ * 返回一个所有可展开字符串字段都已解析的 WebhookAction 副本。
+ * 在入队持久重试前调用，这样重试调度器不需要原始事件环境也能执行。
  */
 export function expandWebhookAction(action: WebhookAction, env: Record<string, string>): WebhookAction {
   const expanded: WebhookAction = {
@@ -118,37 +116,37 @@ export function expandWebhookAction(action: WebhookAction, env: Record<string, s
   return expanded;
 }
 
-/** Default fetch timeout in milliseconds (30 seconds, matching Claude Code's HTTP hook default) */
+/** 默认 fetch 超时（30 秒，与 Claude Code 的 HTTP hook 默认一致） */
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 export interface RetryConfig {
-  /** Max retry attempts (default: 0 = no retry) */
+  /** 最大重试次数（默认 0，表示不重试） */
   maxAttempts: number;
-  /** Initial delay in ms (default: 1000). Doubles each attempt. */
+  /** 初始延迟（毫秒，默认 1000），每次翻倍 */
   initialDelayMs?: number;
-  /** Max delay cap in ms (default: 10000) */
+  /** 延迟上限（毫秒，默认 10000） */
   maxDelayMs?: number;
 }
 
 export interface ExecuteWebhookOptions {
-  /** Timeout in milliseconds (default: 30000) */
+  /** 超时（毫秒，默认 30000） */
   timeoutMs?: number;
-  /** Environment variables for $VAR expansion. If undefined, no expansion is performed (raw mode for tests) */
+  /** 用于 $VAR 展开的环境变量。undefined 表示不做展开（测试用 raw 模式） */
   env?: Record<string, string>;
-  /** Retry config for transient failures. Disabled by default. */
+  /** 瞬态失败重试配置，默认禁用 */
   retry?: RetryConfig;
 }
 
 /**
- * Execute a single webhook HTTP request.
+ * 执行一次 webhook HTTP 请求。
  *
- * Handles: request building, env var expansion, timeout via AbortController,
- * response body consumption (prevents memory leaks), and error wrapping.
- * Includes durationMs in the result for observability.
+ * 处理：请求构建、环境变量展开、AbortController 超时、
+ * 响应体消费（防止内存泄漏）、错误包装。
+ * 结果包含 durationMs 便于观测。
  *
- * @param action - The webhook action definition from automations config
- * @param options - Execution options (timeout, env vars for expansion)
- * @returns WebhookActionResult with status, success flag, timing, and any error
+ * @param action - automations 配置中的 webhook 动作定义
+ * @param options - 执行选项（超时、展开用的环境变量）
+ * @returns 包含状态、成功标志、耗时和错误信息的 WebhookActionResult
  */
 export async function executeWebhookRequest(
   action: WebhookAction,
@@ -160,7 +158,7 @@ export async function executeWebhookRequest(
   const method = action.method ?? DEFAULT_WEBHOOK_METHOD;
   const url = env ? expandEnvVars(action.url, env) : action.url;
 
-  // Validate URL scheme after expansion
+  // 展开后校验 URL scheme
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
@@ -183,10 +181,10 @@ export async function executeWebhookRequest(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    // Build headers
+    // 构建请求头
     const headers: Record<string, string> = {};
 
-    // Apply auth shorthand (before custom headers, so headers can override)
+    // 先应用 auth 简写，再应用自定义 headers，这样 headers 可以覆盖 auth
     if (action.auth) {
       if (action.auth.type === 'basic') {
         const user = env ? expandEnvVars(action.auth.username, env) : action.auth.username;
@@ -204,7 +202,7 @@ export async function executeWebhookRequest(
       }
     }
 
-    // Build body
+    // 构建请求体
     let requestBody: string | undefined;
     if (method !== 'GET' && action.body !== undefined) {
       const bodyFormat = action.bodyFormat ?? 'json';
@@ -235,7 +233,7 @@ export async function executeWebhookRequest(
           requestBody = env ? expandEnvVars(raw, env) : raw;
         }
       } else {
-        // Raw body
+        // raw 格式
         const raw = String(action.body);
         requestBody = env ? expandEnvVars(raw, env) : raw;
       }
@@ -250,8 +248,8 @@ export async function executeWebhookRequest(
 
     const success = response.status >= 200 && response.status < 300;
 
-    // Consume response body to release the TCP connection and prevent memory leaks.
-    // Optionally capture it when requested (truncated to 4KB).
+    // 消费响应体以释放 TCP 连接，防止内存泄漏。
+    // 需要时截取响应体（最多 4KB）。
     const MAX_RESPONSE_SIZE = 4096;
     let responseBody: string | undefined;
     try {
@@ -262,7 +260,7 @@ export async function executeWebhookRequest(
           : text;
       }
     } catch {
-      // Body consumption failed — not fatal
+      // 响应体消费失败不是致命错误
     }
 
     return {
@@ -294,29 +292,29 @@ export async function executeWebhookRequest(
 }
 
 /**
- * Determine if a webhook result represents a transient failure worth retrying.
- * - 5xx server errors: likely transient
- * - Timeout / connection errors (statusCode 0): likely transient
- * - 4xx client errors: not retryable (bad request, auth issues, etc.)
- * - 2xx success: obviously not
+ * 判断 webhook 结果是否属于值得重试的瞬态失败。
+ * - 5xx 服务端错误：通常可重试
+ * - 超时 / 连接错误（statusCode 0）：通常可重试
+ * - 4xx 客户端错误：不重试（请求本身有问题）
+ * - 2xx 成功：当然不重试
  */
 export function isTransientFailure(result: WebhookActionResult): boolean {
   if (result.success) return false;
-  // 4xx = client error, not retryable
+  // 4xx = 客户端错误，不可重试
   if (result.statusCode >= 400 && result.statusCode < 500) return false;
-  // 5xx or 0 (timeout/connection error) = retryable
+  // 5xx 或 0（超时/连接错误）= 可重试
   return true;
 }
 
 /**
- * Execute a webhook request with optional retry for transient failures.
+ * 执行 webhook 请求，支持对瞬态失败做可选重试。
  *
- * Wraps executeWebhookRequest with exponential backoff + jitter.
- * If retry is not configured (or maxAttempts=0), behaves identically to executeWebhookRequest.
+ * 在 executeWebhookRequest 基础上包装指数退避 + 抖动。
+ * 如果未配置重试（或 maxAttempts=0），行为与 executeWebhookRequest 完全一致。
  *
- * @param action - The webhook action definition
- * @param options - Execution options including retry config
- * @returns WebhookActionResult with attempts count and total duration
+ * @param action - webhook 动作定义
+ * @param options - 包含重试配置的执行选项
+ * @returns 带 attempts 计数和总耗时的 WebhookActionResult
  */
 export async function executeWithRetry(
   action: WebhookAction,
@@ -324,7 +322,7 @@ export async function executeWithRetry(
 ): Promise<WebhookActionResult> {
   const maxAttempts = options?.retry?.maxAttempts ?? 0;
 
-  // No retry configured — single attempt
+  // 未配置重试 - 单次尝试
   if (maxAttempts <= 0) {
     const result = await executeWebhookRequest(action, options);
     return { ...result, attempts: 1 };
@@ -339,7 +337,7 @@ export async function executeWithRetry(
   for (let attempt = 0; attempt <= maxAttempts; attempt++) {
     lastResult = await executeWebhookRequest(action, options);
 
-    // Success or non-transient failure — return immediately
+    // 成功或非瞬态失败 - 立即返回
     if (!isTransientFailure(lastResult)) {
       return {
         ...lastResult,
@@ -348,10 +346,10 @@ export async function executeWithRetry(
       };
     }
 
-    // Last attempt — don't delay, just return
+    // 最后一次尝试 - 不再延迟，直接返回
     if (attempt === maxAttempts) break;
 
-    // Exponential backoff with jitter (±10%)
+    // 指数退避 + 抖动（±10%）
     const delay = Math.min(initialDelay * Math.pow(2, attempt), maxDelay);
     const jitter = delay * 0.1 * (Math.random() * 2 - 1); // ±10%
     await new Promise(r => setTimeout(r, delay + jitter));

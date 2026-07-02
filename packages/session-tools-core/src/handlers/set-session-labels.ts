@@ -2,11 +2,16 @@ import type { SessionToolContext } from '../context.ts';
 import type { ToolResult } from '../types.ts';
 import { successResponse, errorResponse } from '../response.ts';
 
+// set_session_labels 参数：不传 sessionId 表示操作当前会话
 export interface SetSessionLabelsArgs {
   sessionId?: string;
   labels: string[];
 }
 
+/**
+ * 处理 set_session_labels tool 调用。
+ * 给会话打标签；如果上下文支持 resolveLabels，会先把显示名解析为内部 ID，并拒绝未知标签。
+ */
 export async function handleSetSessionLabels(
   ctx: SessionToolContext,
   args: SetSessionLabelsArgs
@@ -18,7 +23,7 @@ export async function handleSetSessionLabels(
   try {
     let labels = args.labels;
 
-    // Resolve display names → IDs, reject unknown labels
+    // 把显示名解析为内部 ID；遇到未知标签直接报错
     if (ctx.resolveLabels) {
       const { resolved, unknown, available, reasons } = ctx.resolveLabels(labels);
       if (unknown.length > 0) {

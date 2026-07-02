@@ -1,23 +1,23 @@
 /**
- * Send Developer Feedback Handler
+ * Send Developer Feedback Handler（发送开发反馈处理器）
  *
- * Persists freeform markdown feedback from the agent to the development team.
- * Uses an injected submitFeedback callback to avoid depending on fs paths directly.
+ * 把 Agent 写的任意 Markdown 反馈持久化给开发团队。
+ * 通过注入的 submitFeedback 回调实现，避免直接依赖文件路径。
  */
 
 import type { SessionToolContext } from '../context.ts';
 import type { ToolResult, DeveloperFeedback } from '../types.ts';
 import { successResponse, errorResponse } from '../response.ts';
 
+// send_developer_feedback 参数：反馈内容
 export interface SendDeveloperFeedbackArgs {
   message: string;
 }
 
 /**
- * Handle the send_developer_feedback tool call.
+ * 处理 send_developer_feedback tool 调用。
  *
- * Validates the message, generates a unique ID, and delegates to the
- * context-provided submitFeedback callback for persistence.
+ * 校验消息非空后生成唯一 ID，再调用上下文里的 submitFeedback 回调完成持久化。
  */
 export async function handleSendDeveloperFeedback(
   ctx: SessionToolContext,

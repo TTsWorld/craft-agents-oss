@@ -1,3 +1,18 @@
+/**
+ * 文件：Claude SDK 启动选项
+ *
+ * 角色：负责生成传给 Claude Agent SDK 的默认 Options，主要包括子进程环境变量、
+ * Claude Code 可执行文件路径，以及修复 ~/.claude.json 配置文件的防御性逻辑。
+ *
+ * 重点：
+ * - ensureClaudeConfig：在 SDK 子进程启动前清理/修复 ~/.claude.json，处理 BOM、
+ *   空文件、损坏文件、.backup 等已知问题，防止 SDK stdout 被非 JSON 文本污染。
+ * - buildClaudeSubprocessEnv：合并 process.env、代理环境变量与 per-session 覆盖，
+ *   保证并发 session 不会因为共用 process.env 互相覆盖关键配置。
+ * - getDefaultOptions：优先使用自定义可执行路径（Electron 打包场景），否则回退到
+ *   CLI 安装目录或让 SDK 自动解析。
+ */
+
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { join } from "path";
 import { homedir } from "os";

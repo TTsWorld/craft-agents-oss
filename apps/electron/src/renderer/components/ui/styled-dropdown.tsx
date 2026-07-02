@@ -1,7 +1,7 @@
 /**
- * Styled Dropdown Components
+ * StyledDropdown —— 统一样式的下拉菜单组件集合
  *
- * Re-exports from @craft-agent/ui for shared styling across packages.
+ * 从 @craft-agent/ui 重新导出，跨包共享经过项目定制的下拉菜单原语。
  */
 
 export {

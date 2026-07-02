@@ -1,3 +1,9 @@
+/**
+ * markdown 注册项
+ *
+ * 这个文件演示项目里的 Markdown 渲染组件：普通 Markdown、代码块、内联代码、
+ * 数据表格、电子表格、图片卡片堆、Mermaid 图等。
+ */
 import * as React from 'react'
 import type { ComponentEntry } from './types'
 import { Markdown, CollapsibleMarkdownProvider, CodeBlock, InlineCode, MarkdownDatatableBlock, MarkdownSpreadsheetBlock, MarkdownImageBlock, ImageCardStack, PlatformProvider } from '@craft-agent/ui'
@@ -169,7 +175,7 @@ graph LR
 \`\`\`
 `
 
-// Wrapper for collapsible markdown
+// 为 Markdown 组件包裹 CollapsibleMarkdownProvider，使其支持可折叠标题。
 function CollapsibleWrapper({ children }: { children: React.ReactNode }) {
   return <CollapsibleMarkdownProvider>{children}</CollapsibleMarkdownProvider>
 }
@@ -182,6 +188,7 @@ const MOCK_IMAGE_DATA: Record<string, string> = {
   '/mock/images/gallery-5.png': 'https://picsum.photos/id/1067/1200/900',
 }
 
+// 为 MarkdownImageBlock 提供模拟的图片读取能力：把 mock 路径映射到远程示例图片。
 function MarkdownImageBlockWrapper({ children }: { children: React.ReactNode }) {
   return (
     <PlatformProvider
@@ -201,6 +208,7 @@ function MarkdownImageBlockWrapper({ children }: { children: React.ReactNode }) 
   )
 }
 
+// 图片卡片堆的 playground 包装：支持解析 JSON 字符串形式的 items。
 function ImageCardStackPlayground({
   items,
   maxRotate,
@@ -248,6 +256,7 @@ function ImageCardStackPlayground({
   )
 }
 
+/** markdown 组件注册列表。 */
 export const markdownComponents: ComponentEntry[] = [
   {
     id: 'markdown',

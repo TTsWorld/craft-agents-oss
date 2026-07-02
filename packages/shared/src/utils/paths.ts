@@ -1,8 +1,8 @@
 /**
- * Path Portability Utilities
+ * 路径可移植性工具
  *
- * Functions for making filesystem paths portable across machines.
- * Supports ~ and ${HOME} path variables for cross-machine compatibility.
+ * 让文件系统路径在不同机器间保持可移植。
+ * 支持 ~ 和 ${HOME} 路径变量，便于跨机器兼容。
  */
 
 import { homedir } from 'os';
@@ -10,17 +10,17 @@ import { resolve, join, normalize, isAbsolute } from 'path';
 import { existsSync } from 'fs';
 
 /**
- * Expand path variables (~, ${HOME}, $HOME) to absolute paths.
+ * 展开路径变量（~、${HOME}、$HOME）为绝对路径。
  *
- * @param inputPath - Path that may contain variables
- * @param basePath - Base path for relative path resolution (defaults to cwd)
- * @returns Absolute path with all variables expanded
+ * @param inputPath - 可能包含变量的路径
+ * @param basePath - 相对路径解析的基准路径（默认当前工作目录）
+ * @returns 展开变量后的绝对路径
  *
  * @example
  * expandPath('~')                    // '/Users/alice'
  * expandPath('~/Documents')          // '/Users/alice/Documents'
  * expandPath('${HOME}/projects')     // '/Users/alice/projects'
- * expandPath('/absolute/path')       // '/absolute/path' (unchanged)
+ * expandPath('/absolute/path')       // '/absolute/path' (不变)
  */
 export function expandPath(inputPath: string, basePath?: string): string {
   if (!inputPath) return inputPath;
@@ -28,21 +28,21 @@ export function expandPath(inputPath: string, basePath?: string): string {
   let expanded = inputPath;
   const home = homedir();
 
-  // Handle ~ alone
+  // 单独处理 ~
   if (expanded === '~') {
     return home;
   }
 
-  // Handle ~/ prefix
+  // 处理 ~/ 前缀
   if (expanded.startsWith('~/')) {
     expanded = join(home, expanded.slice(2));
   }
 
-  // Handle ${HOME} and $HOME variables
+  // 处理 ${HOME} 和 $HOME 变量
   expanded = expanded.replace(/\$\{HOME\}/g, home);
   expanded = expanded.replace(/\$HOME(?=\/|$)/g, home);
 
-  // If still not absolute, resolve from base path
+  // 仍不是绝对路径时，从 basePath 解析
   if (!isAbsolute(expanded)) {
     const base = basePath || process.cwd();
     expanded = resolve(base, expanded);
@@ -52,16 +52,16 @@ export function expandPath(inputPath: string, basePath?: string): string {
 }
 
 /**
- * Convert absolute path to portable form.
- * If path is within home directory, converts to ~ prefix.
+ * 将绝对路径转换为可移植形式。
+ * 如果路径在用户主目录内，转换为 ~ 前缀。
  *
- * @param absolutePath - Absolute path to convert
- * @returns Portable path (with ~ prefix if in home) or original if outside home
+ * @param absolutePath - 待转换的绝对路径
+ * @returns 可移植路径（主目录内用 ~ 前缀），主目录外保持原样
  *
  * @example
  * toPortablePath('/Users/alice')           // '~'
  * toPortablePath('/Users/alice/Documents') // '~/Documents'
- * toPortablePath('/var/log')               // '/var/log' (unchanged)
+ * toPortablePath('/var/log')               // '/var/log' (不变)
  */
 export function toPortablePath(absolutePath: string): string {
   if (!absolutePath) return absolutePath;
@@ -69,12 +69,12 @@ export function toPortablePath(absolutePath: string): string {
   const home = homedir();
   const normalized = normalize(absolutePath);
 
-  // Exact match with home directory
+  // 与主目录完全匹配
   if (normalized === home) {
     return '~';
   }
 
-  // Path within home directory (handle both Unix and Windows separators)
+  // 路径位于主目录内（同时处理 Unix 与 Windows 分隔符）
   const homePrefix = home + '/';
   const homePrefixWin = home + '\\';
 
@@ -86,12 +86,12 @@ export function toPortablePath(absolutePath: string): string {
     return '~/' + normalized.slice(homePrefixWin.length);
   }
 
-  // Path is outside home directory, keep as absolute
+  // 路径在主目录外，保持绝对路径
   return normalized;
 }
 
 /**
- * Check if a path contains unexpanded variables.
+ * 检查路径是否包含未展开的变量。
  */
 export function hasPathVariables(path: string): boolean {
   if (!path) return false;
@@ -103,7 +103,7 @@ export function hasPathVariables(path: string): boolean {
 }
 
 /**
- * Check if a path is already portable (has ~ prefix or is relative).
+ * 检查路径是否已经是可移植形式（~ 前缀或相对路径）。
  */
 export function isPortablePath(path: string): boolean {
   if (!path) return false;
@@ -111,26 +111,26 @@ export function isPortablePath(path: string): boolean {
 }
 
 // ============================================================
-// Cross-Platform Path Utilities
+// 跨平台路径工具
 // ============================================================
 
 /**
- * Normalize a path to use forward slashes for consistent cross-platform comparison.
- * Use this before comparing paths or using regex patterns on paths.
+ * 将路径统一为正斜杠，用于跨平台比较。
+ * 在用正则或字符串比较路径前调用。
  *
  * @example
  * normalizePath('C:\\Users\\foo\\bar') // 'C:/Users/foo/bar'
- * normalizePath('/Users/foo/bar')      // '/Users/foo/bar' (unchanged)
+ * normalizePath('/Users/foo/bar')      // '/Users/foo/bar' (不变)
  */
 export function normalizePath(path: string): string {
   return path.replace(/\\/g, '/');
 }
 
 /**
- * Normalize a path for cross-platform comparison.
- * - Resolve to absolute
- * - Convert backslashes to forward slashes
- * - Lowercase on Windows
+ * 为跨平台比较归一化路径。
+ * - 解析为绝对路径
+ * - 反斜杠改为正斜杠
+ * - Windows 下转小写
  */
 export function normalizePathForComparison(path: string): string {
   const normalized = normalizePath(resolve(path));
@@ -138,8 +138,8 @@ export function normalizePathForComparison(path: string): string {
 }
 
 /**
- * Check if a file path starts with a directory path (cross-platform).
- * Handles both Windows backslashes and Unix forward slashes.
+ * 检查文件路径是否以某个目录路径开头（跨平台）。
+ * 同时处理 Windows 反斜杠与 Unix 正斜杠。
  *
  * @example
  * pathStartsWith('C:\\Users\\foo\\file.txt', 'C:\\Users\\foo') // true
@@ -153,8 +153,8 @@ export function pathStartsWith(filePath: string, dirPath: string): boolean {
 }
 
 /**
- * Strip a directory prefix from a path (cross-platform).
- * Returns the relative path portion after the prefix.
+ * 去掉路径中的目录前缀（跨平台）。
+ * 返回前缀之后的相对路径部分。
  *
  * @example
  * stripPathPrefix('/home/user/docs/file.txt', '/home/user') // 'docs/file.txt'
@@ -170,47 +170,47 @@ export function stripPathPrefix(filePath: string, prefix: string): string {
 }
 
 // ============================================================
-// Bundled Assets Resolution
+// 打包资源解析
 // ============================================================
 
 /**
- * Module-level base directory for bundled assets.
- * Set once at Electron startup via setBundledAssetsRoot(__dirname).
- * In non-Electron contexts (tests, dev mode), process.cwd() candidates are used.
+ * 打包资源的模块级根目录。
+ * 在 Electron 启动时通过 setBundledAssetsRoot(__dirname) 设置一次。
+ * 非 Electron 上下文（测试、开发模式）使用 process.cwd() 候选路径。
  */
 let _assetsRoot: string | undefined;
 
 /**
- * Register the Electron main process directory as the root for bundled assets.
- * Call this once at app startup: setBundledAssetsRoot(__dirname)
+ * 将 Electron 主进程目录注册为打包资源根目录。
+ * 应用启动时调用一次：setBundledAssetsRoot(__dirname)
  *
- * After this, getBundledAssetsDir('docs') will resolve to `<__dirname>/resources/docs/`
- * in the packaged app, or fall back to dev paths if that doesn't exist.
+ * 设置后，getBundledAssetsDir('docs') 在打包应用中会解析到 `<__dirname>/resources/docs/`，
+ * 不存在时回退到开发路径。
  */
 export function setBundledAssetsRoot(dir: string): void {
   _assetsRoot = dir;
 }
 
 /**
- * Resolve the path to a bundled assets subdirectory.
+ * 解析打包资源子目录的路径。
  *
- * All bundled assets now live in resources/ which electron-builder handles natively.
- * Tries candidates in order:
- * 1. Electron packaged app: <assetsRoot>/resources/<subfolder>
- * 2. Dev: electron app resources folder (when running from apps/electron)
- * 3. Dev: dist output (after build:copy)
+ * 所有打包资源现在放在 resources/ 下，由 electron-builder 原生处理。
+ * 按以下顺序尝试候选路径：
+ * 1. Electron 打包应用：<assetsRoot>/resources/<subfolder>
+ * 2. 开发环境：electron 应用 resources 目录（当 cwd 是 apps/electron 时）
+ * 3. 开发环境：dist 输出目录（build:copy 之后）
  *
- * Returns the first candidate that exists on disk, or undefined if none found.
+ * 返回磁盘上第一个存在的候选路径，都找不到返回 undefined。
  *
- * @param subfolder - Name of the assets subdirectory (e.g. 'docs', 'tool-icons', 'themes', 'permissions')
+ * @param subfolder - 资源子目录名（如 'docs'、'tool-icons'、'themes'、'permissions'）
  */
 export function getBundledAssetsDir(subfolder: string): string | undefined {
   const candidates = [
-    // Electron packaged app (set via setBundledAssetsRoot at startup)
+    // Electron 打包应用（启动时通过 setBundledAssetsRoot 设置）
     ...(_assetsRoot ? [join(_assetsRoot, 'resources', subfolder)] : []),
-    // Dev: electron app resources folder (when cwd is apps/electron)
+    // 开发环境：electron 应用 resources 目录（cwd 为 apps/electron 时）
     join(process.cwd(), 'resources', subfolder),
-    // Dev: dist output (after build:copy)
+    // 开发环境：dist 输出（build:copy 后）
     join(process.cwd(), 'dist', 'resources', subfolder),
   ];
   return candidates.find(p => existsSync(p));

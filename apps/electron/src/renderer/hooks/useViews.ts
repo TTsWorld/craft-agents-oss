@@ -1,13 +1,13 @@
 /**
  * useViews Hook
  *
- * React hook that loads view configs, compiles their Filtrex expressions,
- * and provides an evaluator function to match sessions against views.
+ * 加载视图配置（view config），编译 Filtrex 表达式，
+ * 并返回一个评估函数用于判断会话是否匹配某个视图。
  *
- * Compilation happens once on config load (useMemo). The compiled functions
- * run at native JS speed — no parsing overhead per evaluation.
+ * 编译在配置加载时只执行一次（useMemo）。编译后的函数以原生 JS 速度运行，
+ * 每次评估不再有解析开销。
  *
- * Re-compiles on LABELS_CHANGED events (views changes trigger same broadcast).
+ * LABELS_CHANGED 事件触发时也会重新编译（视图变更复用同一广播）。
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
@@ -16,24 +16,24 @@ import { compileAllViews, evaluateViews, buildViewContext } from '@craft-agent/s
 import type { SessionMeta } from '../atoms/sessions'
 
 export interface UseViewsResult {
-  /** Raw view configs (for display in sidebar, settings, etc.) */
+  /** 原始视图配置（用于侧边栏、设置等展示） */
   viewConfigs: ViewConfig[]
-  /** Loading state */
+  /** 加载状态 */
   isLoading: boolean
   /**
-   * Evaluate a session against all compiled views.
-   * Returns the configs of matching views.
-   * Fast: runs compiled native JS functions, no parsing.
+   * 评估会话匹配哪些已编译视图。
+   * 返回匹配视图的配置数组。
+   * 快速：运行编译后的原生 JS 函数，无需解析。
    */
   evaluateSession: (meta: SessionMeta) => ViewConfig[]
-  /** Force re-fetch from IPC */
+  /** 强制从 IPC 重新获取 */
   refresh: () => Promise<void>
 }
 
 /**
- * Load and compile views for a workspace.
- * Expressions are compiled once on load, then evaluated per-session per-render.
- * Subscribes to live changes via LABELS_CHANGED event (views trigger same broadcast).
+ * 加载并编译某个工作区的视图。
+ * 表达式在加载时一次性编译，之后每次渲染按会话评估。
+ * 通过 LABELS_CHANGED 事件订阅实时变更（视图变更复用同一广播）。
  */
 export function useViews(workspaceId: string | null): UseViewsResult {
   const [configs, setConfigs] = useState<ViewConfig[]>([])
@@ -57,12 +57,12 @@ export function useViews(workspaceId: string | null): UseViewsResult {
     }
   }, [workspaceId])
 
-  // Load on workspace change
+  // workspace 变化时加载
   useEffect(() => {
     refresh()
   }, [refresh])
 
-  // Subscribe to live changes (views changes trigger LABELS_CHANGED broadcast)
+  // 监听实时变化（视图变更触发 LABELS_CHANGED 广播）
   useEffect(() => {
     if (!workspaceId) return
 
@@ -75,20 +75,19 @@ export function useViews(workspaceId: string | null): UseViewsResult {
     return cleanup
   }, [workspaceId, refresh])
 
-  // Compile all expressions once when configs change.
-  // This is the one-time parsing overhead — after this, evaluation is native speed.
+  // 配置变化时一次性编译所有表达式。
+  // 这是一次性解析开销，之后评估都是原生速度。
   const compiled: CompiledView[] = useMemo(() => {
     if (configs.length === 0) return []
     return compileAllViews(configs)
   }, [configs])
 
-  // Memoized evaluator function — stable reference across renders.
-  // Builds evaluation context from SessionMeta, then runs all compiled functions.
+  // 缓存评估函数引用，避免每次渲染都生成新函数。
+  // 先根据 SessionMeta 构建评估上下文，再运行所有编译后的函数。
   const evaluateSession = useCallback((meta: SessionMeta): ViewConfig[] => {
     if (compiled.length === 0) return []
 
-    // Build the evaluation context from session metadata.
-    // This maps SessionMeta fields to the flat context object expected by expressions.
+    // 把 SessionMeta 字段映射为表达式期望的扁平上下文对象
     const context: ViewEvaluationContext = buildViewContext({
       name: meta.name,
       preview: meta.preview,

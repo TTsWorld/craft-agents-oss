@@ -1,8 +1,8 @@
 /**
  * PermissionsDataTable
  *
- * Typed Data Table for displaying source permissions.
- * Features: searchable patterns, sortable columns, max-height scroll, fullscreen view.
+ * 用于展示 source 权限规则的数据表格。
+ * 支持模式搜索、排序、最大高度滚动、全屏查看。
  */
 
 import * as React from 'react'
@@ -20,37 +20,43 @@ import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/useTheme'
 import { toast } from 'sonner'
 
+/** 权限访问类型：允许 / 阻止 */
 export type PermissionAccess = 'allowed' | 'blocked'
+/** 权限规则类型：tool / bash / api / mcp */
 export type PermissionType = 'tool' | 'bash' | 'api' | 'mcp'
 
+/** 权限规则行数据 */
 export interface PermissionRow {
+  /** 访问控制 */
   access: PermissionAccess
+  /** 规则类型 */
   type: PermissionType
+  /** 匹配模式（通常是 glob 或正则） */
   pattern: string
+  /** 规则备注 */
   comment?: string | null
 }
 
 interface PermissionsDataTableProps {
   data: PermissionRow[]
-  /** Hide the type column (for MCP sources that only show pattern/comment) */
+  /** 是否隐藏类型列（某些 MCP source 只展示 pattern 与 comment） */
   hideTypeColumn?: boolean
-  /** Show search input */
+  /** 是否显示搜索框 */
   searchable?: boolean
-  /** Max height with scroll */
+  /** 最大高度，超出后纵向滚动 */
   maxHeight?: number
-  /** Enable fullscreen button (shows Maximize2 icon on hover) */
+  /** 是否启用全屏按钮（hover 时显示 Maximize2 图标） */
   fullscreen?: boolean
-  /** Title for the fullscreen overlay header */
+  /** 全屏弹窗的标题 */
   fullscreenTitle?: string
   className?: string
 }
 
 /**
- * PatternBadge - Clickable pattern badge with truncation and tooltip
- * - Dynamic width with max-width of 240px
- * - CSS truncation via text-ellipsis
- * - Tooltip shows full pattern on hover (only for patterns 30+ chars)
- * - Click to copy pattern to clipboard with toast notification
+ * PatternBadge - 可点击的模式徽章，过长时自动截断并显示 tooltip。
+ * - 最大宽度 240px，使用 CSS 省略号截断；
+ * - 模式长度 >= 30 时显示 tooltip；
+ * - 点击可复制到剪贴板，并弹出 toast 提示。
  */
 function PatternBadge({ pattern }: { pattern: string }) {
   const { t } = useTranslation()
@@ -73,7 +79,7 @@ function PatternBadge({ pattern }: { pattern: string }) {
     </button>
   )
 
-  // Only show tooltip for longer patterns (30+ chars)
+  // 只有较长的模式（>= 30 字符）才显示 tooltip
   if (pattern.length >= 30) {
     return (
       <Tooltip>
@@ -86,7 +92,7 @@ function PatternBadge({ pattern }: { pattern: string }) {
   return badge
 }
 
-// Column definitions with sorting
+// 包含「类型」列的列定义
 function getColumnsWithType(t: TFunction): ColumnDef<PermissionRow>[] {
   return [
     {
@@ -137,6 +143,7 @@ function getColumnsWithType(t: TFunction): ColumnDef<PermissionRow>[] {
   ]
 }
 
+// 隐藏「类型」列后的列定义
 function getColumnsWithoutType(t: TFunction): ColumnDef<PermissionRow>[] {
   return [
     {
@@ -191,7 +198,7 @@ export function PermissionsDataTable({
   const columnsWithoutType = useMemo(() => getColumnsWithoutType(t), [t])
   const columns = hideTypeColumn ? columnsWithoutType : columnsWithType
 
-  // Fullscreen button for toolbar - shown on hover
+  // 全屏按钮（hover 时显示）
   const fullscreenButton = fullscreen ? (
     <button
       onClick={() => setIsFullscreen(true)}
@@ -220,7 +227,7 @@ export function PermissionsDataTable({
         className={cn(fullscreen && 'group', className)}
       />
 
-      {/* Fullscreen overlay - renders the table without scroll constraints */}
+      {/* 全屏弹窗 overlay：移除滚动限制后再次渲染表格 */}
       {fullscreen && (
         <DataTableOverlay
           isOpen={isFullscreen}

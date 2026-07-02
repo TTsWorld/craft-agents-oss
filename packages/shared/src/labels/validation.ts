@@ -1,23 +1,23 @@
 /**
- * Label Validation
+ * 标签校验
  *
- * Session-level validation for label references.
- * Checks that session label IDs exist in the workspace's label tree.
- * Invalid IDs are silently filtered out (handles deleted labels gracefully).
+ * 会话级别的标签引用校验。
+ * 检查会话中的标签 ID 是否存在于 workspace 的标签树中。
+ * 无效 ID 会被静默过滤（优雅处理已删除标签）。
  */
 
 import { isValidLabelId } from './storage.ts';
 import { extractLabelId } from './values.ts';
 
 /**
- * Validate a session's labels array.
- * Filters out any label IDs that no longer exist in the workspace config.
- * Handles valued entries (e.g., "priority::3") by extracting the ID before checking.
- * Returns the cleaned array (invalid IDs silently removed, values preserved).
+ * 校验会话的标签数组。
+ * 过滤掉 workspace 配置中已不存在的标签 ID。
+ * 对带值条目（如 "priority::3"）会先提取 ID 再检查。
+ * 返回清理后的数组（无效 ID 被静默移除，保留原有值）。
  *
- * @param workspaceRootPath - Workspace root path
- * @param labels - Array of label entries to validate (may contain :: values)
- * @returns Array of valid label entries only
+ * @param workspaceRootPath - workspace 根目录路径
+ * @param labels - 待校验的标签条目数组（可能包含 :: 值）
+ * @returns 仅包含有效标签条目的数组
  */
 export function validateSessionLabels(
   workspaceRootPath: string,
@@ -27,7 +27,7 @@ export function validateSessionLabels(
     return [];
   }
 
-  // Extract label ID from entries (handles "priority::3" → "priority")
-  // then validate the ID exists in config. Preserves the full entry string.
+  // 先从条目中提取标签 ID（"priority::3" → "priority"），
+  // 再校验 ID 是否在配置中存在。保留完整原始条目字符串。
   return labels.filter(entry => isValidLabelId(workspaceRootPath, extractLabelId(entry)));
 }

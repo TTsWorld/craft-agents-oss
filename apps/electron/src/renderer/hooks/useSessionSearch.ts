@@ -11,7 +11,7 @@ import type { ViewConfig } from "@craft-agent/shared/views"
 import type { SessionFilter } from "@/contexts/NavigationContext"
 
 // ---------------------------------------------------------------------------
-// Constants
+// 常量
 // ---------------------------------------------------------------------------
 
 const INITIAL_DISPLAY_LIMIT = 50
@@ -19,10 +19,10 @@ const BATCH_SIZE = 50
 const MAX_SEARCH_RESULTS = 100
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型
 // ---------------------------------------------------------------------------
 
-/** Filter mode for tri-state filtering: include shows only matching, exclude hides matching */
+/** 三态过滤模式：include 只显示匹配项，exclude 隐藏匹配项 */
 export type FilterMode = 'include' | 'exclude'
 
 export interface DateGroup {
@@ -36,7 +36,7 @@ export interface ContentSearchResult {
   snippet: string
 }
 
-/** Metadata for a collapsed group — emitted by the data pipeline so the renderer can show header-only groups */
+/** 折叠分组元数据 —— 由数据管道输出，渲染层可据此展示仅含标题的分组 */
 export interface CollapsedGroupMeta {
   key: string
   count: number
@@ -51,39 +51,39 @@ export interface UseSessionSearchOptions {
   evaluateViews?: (meta: SessionMeta) => ViewConfig[]
   statusFilter?: Map<string, FilterMode>
   labelFilterMap?: Map<string, FilterMode>
-  /** Workspace label tree — label filters match descendants through it (shared matchesLabelFilter). */
+  /** Workspace 标签树 —— 标签过滤器通过它匹配后代（共享的 matchesLabelFilter）。 */
   labelConfigs?: LabelConfig[]
-  /** Collapsed group keys — collapsed items are excluded from pagination and flatItems */
+  /** 折叠分组的 key —— 折叠项不参与分页和 flatItems */
   collapsedGroups?: Set<string>
-  /** Grouping mode — needed to compute group keys for collapse-aware pagination */
+  /** 分组模式 —— 折叠感知分页时需要用它计算分组 key */
   groupingMode?: 'date' | 'status' | 'unread' | 'project'
-  /** Ref to the ScrollArea viewport element — used for scroll-based pagination */
+  /** ScrollArea 视口元素 ref —— 用于基于滚动的分页 */
   scrollViewportRef?: React.RefObject<HTMLDivElement>
 }
 
 export interface UseSessionSearchResult {
-  // Search state
+  // 搜索状态
   isSearchMode: boolean
   highlightQuery: string | undefined
   isSearchingContent: boolean
-  /** Whether the search service is unavailable (e.g. ripgrep not found on remote server) */
+  /** 搜索服务是否不可用（例如远程服务器未安装 ripgrep） */
   isSearchUnavailable: boolean
-  /** Raw content search results — needed by SessionItem for `chatMatchCount` */
+  /** 原始内容搜索结果 —— SessionItem 需要它显示 chatMatchCount */
   contentSearchResults: Map<string, ContentSearchResult>
 
-  // Filtered + grouped results
+  // 过滤 + 分组后的结果
   matchingFilterItems: SessionMeta[]
   otherResultItems: SessionMeta[]
   exceededSearchLimit: boolean
 
-  // Render-ready outputs
+  // 可直接渲染的输出
   flatItems: SessionMeta[]
   dateGroups: DateGroup[]
   sessionIndexMap: Map<string, number>
 
-  // Pagination
+  // 分页
   hasMore: boolean
-  /** Metadata for collapsed groups (key + item count) — used to build header-only placeholder groups */
+  /** 折叠分组元数据（key + 数量）—— 用于构建仅标题的占位分组 */
   collapsedGroupsMeta: CollapsedGroupMeta[]
 
   // Refs
@@ -91,7 +91,7 @@ export interface UseSessionSearchResult {
 }
 
 // ---------------------------------------------------------------------------
-// Pure helpers (moved from SessionList)
+// 纯辅助函数（从 SessionList 移入）
 // ---------------------------------------------------------------------------
 
 function formatDateHeader(date: Date): string {
@@ -141,7 +141,7 @@ export function computeCollapsedPagination(
   collapsedGroups?: Set<string>,
   groupingMode?: 'date' | 'status' | 'unread' | 'project',
 ): CollapsedPaginationResult {
-  // Fast path: no collapse state → original slice
+  // 快路径：没有折叠状态，直接 slice
   if (!collapsedGroups || collapsedGroups.size === 0) {
     return {
       paginatedItems: items.slice(0, displayLimit),
@@ -152,8 +152,8 @@ export function computeCollapsedPagination(
 
   const groupKeysInView = new Set(items.map(item => getCollapseGroupKey(item, groupingMode)))
 
-  // Safety guard: don't allow collapse state to hide the entire list when only one
-  // group exists in the current filtered view (there would be no meaningful collapse UX).
+  // 安全兜底：如果当前过滤视图中只有一个分组，不允许全部折叠
+  //（否则列表会完全为空，失去折叠交互意义）。
   if (groupKeysInView.size <= 1) {
     return {
       paginatedItems: items.slice(0, displayLimit),
@@ -306,11 +306,11 @@ export function useSessionSearch({
   const [displayLimit, setDisplayLimit] = useState(INITIAL_DISPLAY_LIMIT)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
-  // Search mode is active when search is open AND query has 2+ characters
+  // 搜索模式：搜索打开且关键词长度 >= 2
   const isSearchMode = searchActive && searchQuery.length >= 2
   const highlightQuery = isSearchMode ? searchQuery : undefined
 
-  // --- Content search (ripgrep IPC with debounce + cancellation) ---
+  // --- 内容搜索（ripgrep IPC，带防抖与取消） ---
 
   useEffect(() => {
     if (!workspaceId || !isSearchMode) {
@@ -354,7 +354,7 @@ export function useSessionSearch({
         })
       } catch (error) {
         if (cancelled) return
-        // Detect search unavailable (ripgrep not found) vs transient errors
+        // 区分搜索服务不可用（未找到 ripgrep）与临时错误
         const message = error instanceof Error ? error.message : String(error)
         if (message.includes('SearchUnavailableError') || message.includes('ripgrep')) {
           console.warn('[useSessionSearch] Search unavailable:', message)
@@ -377,7 +377,7 @@ export function useSessionSearch({
     }
   }, [workspaceId, isSearchMode, searchQuery])
 
-  // --- Focus search input when search activates ---
+  // --- 搜索打开时自动聚焦输入框 ---
 
   useEffect(() => {
     if (searchActive) {
@@ -385,18 +385,18 @@ export function useSessionSearch({
     }
   }, [searchActive])
 
-  // --- Data pipeline ---
+  // --- 数据管道 ---
 
-  // Filter out hidden sessions before any processing
+  // 先过滤掉隐藏会话
   const visibleItems = useMemo(() => items.filter(item => !item.hidden), [items])
 
-  // Sort by most recent activity first
+  // 按最近活动时间降序
   const sortedItems = useMemo(() =>
     [...visibleItems].sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0)),
     [visibleItems]
   )
 
-  // Filter items by search query or current filter
+  // 按搜索关键词或当前过滤器过滤
   const searchFilteredItems = useMemo(() => {
     if (!isSearchMode) {
       return sortedItems.filter(item =>
@@ -420,7 +420,7 @@ export function useSessionSearch({
       })
   }, [sortedItems, isSearchMode, searchQuery, contentSearchResults, currentFilter, evaluateViews, statusFilter, labelFilterMap, labelConfigs])
 
-  // Split search results: matching current filter vs others
+  // 拆分搜索结果：符合当前过滤器的 vs 其他
   const { matchingFilterItems, otherResultItems, exceededSearchLimit } = useMemo(() => {
     const hasActiveFilters =
       (currentFilter && currentFilter.kind !== 'allSessions') ||
@@ -472,15 +472,14 @@ export function useSessionSearch({
     return { matchingFilterItems: matching, otherResultItems: others, exceededSearchLimit: exceeded }
   }, [searchFilteredItems, currentFilter, evaluateViews, isSearchMode, statusFilter, labelFilterMap, labelConfigs, searchQuery])
 
-  // --- Pagination ---
+  // --- 分页 ---
 
   useEffect(() => {
     setDisplayLimit(INITIAL_DISPLAY_LIMIT)
   }, [searchQuery])
 
-  // Collapse-aware pagination: collapsed items are excluded entirely from
-  // paginatedItems (and therefore flatItems / keyboard nav). Their counts are
-  // returned as collapsedGroupsMeta so the renderer can show header-only groups.
+  // 折叠感知分页：折叠项完全排除在 paginatedItems（以及 flatItems / 键盘导航）之外。
+  // 它们的数量通过 collapsedGroupsMeta 返回，渲染层可展示仅含标题的分组。
   const { paginatedItems, hasMore, collapsedGroupsMeta } = useMemo(() => {
     return computeCollapsedPagination(searchFilteredItems, displayLimit, collapsedGroups, groupingMode)
   }, [searchFilteredItems, displayLimit, collapsedGroups, groupingMode])
@@ -489,8 +488,8 @@ export function useSessionSearch({
     setDisplayLimit(prev => Math.min(prev + BATCH_SIZE, searchFilteredItems.length))
   }, [searchFilteredItems.length])
 
-  // Scroll-based pagination: listen for scroll on the actual ScrollArea viewport
-  // (IntersectionObserver with root=null doesn't detect scroll inside Radix ScrollArea)
+  // 基于滚动的分页：监听实际 ScrollArea 视口的滚动
+  //（IntersectionObserver 的 root=null 检测不到 Radix ScrollArea 内部的滚动）
   useEffect(() => {
     if (!hasMore) return
     const viewport = scrollViewportRef?.current
@@ -503,12 +502,12 @@ export function useSessionSearch({
       }
     }
 
-    check() // fill viewport on mount / after group expand
+    check() // mount 时/分组展开后填满视口
     viewport.addEventListener('scroll', check, { passive: true })
     return () => viewport.removeEventListener('scroll', check)
   }, [hasMore, loadMore, displayLimit, scrollViewportRef])
 
-  // --- Derived render data ---
+  // --- 派生渲染数据 ---
 
   const dateGroups = useMemo(() => groupSessionsByDate(paginatedItems), [paginatedItems])
 

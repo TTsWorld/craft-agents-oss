@@ -1,14 +1,15 @@
 /**
- * Sessions Module
+ * Sessions 模块（会话模块）
  *
- * Public exports for workspace-scoped session management.
+ * 导出 workspace 范围内会话管理的公共 API，
+ * 可以理解为 Go 包里对外暴露的公开接口层。
  *
- * Sessions are stored in JSONL format:
- * - Line 1: SessionHeader (metadata for fast list loading)
- * - Lines 2+: StoredMessage (one message per line)
+ * 会话以 JSONL 格式落盘：
+ * - 第 1 行：SessionHeader（元数据，用于快速列表加载）
+ * - 第 2 行起：StoredMessage（每条消息一行）
  */
 
-// Types
+// 类型导出
 export type {
   SessionStatus,
   SessionTokenUsage,
@@ -20,12 +21,12 @@ export type {
   SessionPersistentField,
 } from './types.ts';
 
-// Field constants
+// 持久化字段常量
 export { SESSION_PERSISTENT_FIELDS } from './types.ts';
 
-// Storage functions
+// 存储相关函数
 export {
-  // Directory utilities
+  // 目录工具
   ensureSessionsDir,
   ensureSessionDir,
   getSessionPath,
@@ -33,9 +34,9 @@ export {
   getSessionAttachmentsPath,
   getSessionPlansPath,
   ensureAttachmentsDir,
-  // ID generation
+  // ID 生成
   generateSessionId,
-  // Session CRUD
+  // 会话 CRUD
   createSession,
   getOrCreateSessionById,
   saveSession,
@@ -44,7 +45,7 @@ export {
   deleteSession,
   clearSessionMessages,
   getOrCreateLatestSession,
-  // Metadata updates
+  // 元数据更新
   updateSessionSdkId,
   updateSessionMetadata,
   canUpdateSdkCwd,
@@ -54,23 +55,23 @@ export {
   setSessionLabels,
   setSessionProjectId,
   unbindProjectFromSessions,
-  // Pending plan execution (Accept & Compact flow)
+  // Pending plan execution（Accept & Compact 流程）
   setPendingPlanExecution,
   markCompactionComplete,
   markPendingPlanExecutionDispatched,
   clearPendingPlanExecution,
   getPendingPlanExecution,
-  // Session filtering
+  // 会话筛选
   listFlaggedSessions,
   listCompletedSessions,
   listInboxSessions,
-  // Archive management
+  // 归档管理
   archiveSession,
   unarchiveSession,
   listArchivedSessions,
   listActiveSessions,
   deleteOldArchivedSessions,
-  // Plan storage
+  // Plan 存储
   formatPlanAsMarkdown,
   parsePlanFromMarkdown,
   savePlanToFile,
@@ -79,13 +80,13 @@ export {
   listPlanFiles,
   deletePlanFile,
   getMostRecentPlanFile,
-  // Async persistence queue
+  // 异步持久化队列
   sessionPersistenceQueue,
-  // Header metadata signature (for self-triggered event suppression)
+  // 头部元数据签名（用于抑制自身触发的事件）
   getHeaderMetadataSignature,
 } from './storage.ts';
 
-// JSONL helpers (for direct access if needed)
+// JSONL 辅助函数（需要直接读写 session 文件时使用）
 export {
   readSessionHeader,
   readSessionJsonl,
@@ -93,10 +94,10 @@ export {
   createSessionHeader,
 } from './jsonl.ts';
 
-// Field utilities
+// 字段工具
 export { pickSessionFields } from './utils.ts';
 
-// Slug generator utilities
+// 会话 ID 生成/解析工具
 export {
   generateDatePrefix,
   generateHumanSlug,
@@ -105,16 +106,16 @@ export {
   isHumanReadableId,
 } from './slug-generator.ts';
 
-// Word lists (for customization if needed)
+// 单词表（需要自定义生成规则时可直接使用）
 export { ADJECTIVES, NOUNS } from './word-lists.ts';
 
-// Session ID validation (security)
+// 会话 ID 校验（安全相关）
 export {
   validateSessionId,
   sanitizeSessionId,
 } from './validation.ts';
 
-// Session bundle (export/import/dispatch)
+// 会话打包（导出/导入/分发）
 export type {
   SessionBundle,
   BundleFile,
@@ -126,5 +127,3 @@ export {
   validateBundle,
   MAX_BUNDLE_SIZE_BYTES,
 } from './bundle.ts';
-
-

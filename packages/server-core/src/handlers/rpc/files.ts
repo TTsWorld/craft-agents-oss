@@ -15,6 +15,14 @@ import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { requestClientOpenFileDialog } from '@craft-agent/server-core/transport'
 
+// 本文件属于 Files RPC 模块，负责：文件读取（文本/二进制/DataURL/缩略图）、附件持久化、
+// 原生文件选择对话框、文件系统搜索与目录浏览。
+// Agent 概念：Attachment 是用户附加到 session 的文件，Agent 会把它送到 LLM；
+// 图片附件需要按 Claude API 规范做尺寸/格式校验与压缩。
+// TS 提示：`type` 导入的 FileAttachment、DirectoryListingResult 是编译期类型；
+// 函数返回类型 Promise<T> 相当于 Golang 的 (T, error)，只是 TS 用 throw/reject 表示错误。
+
+// 本 handler 负责注册的文件与文件系统 channel 列表
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.file.READ,
   RPC_CHANNELS.file.READ_DATA_URL,
@@ -29,8 +37,9 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.fs.LIST_DIRECTORY,
 ] as const
 
+// registerFilesHandlers：注册文件与文件系统相关 RPC 路由。
 export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): void {
-  // Read a file (with path validation to prevent traversal attacks)
+  // 读取文件内容为 UTF-8 文本；通过 workspace 允许目录列表做路径校验，防止目录穿越。
   server.handle(RPC_CHANNELS.file.READ, async (ctx, path: string) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
@@ -39,7 +48,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       return content
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      // ENOENT is expected for optional config files (e.g. automations.json)
+      // ENOENT 对可选配置文件是预期情况（如 automations.json）
       if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
         deps.platform.logger.debug('readFile: file not found:', path)
       } else {
@@ -49,8 +58,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     }
   })
 
-  // Read an image file as a data URL for in-app image preview overlays.
-  // Returns data:{mime};base64,{content} — used by ImagePreviewOverlay and markdown image blocks.
+  // 把图片文件读取为 data URL，用于应用内图片预览浮层和 markdown 图片块。
   server.handle(RPC_CHANNELS.file.READ_DATA_URL, async (ctx, path: string) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
@@ -58,8 +66,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       const buffer = await readFile(safePath)
       const ext = safePath.split('.').pop()?.toLowerCase() ?? ''
 
-      // Map previewable image extensions to MIME types.
-      // HEIC/HEIF/TIFF are intentionally excluded — no Chromium codec, opened externally instead.
+      // 映射常见图片扩展名到 MIME 类型；HEIC/HEIF/TIFF 被有意排除（Chromium 无解码器）
       const mimeMap: Record<string, string> = {
         png: 'image/png',
         jpg: 'image/jpeg',
@@ -81,8 +88,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     }
   })
 
-  // Read an image file as a small preview data URL for lightweight thumbnail rendering.
-  // Returns a PNG data URL resized to fit within maxSize×maxSize.
+  // 读取图片并生成小尺寸预览 data URL（默认 64x64，用于轻量缩略图）。
   server.handle(RPC_CHANNELS.file.READ_PREVIEW_DATA_URL, async (ctx, path: string, maxSize = 64) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
@@ -101,14 +107,14 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     }
   })
 
-  // Read a file as raw binary (Uint8Array) for react-pdf.
-  // The WS transport codec preserves Uint8Array payloads over JSON envelopes.
+  // 以原始二进制（Uint8Array）读取文件，供 react-pdf 等使用。
+  // WS transport codec 会在 JSON 信封中保留 Uint8Array payload。
   server.handle(RPC_CHANNELS.file.READ_BINARY, async (ctx, path: string) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
       const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId))
       const buffer = await readFile(safePath)
-      // Return as Uint8Array (serializes to ArrayBuffer over IPC)
+      // 返回 Uint8Array（IPC 序列化时转为 ArrayBuffer）
       return new Uint8Array(buffer)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
@@ -117,12 +123,11 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     }
   })
 
-  // Open native file dialog for selecting files to attach (routed to client)
+  // 打开原生文件选择对话框（转发给客户端），返回选中的文件路径列表。
   server.handle(RPC_CHANNELS.file.OPEN_DIALOG, async (ctx) => {
     const result = await requestClientOpenFileDialog(server, ctx.clientId, {
       properties: ['openFile', 'multiSelections'],
       filters: [
-        // Allow all files by default - the agent can figure out how to handle them
         { name: 'All Files', extensions: ['*'] },
         { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'] },
         { name: 'Documents', extensions: ['pdf', 'docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt', 'txt', 'md', 'rtf'] },
@@ -132,17 +137,14 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     return result.canceled ? [] : result.filePaths
   })
 
-  // Read file and return as FileAttachment with Quick Look thumbnail
+  // 读取文件并返回带缩略图的 FileAttachment；图片会尝试生成缩略图，PDF/Office 等回退到图标。
   server.handle(RPC_CHANNELS.file.READ_ATTACHMENT, async (ctx, path: string) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
       const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId))
-      // Use shared utility that handles file type detection, encoding, etc.
       const attachment = await readFileAttachment(safePath)
       if (!attachment) return null
 
-      // Generate thumbnail for image preview
-      // Only works for image formats the processor supports — PDFs/Office files get icon fallback
       try {
         const thumbBuffer = await deps.platform.imageProcessor.process(safePath, {
           resize: { width: 200, height: 200 },
@@ -150,7 +152,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         })
         ;(attachment as { thumbnailBase64?: string }).thumbnailBase64 = thumbBuffer.toString('base64')
       } catch (thumbError) {
-        // Thumbnail generation failed (non-image file or corrupt) — icon fallback
+        // 缩略图生成失败（非图片或损坏）— 使用图标回退
         deps.platform.logger.info('Thumbnail generation failed (using fallback):', thumbError instanceof Error ? thumbError.message : thumbError)
       }
 
@@ -162,11 +164,10 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     }
   })
 
-  // Read a user-attached file (bypasses workspace-dir validation).
-  // Used only by renderer draft hydration: the path was written to drafts.json by a
-  // previous user-initiated OS-picker / Finder-drag attach, so the path implies consent.
-  // NOT exposed to agent code — no equivalent MCP tool. Kept separate from readFileAttachment
-  // on purpose to preserve the agent-facing read's narrow trust boundary.
+  // 读取用户主动附加的文件（跳过 workspace 目录校验）。
+  // 仅用于 renderer 草稿恢复：路径由之前的用户主动选择/Finder 拖拽写入 drafts.json，
+  // 因此路径本身代表用户授权。不要暴露给 Agent 代码，以维持 agent 侧读取的狭窄信任边界。
+  // 用户附件大小上限：50 MB
   const USER_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
   server.handle(RPC_CHANNELS.file.READ_USER_ATTACHMENT, async (_ctx, path: string) => {
     try {
@@ -186,7 +187,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         })
         ;(attachment as { thumbnailBase64?: string }).thumbnailBase64 = thumbBuffer.toString('base64')
       } catch {
-        // Non-image or corrupt — icon fallback, same as readFileAttachment
+        // 非图片或损坏 — 图标回退
       }
       return attachment
     } catch (error) {
@@ -195,7 +196,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     }
   })
 
-  // Generate thumbnail from base64 data (for drag-drop files where we don't have a path)
+  // 从 base64 数据生成缩略图（用于拖拽文件时没有 path 的场景）。
   server.handle(RPC_CHANNELS.file.GENERATE_THUMBNAIL, async (_ctx, base64: string, _mimeType: string): Promise<string | null> => {
     try {
       const buffer = Buffer.from(base64, 'base64')
@@ -210,19 +211,18 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     }
   })
 
-  // Store an attachment to disk and generate thumbnail/markdown conversion
-  // This is the core of the persistent file attachment system
+  // 把附件持久化到磁盘，并生成缩略图 / Office 转 markdown。
+  // 这是文件附件系统的核心：返回 StoredAttachment 元数据供后续发送给 LLM。
   server.handle(RPC_CHANNELS.file.STORE_ATTACHMENT, async (ctx, sessionId: string, attachment: FileAttachment): Promise<StoredAttachment> => {
-    // Track files we've written for cleanup on error
+    // 错误时用于清理已写入文件的列表
     const filesToCleanup: string[] = []
 
     try {
-      // Reject empty files early
       if (attachment.size === 0) {
         throw new Error('Cannot attach empty file')
       }
 
-      // Get workspace slug from the calling window
+      // 从调用窗口获取 workspace
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
       if (!workspaceId) {
         throw new Error('Cannot determine workspace for attachment storage')
@@ -233,42 +233,39 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       }
       const workspaceRootPath = workspace.rootPath
 
-      // SECURITY: Validate sessionId to prevent path traversal attacks
-      // This must happen before using sessionId in any file path operations
+      // 安全：在把 sessionId 用于路径前先做校验，防止目录穿越
       validateSessionId(sessionId)
 
-      // Create attachments directory if it doesn't exist
+      // 创建附件目录
       const attachmentsDir = getSessionAttachmentsPath(workspaceRootPath, sessionId)
       await mkdir(attachmentsDir, { recursive: true })
 
-      // Generate unique ID for this attachment
+      // 生成唯一附件 ID 与文件名
       const id = randomUUID()
       const safeName = sanitizeFilename(attachment.name)
       const storedFileName = `${id}_${safeName}`
       const storedPath = join(attachmentsDir, storedFileName)
 
-      // Track if image was resized (for return value)
       let wasResized = false
       let finalSize = attachment.size
       let resizedBase64: string | undefined
 
-      // 1. Save the file (with image validation and resizing)
+      // 1. 保存文件（图片会额外校验与压缩）
       if (attachment.base64) {
-        // Images, PDFs, Office files - decode from base64
+        // 图片、PDF、Office 等从 base64 解码
         let decoded: Buffer = Buffer.from(attachment.base64, 'base64')
-        // Validate decoded size matches expected (allow small variance for encoding overhead)
+        // 允许编码开销造成的小幅差异
         if (Math.abs(decoded.length - attachment.size) > 100) {
           throw new Error(`Attachment corrupted: size mismatch (expected ${attachment.size}, got ${decoded.length})`)
         }
 
-        // For images: validate and resize if needed for Claude API compatibility
+        // 图片：按 Claude API 要求校验尺寸与大小，必要时自动缩放
         if (attachment.type === 'image') {
           const imageInspection = await inspectImageBuffer(decoded, deps.platform.imageProcessor)
           const imageSize = imageInspection.status === 'ok'
             ? { width: imageInspection.width, height: imageInspection.height }
             : null
 
-          // Determine if we should resize
           let shouldResize = false
           let targetSize: { width: number; height: number } | undefined
 
@@ -280,14 +277,13 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
           } else if (imageInspection.status === 'invalid_image') {
             throw new Error(imageInspection.error?.message || 'Invalid or unsupported image file')
           } else {
-            // Validate image for Claude API
             const validation = validateImageForClaudeAPI(decoded.length, imageSize!.width, imageSize!.height)
 
             shouldResize = validation.needsResize ?? false
             targetSize = validation.suggestedSize
 
             if (!validation.valid && validation.errorCode === 'dimension_exceeded') {
-              // Image exceeds 8000px limit - calculate resize to fit within limits
+              // 超过 8000px 限制，按比例缩放
               const maxDim = IMAGE_LIMITS.MAX_DIMENSION
               const scale = Math.min(maxDim / imageSize!.width, maxDim / imageSize!.height)
               targetSize = {
@@ -297,7 +293,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
               shouldResize = true
               deps.platform.logger.info(`Image exceeds ${maxDim}px limit (${imageSize!.width}x${imageSize!.height}), will resize to ${targetSize.width}x${targetSize.height}`)
             } else if (!validation.valid && validation.errorCode === 'size_exceeded') {
-              // File >5MB — try resize+compress instead of rejecting
+              // 超过 5MB，尝试压缩
               shouldResize = true
               deps.platform.logger.info(`Image exceeds 5MB (${(decoded.length / 1024 / 1024).toFixed(1)}MB), will attempt resize`)
             } else if (!validation.valid) {
@@ -305,12 +301,10 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
             }
           }
 
-          // If resize is needed (either recommended or required), do it now
           if (shouldResize) {
             const isPhoto = attachment.mimeType === 'image/jpeg'
 
             if (targetSize) {
-              // Dimension-exceeded: resize to specific target dimensions
               deps.platform.logger.info(`Resizing image from ${imageSize!.width}x${imageSize!.height} to ${targetSize.width}x${targetSize.height}`)
               try {
                 decoded = await deps.platform.imageProcessor.process(decoded, {
@@ -321,7 +315,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
                 wasResized = true
                 finalSize = decoded.length
 
-                // Re-validate final size after resize
+                // 再次校验最终大小
                 if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
                   decoded = await deps.platform.imageProcessor.process(decoded, { format: 'jpeg', quality: IMAGE_LIMITS.JPEG_QUALITY_FALLBACK })
                   finalSize = decoded.length
@@ -335,7 +329,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
                 throw new Error(`Image too large (${imageSize!.width}x${imageSize!.height}) and automatic resize failed: ${reason}. Please manually resize it before attaching.`)
               }
             } else {
-              // Size-exceeded or optimal resize — use shared utility for full pipeline
+              // 大小超限或建议最优压缩，走完整 pipeline
               const result = await resizeImageForAPI(decoded, { isPhoto })
               if (!result) {
                 throw new Error(`Image too large (${(decoded.length / 1024 / 1024).toFixed(1)}MB) and could not be compressed enough. Please use a smaller image.`)
@@ -347,8 +341,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
 
             deps.platform.logger.info(`Image resized: ${attachment.size} -> ${finalSize} bytes (${Math.round((1 - finalSize / attachment.size) * 100)}% reduction)`)
 
-            // Store resized base64 to return to renderer
-            // This is used when sending to Claude API instead of original large base64
+            // 保存压缩后的 base64，供 renderer 直接发给 Claude API
             resizedBase64 = decoded.toString('base64')
           }
         }
@@ -356,14 +349,14 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         await writeFile(storedPath, decoded)
         filesToCleanup.push(storedPath)
       } else if (attachment.text) {
-        // Text files - save as UTF-8
+        // 文本文件直接以 UTF-8 保存
         await writeFile(storedPath, attachment.text, 'utf-8')
         filesToCleanup.push(storedPath)
       } else {
         throw new Error('Attachment has no content (neither base64 nor text)')
       }
 
-      // 2. Generate thumbnail (images only — PDFs/Office get icon fallback)
+      // 2. 生成缩略图（仅图片；PDF/Office 回退图标）
       let thumbnailPath: string | undefined
       let thumbnailBase64: string | undefined
       const thumbFileName = `${id}_thumb.png`
@@ -378,12 +371,10 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         thumbnailBase64 = pngBuffer.toString('base64')
         filesToCleanup.push(thumbPath)
       } catch (thumbError) {
-        // Thumbnail generation failed (non-image or corrupt) — icon fallback
         deps.platform.logger.info('Thumbnail generation failed (using fallback):', thumbError instanceof Error ? thumbError.message : thumbError)
       }
 
-      // 3. Convert Office files to markdown (for sending to Claude)
-      // This is required for Office files - Claude can't read raw Office binary
+      // 3. Office 文件转 markdown（Claude 无法直接读取 Office 二进制）
       let markdownPath: string | undefined
       if (attachment.type === 'office') {
         const mdFileName = `${id}_${safeName}.md`
@@ -399,33 +390,29 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
           filesToCleanup.push(mdPath)
           deps.platform.logger.info(`Converted Office file to markdown: ${mdPath}`)
         } catch (convertError) {
-          // Conversion failed - throw so user knows the file can't be processed
-          // Claude can't read raw Office binary, so a failed conversion = unusable file
           const errorMsg = convertError instanceof Error ? convertError.message : String(convertError)
           deps.platform.logger.error('Office to markdown conversion failed:', errorMsg)
           throw new Error(`Failed to convert "${attachment.name}" to readable format: ${errorMsg}`)
         }
       }
 
-      // Return StoredAttachment metadata
-      // Include wasResized flag so UI can show notification
-      // Include resizedBase64 so renderer uses resized image for Claude API
+      // 返回 StoredAttachment 元数据
       return {
         id,
         type: attachment.type,
         name: attachment.name,
         mimeType: attachment.mimeType,
-        size: finalSize, // Use final size (may differ if resized)
-        originalSize: wasResized ? attachment.size : undefined, // Track original if resized
+        size: finalSize,
+        originalSize: wasResized ? attachment.size : undefined,
         storedPath,
         thumbnailPath,
         thumbnailBase64,
         markdownPath,
         wasResized,
-        resizedBase64, // Only set when wasResized=true, used for Claude API
+        resizedBase64,
       }
     } catch (error) {
-      // Clean up any files we've written before the error
+      // 出错时清理已写入的孤儿文件
       if (filesToCleanup.length > 0) {
         deps.platform.logger.info(`Cleaning up ${filesToCleanup.length} orphaned file(s) after storage error`)
         await Promise.all(filesToCleanup.map(f => unlink(f).catch(() => {})))
@@ -437,15 +424,13 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     }
   })
 
-  // Filesystem search for @ mention file selection.
-  // Parallel BFS walk that skips ignored directories BEFORE entering them,
-  // avoiding reading node_modules/etc. contents entirely. Uses withFileTypes
-  // to get entry types without separate stat calls.
+  // 文件系统搜索：用于 @mention 选择文件。
+  // 并行 BFS：在“进入”目录前就跳过忽略目录，避免读取 node_modules 等内容；
+  // 使用 withFileTypes 减少额外 stat 调用。
   server.handle(RPC_CHANNELS.fs.SEARCH, async (_ctx, basePath: string, query: string) => {
     deps.platform.logger.info('[FS_SEARCH] called:', basePath, query)
     const MAX_RESULTS = 50
 
-    // Directories to never recurse into
     const SKIP_DIRS = new Set([
       'node_modules', '.git', '.svn', '.hg', 'dist', 'build',
       '.next', '.nuxt', '.cache', '__pycache__', 'vendor',
@@ -456,11 +441,10 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     const results: Array<{ name: string; path: string; type: 'file' | 'directory'; relativePath: string }> = []
 
     try {
-      // BFS queue: each entry is a relative path prefix ('' for root)
+      // BFS 队列：每项是相对路径前缀（根目录为空字符串）
       let queue = ['']
 
       while (queue.length > 0 && results.length < MAX_RESULTS) {
-        // Process current level: read all directories in parallel
         const nextQueue: string[] = []
 
         const dirResults = await Promise.all(
@@ -469,7 +453,6 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
             try {
               return { relDir, entries: await readdir(absDir, { withFileTypes: true }) }
             } catch {
-              // Skip dirs we can't read (permissions, broken symlinks, etc.)
               return { relDir, entries: [] as import('fs').Dirent[] }
             }
           })
@@ -482,18 +465,15 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
             if (results.length >= MAX_RESULTS) break
 
             const name = entry.name
-            // Skip hidden files/dirs and ignored directories
             if (name.startsWith('.') || SKIP_DIRS.has(name)) continue
 
             const relativePath = relDir ? `${relDir}/${name}` : name
             const isDir = entry.isDirectory()
 
-            // Queue subdirectories for next BFS level
             if (isDir) {
               nextQueue.push(relativePath)
             }
 
-            // Check if name or path matches the query
             const lowerName = name.toLowerCase()
             const lowerRelative = relativePath.toLowerCase()
             if (lowerName.includes(lowerQuery) || lowerRelative.includes(lowerQuery)) {
@@ -510,7 +490,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
         queue = nextQueue
       }
 
-      // Sort: directories first, then by name length (shorter = better match)
+      // 排序：目录优先，再按名称长度（短的更匹配）
       results.sort((a, b) => {
         if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
         return a.name.length - b.name.length
@@ -524,24 +504,21 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     }
   })
 
-  // List directories in a given path (for remote directory browsing).
-  // Returns only directories (not files) — this is a folder picker.
+  // 列出某路径下的目录（远程目录浏览用），只返回目录，用作文件夹选择器。
   server.handle(RPC_CHANNELS.fs.LIST_DIRECTORY, async (_ctx, dirPath: string) => {
-    // Resolve ~ to server's home directory (thin clients don't know the server's home)
+    // 把 ~ 解析为服务端 home 目录（瘦客户端不知道服务端 home）
     if (dirPath === '~' || dirPath.startsWith('~/')) {
       dirPath = dirPath === '~' ? homedir() : join(homedir(), dirPath.slice(2))
     }
 
-    // Reject cross-platform and relative paths before resolve() can concatenate with cwd
+    // 在 resolve() 拼接 cwd 前拒绝跨平台/相对路径
     const pathCheck = validatePathFormat(dirPath)
     if (!pathCheck.valid) {
       throw new Error(pathCheck.reason!)
     }
 
-    // Normalize (collapses .. segments, trailing slashes, etc.)
     const resolved = resolve(dirPath)
 
-    // Read entries, filter to directories
     const raw = await readdir(resolved, { withFileTypes: true })
 
     const entries: Array<{ name: string; path: string; isSymlink: boolean }> = []
@@ -552,28 +529,28 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       if (entry.isDirectory()) {
         entries.push({ name: entry.name, path: fullPath, isSymlink: false })
       } else if (isSymlink) {
-        // Follow symlink — check if target is a directory
+        // 跟随符号链接，检查目标是否为目录
         try {
           const target = await stat(fullPath)
           if (target.isDirectory()) {
             entries.push({ name: entry.name, path: fullPath, isSymlink: true })
           }
         } catch {
-          // Broken symlink — skip silently
+          // 损坏的符号链接静默跳过
         }
       }
     }
 
-    // Sort alphabetically (case-insensitive), cap at 500
+    // 按字母顺序排序，最多返回 500 条
     entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
     const totalEntries = entries.length
     const truncated = totalEntries > 500
     if (truncated) entries.length = 500
 
-    // Compute parent path
+    // 计算父路径
     const parentPath = resolved === parsePath(resolved).root ? null : dirname(resolved)
 
-    // Compute breadcrumbs server-side
+    // 服务端生成面包屑
     const breadcrumbs: Array<{ name: string; path: string }> = []
     let current = resolved
     while (true) {

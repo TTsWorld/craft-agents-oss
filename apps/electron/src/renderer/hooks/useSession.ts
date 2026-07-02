@@ -1,8 +1,8 @@
 /**
- * Session selection hooks.
+ * Session 选择相关 hook。
  *
- * Re-exports from the generic useEntitySelection factory.
- * The legacy useSession() hook is preserved for backward compatibility.
+ * 从通用的 useEntitySelection 工厂重新导出。
+ * 保留旧的 useSession() hook 以兼容已有代码。
  */
 
 import { useCallback } from 'react'
@@ -10,17 +10,17 @@ import { createInitialState, singleSelect } from './useMultiSelect'
 import { sessionSelection } from './useEntitySelection'
 
 /**
- * Legacy type alias for backward compatibility
+ * 旧版类型别名，仅用于向后兼容
  */
 type Config = {
   selected: string | null
 }
 
 /**
- * Legacy hook - maintains backward compatibility with existing code.
- * Returns [{ selected }, setSession] tuple.
+ * 旧版 hook - 保持与现有代码的向后兼容。
+ * 返回 [{ selected }, setSession] 元组。
  *
- * @deprecated Use useSessionSelection() for full multi-select support
+ * @deprecated 需要完整多选支持时请使用 useSessionSelection()
  */
 export function useSession(): [Config, (config: Config) => void] {
   const { state, setState } = sessionSelection.useSelectionStore()
@@ -36,7 +36,7 @@ export function useSession(): [Config, (config: Config) => void] {
   return [{ selected: state.selected }, legacySetSession]
 }
 
-// Re-export factory-generated hooks under existing names
+// 用已有名称重新导出工厂生成的 hook
 export const useSessionSelection = sessionSelection.useSelection
 export const useSessionSelectionStore = sessionSelection.useSelectionStore
 export const useIsMultiSelectActive = sessionSelection.useIsMultiSelectActive

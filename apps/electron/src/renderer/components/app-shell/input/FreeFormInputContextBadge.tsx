@@ -1,44 +1,51 @@
+/**
+ * FreeFormInputContextBadge - 自由输入区的上下文徽章。
+ *
+ * 用于 Sources、Files、Folder 等选择器，统一展示图标、标签和可选下拉箭头。
+ * 支持展开、折叠（有/无选择）和打开三种视觉状态。
+ */
 import * as React from 'react'
 import { ChevronDown } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@craft-agent/ui'
 import { FadingText } from '@/components/ui/fading-text'
 import { cn } from '@/lib/utils'
 
+/** FreeFormInputContextBadgeProps：组件 props 类型定义 */
 export interface FreeFormInputContextBadgeProps {
-  /** Left area - fully customizable (icon, avatar stack, etc.) */
+  /** 左侧区域，完全自定义（图标、头像堆叠等） */
   icon: React.ReactNode
-  /** Label text - shown in expanded state or collapsed with selection */
+  /** 标签文字：展开状态显示，或折叠且有选择时显示 */
   label: string
-  /** Whether to show expanded state (icon + label + chevron) vs collapsed */
+  /** 是否展开（图标 + 标签 + 箭头） */
   isExpanded?: boolean
-  /** Whether there's an active selection (affects collapsed state styling and shows label) */
+  /** 是否有当前选择（影响折叠态样式并显示标签） */
   hasSelection?: boolean
-  /** Show chevron indicator (for dropdowns) - only visible in expanded state */
+  /** 是否显示下拉箭头（仅在展开态可见） */
   showChevron?: boolean
-  /** Click handler */
+  /** 点击回调 */
   onClick?: () => void
-  /** Tooltip content - can be string or ReactNode for rich content */
+  /** Tooltip 内容，可以是字符串或 ReactNode */
   tooltip?: React.ReactNode
-  /** Whether the badge is currently "open" (e.g., dropdown is shown) */
+  /** 徽章是否处于“打开”状态（如下拉菜单展开） */
   isOpen?: boolean
-  /** Whether the badge is disabled */
+  /** 是否禁用 */
   disabled?: boolean
-  /** Additional className for the button */
+  /** 按钮额外的 CSS 类名 */
   className?: string
-  /** Ref forwarding for positioning dropdowns */
+  /** 用于定位下拉菜单的 ref */
   buttonRef?: React.RefObject<HTMLButtonElement>
-  /** Data attribute for tutorials */
+  /** 教程用的 data 属性 */
   'data-tutorial'?: string
 }
 
 /**
- * FreeFormInputContextBadge - Unified context badge for Sources, Files, and Folder selectors
+ * FreeFormInputContextBadge - Sources、Files、Folder 选择器的统一上下文徽章。
  *
- * Visual States:
- * - Expanded: Icon + Label + Chevron, no background, hover shows background
- * - Collapsed (no selection): Icon only, no background, hover shows background
- * - Collapsed (has selection): Icon + Label (fading), bg-background + shadow-minimal
- * - Open: bg-foreground/5 (like hover)
+ * 视觉状态：
+ * - 展开：图标 + 标签 + 箭头，无背景，悬停显示背景
+ * - 折叠（无选择）：仅图标，无背景，悬停显示背景
+ * - 折叠（有选择）：图标 + 标签（渐隐），bg-background + shadow-minimal
+ * - 打开：bg-foreground/5（和悬停一致）
  */
 export const FreeFormInputContextBadge = React.forwardRef<HTMLButtonElement, FreeFormInputContextBadgeProps>(
   function FreeFormInputContextBadge(
@@ -58,10 +65,10 @@ export const FreeFormInputContextBadge = React.forwardRef<HTMLButtonElement, Fre
     },
     ref
   ) {
-    // Merge refs if both are provided
+    // 如果同时传了 buttonRef 和 ref，优先使用 buttonRef
     const mergedRef = buttonRef || ref
 
-    // Show label in expanded state OR in collapsed state with selection
+    // 展开态始终显示标签；折叠态只有存在选择时才显示
     const showLabel = isExpanded || hasSelection
 
     const button = (
@@ -73,48 +80,48 @@ export const FreeFormInputContextBadge = React.forwardRef<HTMLButtonElement, Fre
         disabled={disabled}
         data-tutorial={dataTutorial}
         className={cn(
-          // Base styles - shrink + min-w-0 allows badge to compress in tight layouts
+          // 基础样式：shrink + min-w-0 让徽章在拥挤布局中可压缩
           "input-toolbar-btn inline-flex items-center gap-1.5 h-7 rounded-[6px] text-[13px] text-foreground transition-colors select-none shrink min-w-0",
           "disabled:opacity-50 disabled:pointer-events-none",
-          // Padding: more padding when showing label
+          // 显示标签时内边距更大
           showLabel ? "px-2" : "px-1.5",
-          // Collapsed with selection: visible background + thin 1px border + margin
+          // 折叠且有选择：可见背景 + 细边框 + 外边距
           !isExpanded && hasSelection && "bg-background border border-foreground/5 mx-0.5",
-          // Hover state (when not already showing background from selection)
+          // 悬停状态（未因选择显示背景时）
           !(!isExpanded && hasSelection) && "hover:bg-foreground/5",
-          // Open state (dropdown shown)
+          // 打开状态（下拉展开）
           isOpen && "bg-foreground/5",
           className
         )}
       >
-        {/* Icon area */}
+        {/* 图标区域 */}
         <span className="shrink-0 flex items-center">
           {icon}
         </span>
 
-        {/* Label - in expanded state or collapsed with selection */}
+        {/* 标签：展开态或折叠有选择时显示 */}
         {showLabel && (
           isExpanded ? (
-            // Expanded: simple truncate, placeholder (no selection) gets 60% opacity
+            // 展开态：简单截断；占位（无选择）时透明度 60%
             <span className={cn("truncate max-w-[120px] min-w-0 shrink", !hasSelection && "opacity-50")}>
               {label}
             </span>
           ) : (
-            // Collapsed with selection: fading text with max width
+            // 折叠有选择：使用渐隐文本并限制最大宽度
             <FadingText className="max-w-[140px] min-w-0 shrink" fadeWidth={20}>
               {label}
             </FadingText>
           )
         )}
 
-        {/* Optional chevron - only in expanded state */}
+        {/* 可选下拉箭头：仅在展开态显示 */}
         {isExpanded && showChevron && (
           <ChevronDown className="h-3 w-3 opacity-50 shrink-0" />
         )}
       </button>
     )
 
-    // Wrap with tooltip if provided (skip when dropdown is open to avoid showing tooltip)
+    // 如果提供了 tooltip 且下拉未打开，则包一层 Tooltip（避免冲突）
     if (tooltip && !isOpen) {
       return (
         <Tooltip>

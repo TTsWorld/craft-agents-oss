@@ -1,24 +1,24 @@
 /**
  * SettingsCard
  *
- * Container card with muted background for grouping related settings.
- * Children are separated by internal dividers.
+ * 设置页的卡片容器，用于把相关设置项归为一组。
+ * 子元素之间会自动插入分隔线。
  */
 
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 
 export interface SettingsCardProps {
-  /** Card content */
+  /** 卡片内容 */
   children: React.ReactNode
-  /** Additional className */
+  /** 额外 className */
   className?: string
-  /** Whether to add internal dividers between children */
+  /** 是否在子元素之间添加分隔线 */
   divided?: boolean
 }
 
 /**
- * SettingsCard - Container for grouping related settings
+ * SettingsCard - 用于分组相关设置的卡片容器
  *
  * @example
  * <SettingsCard>
@@ -27,6 +27,7 @@ export interface SettingsCardProps {
  * </SettingsCard>
  */
 export function SettingsCard({ children, className, divided = true }: SettingsCardProps) {
+  // 把 children 转成数组并过滤掉 falsy 值，方便后续加分隔线
   const childArray = React.Children.toArray(children).filter(Boolean)
 
   return (
@@ -49,9 +50,9 @@ export function SettingsCard({ children, className, divided = true }: SettingsCa
 }
 
 /**
- * SettingsCardContent - Inner padding wrapper for card content
+ * SettingsCardContent - 卡片内容的内边距包装器
  *
- * Use when you need custom content inside a SettingsCard
+ * 当需要在 SettingsCard 里放自定义内容时使用。
  */
 export function SettingsCardContent({
   children,
@@ -64,7 +65,7 @@ export function SettingsCardContent({
 }
 
 /**
- * SettingsCardFooter - Footer section with actions
+ * SettingsCardFooter - 卡片底部操作栏
  */
 export function SettingsCardFooter({
   children,

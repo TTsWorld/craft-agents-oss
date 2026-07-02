@@ -3,13 +3,15 @@ import { useActionRegistry } from './registry'
 import type { ActionId } from './definitions'
 
 /**
- * Register a handler for an action.
+ * 为某个 action 注册一个处理器（handler）。
+ *
+ * 用法类似订阅：组件挂载时注册，卸载时自动取消注册。
  *
  * @example
  * useAction('app.newChat', () => handleNewChat())
  *
  * @example
- * // With enabled condition
+ * // 带启用条件
  * useAction('navigator.selectAll', selectAll, {
  *   enabled: () => zoneRef.current?.contains(document.activeElement) ?? false
  * })
@@ -21,20 +23,24 @@ export function useAction(
   deps: unknown[] = []
 ) {
   const { register } = useActionRegistry()
+  // useRef 保存最新 handler/options，避免每次渲染都重新注册，
+  // 同时保证触发时用的是最新函数。
   const handlerRef = useRef(handler)
   const optionsRef = useRef(options)
 
-  // Keep refs current
+  // 保持 ref 的值始终是最新传入的 handler/options
   useEffect(() => {
     handlerRef.current = handler
     optionsRef.current = options
   }, [handler, options, ...deps])
 
-  // Register handler
+  // 注册 handler；register 返回取消注册函数，作为 useEffect 的清理函数。
   useEffect(() => {
     return register({
       actionId,
       handler: () => handlerRef.current(),
+      // `?.` 是可选链：只有 optionsRef.current 存在且 enabled 存在才启用；
+      // `?? false` 是空值合并，防止 enabled 返回 undefined。
       enabled: optionsRef.current?.enabled ? () => optionsRef.current?.enabled?.() ?? false : undefined,
     })
   }, [actionId, register])

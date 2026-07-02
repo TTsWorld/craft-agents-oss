@@ -1,20 +1,18 @@
 /**
  * MessagingSessionMenuItem
  *
- * The "Connect Messaging → Telegram / WhatsApp" submenu block shared by
- * SessionMenu (real context/dropdown menus) and the playground preview.
+ * “Connect Messaging → Telegram / WhatsApp / Lark” 子菜单块，
+ * 被 SessionMenu（真实的右键/context/dropdown 菜单）和 playground 预览共用。
  *
- * Behavior:
- *  - If the target platform isn't connected yet, route the user to the right
- *    setup entry point (WhatsApp opens the connect dialog; Telegram defaults
- *    to navigating to messaging settings + toasting — callers can override
- *    that via `onTelegramNotConfigured`).
- *  - If the platform is connected, dispatch `messagingDialogAtom` with a
- *    pairing-code dialog and kick off `generateMessagingPairingCode`.
+ * 行为：
+ *  - 如果目标平台尚未连接，引导用户到正确的设置入口：
+ *    WhatsApp 打开连接对话框；Telegram/Lark 默认跳转到 messaging 设置并提示。
+ *    调用方可通过 `onTelegramNotConfigured` 覆盖默认行为（例如 playground 没有路由，只 toast）。
+ *  - 如果平台已连接，通过 `messagingDialogAtom` 打开配对码对话框，
+ *    并调用 `generateMessagingPairingCode` 生成配对码。
  *
- * Renders the `<Sub>` block only — the caller decides placement and
- * separators. Reads menu primitives from `useMenuComponents()` so it works
- * identically inside a DropdownMenu or ContextMenu.
+ * 组件只渲染 `<Sub>` 子菜单块；由调用方决定放在哪里、是否加分隔线。
+ * 通过 `useMenuComponents()` 读取菜单原子组件，使其在 DropdownMenu 或 ContextMenu 中表现一致。
  */
 
 import * as React from 'react'
@@ -30,25 +28,26 @@ import { messagingDialogAtom } from '@/atoms/messaging'
 export type MessagingPlatform = 'telegram' | 'whatsapp' | 'lark'
 
 export interface UseMessagingConnectOptions {
-  /** Session to bind the pairing code to. */
+  // 要绑定配对码的 session ID
   sessionId: string
   /**
-   * Called when the user clicks Telegram or Lark but the platform isn't
-   * connected yet. Default: navigate to messaging settings + toast.
-   * Playground overrides this to toast only (it has no router).
+   * 当用户点击 Telegram 或 Lark 但该平台尚未配置时调用。
+   * 默认行为：跳转到 messaging 设置并弹出提示。
+   * Playground 会覆盖为只 toast（因为 playground 没有路由）。
    */
   onTelegramNotConfigured?: () => void
   /**
-   * Override the error classifier used when pairing-code generation fails.
-   * Default: {@link classifyMessagingError} — matches "not connected" and
-   * "rate limit" messages into i18n keys.
+   * 自定义配对码生成失败时的错误分类器。
+   * 默认使用 {@link classifyMessagingError}，把“未连接”“限流”等错误映射为 i18n key。
    */
   classifyError?: (err: unknown, t: TFunction) => string
 }
 
 /**
- * Shared connect-and-pair handler used by both the dropdown/context-menu
- * `MessagingSessionMenuItem` and the drawer-based `CompactSessionMenu`.
+ * 共享的“连接并配对”处理函数。
+ *
+ * 同时被下拉/context 菜单的 `MessagingSessionMenuItem` 和抽屉式的 `CompactSessionMenu` 使用。
+ * React.useCallback 保证多次渲染间引用稳定，避免子菜单触发不必要的重渲染。
  */
 export function useMessagingConnect({
   sessionId,
@@ -59,9 +58,8 @@ export function useMessagingConnect({
   const setMessagingDialog = useSetAtom(messagingDialogAtom)
 
   return React.useCallback(async (platform: MessagingPlatform) => {
-    // First-run check — avoid hitting the server if the platform is not
-    // connected. Failure to read config is treated as "unknown" and falls
-    // through to attempting pairing so the server surfaces a real error.
+    // 前置检查：如果平台未连接，直接引导设置，避免无意义地请求服务器。
+    // 读取配置失败时视为“未知”，继续尝试生成配对码，让服务端给出真实错误。
     try {
       const cfg = await window.electronAPI.getMessagingConfig()
       const runtime = cfg?.runtime?.[platform]
@@ -72,15 +70,14 @@ export function useMessagingConnect({
         } else if (onTelegramNotConfigured) {
           onTelegramNotConfigured()
         } else {
-          // Telegram + Lark share the "open Settings" path — both use
-          // a Settings dialog rather than an inline connect flow.
+          // Telegram 和 Lark 都走“打开 Settings”路径：两者都用设置对话框，而非内联连接流程
           navigate(routes.view.settings('messaging'))
           toast.info(t('toast.telegramNotConfiguredOpenSettings'))
         }
         return
       }
     } catch {
-      // Fall through to attempting pairing code generation.
+      // 读取配置失败，继续尝试生成配对码
     }
 
     setMessagingDialog({
@@ -142,9 +139,9 @@ export function MessagingSessionMenuItem(props: MessagingSessionMenuItemProps) {
 }
 
 /**
- * Translate raw errors from the pairing-code RPC into user-facing text.
- * Narrow on purpose — only classifies well-known failure modes; anything else
- * is surfaced verbatim so real errors aren't hidden.
+ * 把配对码 RPC 返回的原始错误转换为用户可见的文案。
+ *
+ * 故意保持精简——只识别几种已知失败模式；其余错误原样展示，避免掩盖真实问题。
  */
 export function classifyMessagingError(err: unknown, t: TFunction): string {
   const msg = err instanceof Error ? err.message : String(err)

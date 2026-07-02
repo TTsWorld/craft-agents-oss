@@ -1,6 +1,7 @@
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 
+// 各 domain 的 RPC handler 注册函数
 import { registerAuthHandlers } from './auth'
 import { registerAutomationsHandlers } from './automations'
 import { registerFilesHandlers } from './files'
@@ -26,6 +27,12 @@ import { registerTransferHandlers } from './transfer'
 import { registerWorkspaceCoreHandlers } from './workspace'
 import { registerMessagingHandlers } from './messaging'
 
+/**
+ * 注册所有核心 RPC handler。
+ *
+ * 这个函数相当于 Golang 项目里的路由注册：把所有 domain 的 handler 挂到 RpcServer 上。
+ * 每个 registerXxxHandlers 函数内部会调用 server.handle(channel, handler)。
+ */
 export function registerCoreRpcHandlers(
   server: RpcServer,
   deps: HandlerDeps,

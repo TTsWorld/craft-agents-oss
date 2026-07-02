@@ -1,37 +1,36 @@
 /**
  * SettingsSegmentedControl
  *
- * Horizontal button group for selecting between options.
- * Ideal for theme selection, font selection, etc.
+ * 横向分段选择器，适合主题、字体等互斥选项的快速切换。
  */
 
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 
 export interface SettingsSegmentedOption<T extends string = string> {
-  /** Value for this option */
+  /** 选项值 */
   value: T
-  /** Display label */
+  /** 展示标签 */
   label: string
-  /** Optional icon */
+  /** 可选图标 */
   icon?: React.ReactNode
 }
 
 export interface SettingsSegmentedControlProps<T extends string = string> {
-  /** Currently selected value */
+  /** 当前选中的值 */
   value: T
-  /** Change handler */
+  /** 选中变化时的回调 */
   onValueChange: (value: T) => void
-  /** Available options */
+  /** 可选列表 */
   options: SettingsSegmentedOption<T>[]
-  /** Size variant */
+  /** 尺寸变体 */
   size?: 'sm' | 'md'
-  /** Additional className */
+  /** 额外 className */
   className?: string
 }
 
 /**
- * SettingsSegmentedControl - Horizontal button group
+ * SettingsSegmentedControl - 横向按钮组
  *
  * @example
  * <SettingsSegmentedControl
@@ -99,9 +98,9 @@ export function SettingsSegmentedControl<T extends string = string>({
 }
 
 /**
- * SettingsSegmentedControlCard - Card variant with individual backgrounds
+ * SettingsSegmentedControlCard - 卡片式分段选择器
  *
- * Each option is a small card (like Amie's app icon selector)
+ * 每个选项都是一张小卡片（类似 Amie 的 app icon selector）。
  */
 export interface SettingsSegmentedCardOption<T extends string = string> {
   value: T
@@ -113,7 +112,7 @@ export interface SettingsSegmentedControlCardProps<T extends string = string> {
   value: T
   onValueChange: (value: T) => void
   options: SettingsSegmentedCardOption<T>[]
-  /** Number of columns */
+  /** 列数 */
   columns?: 2 | 3 | 4
   className?: string
 }
@@ -151,7 +150,7 @@ export function SettingsSegmentedControlCard<T extends string = string>({
               isSelected ? 'bg-muted' : 'bg-muted/50 hover:bg-muted/70'
             )}
           >
-            {/* Radio indicator */}
+            {/* 单选指示器 */}
             <div
               className={cn(
                 'w-[16px] h-[16px] rounded-full border-2 shrink-0',
@@ -166,10 +165,10 @@ export function SettingsSegmentedControlCard<T extends string = string>({
               )}
             </div>
 
-            {/* Label */}
+            {/* 标签 */}
             <span className="text-sm">{option.label}</span>
 
-            {/* Icon on right */}
+            {/* 右侧图标 */}
             {option.icon && (
               <span className="ml-auto shrink-0">{option.icon}</span>
             )}

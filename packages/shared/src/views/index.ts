@@ -1,8 +1,8 @@
 /**
- * Views Module
+ * Views 模块入口
  *
- * Dynamic views computed from session state using Filtrex expressions.
- * Never persisted on sessions — purely runtime evaluation.
+ * 视图（View）是从 session 状态动态计算出来的筛选条件，底层使用 Filtrex 表达式。
+ * 它们不会被持久化到 session 里， purely runtime evaluation（纯运行时计算）。
  */
 
 export type { ViewConfig, CompiledView, ViewEvaluationContext } from './types.ts';

@@ -1,36 +1,36 @@
 /**
- * Smart Typography - Live text replacement for typographic symbols
+ * 智能排版：输入时自动把常见字符组合替换为排版符号。
  *
- * Transforms trigger when user types a space after the pattern.
- * This avoids complex partial-match handling and feels natural.
+ * 触发时机：用户在某个模式后输入空格时执行替换。
+ * 这样可以避免处理复杂的部分匹配，体验也更自然。
  *
- * Supported patterns:
- * - -> → (right arrow)
- * - <- → ← (left arrow)
- * - <-> → ↔ (left-right arrow)
- * - => → ⇒ (double right arrow)
- * - <=> → ⇔ (double bidirectional arrow)
- * - -- → – (en-dash)
- * - ... → … (ellipsis)
- * - != → ≠ (not equal)
+ * 支持的替换：
+ * - -> → →（右箭头）
+ * - <- → ←（左箭头）
+ * - <-> → ↔（左右箭头）
+ * - => → ⇒（双右箭头）
+ * - <=> → ⇔（双向双箭头）
+ * - -- → –（en-dash）
+ * - ... → …（省略号）
+ * - != → ≠（不等于）
  */
 
 interface Replacement {
-  /** Pattern to match (followed by space) */
+  /** 要匹配的模式（后面需跟一个空格才会触发） */
   pattern: string
-  /** Replacement character/string */
+  /** 替换后的字符/字符串 */
   replacement: string
 }
 
 /**
- * Ordered list of replacements - longer patterns first to avoid partial matches
+ * 按顺序排列的替换规则——长模式放前面，避免部分匹配。
  */
 const REPLACEMENTS: Replacement[] = [
-  // Longer patterns first
+  // 长模式优先
   { pattern: '<=>', replacement: '⇔' },
   { pattern: '<->', replacement: '↔' },
   { pattern: '...', replacement: '…' },
-  // Shorter patterns
+  // 短模式
   { pattern: '->', replacement: '→' },
   { pattern: '<-', replacement: '←' },
   { pattern: '=>', replacement: '⇒' },
@@ -39,68 +39,67 @@ const REPLACEMENTS: Replacement[] = [
 ]
 
 interface SmartTypographyResult {
-  /** The transformed text */
+  /** 替换后的文本 */
   text: string
-  /** The adjusted cursor position */
+  /** 调整后的光标位置 */
   cursor: number
-  /** Whether a replacement was made */
+  /** 是否发生了替换 */
   replaced: boolean
 }
 
 /**
- * Check if cursor is inside a code block (backticks)
- * Simple heuristic: count backticks before cursor, odd = inside code
+ * 检查光标是否在代码块（反引号）内。
+ * 简单启发式：光标前反引号数量为奇数时认为在代码内。
  */
 function isInsideCode(text: string, cursor: number): boolean {
   const textBeforeCursor = text.slice(0, cursor)
 
-  // Check for triple backticks (code blocks)
+  // 检查三重反引号（代码块）
   const tripleBackticks = (textBeforeCursor.match(/```/g) || []).length
   if (tripleBackticks % 2 === 1) return true
 
-  // Check for single backticks (inline code) - but not triple
-  // Remove triple backticks first, then count singles
+  // 检查单重反引号（行内代码）——先去掉三重反引号再计数
   const withoutTriple = textBeforeCursor.replace(/```/g, '')
   const singleBackticks = (withoutTriple.match(/`/g) || []).length
   return singleBackticks % 2 === 1
 }
 
 /**
- * Apply smart typography replacements to text
+ * 对文本应用智能排版替换。
  *
- * Transforms trigger when user types a space after a pattern.
- * e.g., "hello -> " becomes "hello → "
+ * 当用户在某个模式后输入空格时触发替换。
+ * 例如 "hello -> " 会变成 "hello → "。
  *
- * @param text - The current input text
- * @param cursor - The current cursor position
- * @returns Object with transformed text, adjusted cursor, and whether replacement occurred
+ * @param text - 当前输入文本
+ * @param cursor - 当前光标位置
+ * @returns 包含替换后文本、调整后光标位置、是否发生替换的对象
  */
 export function applySmartTypography(
   text: string,
   cursor: number
 ): SmartTypographyResult {
-  // Only transform if user just typed a space
+  // 只在用户刚输入空格时做替换
   if (cursor === 0 || text[cursor - 1] !== ' ') {
     return { text, cursor, replaced: false }
   }
 
-  // Don't transform if cursor is inside code
+  // 光标在代码块内时不替换
   if (isInsideCode(text, cursor)) {
     return { text, cursor, replaced: false }
   }
 
-  // Get the text before the space to check for patterns
+  // 取空格之前的文本，检查是否以某个模式结尾
   const textBeforeSpace = text.slice(0, cursor - 1)
 
-  // Try each replacement pattern (ordered by priority - longer first)
+  // 按优先级尝试每个替换规则（长模式优先）
   for (const { pattern, replacement } of REPLACEMENTS) {
     if (textBeforeSpace.endsWith(pattern)) {
-      // Found a match - replace pattern (keep the space)
+      // 命中：替换模式，保留空格
       const patternStart = cursor - 1 - pattern.length
       const newText =
         text.slice(0, patternStart) + replacement + ' ' + text.slice(cursor)
 
-      // Adjust cursor: pattern replaced with shorter replacement, space stays
+      // 调整光标：模式被更短的替换字符取代，空格保留
       const cursorAdjustment = pattern.length - replacement.length
       const newCursor = cursor - cursorAdjustment
 
@@ -108,6 +107,6 @@ export function applySmartTypography(
     }
   }
 
-  // No replacement made
+  // 没有匹配到任何规则
   return { text, cursor, replaced: false }
 }

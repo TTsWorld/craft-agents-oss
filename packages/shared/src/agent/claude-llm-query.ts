@@ -1,4 +1,17 @@
 /**
+ * 文件：Claude SDK query() 流消费辅助函数
+ *
+ * 角色：专门处理 call_llm 工具对 Claude SDK query() 的调用。把 SDK 的异步消息流
+ * 收敛成 { text, warning }，便于上层 LLMQueryResult 复用。
+ *
+ * 重点：
+ * - SDK 可能以两种形式报告非成功结果：yield 一个 subtype 为 error_max_turns 等
+ *   的 result 消息，或者直接抛异常。
+ * - 函数会尽量保留已累积的部分文本（partial output），实在没 salvage 到内容才
+ *   重新抛出异常。
+ */
+
+/**
  * Helpers for consuming Claude SDK `query()` streams for the call_llm tool.
  *
  * Extracted from `ClaudeAgent.queryLlm` so the max-turns / partial-output

@@ -1,15 +1,15 @@
 /**
- * Session Storage
+ * 会话存储
  *
- * Workspace-scoped session CRUD operations.
- * Sessions are stored at {workspaceRootPath}/sessions/{id}/session.jsonl
- * Each session folder contains:
- * - session.jsonl (main data in JSONL format: line 1 = header, lines 2+ = messages)
- * - attachments/ (file attachments)
- * - plans/ (plan files for Safe Mode)
- * - data/ (transform_data tool output: JSON files for datatable/spreadsheet blocks)
- * - long_responses/ (full tool results that were summarized due to size limits)
- * - downloads/ (binary files downloaded from API sources: PDFs, images, archives, etc.)
+ * Workspace 范围内的会话 CRUD 操作。
+ * 会话存储在 {workspaceRootPath}/sessions/{id}/session.jsonl
+ * 每个会话目录包含：
+ * - session.jsonl（主数据，JSONL 格式：第 1 行 header，第 2 行起消息）
+ * - attachments/（文件附件）
+ * - plans/（Safe Mode 的 plan 文件）
+ * - data/（transform_data 工具输出：datatable/spreadsheet 用的 JSON 文件）
+ * - long_responses/（因大小限制被摘要的完整工具结果）
+ * - downloads/（从 API 源下载的二进制文件：PDF、图片、压缩包等）
  */
 
 import {
@@ -43,15 +43,15 @@ import { getStatusCategory } from '../statuses/storage.ts';
 import { readSessionHeader, readSessionJsonl } from './jsonl.ts';
 import { sessionPersistenceQueue } from './persistence-queue.ts';
 
-// Re-export types for convenience
+// 为方便使用，重新导出类型
 export type { SessionConfig } from './types.ts';
 
 // ============================================================
-// Directory Utilities
+// 目录工具
 // ============================================================
 
 /**
- * Ensure sessions directory exists for a workspace
+ * 确保 workspace 的 sessions 目录存在。
  */
 export function ensureSessionsDir(workspaceRootPath: string): string {
   const dir = getWorkspaceSessionsPath(workspaceRootPath);
@@ -62,33 +62,33 @@ export function ensureSessionsDir(workspaceRootPath: string): string {
 }
 
 /**
- * Get path to a session's directory
+ * 获取某个会话目录的路径。
  *
- * SECURITY: Uses sanitizeSessionId() as defense-in-depth to prevent path traversal.
- * Callers should still validate sessionId before calling this function.
+ * 安全：使用 sanitizeSessionId() 做纵深防御，防止路径遍历。
+ * 调用方仍应提前校验 sessionId。
  */
 export function getSessionPath(workspaceRootPath: string, sessionId: string): string {
-  // Defense-in-depth: strip any path components from sessionId
+  // 纵深防御：去掉 sessionId 中的路径成分
   const safeSessionId = sanitizeSessionId(sessionId);
   return join(getWorkspaceSessionsPath(workspaceRootPath), safeSessionId);
 }
 
 /**
- * Get path to a session's JSONL file (inside session folder)
+ * 获取某个会话 JSONL 文件的路径（在会话目录内）。
  */
 export function getSessionFilePath(workspaceRootPath: string, sessionId: string): string {
   return join(getSessionPath(workspaceRootPath, sessionId), 'session.jsonl');
 }
 
 /**
- * Ensure session directory exists with all subdirectories
+ * 确保会话目录存在，并包含所有子目录。
  */
 export function ensureSessionDir(workspaceRootPath: string, sessionId: string): string {
   const sessionDir = getSessionPath(workspaceRootPath, sessionId);
   if (!existsSync(sessionDir)) {
     mkdirSync(sessionDir, { recursive: true });
   }
-  // Also create plans, attachments, long_responses, and downloads directories
+  // 同时创建 plans、attachments、long_responses、downloads 等子目录
   const plansDir = join(sessionDir, 'plans');
   if (!existsSync(plansDir)) {
     mkdirSync(plansDir, { recursive: true });
@@ -101,12 +101,12 @@ export function ensureSessionDir(workspaceRootPath: string, sessionId: string): 
   if (!existsSync(longResponsesDir)) {
     mkdirSync(longResponsesDir, { recursive: true });
   }
-  // Data directory for transform_data tool output (JSON files for datatable/spreadsheet)
+  // transform_data 工具输出的 JSON 文件目录（datatable/spreadsheet）
   const dataDir = join(sessionDir, 'data');
   if (!existsSync(dataDir)) {
     mkdirSync(dataDir, { recursive: true });
   }
-  // Downloads directory for binary files from API responses (PDFs, images, etc.)
+  // 从 API 响应下载的二进制文件目录（PDF、图片等）
   const downloadsDir = join(sessionDir, 'downloads');
   if (!existsSync(downloadsDir)) {
     mkdirSync(downloadsDir, { recursive: true });
@@ -115,39 +115,39 @@ export function ensureSessionDir(workspaceRootPath: string, sessionId: string): 
 }
 
 /**
- * Get the attachments directory for a session
+ * 获取会话的附件目录。
  */
 export function getSessionAttachmentsPath(workspaceRootPath: string, sessionId: string): string {
   return join(getSessionPath(workspaceRootPath, sessionId), 'attachments');
 }
 
 /**
- * Get the plans directory for a session
+ * 获取会话的 plan 文件目录。
  */
 export function getSessionPlansPath(workspaceRootPath: string, sessionId: string): string {
   return join(getSessionPath(workspaceRootPath, sessionId), 'plans');
 }
 
 /**
- * Get the data directory for a session (transform_data tool output)
+ * 获取会话的 data 目录（transform_data 工具输出）。
  */
 export function getSessionDataPath(workspaceRootPath: string, sessionId: string): string {
   return join(getSessionPath(workspaceRootPath, sessionId), 'data');
 }
 
 /**
- * Get the downloads directory for a session (binary files from API responses)
+ * 获取会话的 downloads 目录（API 返回的二进制文件）。
  */
 export function getSessionDownloadsPath(workspaceRootPath: string, sessionId: string): string {
   return join(getSessionPath(workspaceRootPath, sessionId), 'downloads');
 }
 
 // ============================================================
-// Session ID Generation
+// 会话 ID 生成
 // ============================================================
 
 /**
- * Get existing session IDs for collision detection
+ * 获取已有会话 ID，用于生成新 ID 时做冲突检测。
  */
 function getExistingSessionIds(workspaceRootPath: string): Set<string> {
   const sessionsDir = getWorkspaceSessionsPath(workspaceRootPath);
@@ -159,8 +159,8 @@ function getExistingSessionIds(workspaceRootPath: string): Set<string> {
 }
 
 /**
- * Generate a human-readable session ID
- * Format: YYMMDD-adjective-noun (e.g., 260111-swift-river)
+ * 生成人类可读的会话 ID。
+ * 格式：YYMMDD-adjective-noun（例如 260111-swift-river）
  */
 export function generateSessionId(workspaceRootPath: string): string {
   const existingIds = getExistingSessionIds(workspaceRootPath);
@@ -168,11 +168,11 @@ export function generateSessionId(workspaceRootPath: string): string {
 }
 
 // ============================================================
-// Session CRUD
+// 会话 CRUD
 // ============================================================
 
 /**
- * Create a new session for a workspace
+ * 为 workspace 创建一个新会话。
  */
 export async function createSession(
   workspaceRootPath: string,
@@ -200,12 +200,12 @@ export async function createSession(
   const now = Date.now();
   const sessionId = generateSessionId(workspaceRootPath);
 
-  // Create session directory with all subdirectories (plans, attachments)
+  // 创建会话目录及其子目录（plans、attachments 等）
   ensureSessionDir(workspaceRootPath, sessionId);
 
-  // Set sdkCwd to initial working directory or session path - this never changes
-  // The SDK stores session transcripts at ~/.claude/projects/{cwd-slugified}/
-  // If workingDirectory changes later, sdkCwd stays the same to preserve session resumption
+  // sdkCwd 在创建时确定，之后不再改变。
+  // SDK 把会话 transcript 存在 ~/.claude/projects/{cwd-hash}/ 下。
+  // 即使 workingDirectory 后续变化，sdkCwd 也不变，保证能恢复会话。
   const sdkCwd = options?.workingDirectory ?? getSessionPath(workspaceRootPath, sessionId);
 
   const session: SessionConfig = {
@@ -232,7 +232,7 @@ export async function createSession(
     taskDraft: options?.taskDraft,
   };
 
-  // Save empty session
+  // 保存一个空会话
   const storedSession: StoredSession = {
     ...session,
     messages: [],
@@ -250,8 +250,8 @@ export async function createSession(
 }
 
 /**
- * Get or create a session with a specific ID
- * Used for --session <id> flag to allow user-defined session IDs
+ * 按指定 ID 获取会话；不存在则创建。
+ * 用于 --session <id> 命令行参数，允许用户自定义会话 ID。
  */
 export async function getOrCreateSessionById(
   workspaceRootPath: string,
@@ -271,14 +271,12 @@ export async function getOrCreateSessionById(
     };
   }
 
-  // Create new session with the specified ID
+  // 指定 ID 不存在则创建新会话
   ensureSessionsDir(workspaceRootPath);
-
-  // Create session directory with all subdirectories (plans, attachments)
   ensureSessionDir(workspaceRootPath, sessionId);
 
   const now = Date.now();
-  // Set sdkCwd to session path - this never changes (ensures SDK can find session transcripts)
+  // sdkCwd 设为会话目录，创建后不再改变
   const sdkCwd = getSessionPath(workspaceRootPath, sessionId);
 
   const session: SessionConfig = {
@@ -306,13 +304,11 @@ export async function getOrCreateSessionById(
 }
 
 /**
- * Save session immediately using the persistence queue.
- * Enqueues the session and flushes to ensure immediate write.
+ * 立即保存会话。
+ * 通过持久化队列入队并 flush，确保立刻落盘。
  *
- * This unified approach ensures all session writes go through the same
- * async code path, which is more reliable on Windows.
- *
- * Writes in JSONL format: line 1 = header, lines 2+ = messages
+ * 这种统一写路径在 Windows 上更可靠。
+ * 写入 JSONL 格式：第 1 行 header，第 2 行起消息。
  */
 export async function saveSession(session: StoredSession): Promise<void> {
   sessionPersistenceQueue.enqueue(session);
@@ -320,15 +316,15 @@ export async function saveSession(session: StoredSession): Promise<void> {
 }
 
 /**
- * Queue session for async persistence with debouncing.
- * Multiple rapid calls are coalesced into a single write.
- * Use this during active sessions to avoid blocking the main thread.
+ * 把会话加入异步持久化队列并防抖。
+ * 多次快速调用会合并成一次写入。
+ * 活跃会话中使用，避免阻塞主线程。
  */
 export { sessionPersistenceQueue, getHeaderMetadataSignature } from './persistence-queue.js'
 
 /**
- * Load session by ID
- * Loads session from folder structure in JSONL format.
+ * 按 ID 加载完整会话。
+ * 从 JSONL 文件读取。
  */
 export function loadSession(workspaceRootPath: string, sessionId: string): StoredSession | null {
   const end = perf.start('session.loadSession', { sessionId });
@@ -347,10 +343,9 @@ export function loadSession(workspaceRootPath: string, sessionId: string): Store
 }
 
 /**
- * List sessions for a workspace
- * Lists sessions from folder structure.
+ * 列出 workspace 中的所有会话。
  *
- * Uses JSONL header for fast loading (only reads first line of each file).
+ * 利用 JSONL header 实现快速加载：只读每个文件的第一行。
  */
 export function listSessions(workspaceRootPath: string): SessionMetadata[] {
   const span = perf.span('session.listSessions');
@@ -370,11 +365,10 @@ export function listSessions(workspaceRootPath: string): SessionMetadata[] {
       const sessionDir = join(sessionsDir, sessionId);
       const jsonlFile = join(sessionDir, 'session.jsonl');
 
-      // Clean up orphaned .tmp files from crashed atomic writes.
-      // These are harmless but waste disk space.
+      // 清理崩溃原子写留下的孤立 .tmp 文件， harmless 但占空间
       const tmpFile = jsonlFile + '.tmp';
       if (existsSync(tmpFile)) {
-        try { unlinkSync(tmpFile); } catch { /* ignore */ }
+        try { unlinkSync(tmpFile); } catch { /* 忽略 */ }
       }
 
       if (existsSync(jsonlFile)) {
@@ -389,31 +383,31 @@ export function listSessions(workspaceRootPath: string): SessionMetadata[] {
   span.mark('parsed');
   span.setMetadata('count', sessions.length);
 
-  // Sort by lastUsedAt descending (most recent first)
+  // 按 lastUsedAt 降序排列（最近的在前）
   const sorted = sessions.sort((a, b) => b.lastUsedAt - a.lastUsedAt);
   span.end();
   return sorted;
 }
 
 /**
- * Convert SessionHeader to SessionMetadata
- * Used for fast session list loading from JSONL format.
+ * 把 SessionHeader 转成 SessionMetadata。
+ * 用于从 JSONL 第一行快速生成会话列表。
  */
 function headerToMetadata(header: SessionHeader, workspaceRootPath: string): SessionMetadata | null {
   try {
-    // Migration: accept old 'todoState' field from pre-rename session files
+    // 兼容旧字段：早期版本叫 todoState
     const rawStatus = header.sessionStatus ?? (header as unknown as { todoState?: string }).todoState;
-    // Validate sessionStatus against workspace status config
+    // 根据 workspace 状态配置校验 sessionStatus
     const validatedStatus = validateSessionStatus(workspaceRootPath, rawStatus);
 
-    // Count plan files for this session
+    // 统计 plan 文件数量
     const planCount = listPlanFiles(workspaceRootPath, header.id).length;
 
-    // Migration: For sessions created before sdkCwd was added, use workingDirectory as fallback.
+    // 兼容旧数据：没有 sdkCwd 时回退到 workingDirectory
     const workingDir = header.workingDirectory ? expandPath(header.workingDirectory) : undefined;
     const sdkCwd = header.sdkCwd ? expandPath(header.sdkCwd) : workingDir;
 
-    // Destructure fields that don't exist on SessionMetadata or need overrides
+    // 解构出 SessionMetadata 不需要或需要覆盖的字段
     const {
       pendingPlanExecution: _pp,
       sessionStatus: _ss, workingDirectory: _wd, sdkCwd: _sc,
@@ -435,12 +429,12 @@ function headerToMetadata(header: SessionHeader, workspaceRootPath: string): Ses
 }
 
 /**
- * Delete a session and its associated files
- * Deletes session folder and all associated files
+ * 删除会话及其关联文件。
+ * 删除整个会话目录。
  */
 export function deleteSession(workspaceRootPath: string, sessionId: string): boolean {
   try {
-    // Delete session directory (includes session.json, attachments, plans)
+    // 删除会话目录（包含 session.jsonl、attachments、plans 等）
     const sessionDir = getSessionPath(workspaceRootPath, sessionId);
     if (existsSync(sessionDir)) {
       rmSync(sessionDir, { recursive: true });
@@ -453,17 +447,17 @@ export function deleteSession(workspaceRootPath: string, sessionId: string): boo
 }
 
 /**
- * Clear messages from a session while preserving metadata.
- * Used for /clear command to reset conversation without creating a new session.
- * Also clears the SDK session ID to start a fresh Claude conversation.
+ * 清空会话消息但保留元数据。
+ * 用于 /clear 命令：重置对话而不新建会话。
+ * 同时清空 SDK session ID，让 Claude 开启一次新对话。
  */
 export async function clearSessionMessages(workspaceRootPath: string, sessionId: string): Promise<void> {
   const session = loadSession(workspaceRootPath, sessionId);
   if (session) {
-    // Clear messages and SDK session ID but preserve metadata
+    // 清空消息和 SDK session ID，但保留其他元数据
     session.messages = [];
     session.sdkSessionId = undefined;
-    // Reset token usage to zero
+    // token 使用量归零
     session.tokenUsage = {
       inputTokens: 0,
       outputTokens: 0,
@@ -476,8 +470,8 @@ export async function clearSessionMessages(workspaceRootPath: string, sessionId:
 }
 
 /**
- * Get or create the latest session for a workspace
- * Uses listActiveSessions to exclude archived sessions
+ * 获取 workspace 最新的会话；没有则创建。
+ * 使用 listActiveSessions 排除已归档会话。
  */
 export async function getOrCreateLatestSession(workspaceRootPath: string): Promise<SessionConfig> {
   const sessions = listActiveSessions(workspaceRootPath);
@@ -496,11 +490,11 @@ export async function getOrCreateLatestSession(workspaceRootPath: string): Promi
 }
 
 // ============================================================
-// Session Metadata Updates
+// 会话元数据更新
 // ============================================================
 
 /**
- * Update SDK session ID for a session
+ * 更新会话的 SDK session ID。
  */
 export async function updateSessionSdkId(
   workspaceRootPath: string,
@@ -515,23 +509,28 @@ export async function updateSessionSdkId(
 }
 
 /**
- * Check if sdkCwd can be safely updated for a session.
+ * 判断是否可以安全更新会话的 sdkCwd。
  *
- * sdkCwd is normally immutable because the SDK stores session transcripts at
- * ~/.claude/projects/{cwd-slugified}/. However, it's safe to update sdkCwd if
- * no SDK interaction has occurred yet (no transcripts to preserve).
+ * sdkCwd 通常不可变，因为 SDK 把会话 transcript 存在
+ * ~/.claude/projects/{cwd-hash}/ 下。但如果还没有发生任何 SDK 交互
+ *（没有需要保留的 transcript），就可以安全更新。
  *
- * @returns true if sdkCwd can be updated (no messages and no SDK session ID)
+ * @returns 没有消息且没有 SDK session ID 时返回 true
  */
 export function canUpdateSdkCwd(session: StoredSession): boolean {
-  // Safe to update if:
-  // 1. No messages have been sent yet (no conversation to preserve)
-  // 2. No SDK session ID (no transcript exists at the sdkCwd path)
+  // 安全更新的条件：
+  // 1. 还没有发送过消息（没有需要保留的对话）
+  // 2. 没有 SDK session ID（sdkCwd 路径下没有 transcript）
   return session.messages.length === 0 && !session.sdkSessionId;
 }
 
 /**
- * Update session metadata
+ * 更新会话元数据。
+ *
+ * updates 参数类型解释：
+ * Pick<SessionConfig, 'isFlagged' | ...> 从 SessionConfig 中挑出允许修改的字段；
+ * Partial<...> 表示这些字段都是可选的。
+ * 类似 Go 里传一个可选字段很多的 UpdateRequest struct。
  */
 export async function updateSessionMetadata(
   workspaceRootPath: string,
@@ -581,21 +580,21 @@ export async function updateSessionMetadata(
 }
 
 /**
- * Flag a session
+ * 标记会话为 flagged。
  */
 export async function flagSession(workspaceRootPath: string, sessionId: string): Promise<void> {
   await updateSessionMetadata(workspaceRootPath, sessionId, { isFlagged: true });
 }
 
 /**
- * Unflag a session
+ * 取消会话的 flagged 标记。
  */
 export async function unflagSession(workspaceRootPath: string, sessionId: string): Promise<void> {
   await updateSessionMetadata(workspaceRootPath, sessionId, { isFlagged: false });
 }
 
 /**
- * Set session status
+ * 设置会话状态。
  */
 export async function setSessionStatus(
   workspaceRootPath: string,
@@ -606,7 +605,7 @@ export async function setSessionStatus(
 }
 
 /**
- * Set labels for a session
+ * 设置会话标签。
  */
 export async function setSessionLabels(
   workspaceRootPath: string,
@@ -617,8 +616,8 @@ export async function setSessionLabels(
 }
 
 /**
- * Set or clear the project binding for a session.
- * Pass `null` to unbind.
+ * 设置或清除 session 的项目绑定。
+ * 传入 `null` 即可解绑。
  */
 export async function setSessionProjectId(
   workspaceRootPath: string,
@@ -631,9 +630,9 @@ export async function setSessionProjectId(
 }
 
 /**
- * Unbind every session that referenced a given projectId.
- * Called when a project is deleted — sessions are preserved, just unlinked.
- * Returns the number of sessions touched.
+ * 解除所有引用了某个 projectId 的 session 的绑定。
+ * 在项目被删除时调用 —— session 本身保留，只是取消关联。
+ * 返回受影响的 session 数量。
  */
 export async function unbindProjectFromSessions(
   workspaceRootPath: string,
@@ -653,7 +652,7 @@ export async function unbindProjectFromSessions(
 }
 
 /**
- * Archive a session
+ * 归档会话。
  */
 export async function archiveSession(workspaceRootPath: string, sessionId: string): Promise<void> {
   await updateSessionMetadata(workspaceRootPath, sessionId, {
@@ -663,7 +662,7 @@ export async function archiveSession(workspaceRootPath: string, sessionId: strin
 }
 
 /**
- * Unarchive a session
+ * 取消归档会话。
  */
 export async function unarchiveSession(workspaceRootPath: string, sessionId: string): Promise<void> {
   await updateSessionMetadata(workspaceRootPath, sessionId, {
@@ -673,13 +672,13 @@ export async function unarchiveSession(workspaceRootPath: string, sessionId: str
 }
 
 // ============================================================
-// Pending Plan Execution (Accept & Compact flow)
+// Pending Plan Execution（Accept & Compact 流程）
 // ============================================================
 
 /**
- * Set pending plan execution state.
- * Called when user clicks "Accept & Compact" - stores the plan path
- * so it can be executed after compaction, even if the page reloads.
+ * 设置 pending plan execution 状态。
+ * 用户点击 "Accept & Compact" 时调用：保存 plan 路径，
+ * 这样即使页面刷新，compaction 完成后仍能恢复执行。
  */
 export async function setPendingPlanExecution(
   workspaceRootPath: string,
@@ -700,9 +699,9 @@ export async function setPendingPlanExecution(
 }
 
 /**
- * Mark compaction as complete for pending plan execution.
- * Called when compaction_complete event fires - sets awaitingCompaction to false
- * so reload recovery knows compaction finished and can trigger execution.
+ * 标记 compaction 已完成。
+ * 在 compaction_complete 事件触发时调用：把 awaitingCompaction 设为 false，
+ * 刷新后恢复逻辑就知道可以触发执行。
  */
 export async function markCompactionComplete(
   workspaceRootPath: string,
@@ -716,9 +715,8 @@ export async function markCompactionComplete(
 }
 
 /**
- * Mark pending plan execution as already dispatched from the UI.
- * This prevents reload recovery from sending the same approval message twice
- * if cleanup fails after the send has already been kicked off.
+ * 标记 pending plan execution 已经从 UI 分发。
+ * 防止刷新恢复时把同一条批准消息发送两次。
  */
 export async function markPendingPlanExecutionDispatched(
   workspaceRootPath: string,
@@ -732,9 +730,8 @@ export async function markPendingPlanExecutionDispatched(
 }
 
 /**
- * Clear pending plan execution state.
- * Called after plan execution is sent, on new user message, or when
- * the pending execution is no longer relevant.
+ * 清除 pending plan execution 状态。
+ * 在 plan 执行已发送、收到新用户消息、或不再需要时调用。
  */
 export async function clearPendingPlanExecution(
   workspaceRootPath: string,
@@ -748,8 +745,8 @@ export async function clearPendingPlanExecution(
 }
 
 /**
- * Get pending plan execution state for a session.
- * Used on reload to check if we need to resume plan execution.
+ * 获取会话的 pending plan execution 状态。
+ * 刷新时用它判断是否需要恢复 plan 执行。
  */
 export function getPendingPlanExecution(
   workspaceRootPath: string,
@@ -764,20 +761,19 @@ export function getPendingPlanExecution(
 }
 
 // ============================================================
-// Session Filtering
+// 会话筛选
 // ============================================================
 
 /**
- * List flagged sessions (excludes archived)
+ * 列出已 flagged 的会话（不包含已归档）。
  */
 export function listFlaggedSessions(workspaceRootPath: string): SessionMetadata[] {
   return listActiveSessions(workspaceRootPath).filter(s => s.isFlagged === true);
 }
 
 /**
- * List completed sessions (category: closed)
- * Includes done, cancelled, and any custom "closed" statuses
- * Excludes archived sessions
+ * 列出已完成会话（category 为 closed）。
+ * 包括 done、cancelled 以及任何自定义的 closed 状态；不包含已归档。
  */
 export function listCompletedSessions(workspaceRootPath: string): SessionMetadata[] {
   return listActiveSessions(workspaceRootPath).filter(s => {
@@ -787,9 +783,8 @@ export function listCompletedSessions(workspaceRootPath: string): SessionMetadat
 }
 
 /**
- * List inbox sessions (category: open)
- * Includes todo, in-progress, needs-review, and any custom "open" statuses
- * Excludes archived sessions
+ * 列出收件箱会话（category 为 open）。
+ * 包括 todo、in-progress、needs-review 以及任何自定义的 open 状态；不包含已归档。
  */
 export function listInboxSessions(workspaceRootPath: string): SessionMetadata[] {
   return listActiveSessions(workspaceRootPath).filter(s => {
@@ -799,22 +794,22 @@ export function listInboxSessions(workspaceRootPath: string): SessionMetadata[] 
 }
 
 /**
- * List archived sessions
+ * 列出已归档会话。
  */
 export function listArchivedSessions(workspaceRootPath: string): SessionMetadata[] {
   return listSessions(workspaceRootPath).filter(s => s.isArchived === true);
 }
 
 /**
- * List active (non-archived) sessions
+ * 列出活跃（未归档）会话。
  */
 export function listActiveSessions(workspaceRootPath: string): SessionMetadata[] {
   return listSessions(workspaceRootPath).filter(s => s.isArchived !== true);
 }
 
 /**
- * Delete archived sessions older than the specified number of days
- * Returns the number of sessions deleted
+ * 删除超过保留天数的已归档会话。
+ * @returns 删除的会话数量
  */
 export function deleteOldArchivedSessions(workspaceRootPath: string, retentionDays: number): number {
   const cutoffTime = Date.now() - (retentionDays * 24 * 60 * 60 * 1000);
@@ -822,7 +817,7 @@ export function deleteOldArchivedSessions(workspaceRootPath: string, retentionDa
   let deletedCount = 0;
 
   for (const session of archivedSessions) {
-    // Use archivedAt if available, otherwise fall back to lastUsedAt
+    // 优先用 archivedAt，不存在则回退到 lastUsedAt
     const archiveTime = session.archivedAt ?? session.lastUsedAt;
     if (archiveTime < cutoffTime) {
       if (deleteSession(workspaceRootPath, session.id)) {
@@ -835,11 +830,11 @@ export function deleteOldArchivedSessions(workspaceRootPath: string, retentionDa
 }
 
 // ============================================================
-// Plan Storage (Session-Scoped)
+// Plan 存储（按会话隔离）
 // ============================================================
 
 /**
- * Slugify a string for file names
+ * 把字符串转成适合文件名的 slug。
  */
 function slugify(text: string): string {
   return text
@@ -853,7 +848,7 @@ function slugify(text: string): string {
 }
 
 /**
- * Generate a unique, readable file name for a plan
+ * 为 plan 生成唯一且可读的文件名。
  */
 function generatePlanFileName(plan: Plan, plansDir: string): string {
   let name = plan.title || plan.context?.substring(0, 50) || 'untitled';
@@ -878,7 +873,7 @@ function generatePlanFileName(plan: Plan, plansDir: string): string {
 }
 
 /**
- * Ensure the plans directory exists
+ * 确保会话的 plans 目录存在。
  */
 function ensurePlansDir(workspaceRootPath: string, sessionId: string): string {
   const plansDir = getSessionPlansPath(workspaceRootPath, sessionId);
@@ -889,7 +884,7 @@ function ensurePlansDir(workspaceRootPath: string, sessionId: string): string {
 }
 
 /**
- * Format a plan as markdown
+ * 把 Plan 对象格式化为 Markdown。
  */
 export function formatPlanAsMarkdown(plan: Plan): string {
   const lines: string[] = [];
@@ -939,7 +934,7 @@ export function formatPlanAsMarkdown(plan: Plan): string {
 }
 
 /**
- * Parse a markdown plan file back to a Plan object
+ * 把 Markdown plan 文件解析回 Plan 对象。
  */
 export function parsePlanFromMarkdown(content: string, planId: string): Plan | null {
   try {
@@ -998,7 +993,8 @@ export function parsePlanFromMarkdown(content: string, planId: string): Plan | n
 }
 
 /**
- * Save a plan to a markdown file
+ * 把 plan 保存为 Markdown 文件。
+ * @returns 保存后的文件路径
  */
 export function savePlanToFile(
   workspaceRootPath: string,
@@ -1016,7 +1012,7 @@ export function savePlanToFile(
 }
 
 /**
- * Load a plan from a markdown file by name
+ * 按文件名加载会话的 plan。
  */
 export function loadPlanFromFile(
   workspaceRootPath: string,
@@ -1038,7 +1034,7 @@ export function loadPlanFromFile(
 }
 
 /**
- * Load a plan from a full file path
+ * 按完整路径加载 plan。
  */
 export function loadPlanFromPath(filePath: string): Plan | null {
   if (!existsSync(filePath)) {
@@ -1055,7 +1051,7 @@ export function loadPlanFromPath(filePath: string): Plan | null {
 }
 
 /**
- * List all plan files in a session
+ * 列出会话的所有 plan 文件。
  */
 export function listPlanFiles(
   workspaceRootPath: string,
@@ -1087,7 +1083,7 @@ export function listPlanFiles(
 }
 
 /**
- * Delete a plan file
+ * 删除会话的 plan 文件。
  */
 export function deletePlanFile(
   workspaceRootPath: string,
@@ -1104,7 +1100,7 @@ export function deletePlanFile(
 }
 
 /**
- * Get the most recent plan file for a session
+ * 获取会话最近修改的 plan 文件。
  */
 export function getMostRecentPlanFile(
   workspaceRootPath: string,
@@ -1115,11 +1111,11 @@ export function getMostRecentPlanFile(
 }
 
 // ============================================================
-// Attachments Directory
+// 附件目录
 // ============================================================
 
 /**
- * Ensure attachments directory exists
+ * 确保会话的 attachments 目录存在。
  */
 export function ensureAttachmentsDir(workspaceRootPath: string, sessionId: string): string {
   const dir = getSessionAttachmentsPath(workspaceRootPath, sessionId);

@@ -1,8 +1,8 @@
 /**
  * useStatuses Hook
  *
- * React hook to load and manage workspace statuses.
- * Auto-refreshes when workspace changes.
+ * 加载并管理工作区的状态配置（status config）。
+ * 当 workspace 变化时自动刷新。
  */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -17,12 +17,12 @@ export interface UseStatusesResult {
 }
 
 /**
- * Load statuses for a workspace via IPC
- * Auto-refreshes when workspaceId changes
+ * 通过 IPC 加载某个工作区的状态配置。
+ * workspaceId 变化时自动刷新。
  *
- * To detect agent edits to status config files, you could:
- * - Poll periodically (simple)
- * - Use file watcher in main process (more complex but real-time)
+ * 若要感知 Agent 对状态配置文件的修改，可以：
+ * - 简单方案：定时轮询
+ * - 实时方案：在主进程监听文件变化并推送事件
  */
 export function useStatuses(workspaceId: string | null): UseStatusesResult {
   const [statuses, setStatuses] = useState<StatusConfig[]>([])
@@ -49,19 +49,19 @@ export function useStatuses(workspaceId: string | null): UseStatusesResult {
     }
   }, [workspaceId])
 
-  // Load statuses when workspace changes
+  // workspace 变化时加载
   useEffect(() => {
     refresh()
   }, [refresh])
 
-  // Subscribe to live status changes (config or icon file changes)
+  // 监听实时状态变化（配置文件或图标文件变化）
   useEffect(() => {
     if (!workspaceId) return
 
     const cleanup = window.electronAPI.onStatusesChanged((changedWorkspaceId) => {
-      // Only refresh if this is our workspace
+      // 只刷新属于当前 workspace 的数据
       if (changedWorkspaceId === workspaceId) {
-        clearIconCache()  // Clear cached icon files before refreshing
+        clearIconCache()  // 刷新前先清掉缓存的图标文件
         refresh()
       }
     })

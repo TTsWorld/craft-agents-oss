@@ -6,6 +6,12 @@ import { createPendingFlow } from '@craft-agent/shared/auth'
 import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 
+// 本文件属于 OAuth RPC 模块，负责：Source 的 OAuth 授权流程管理（start/complete/cancel/revoke）。
+// Agent 概念：OAuth 用于让 Agent 安全地获得外部 source 的访问令牌，避免把用户密码直接交给 Agent。
+// 核心函数 completeOAuthFlow 同时被 RPC handler 和 /api/oauth/callback HTTP 路由复用，
+// 类似 Golang 里抽出一个 service 函数，被 grpc handler 和 http handler 同时调用。
+
+// 本 handler 负责注册的 OAuth channel 列表
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.oauth.START,
   RPC_CHANNELS.oauth.COMPLETE,
@@ -14,14 +20,16 @@ export const HANDLED_CHANNELS = [
 ] as const
 
 /**
- * Complete an OAuth flow: validate state, exchange code for tokens, store credentials.
+ * 完成 OAuth 流程：校验 state、用授权码换取 token、保存凭证。
  *
- * Shared between the `oauth:complete` RPC handler (called by Electron) and the
- * `/api/oauth/callback` HTTP route (called by the relay for WebUI).
+ * 同时被 `oauth:complete` RPC handler（Electron 调用）和 `/api/oauth/callback`
+ * HTTP 路由（WebUI 的 relay 调用）复用。
  *
- * @param opts.clientId - RPC client ID (for ownership validation). Omit for HTTP callback.
- * @param opts.workspaceId - Workspace ID (for ownership validation). Omit for HTTP callback.
+ * @param opts.clientId - RPC 客户端 ID（用于所有权校验）；HTTP callback 调用时省略。
+ * @param opts.workspaceId - Workspace ID（用于所有权校验）；HTTP callback 调用时省略。
  */
+// completeOAuthFlow：完成 OAuth 授权码换 token，并保存凭证。
+// 参数用 options 对象组织，避免过长参数列表；TS 里这叫“命名参数模式”。
 export async function completeOAuthFlow(opts: {
   code: string
   state: string
@@ -38,7 +46,7 @@ export async function completeOAuthFlow(opts: {
   const flow = flowStore.getByState(state)
   if (!flow) throw new Error('Unknown or expired OAuth flow')
 
-  // When called via RPC, enforce ownership. HTTP callbacks skip this (state is sufficient auth).
+  // 通过 RPC 调用时校验 flow 所有权；HTTP callback 只靠 state 本身做认证，跳过此校验
   if (opts.clientId !== undefined) {
     if (flow.ownerClientId !== opts.clientId) throw new Error('OAuth flow owned by different client')
   }
@@ -57,7 +65,7 @@ export async function completeOAuthFlow(opts: {
 
   flowStore.remove(state)
 
-  // If this was triggered from a session auth card, complete it
+  // 如果 OAuth 是从 session 的 auth card 触发的，通知 session manager 完成认证请求
   if (flow.sessionId && flow.authRequestId) {
     await sessionManager.completeAuthRequest(flow.sessionId, {
       requestId: flow.authRequestId,
@@ -68,19 +76,22 @@ export async function completeOAuthFlow(opts: {
     })
   }
 
-  // Push source status update to all clients in this workspace
+  // 向该 workspace 的所有客户端推送 source 状态更新
   pushSourcesChanged(flow.workspaceId)
 
   logger.info(`[OAuth] Flow complete for ${flow.sourceSlug} (success=${result.success})`)
   return result
 }
 
+// registerOAuthHandlers：注册 OAuth 流程相关 RPC 路由。
 export function registerOAuthHandlers(server: RpcServer, deps: HandlerDeps): void {
   const log = deps.platform.logger
   const flowStore = deps.oauthFlowStore
   const credManager = getSourceCredentialManager()
 
   // ── oauth:start ──────────────────────────────────────────────
+  // 启动 source 的 OAuth 流程：准备 authUrl、state、PKCE codeVerifier，
+  // 把 pending flow 存到 flowStore，等待浏览器回调或客户端 complete。
   server.handle(RPC_CHANNELS.oauth.START, async (ctx, args: {
     sourceSlug: string
     callbackPort?: number
@@ -129,6 +140,7 @@ export function registerOAuthHandlers(server: RpcServer, deps: HandlerDeps): voi
   })
 
   // ── oauth:complete ───────────────────────────────────────────
+  // 客户端在浏览器授权完成后调用；校验 flowId/state 后进入复用的 completeOAuthFlow。
   server.handle(RPC_CHANNELS.oauth.COMPLETE, async (ctx, args: {
     flowId: string
     code: string
@@ -136,7 +148,6 @@ export function registerOAuthHandlers(server: RpcServer, deps: HandlerDeps): voi
   }) => {
     const { flowId, code, state } = args
 
-    // Validate flowId match before delegating
     const flow = flowStore.getByState(state)
     if (!flow) throw new Error('Unknown or expired OAuth flow')
     if (flow.flowId !== flowId) throw new Error('Flow ID mismatch')
@@ -159,6 +170,7 @@ export function registerOAuthHandlers(server: RpcServer, deps: HandlerDeps): voi
   })
 
   // ── oauth:cancel ─────────────────────────────────────────────
+  // 取消进行中的 OAuth flow，仅在 flow 属于当前 client 时删除。
   server.handle(RPC_CHANNELS.oauth.CANCEL, async (ctx, args: {
     flowId: string
     state: string
@@ -172,6 +184,7 @@ export function registerOAuthHandlers(server: RpcServer, deps: HandlerDeps): voi
   })
 
   // ── oauth:revoke ─────────────────────────────────────────────
+  // 吊销/登出某个 source 的 OAuth 凭证，并推送 source 状态变更。
   server.handle(RPC_CHANNELS.oauth.REVOKE, async (ctx, args: {
     sourceSlug: string
   }) => {
@@ -194,7 +207,7 @@ export function registerOAuthHandlers(server: RpcServer, deps: HandlerDeps): voi
     await credManager.delete(source)
     credManager.markSourceNeedsReauth(source, 'Signed out by user')
 
-    // Push source status update
+    // 推送 source 状态更新
     const revokeSources = loadWorkspaceSources(workspace.rootPath)
     pushTyped(server, RPC_CHANNELS.sources.CHANGED, { to: 'workspace', workspaceId: ctx.workspaceId }, ctx.workspaceId, revokeSources)
 

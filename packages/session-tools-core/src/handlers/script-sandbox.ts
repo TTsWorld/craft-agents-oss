@@ -10,6 +10,7 @@ import { isPathWithinDirectory } from '../runtime/path-security.ts';
 import { resolveScriptRuntime } from '../runtime/resolve-script-runtime.ts';
 import { createScriptRuntimeEnv } from '../runtime/sandbox-env.ts';
 
+// script_sandbox 参数：语言、脚本内容、输入文件、stdin、超时时间
 export interface ScriptSandboxArgs {
   language: 'python3' | 'node' | 'bun';
   script: string;
@@ -22,6 +23,7 @@ const DEFAULT_TIMEOUT_MS = 5_000;
 const MAX_TIMEOUT_MS = 15_000;
 const MAX_OUTPUT_CHARS = 20_000;
 
+// 截断超长输出，避免把过多内容塞进 tool result
 function truncateOutput(text: string): { text: string; truncated: boolean } {
   if (text.length <= MAX_OUTPUT_CHARS) {
     return { text, truncated: false };
@@ -33,6 +35,16 @@ function truncateOutput(text: string): { text: string; truncated: boolean } {
   };
 }
 
+/**
+ * 处理 script_sandbox tool 调用。
+ *
+ * 在隔离环境中执行用户脚本（Python/Node/Bun）。
+ * 关键安全点：
+ * - 输入文件必须位于会话目录内；
+ * - 必须启用网络和文件系统隔离；
+ * - 超时时会发送 SIGKILL；
+ * - 敏感环境变量会被 createScriptRuntimeEnv 剥离。
+ */
 export async function handleScriptSandbox(
   ctx: SessionToolContext,
   args: ScriptSandboxArgs
@@ -44,6 +56,7 @@ export async function handleScriptSandbox(
   const sessionDir = ctx.sessionPath;
   const dataDir = ctx.dataPath;
 
+  // 解析并校验输入文件路径，防止目录穿越
   const inputFiles = args.inputFiles ?? [];
   const resolvedInputs: string[] = [];
   for (const inputFile of inputFiles) {
@@ -61,6 +74,7 @@ export async function handleScriptSandbox(
     mkdirSync(dataDir, { recursive: true });
   }
 
+  // 超时时间限制在 [1, MAX_TIMEOUT_MS] 毫秒之间
   const timeoutMs = Math.min(Math.max(args.timeoutMs ?? DEFAULT_TIMEOUT_MS, 1), MAX_TIMEOUT_MS);
   const ext = args.language === 'python3' ? '.py' : '.js';
   const sandboxScriptDir = join(dataDir, '.sandbox-scripts');
@@ -72,6 +86,7 @@ export async function handleScriptSandbox(
   writeFileSync(tempScript, args.script, 'utf-8');
 
   try {
+    // 解析实际运行时（例如系统 node、bun、python3）
     const runtime = resolveScriptRuntime(args.language);
     const runtimeArgs = [...runtime.argsPrefix, tempScript, ...resolvedInputs];
 
@@ -79,8 +94,8 @@ export async function handleScriptSandbox(
     let filesystemIsolation = applyFilesystemIsolation(runtime.command, runtimeArgs, sessionDir);
 
     if (process.platform === 'darwin') {
-      // macOS: compose network + filesystem restrictions in a SINGLE sandbox-exec profile
-      // to avoid nested sandbox-exec wrapping failures.
+      // macOS：把网络限制和文件系统限制合并到同一个 sandbox-exec profile 里，
+      // 避免嵌套 sandbox-exec 导致失败。
       filesystemIsolation = applyFilesystemIsolation(runtime.command, runtimeArgs, sessionDir, {
         includeNetworkDeny: true,
       });
@@ -105,6 +120,7 @@ export async function handleScriptSandbox(
       );
     }
 
+    // 双重校验隔离是否生效
     if (networkIsolation.status !== 'enforced') {
       return errorResponse(
         'script_sandbox requires network isolation in all permission modes, but no supported isolation backend is available on this platform/runtime.'
@@ -117,6 +133,7 @@ export async function handleScriptSandbox(
       );
     }
 
+    // 构造剥离敏感变量后的环境变量
     const env = createScriptRuntimeEnv({
       language: args.language,
       dataDir,
@@ -139,6 +156,7 @@ export async function handleScriptSandbox(
       }
       child.stdin.end();
 
+      // 超时后强制杀进程
       const killTimer = setTimeout(() => {
         timedOut = true;
         child.kill('SIGKILL');
@@ -205,7 +223,7 @@ export async function handleScriptSandbox(
     try {
       unlinkSync(tempScript);
     } catch {
-      // ignore cleanup errors
+      // 忽略清理失败
     }
   }
 }

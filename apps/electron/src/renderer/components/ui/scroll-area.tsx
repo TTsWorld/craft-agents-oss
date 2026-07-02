@@ -1,9 +1,15 @@
+/**
+ * ScrollArea —— 自定义滚动条区域组件
+ *
+ * 基于 Radix UI ScrollArea 封装，用统一的细滚动条替换浏览器默认滚动条。
+ * viewportRef 可让父组件获取可滚动视口的 DOM 引用。
+ */
 import * as React from "react"
 import * as ScrollAreaPrimitive from "@radix-ui/react-scroll-area"
 import { cn } from "@/lib/utils"
 
 interface ScrollAreaProps extends React.ComponentProps<typeof ScrollAreaPrimitive.Root> {
-  /** Ref to the scrollable viewport element */
+  /** 可滚动视口元素的 ref，父组件可通过它控制滚动 */
   viewportRef?: React.RefObject<HTMLDivElement>
 }
 

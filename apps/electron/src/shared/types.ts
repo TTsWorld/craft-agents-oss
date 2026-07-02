@@ -1,13 +1,13 @@
 // =============================================================================
-// Protocol re-exports (channels, DTOs, events, wire types)
+// Protocol 重新导出（channels、DTOs、events、wire types）
 // =============================================================================
 export * from '@craft-agent/shared/protocol'
 
 // =============================================================================
-// Package re-exports (convenience for renderer imports)
+// Package 重新导出（方便 renderer 侧统一导入）
 // =============================================================================
 
-// Core types
+// 核心类型
 import type {
   Message as CoreMessage,
   MessageRole as CoreMessageRole,
@@ -22,12 +22,12 @@ import type {
   AnnotationV1,
 } from '@craft-agent/core/types';
 
-// Mode types from dedicated subpath export (avoids pulling in SDK)
+// 从独立子路径导出的 Mode 类型（避免引入 SDK 本身）
 import type { PermissionMode } from '@craft-agent/shared/agent/modes';
 export type { PermissionMode };
 export { PERMISSION_MODE_CONFIG } from '@craft-agent/shared/agent/modes';
 
-// Thinking level types
+// Thinking level 类型
 import type { ThinkingLevel } from '@craft-agent/shared/agent/thinking-levels';
 export type { ThinkingLevel };
 export { THINKING_LEVELS, DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels';
@@ -46,38 +46,38 @@ export type {
   AnnotationV1,
 };
 
-// Auth types for onboarding
+// 引导流程（onboarding）所需的认证类型
 import type { AuthState, SetupNeeds } from '@craft-agent/shared/auth/types';
 import type { AuthType } from '@craft-agent/shared/config/types';
 export type { AuthState, SetupNeeds, AuthType };
 
-// Credential health types
+// 凭据健康状态类型
 import type { CredentialHealthStatus, CredentialHealthIssue, CredentialHealthIssueType } from '@craft-agent/shared/credentials/types';
 export type { CredentialHealthStatus, CredentialHealthIssue, CredentialHealthIssueType };
 
-// Source types for session source selection
+// Session source 选择相关的 source 类型
 import type { LoadedSource, FolderSourceConfig, SourceConnectionStatus } from '@craft-agent/shared/sources/types';
 export type { LoadedSource, FolderSourceConfig, SourceConnectionStatus };
 
-// Skill types
+// Skill 类型
 import type { LoadedSkill, SkillMetadata } from '@craft-agent/shared/skills/types';
 export type { LoadedSkill, SkillMetadata };
 
-// Resource bundle types (cross-workspace export/import)
+// 资源包类型（跨 workspace 的导出/导入）
 import type { ExportResourcesOptions, ExportResult, ResourceImportMode, ResourceBundle, ResourceImportResult } from '@craft-agent/shared/resources';
 export type { ExportResourcesOptions, ExportResult, ResourceImportMode, ResourceBundle, ResourceImportResult };
 
-// LLM connection types
+// LLM 连接类型
 import type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType, NetworkProxySettings } from '@craft-agent/shared/config';
 export type { LlmConnection, LlmConnectionWithStatus, LlmAuthType, LlmProviderType, NetworkProxySettings };
 
 // =============================================================================
-// GUI-only types (not used by server/handler code)
+// GUI 专用类型（server/handler 代码不会使用）
 // =============================================================================
 
 /**
- * Browser toolbar window IPC channels (preload <-> BrowserPaneManager).
- * Kept separate from RPC_CHANNELS because these are scoped to toolbar windows.
+ * 浏览器工具栏窗口的 IPC 通道（preload <-> BrowserPaneManager）。
+ * 与 RPC_CHANNELS 分开，因为这些通道只作用于工具栏窗口。
  */
 export const BROWSER_TOOLBAR_CHANNELS = {
   NAVIGATE: 'browser-toolbar:navigate',
@@ -92,43 +92,50 @@ export const BROWSER_TOOLBAR_CHANNELS = {
   THEME_COLOR: 'browser-toolbar:theme-color',
 } as const
 
-/** Tool icon mapping entry from tool-icons.json (with icon resolved to data URL) */
+// tool-icons.json 中的图标映射项（图标已解析为 data URL）
 export interface ToolIconMapping {
+  // 工具 ID
   id: string
+  // 显示名称
   displayName: string
-  /** Data URL of the icon (e.g., data:image/png;base64,...) */
+  // 图标数据的 Data URL，例如 data:image/png;base64,...
   iconDataUrl: string
+  // 该图标适用的命令名列表
   commands: string[]
 }
 
-/**
- * Browser pane creation options
- */
+// 浏览器面板（Browser Pane）创建选项
 export interface BrowserPaneCreateOptions {
+  // 面板唯一 ID
   id?: string
+  // 是否立即显示
   show?: boolean
+  // 将浏览器面板绑定到某个 session，便于随 session 一起清理
   bindToSessionId?: string
 }
 
-/**
- * Empty-state launch request from the browser empty-state renderer.
- */
+// 浏览器空白页向主进程发起的启动请求
 export interface BrowserEmptyStateLaunchPayload {
+  // 要跳转到的路由
   route: string
+  // 可选的认证/会话 token
   token?: string
 }
 
-/**
- * Result of browser empty-state launch handling.
- */
+// 浏览器空白页启动处理结果
 export interface BrowserEmptyStateLaunchResult {
+  // 是否成功
   ok: boolean
+  // 是否已处理
   handled: boolean
+  // 失败或跳过的原因
   reason?: string
 }
 
+// 传输层模式：local 表示本地 server，remote 表示远程 server
 export type TransportMode = 'local' | 'remote'
 
+// 传输层连接状态
 export type TransportConnectionStatus =
   | 'idle'
   | 'connecting'
@@ -137,6 +144,7 @@ export type TransportConnectionStatus =
   | 'disconnected'
   | 'failed'
 
+// 传输层连接错误分类
 export type TransportConnectionErrorKind =
   | 'auth'
   | 'protocol'
@@ -145,38 +153,54 @@ export type TransportConnectionErrorKind =
   | 'server'
   | 'unknown'
 
+// 传输层连接错误详情
 export interface TransportConnectionError {
+  // 错误分类
   kind: TransportConnectionErrorKind
+  // 错误信息
   message: string
+  // 可选的错误码
   code?: string
 }
 
+// 传输层连接关闭信息
 export interface TransportCloseInfo {
+  // 关闭码
   code?: number
+  // 关闭原因
   reason?: string
+  // 是否为正常关闭
   wasClean?: boolean
 }
 
+// 传输层连接完整状态
 export interface TransportConnectionState {
+  // 当前模式：本地或远程
   mode: TransportMode
+  // 当前连接状态
   status: TransportConnectionStatus
+  // 连接地址
   url: string
+  // 当前重试次数
   attempt: number
+  // 距离下次重试的毫秒数
   nextRetryInMs?: number
+  // 最近一次错误
   lastError?: TransportConnectionError
+  // 最近一次关闭信息
   lastClose?: TransportCloseInfo
+  // 状态更新时间戳
   updatedAt: number
 }
 
 // =============================================================================
-// ElectronAPI — type-safe IPC API exposed to renderer
+// ElectronAPI —— 暴露给 renderer 的类型安全 IPC API
 // =============================================================================
 
-// Re-import types for ElectronAPI
+// 为 ElectronAPI 重新导入所需类型
 import type { WorkspaceInfo, Workspace, SessionMetadata, StoredAttachment as StoredAttachmentType } from '@craft-agent/core/types';
 
-// Import protocol types used by ElectronAPI (they come through the `export *` above,
-// but we need them in scope for the interface definition)
+// 导入 ElectronAPI 用到的 protocol 类型（虽然上面已经 `export *`，但 interface 定义需要它们在作用域内）
 import type {
   Session,
   UnreadSummary,
@@ -223,8 +247,12 @@ import type {
   ImportRemoteSessionTransferResult,
 } from '@craft-agent/shared/protocol'
 
+/**
+ * 暴露给 renderer 进程的类型安全 IPC API。
+ * 在 preload 脚本中通过 contextBridge 注入为 `window.electronAPI`。
+ */
 export interface ElectronAPI {
-  // Session management
+  // Session 管理
   getSessions(): Promise<Session[]>
   getUnreadSummary(): Promise<UnreadSummary>
   markAllSessionsRead(workspaceId: string): Promise<void>
@@ -253,44 +281,44 @@ export interface ElectronAPI {
   respondToPermission(sessionId: string, requestId: string, allowed: boolean, alwaysAllow: boolean, options?: PermissionResponseOptions): Promise<boolean>
   respondToCredential(sessionId: string, requestId: string, response: CredentialResponse): Promise<boolean>
 
-  // Consolidated session command handler
+  // 统一的 session 命令处理入口
   sessionCommand(sessionId: string, command: SessionCommand): Promise<void | ShareResult | RefreshTitleResult | { count: number }>
 
-  // Server info (REMOTE_ELIGIBLE — returns data from whichever server owns the workspace)
+  // Server 信息（REMOTE_ELIGIBLE —— 返回拥有该 workspace 的 server 的数据）
   getServerHomeDir(): Promise<string>
 
-  // Server mode configuration
+  // Server 模式配置
   getServerConfig(): Promise<import('@craft-agent/shared/config/server-config').ServerConfig>
   setServerConfig(config: import('@craft-agent/shared/config/server-config').ServerConfig): Promise<void>
   getServerStatus(): Promise<import('@craft-agent/shared/config/server-config').ServerStatus>
 
-  // App lifecycle
+  // 应用生命周期
   relaunchApp(): Promise<void>
   removeWorkspace(workspaceId: string): Promise<boolean>
   invokeOnServer(url: string, token: string, channel: string, ...args: any[]): Promise<any>
 
-  // Remote session transfer (main-process orchestrated, supports chunked upload)
+  // 跨 workspace 的 session 传输（由 main 进程编排，支持分块上传）
   transferSessionToWorkspace(sessionId: string, targetWorkspaceId: string, sessionIndex?: number, sessionCount?: number): Promise<{ sessionId: string }>
   onTransferProgress(callback: (progress: { sessionIndex: number; sessionCount: number; chunkSent: number; chunkTotal: number }) => void): () => void
 
-  // Session export/import (cross-workspace transfer)
+  // Session 导出/导入（跨 workspace 迁移）
   exportSession(sessionId: string): Promise<unknown>
   importSession(targetWorkspaceId: string, bundle: unknown, mode: 'move' | 'fork'): Promise<{ sessionId: string; warnings?: string[] }>
   exportRemoteSessionTransfer(sessionId: string): Promise<RemoteSessionTransferPayload>
   importRemoteSessionTransfer(targetWorkspaceId: string, payload: RemoteSessionTransferPayload): Promise<ImportRemoteSessionTransferResult>
 
-  // Pending plan execution (for reload recovery)
+  // 待执行的 plan（用于刷新后恢复）
   getPendingPlanExecution(sessionId: string): Promise<{ planPath: string; draftInputSnapshot?: string; awaitingCompaction: boolean; executionDispatched: boolean } | null>
-  // Permission mode reconciliation
+  // 权限模式（permission mode）对账
   getSessionPermissionModeState(sessionId: string): Promise<PermissionModeState | null>
 
-  // Workspace management
+  // Workspace 管理
   getWorkspaces(): Promise<Workspace[]>
   createWorkspace(folderPath: string, name: string, remoteServer?: { url: string; token: string; remoteWorkspaceId: string }): Promise<Workspace>
   checkWorkspaceSlug(slug: string): Promise<{ exists: boolean; path: string }>
   updateWorkspaceRemoteServer(workspaceId: string, remoteServer: { url: string; token: string; remoteWorkspaceId: string }): Promise<{ success: boolean }>
 
-  // Server-level workspace operations (for thin client / remote workspace discovery)
+  // Server 级别的 workspace 操作（用于 thin client / 远程 workspace 发现）
   getServerWorkspaces(): Promise<WorkspaceInfo[]>
   createServerWorkspace(name: string): Promise<WorkspaceInfo>
 
@@ -299,12 +327,12 @@ export interface ElectronAPI {
     error?: string
     needsWorkspace?: boolean
     remoteWorkspaces?: Array<{ id: string; name: string }>
-    remoteWorkspaceId?: string   // auto-set when exactly one workspace
-    remoteWorkspaceName?: string // auto-set when exactly one workspace
-    serverVersion?: string       // server app version from handshake
+    remoteWorkspaceId?: string   // 当远端只有一个 workspace 时自动填充
+    remoteWorkspaceName?: string // 当远端只有一个 workspace 时自动填充
+    serverVersion?: string       // 握手时获取的 server 应用版本
   }>
 
-  // Window management
+  // 窗口管理
   getWindowWorkspace(): Promise<string | null>
   getWindowMode(): Promise<string | null>
   openWorkspace(workspaceId: string): Promise<void>
@@ -312,66 +340,68 @@ export interface ElectronAPI {
   switchWorkspace(workspaceId: string): Promise<void>
   closeWindow(): Promise<void>
   confirmCloseWindow(): Promise<void>
-  /** Cancel a pending close request (renderer handled it by closing a modal/panel). */
+  // 取消待处理的关闭请求（renderer 已通过关闭弹窗/面板处理完毕）
   cancelCloseWindow(): Promise<void>
-  /** Listen for close requests and receive source metadata. Returns cleanup function. */
+  // 监听关闭请求并接收源数据；返回取消监听的清理函数
   onCloseRequested(callback: (request: WindowCloseRequest) => void): () => void
-  /** Show/hide macOS traffic light buttons (for fullscreen overlays) */
+  // 显示/隐藏 macOS 交通灯按钮（用于全屏 overlay）
   setTrafficLightsVisible(visible: boolean): Promise<void>
 
-  // Event listeners
+  // 事件监听
   onSessionEvent(callback: (event: SessionEvent) => void): () => void
   onUnreadSummaryChanged(callback: (summary: UnreadSummary) => void): () => void
 
-  // File operations
+  // 文件操作
   readFile(path: string): Promise<string>
-  /** Read a file as binary data (Uint8Array) */
+  // 以二进制（Uint8Array）读取文件
   readFileBinary(path: string): Promise<Uint8Array>
-  /** Read a file as a data URL (data:{mime};base64,...) for binary preview (images, PDFs) */
+  // 以 data URL（data:{mime};base64,...）读取文件，用于图片/PDF 预览
   readFileDataUrl(path: string): Promise<string>
-  /** Read an image file as a size-bounded preview data URL for lightweight thumbnail rendering. */
+  // 读取图片并按最大尺寸缩放后的轻量缩略图 data URL
   readFilePreviewDataUrl(path: string, maxSize?: number): Promise<string>
   openFileDialog(): Promise<string[]>
   readFileAttachment(path: string): Promise<FileAttachment | null>
-  /** Re-read a user-attached file by absolute path (bypasses workspace-dir validation).
-   *  Used only by draft hydration for paths the user explicitly picked via OS dialog / drag. */
+  /**
+   * 通过绝对路径重新读取用户已附加的文件（绕过 workspace 目录校验）。
+   * 仅用于草稿恢复：文件路径来自用户通过系统对话框/拖拽明确选择的内容。
+   */
   readUserAttachment(path: string): Promise<FileAttachment | null>
   storeAttachment(sessionId: string, attachment: FileAttachment): Promise<import('../../../../packages/core/src/types/index.ts').StoredAttachment>
   generateThumbnail(base64: string, mimeType: string): Promise<string | null>
-  /** Returns the absolute filesystem path for a File (only works for file-picker / OS-drag Files). */
+  // 获取 File 对象的绝对文件系统路径（仅对文件选择器/OS 拖拽文件有效）
   getFilePath(file: File): string | null
 
-  // Filesystem search (for @ mention file selection)
+  // 文件系统搜索（用于 @ 提及文件选择）
   searchFiles(basePath: string, query: string): Promise<FileSearchResult[]>
 
-  // Server filesystem browsing (remote mode)
+  // 远程模式下的 server 文件系统浏览
   listServerDirectory(dirPath: string): Promise<DirectoryListingResult>
-  // Debug: send renderer logs to main process log file
+  // Debug：把 renderer 日志写入 main 进程日志文件
   debugLog(...args: unknown[]): void
 
-  // Theme
+  // 主题
   getSystemTheme(): Promise<boolean>
   onSystemThemeChange(callback: (isDark: boolean) => void): () => void
 
-  // System
+  // 系统信息
   getVersions(): { node: string; chrome: string; electron: string }
-  /** Returns the renderer host environment without going through RPC. */
+  // 直接返回 renderer 宿主环境，不经过 RPC
   getRuntimeEnvironment(): 'electron' | 'web'
   getHomeDir(): Promise<string>
   isDebugMode(): Promise<boolean>
 
-  // Transport connection status (preload-local, not RPC channels)
+  // 传输层连接状态（preload 本地维护，不走 RPC 通道）
   getTransportConnectionState(): Promise<TransportConnectionState>
   onTransportConnectionStateChanged(callback: (state: TransportConnectionState) => void): () => void
   reconnectTransport(): Promise<void>
 
-  /** Fired after a WebSocket reconnect. isStale=true means buffer was evicted — full refresh needed. */
+  // WebSocket 重连后触发；isStale=true 表示缓冲区已被驱逐，需要完整刷新
   onReconnected(callback: (isStale: boolean) => void): () => void
 
-  /** Check whether the server registered a handler for a given RPC channel. */
+  // 检查 server 是否注册了某个 RPC channel 的处理器
   isChannelAvailable(channel: string): boolean
 
-  // Auto-update
+  // 自动更新
   checkForUpdates(): Promise<UpdateInfo>
   getUpdateInfo(): Promise<UpdateInfo>
   installUpdate(): Promise<void>
@@ -380,92 +410,92 @@ export interface ElectronAPI {
   onUpdateAvailable(callback: (info: UpdateInfo) => void): () => void
   onUpdateDownloadProgress(callback: (progress: number) => void): () => void
 
-  // Release notes
+  // 发布说明
   getReleaseNotes(): Promise<string>
   getLatestReleaseVersion(): Promise<string | undefined>
 
-  // System warnings (startup checks)
+  // 系统警告（启动时检查）
   getSystemWarnings(): Promise<{ vcredistMissing: boolean; downloadUrl?: string }>
 
-  // Shell operations
+  // Shell 操作
   openUrl(url: string): Promise<void>
   openFile(path: string): Promise<void>
   showInFolder(path: string): Promise<void>
 
-  // Menu event listeners
+  // 菜单事件监听
   onMenuNewChat(callback: () => void): () => void
   onMenuOpenSettings(callback: () => void): () => void
   onMenuKeyboardShortcuts(callback: () => void): () => void
   onMenuToggleFocusMode(callback: () => void): () => void
   onMenuToggleSidebar(callback: () => void): () => void
 
-  // Deep link navigation listener (for external craftagents:// URLs)
+  // 深链接导航监听（处理外部 craftagents:// URL）
   onDeepLinkNavigate(callback: (nav: DeepLinkNavigation) => void): () => void
 
-  // Auth
+  // 认证
   showLogoutConfirmation(): Promise<boolean>
   showDeleteSessionConfirmation(name: string): Promise<boolean>
   logout(): Promise<void>
 
-  // Credential health check (startup validation)
+  // 凭据健康检查（启动校验）
   getCredentialHealth(): Promise<CredentialHealthStatus>
 
-  // Onboarding
+  // 引导流程
   getAuthState(): Promise<AuthState>
   getSetupNeeds(): Promise<SetupNeeds>
   startWorkspaceMcpOAuth(mcpUrl: string): Promise<OAuthResult & { clientId?: string }>
-  // Claude OAuth (two-step flow)
+  // Claude OAuth（两步流程）
   startClaudeOAuth(): Promise<{ success: boolean; authUrl?: string; error?: string }>
   exchangeClaudeCode(code: string, connectionSlug: string): Promise<ClaudeOAuthResult>
   hasClaudeOAuthState(): Promise<boolean>
   clearClaudeOAuthState(): Promise<{ success: boolean }>
-  /** Defer onboarding setup — user chose "Setup later" */
+  // 推迟引导设置 —— 用户选择“稍后设置”
   deferSetup(): Promise<{ success: boolean }>
 
-  // ChatGPT OAuth (for Codex chatgptAuthTokens mode)
+  // ChatGPT OAuth（用于 Codex chatgptAuthTokens 模式）
   startChatGptOAuth(connectionSlug: string): Promise<{ success: boolean; error?: string }>
   cancelChatGptOAuth(): Promise<{ success: boolean }>
   getChatGptAuthStatus(connectionSlug: string): Promise<{ authenticated: boolean; expiresAt?: number; hasRefreshToken?: boolean }>
   chatGptLogout(connectionSlug: string): Promise<{ success: boolean }>
 
-  // GitHub Copilot OAuth
+  // GitHub Copilot OAuth 授权
   startCopilotOAuth(connectionSlug: string): Promise<{ success: boolean; error?: string }>
   cancelCopilotOAuth(): Promise<{ success: boolean }>
   getCopilotAuthStatus(connectionSlug: string): Promise<{ authenticated: boolean }>
   copilotLogout(connectionSlug: string): Promise<{ success: boolean }>
   onCopilotDeviceCode(callback: (data: { userCode: string; verificationUri: string }) => void): () => void
 
-  /** Unified LLM connection setup */
+  // 统一的 LLM 连接设置
   setupLlmConnection(setup: LlmConnectionSetup): Promise<{ success: boolean; error?: string }>
-  /** Unified connection test — spawns a lightweight agent subprocess to validate credentials */
+  // 统一的连接测试 —— 会启动一个轻量 agent 子进程验证凭据
   testLlmConnectionSetup(params: TestLlmConnectionParams): Promise<TestLlmConnectionResult>
-  // Pi provider discovery (main process only — Pi SDK can't run in renderer)
+  // Pi provider 发现（仅 main 进程 —— Pi SDK 无法在 renderer 运行）
   getPiApiKeyProviders(): Promise<Array<{ key: string; label: string; placeholder: string }>>
   getPiProviderBaseUrl(provider: string): Promise<string | undefined>
   getPiProviderModels(provider: string): Promise<{ models: Array<{ id: string; name: string; costInput: number; costOutput: number; contextWindow: number; reasoning: boolean }>; totalCount: number }>
 
-  // Session-specific model (overrides global)
+  // Session 级别的模型覆盖（覆盖全局设置）
   getSessionModel(sessionId: string, workspaceId: string): Promise<string | null>
   setSessionModel(sessionId: string, workspaceId: string, model: string | null, connection?: string): Promise<void>
 
-  // Workspace Settings (per-workspace configuration)
+  // Workspace 设置（每个 workspace 独立配置）
   getWorkspaceSettings(workspaceId: string): Promise<WorkspaceSettings | null>
   updateWorkspaceSetting<K extends keyof WorkspaceSettings>(workspaceId: string, key: K, value: WorkspaceSettings[K]): Promise<void>
 
-  // Folder dialog
+  // 文件夹选择对话框
   openFolderDialog(): Promise<string | null>
 
-  // User Preferences
+  // 用户偏好设置
   readPreferences(): Promise<{ content: string; exists: boolean; path: string }>
   writePreferences(content: string): Promise<{ success: boolean; error?: string }>
 
-  // Session Drafts (persisted composer state — text + attachment refs)
+  // Session 草稿（持久化的输入框状态：文本 + 附件引用）
   getDraft(sessionId: string): Promise<import('@craft-agent/shared/config').SessionDraft | null>
   setDraft(sessionId: string, draft: import('@craft-agent/shared/config').SessionDraft): Promise<void>
   deleteDraft(sessionId: string): Promise<void>
   getAllDrafts(): Promise<Record<string, import('@craft-agent/shared/config').SessionDraft>>
 
-  // Session Info Panel
+  // Session 信息面板
   getSessionFiles(sessionId: string): Promise<SessionFile[]>
   getSessionNotes(sessionId: string): Promise<string>
   setSessionNotes(sessionId: string, content: string): Promise<void>
@@ -473,7 +503,7 @@ export interface ElectronAPI {
   unwatchSessionFiles(): Promise<void>
   onSessionFilesChanged(callback: (sessionId: string) => void): () => void
 
-  // Sources
+  // Sources（数据源）
   getSources(workspaceId: string): Promise<LoadedSource[]>
   createSource(workspaceId: string, config: Partial<FolderSourceConfig>): Promise<FolderSourceConfig>
   deleteSource(workspaceId: string, sourceSlug: string): Promise<void>
@@ -484,55 +514,55 @@ export interface ElectronAPI {
   getDefaultPermissionsConfig(): Promise<{ config: import('@craft-agent/shared/agent').PermissionsConfigFile | null; path: string }>
   getMcpTools(workspaceId: string, sourceSlug: string): Promise<McpToolsResult>
 
-  // OAuth (server-owned credentials, client-orchestrated flow)
+  // OAuth（server 拥有凭据，client 编排授权流程）
   performOAuth(args: { sourceSlug: string; sessionId?: string; authRequestId?: string }): Promise<{ success: boolean; error?: string; email?: string }>
   oauthRevoke(sourceSlug: string): Promise<{ success: boolean }>
 
-  // Session content search (full-text search via ripgrep)
+  // Session 内容全文搜索（通过 ripgrep）
   searchSessionContent(workspaceId: string, query: string, searchId?: string): Promise<SessionSearchResult[]>
 
-  // Sources change listener (live updates when sources are added/removed)
+  // Source 变更监听（source 增删改时实时推送）
   onSourcesChanged(callback: (workspaceId: string, sources: LoadedSource[]) => void): () => void
 
-  // Default permissions change listener (live updates when default.json changes)
+  // 默认权限变更监听（default.json 变化时实时推送）
   onDefaultPermissionsChanged(callback: () => void): () => void
 
-  // Skills
+  // Skills（技能）
   getSkills(workspaceId: string, workingDirectory?: string): Promise<LoadedSkill[]>
   getSkillFiles?(workspaceId: string, skillSlug: string): Promise<SkillFile[]>
   deleteSkill(workspaceId: string, skillSlug: string): Promise<void>
   openSkillInEditor(workspaceId: string, skillSlug: string): Promise<void>
   openSkillInFinder(workspaceId: string, skillSlug: string): Promise<void>
 
-  // Skills change listener (live updates when skills are added/removed/modified)
+  // Skill 变更监听（skill 增删改时实时推送）
   onSkillsChanged(callback: (workspaceId: string, skills: LoadedSkill[]) => void): () => void
 
-  // Statuses (workspace-scoped)
+  // Statuses（workspace 级别）
   listStatuses(workspaceId: string): Promise<import('@craft-agent/shared/statuses').StatusConfig[]>
   reorderStatuses(workspaceId: string, orderedIds: string[]): Promise<void>
   onStatusesChanged(callback: (workspaceId: string) => void): () => void
 
-  // Labels (workspace-scoped)
+  // Labels（workspace 级别）
   listLabels(workspaceId: string): Promise<import('@craft-agent/shared/labels').LabelConfig[]>
   createLabel(workspaceId: string, input: import('@craft-agent/shared/labels').CreateLabelInput): Promise<import('@craft-agent/shared/labels').LabelConfig>
   deleteLabel(workspaceId: string, labelId: string): Promise<{ stripped: number }>
   onLabelsChanged(callback: (workspaceId: string) => void): () => void
 
-  // LLM connections change listener
+  // LLM 连接变更监听
   onLlmConnectionsChanged(callback: () => void): () => void
 
-  // Views (workspace-scoped, stored in views.json)
+  // Views（workspace 级别，存储在 views.json）
   listViews(workspaceId: string): Promise<import('@craft-agent/shared/views').ViewConfig[]>
   saveViews(workspaceId: string, views: import('@craft-agent/shared/views').ViewConfig[]): Promise<void>
 
-  // Generic workspace image loading/saving
+  // 通用 workspace 图片读写
   readWorkspaceImage(workspaceId: string, relativePath: string): Promise<string>
   writeWorkspaceImage(workspaceId: string, relativePath: string, base64: string, mimeType: string): Promise<void>
 
-  // Tool icon mappings
+  // 工具图标映射
   getToolIconMappings(): Promise<ToolIconMapping[]>
 
-  // Theme (app-level default)
+  // 主题（应用级默认）
   getAppTheme(): Promise<import('@config/theme').ThemeOverrides | null>
   loadPresetThemes(): Promise<import('@config/theme').PresetTheme[]>
   loadPresetTheme(themeId: string): Promise<import('@config/theme').PresetTheme | null>
@@ -542,18 +572,18 @@ export interface ElectronAPI {
   setWorkspaceColorTheme(workspaceId: string, themeId: string | null): Promise<void>
   getAllWorkspaceThemes(): Promise<Record<string, string | undefined>>
 
-  // Theme change listeners
+  // 主题变更监听
   onAppThemeChange(callback: (theme: import('@config/theme').ThemeOverrides | null) => void): () => void
 
-  // Logo URL resolution
+  // Logo URL 解析
   getLogoUrl(serviceUrl: string, provider?: string): Promise<string | null>
 
-  // Notifications
+  // 通知
   showNotification(title: string, body: string, workspaceId: string, sessionId: string): Promise<void>
   getNotificationsEnabled(): Promise<boolean>
   setNotificationsEnabled(enabled: boolean): Promise<void>
 
-  // Input settings
+  // 输入设置
   getAutoCapitalisation(): Promise<boolean>
   setAutoCapitalisation(enabled: boolean): Promise<void>
   getSendMessageKey(): Promise<'enter' | 'cmd-enter'>
@@ -561,31 +591,31 @@ export interface ElectronAPI {
   getSpellCheck(): Promise<boolean>
   setSpellCheck(enabled: boolean): Promise<void>
 
-  // Power settings
+  // 电源设置
   getKeepAwakeWhileRunning(): Promise<boolean>
   setKeepAwakeWhileRunning(enabled: boolean): Promise<void>
 
-  // Tools settings
+  // 工具设置
   getBrowserToolEnabled(): Promise<boolean>
   setBrowserToolEnabled(enabled: boolean): Promise<void>
 
-  // Appearance settings
+  // 外观设置
   getRichToolDescriptions(): Promise<boolean>
   setRichToolDescriptions(enabled: boolean): Promise<void>
 
-  // Prompt caching & context
+  // 提示缓存与上下文
   getExtendedPromptCache(): Promise<boolean>
   setExtendedPromptCache(enabled: boolean): Promise<void>
   getEnable1MContext(): Promise<boolean>
   setEnable1MContext(enabled: boolean): Promise<void>
 
-  // RTK token optimization
+  // RTK token 优化
   getRtkEnabled(): Promise<boolean>
   setRtkEnabled(enabled: boolean): Promise<void>
   getRtkStatus(opts?: { forceRecheck?: boolean }): Promise<{ installed: boolean; path: string | null; version: string | null }>
   getRtkGain(): Promise<{ totalCommands: number; totalInput: number; totalOutput: number; totalSaved: number; avgSavingsPct: number; totalTimeMs: number; avgTimeMs: number } | null>
 
-  // Network proxy settings
+  // 网络代理设置
   getNetworkProxySettings(): Promise<NetworkProxySettings | undefined>
   setNetworkProxySettings(settings: NetworkProxySettings): Promise<void>
 
@@ -597,23 +627,23 @@ export interface ElectronAPI {
   onWindowFocusChange(callback: (isFocused: boolean) => void): () => void
   onNotificationNavigate(callback: (data: { workspaceId: string; sessionId: string }) => void): () => void
 
-  // Theme preferences sync across windows
+  // 主题偏好在多窗口间同步
   broadcastThemePreferences(preferences: { mode: string; colorTheme: string; font: string }): Promise<void>
   onThemePreferencesChange(callback: (preferences: { mode: string; colorTheme: string; font: string }) => void): () => void
 
-  // Workspace theme sync across windows
+  // Workspace 主题在多窗口间同步
   broadcastWorkspaceThemeChange(workspaceId: string, themeId: string | null): Promise<void>
   onWorkspaceThemeChange(callback: (data: { workspaceId: string; themeId: string | null }) => void): () => void
 
-  // Git operations
+  // Git 操作
   getGitBranch(dirPath: string): Promise<string | null>
 
-  // Git Bash (Windows)
+  // Git Bash 路径设置（Windows）
   checkGitBash(): Promise<GitBashStatus>
   browseForGitBash(): Promise<string | null>
   setGitBashPath(path: string): Promise<{ success: boolean; error?: string }>
 
-  // Menu actions (from renderer to main)
+  // 菜单动作（renderer 向 main 发送）
   menuQuit(): Promise<void>
   menuNewWindow(): Promise<void>
   menuMinimize(): Promise<void>
@@ -629,7 +659,7 @@ export interface ElectronAPI {
   menuPaste(): Promise<void>
   menuSelectAll(): Promise<void>
 
-  // Browser pane management
+  // 浏览器面板管理
   browserPane: {
     create(input?: string | BrowserPaneCreateOptions): Promise<string>
     destroy(id: string): Promise<void>
@@ -646,7 +676,7 @@ export interface ElectronAPI {
     onInteracted(callback: (id: string) => void): () => void
   }
 
-  // LLM Connections (provider configurations)
+  // LLM 连接（provider 配置）
   listLlmConnections(): Promise<LlmConnection[]>
   listLlmConnectionsWithStatus(): Promise<LlmConnectionWithStatus[]>
   getLlmConnection(slug: string): Promise<LlmConnection | null>
@@ -659,7 +689,7 @@ export interface ElectronAPI {
   setDefaultThinkingLevel(level: ThinkingLevel): Promise<{ success: boolean; error?: string }>
   setWorkspaceDefaultLlmConnection(workspaceId: string, slug: string | null): Promise<{ success: boolean; error?: string }>
 
-  // Projects (workspace-scoped)
+  // Projects（workspace 级别）
   getProjects(workspaceId: string): Promise<unknown>
   getProject(workspaceId: string, projectIdOrSlug: string): Promise<unknown | null>
   createProject(workspaceId: string, input: import('@craft-agent/shared/projects/types').CreateProjectInput): Promise<import('@craft-agent/shared/projects/types').ProjectConfig>
@@ -670,13 +700,13 @@ export interface ElectronAPI {
   deleteProjectAsset(workspaceId: string, projectSlug: string, filename: string): Promise<void>
   onProjectsChanged(callback: (workspaceId: string, projects: unknown) => void): () => void
 
-  // Automations
+  // Automations（自动化）
   getAutomations(workspaceId: string): Promise<unknown>
 
-  // Automation testing (manual trigger)
+  // 自动化手动触发测试
   testAutomation(payload: TestAutomationPayload): Promise<TestAutomationResult>
 
-  // Automation state management
+  // 自动化状态管理
   setAutomationEnabled(workspaceId: string, eventName: string, matcherIndex: number, enabled: boolean): Promise<void>
   duplicateAutomation(workspaceId: string, eventName: string, matcherIndex: number): Promise<void>
   deleteAutomation(workspaceId: string, eventName: string, matcherIndex: number): Promise<void>
@@ -684,17 +714,17 @@ export interface ElectronAPI {
   getAutomationLastExecuted(workspaceId: string): Promise<Record<string, number>>
   replayAutomation(workspaceId: string, automationId: string, eventName: string): Promise<{ results: Array<{ type: string; url: string; statusCode: number; success: boolean; error?: string; duration: number }> }>
 
-  // Automations change listener
+  // 自动化变更监听
   onAutomationsChanged(callback: (workspaceId: string) => void): () => void
 
-  // Language
+  // 语言
   changeLanguage(lang: string): Promise<void>
 
-  // Resources (cross-workspace export/import)
+  // Resources（跨 workspace 导出/导入）
   exportResources(workspaceId: string, options: ExportResourcesOptions): Promise<ExportResult>
   importResources(workspaceId: string, bundle: ResourceBundle, mode: ResourceImportMode): Promise<ResourceImportResult>
 
-  // Messaging gateway — workspaceId is taken from the client handshake (ctx.workspaceId)
+  // Messaging gateway —— workspaceId 来自客户端握手（ctx.workspaceId）
   getMessagingConfig(): Promise<{
     enabled: boolean
     platforms: Record<string, { enabled: boolean; accessMode?: MessagingPlatformAccessMode; owners?: MessagingPlatformOwnerInfo[] } | undefined>
@@ -709,21 +739,21 @@ export interface ElectronAPI {
   forgetMessagingPlatform(platform: string): Promise<void>
   getMessagingBindings(): Promise<Array<{ id: string; workspaceId: string; sessionId: string; platform: string; channelId: string; threadId?: number; channelName?: string; enabled: boolean; createdAt: number; accessMode?: MessagingBindingAccessMode; allowedSenderIds?: string[] }>>
   generateMessagingPairingCode(sessionId: string, platform: string): Promise<{ code: string; expiresAt: number; botUsername?: string }>
-  /** Telegram supergroup pairing — returns a code typed in the supergroup to capture its chatId. */
+  // Telegram 超级群组配对 —— 返回一个需要在超级群组里输入的 code，用于捕获 chatId
   generateMessagingSupergroupCode(platform: string): Promise<{ code: string; expiresAt: number; botUsername?: string }>
-  /** Read the workspace's currently paired Telegram supergroup, if any. */
+  // 读取当前 workspace 已配对的 Telegram 超级群组（如有）
   getMessagingSupergroup(): Promise<{ chatId: string; title: string; capturedAt: number } | null>
-  /** Forget the paired Telegram supergroup (existing topic bindings stay on disk but stop matching). */
+  // 忘记已配对的 Telegram 超级群组（已有 topic 绑定仍保留在磁盘，但停止匹配）
   unbindMessagingSupergroup(): Promise<{ success: boolean }>
   unbindMessagingSession(sessionId: string, platform?: string): Promise<void>
   unbindMessagingBinding(bindingId: string): Promise<{ success: boolean }>
   onMessagingBindingChanged(callback: (workspaceId: string) => void): () => void
   onMessagingPlatformStatus(callback: (workspaceId: string, platform: string, status: MessagingPlatformRuntimeInfo) => void): () => void
-  // WhatsApp (subprocess-based Baileys adapter)
+  // WhatsApp（基于 Baileys 的子进程适配器）
   startWhatsAppConnect(): Promise<{ success: boolean }>
   submitWhatsAppPhone(phoneNumber: string): Promise<{ success: boolean }>
   onWhatsAppEvent(callback: (payload: { workspaceId: string; event: WhatsAppUiEvent }) => void): () => void
-  // Messaging access control (Phase 3)
+  // 消息平台访问控制（Phase 3）
   getMessagingPlatformOwners(platform: string): Promise<MessagingPlatformOwnerInfo[]>
   setMessagingPlatformOwners(platform: string, owners: MessagingPlatformOwnerInfo[]): Promise<MessagingPlatformOwnerInfo[]>
   getMessagingPlatformAccessMode(platform: string): Promise<MessagingPlatformAccessMode>
@@ -739,49 +769,74 @@ export interface ElectronAPI {
   onMessagingPendingChanged(callback: (workspaceId: string) => void): () => void
 }
 
+// Messaging 平台运行状态
 export interface MessagingPlatformRuntimeInfo {
+  // 平台标识，例如 telegram、lark、whatsapp
   platform: string
+  // 是否已完成配置
   configured: boolean
+  // 是否已连接
   connected: boolean
+  // 运行状态
   state: 'disconnected' | 'connecting' | 'connected' | 'reconnect_required' | 'error'
+  // 平台身份标识
   identity?: string
+  // 最近一次错误信息
   lastError?: string
+  // 状态更新时间戳
   updatedAt: number
 }
 
 /**
- * Workspace-level access policy for a messaging platform.
- * Mirrors the canonical type in `@craft-agent/messaging-gateway`.
+ * Workspace 级别的消息平台访问策略。
+ * 与 `@craft-agent/messaging-gateway` 中的权威类型保持一致。
  */
 export type MessagingPlatformAccessMode = 'open' | 'owner-only'
 
-/** Per-binding access policy. */
+// 每个绑定的访问策略
 export type MessagingBindingAccessMode = 'inherit' | 'allow-list' | 'open'
 
+// Messaging 平台所有者信息
 export interface MessagingPlatformOwnerInfo {
+  // 用户 ID
   userId: string
+  // 显示名称
   displayName?: string
+  // 用户名
   username?: string
+  // 添加时间戳
   addedAt: number
 }
 
 export type MessagingPendingRejectReason = 'not-owner' | 'not-on-binding-allowlist'
 
+// 等待审批的发送者信息
 export interface MessagingPendingSenderInfo {
+  // 所属平台
   platform: string
+  // 用户 ID
   userId: string
+  // 显示名称
   displayName?: string
+  // 用户名
   username?: string
+  // 最近尝试时间戳
   lastAttemptAt: number
+  // 尝试次数
   attemptCount: number
+  // 被拒绝原因
   reason?: MessagingPendingRejectReason
+  // 关联的 binding ID
   bindingId?: string
+  // 关联的 session ID
   sessionId?: string
+  // 关联的频道 ID
   channelId?: string
+  // 关联的话题/线程 ID
   threadId?: number
 }
 
-/** Event payloads broadcast from the WhatsApp subprocess to the UI. */
+// 从 WhatsApp 子进程广播给 UI 的事件负载
 export type WhatsAppUiEvent =
   | { type: 'qr'; qr: string }
   | { type: 'pairing_code'; code: string }
@@ -791,20 +846,16 @@ export type WhatsAppUiEvent =
   | { type: 'error'; message: string }
 
 // =============================================================================
-// Navigation types (renderer-only)
+// 导航类型（仅 renderer 使用）
 // =============================================================================
 
-/**
- * Right sidebar panel types
- */
+// 右侧边栏面板类型
 export type RightSidebarPanel =
   | { type: 'files'; path?: string }
   | { type: 'history' }
   | { type: 'none' }
 
-/**
- * Session filter options
- */
+// Session 筛选选项
 export type SessionFilter =
   | { kind: 'allSessions' }
   | { kind: 'flagged' }
@@ -813,15 +864,11 @@ export type SessionFilter =
   | { kind: 'view'; viewId: string }
   | { kind: 'archived' }
 
-/**
- * Settings subpage options - re-exported from settings-registry (single source of truth)
- */
+// Settings 子页面选项 —— 从 settings-registry 重新导出（单一事实来源）
 export type { SettingsSubpage } from './settings-registry'
 import { isValidSettingsSubpage, type SettingsSubpage } from './settings-registry'
 
-/**
- * Sessions navigation state
- */
+// Sessions 导航状态
 export interface SessionsNavigationState {
   navigator: 'sessions'
   filter: SessionFilter
@@ -835,25 +882,19 @@ export interface SessionsNavigationState {
   viewMode?: 'list' | 'board'
 }
 
-/**
- * Source type filter for sources navigation
- */
+// Sources 导航的类型过滤条件
 export interface SourceFilter {
   kind: 'type'
   sourceType: 'api' | 'mcp' | 'local'
 }
 
-/**
- * Automation type filter for automations navigation
- */
+// Automations 导航的类型过滤条件
 export interface AutomationFilter {
   kind: 'type'
   automationType: 'scheduled' | 'event' | 'agentic'
 }
 
-/**
- * Sources navigation state
- */
+// Sources 导航状态
 export interface SourcesNavigationState {
   navigator: 'sources'
   filter?: SourceFilter
@@ -862,11 +903,11 @@ export interface SourcesNavigationState {
 }
 
 /**
- * Settings navigation state
+ * Settings 导航状态。
  *
- * `subpage: null` means the bare `settings` route — navigator-only view in compact
- * mode. On desktop, the content panel falls back to the App page so it isn't empty.
- * Sources/Skills/Automations use `details: null` for the same purpose.
+ * `subpage: null` 表示裸 `settings` 路由 —— 紧凑模式下只展示导航器。
+ * 桌面端内容面板会回退到 App 页，避免空白。
+ * Sources/Skills/Automations 则用 `details: null` 达到同样目的。
  */
 export interface SettingsNavigationState {
   navigator: 'settings'
@@ -874,18 +915,14 @@ export interface SettingsNavigationState {
   rightSidebar?: RightSidebarPanel
 }
 
-/**
- * Skills navigation state
- */
+// Skills 导航状态
 export interface SkillsNavigationState {
   navigator: 'skills'
   details: { type: 'skill'; skillSlug: string } | null
   rightSidebar?: RightSidebarPanel
 }
 
-/**
- * Automations navigation state
- */
+// Automations 导航状态
 export interface AutomationsNavigationState {
   navigator: 'automations'
   filter?: AutomationFilter
@@ -894,7 +931,7 @@ export interface AutomationsNavigationState {
 }
 
 /**
- * Projects navigation state
+ * Projects 导航状态
  */
 export interface ProjectsNavigationState {
   navigator: 'projects'
@@ -902,9 +939,7 @@ export interface ProjectsNavigationState {
   rightSidebar?: RightSidebarPanel
 }
 
-/**
- * Unified navigation state
- */
+// 统一的导航状态联合类型
 export type NavigationState =
   | SessionsNavigationState
   | SourcesNavigationState
@@ -913,36 +948,44 @@ export type NavigationState =
   | AutomationsNavigationState
   | ProjectsNavigationState
 
+// 类型守卫：判断当前状态是否属于 sessions 导航器
 export const isSessionsNavigation = (
   state: NavigationState
 ): state is SessionsNavigationState => state.navigator === 'sessions'
 
+// 类型守卫：判断当前状态是否属于 sources 导航器
 export const isSourcesNavigation = (
   state: NavigationState
 ): state is SourcesNavigationState => state.navigator === 'sources'
 
+// 类型守卫：判断当前状态是否属于 settings 导航器
 export const isSettingsNavigation = (
   state: NavigationState
 ): state is SettingsNavigationState => state.navigator === 'settings'
 
+// 类型守卫：判断当前状态是否属于 skills 导航器
 export const isSkillsNavigation = (
   state: NavigationState
 ): state is SkillsNavigationState => state.navigator === 'skills'
 
+// 类型守卫：判断当前状态是否属于 automations 导航器
 export const isAutomationsNavigation = (
   state: NavigationState
 ): state is AutomationsNavigationState => state.navigator === 'automations'
 
+// 类型守卫：判断当前状态是否属于 projects 导航器
 export const isProjectsNavigation = (
   state: NavigationState
 ): state is ProjectsNavigationState => state.navigator === 'projects'
 
+// 默认导航状态：全部 sessions 列表，无详情
 export const DEFAULT_NAVIGATION_STATE: NavigationState = {
   navigator: 'sessions',
   filter: { kind: 'allSessions' },
   details: null,
 }
 
+// 将 NavigationState 编码为用于缓存/恢复的 key 字符串
 export const getNavigationStateKey = (state: NavigationState): string => {
   if (state.navigator === 'sources') {
     if (state.details) {
@@ -972,7 +1015,7 @@ export const getNavigationStateKey = (state: NavigationState): string => {
     if (state.subpage === null) return 'settings'
     return `settings:${state.subpage}`
   }
-  // Chats
+  // Sessions 相关
   const f = state.filter
   let base: string
   if (f.kind === 'state') base = `state:${f.stateId}`
@@ -985,8 +1028,9 @@ export const getNavigationStateKey = (state: NavigationState): string => {
   return base
 }
 
+// 从缓存 key 字符串还原 NavigationState
 export const parseNavigationStateKey = (key: string): NavigationState | null => {
-  // Handle sources
+  // 处理 sources
   if (key === 'sources') return { navigator: 'sources', details: null }
   if (key.startsWith('sources/source/')) {
     const sourceSlug = key.slice(15)
@@ -996,7 +1040,7 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
     return { navigator: 'sources', details: null }
   }
 
-  // Handle skills
+  // 处理 skills
   if (key === 'skills') return { navigator: 'skills', details: null }
   if (key.startsWith('skills/skill/')) {
     const skillSlug = key.slice(13)
@@ -1006,7 +1050,7 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
     return { navigator: 'skills', details: null }
   }
 
-  // Handle automations
+  // 处理 automations
   if (key === 'automations') return { navigator: 'automations', details: null }
   if (key.startsWith('automations/automation/')) {
     const automationId = key.slice(22)
@@ -1016,7 +1060,7 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
     return { navigator: 'automations', details: null }
   }
 
-  // Handle projects
+  // 处理 projects
   if (key === 'projects') return { navigator: 'projects', details: null }
   if (key.startsWith('projects/project/')) {
     const projectSlug = key.slice(17)
@@ -1026,7 +1070,7 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
     return { navigator: 'projects', details: null }
   }
 
-  // Handle settings
+  // 处理 settings
   if (key === 'settings') return { navigator: 'settings', subpage: null }
   if (key.startsWith('settings:')) {
     const subpage = key.slice(9)
@@ -1035,7 +1079,7 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
     }
   }
 
-  // Handle sessions
+  // 处理 sessions
   const parseSessionsKey = (filterKey: string, sessionId?: string): NavigationState | null => {
     let filter: SessionFilter
     if (filterKey === 'allSessions') filter = { kind: 'allSessions' }
@@ -1063,18 +1107,19 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
     }
   }
 
-  // Check for session details
+  // 检查是否包含 session 详情
   if (key.includes('/session/')) {
     const [filterPart, , sessionId] = key.split('/')
     return parseSessionsKey(filterPart, sessionId)
   }
 
-  // Simple filter key
+  // 简单的 filter key
   return parseSessionsKey(key)
 }
 
 declare global {
   interface Window {
+    // 将 ElectronAPI 挂载到全局 window，renderer 中通过 window.electronAPI 访问
     electronAPI: ElectronAPI
   }
 }

@@ -1,7 +1,7 @@
 /**
  * SettingsTextarea
  *
- * Multiline text input with label and optional character count.
+ * 设置页多行文本输入组件，带标签、描述和可选字数统计。
  */
 
 import * as React from 'react'
@@ -11,32 +11,32 @@ import { cn } from '@/lib/utils'
 import { settingsUI } from './SettingsUIConstants'
 
 export interface SettingsTextareaProps {
-  /** Textarea label */
+  /** 文本域标签 */
   label?: string
-  /** Optional description below label */
+  /** 标签下方的描述说明 */
   description?: string
-  /** Current value */
+  /** 当前输入值 */
   value: string
-  /** Change handler */
+  /** 值变化时的回调 */
   onChange: (value: string) => void
-  /** Placeholder text */
+  /** 占位提示 */
   placeholder?: string
-  /** Maximum character length */
+  /** 最大字符长度 */
   maxLength?: number
-  /** Number of visible rows */
+  /** 可见行数 */
   rows?: number
-  /** Disabled state */
+  /** 是否禁用 */
   disabled?: boolean
-  /** Error message */
+  /** 错误提示 */
   error?: string
-  /** Additional className */
+  /** 额外 className */
   className?: string
-  /** Whether inside a card */
+  /** 是否在卡片内部 */
   inCard?: boolean
 }
 
 /**
- * SettingsTextarea - Multiline text input with character count
+ * SettingsTextarea - 带字数统计的多行文本输入框
  *
  * @example
  * <SettingsTextarea
@@ -63,6 +63,7 @@ export function SettingsTextarea({
 }: SettingsTextareaProps) {
   const id = React.useId()
   const charCount = value.length
+  // 是否超出最大长度限制
   const isOverLimit = maxLength !== undefined && charCount > maxLength
 
   return (

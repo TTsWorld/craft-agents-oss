@@ -1,27 +1,26 @@
 /**
- * useLinkInterceptor - Centralized hook for intercepting file/URL open requests.
+ * useLinkInterceptor - 集中拦截文件/URL 打开请求的 hook。
  *
- * Replaces the old handleOpenFile/handleOpenUrl in App.tsx that always opened externally.
- * Now classifies file types and decides whether to show an in-app preview overlay
- * or fall back to opening in the default external application.
+ * 替代 App.tsx 中旧的 handleOpenFile/handleOpenUrl（它们总是外部打开）。
+ * 现在根据文件类型决定：是显示应用内预览浮层，还是回退到用默认外部程序打开。
  *
- * Architecture:
- *   Markdown click → PlatformContext → App.tsx → useLinkInterceptor
- *     ├── canPreview? → set previewState (renders overlay in App.tsx)
- *     └── can't preview? → electronAPI.openFile (opens externally)
+ * 架构：
+ *   Markdown 点击 → PlatformContext → App.tsx → useLinkInterceptor
+ *     ├── 可预览？→ 设置 previewState（在 App.tsx 中渲染浮层）
+ *     └── 不可预览？→ electronAPI.openFile（外部打开）
  *
- * Uses refs for options to keep returned callbacks referentially stable,
- * preventing unnecessary re-renders of consumers (AppShellContext, PlatformProvider).
+ * 用 ref 保存 options，使返回的回调引用稳定，
+ * 避免消费者（AppShellContext、PlatformProvider）不必要的重渲染。
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { classifyFile, type FilePreviewType } from '@craft-agent/ui'
 import { getLanguageFromPath } from '@/lib/file-utils'
 
-// ── Preview state types ────────────────────────────────────────────────────────
-// Each variant carries the data needed to render its specific overlay.
-// For text-based files (code, markdown, json, text), content starts as null
-// while the file is being read, then gets populated.
+// ── 预览状态类型 ─────────────────────────────────────────────────────────────
+// 每个变体携带渲染对应浮层所需的数据。
+// 文本类文件（code、markdown、json、text）初始 content 为 null，
+// 文件读取完成后再填充。
 
 interface ImagePreview {
   type: 'image'
@@ -70,92 +69,90 @@ export type FilePreviewState =
   | JSONPreview
   | TextPreview
 
-// ── Hook options ───────────────────────────────────────────────────────────────
-// Callbacks injected by App.tsx so the hook doesn't depend on window.electronAPI directly.
+// ── Hook 选项 ───────────────────────────────────────────────────────────────
+// 由 App.tsx 注入回调，使 hook 不直接依赖 window.electronAPI。
 
 interface LinkInterceptorOptions {
-  /** Open file in default external application (e.g., VS Code) */
+  /** 用默认外部程序打开文件（例如 VS Code） */
   openFileExternal: (path: string) => Promise<void>
-  /** Open URL in default browser */
+  /** 用默认浏览器打开 URL */
   openUrl: (url: string) => Promise<void>
-  /** Reveal file in system file manager */
+  /** 在系统文件管理器中显示文件 */
   showInFolder: (path: string) => Promise<void>
-  /** Read file as UTF-8 text (for code, markdown, json, text previews) */
+  /** 以 UTF-8 文本读取文件（用于 code、markdown、json、text 预览） */
   readFile: (path: string) => Promise<string>
-  /** Read file as data URL (for image previews) */
+  /** 以 data URL 读取文件（用于图片预览） */
   readFileDataUrl: (path: string) => Promise<string>
-  /** Read file as binary (Uint8Array) for PDF previews via react-pdf */
+  /** 以二进制（Uint8Array）读取文件，供 react-pdf 做 PDF 预览 */
   readFileBinary: (path: string) => Promise<Uint8Array>
 }
 
-// ── Hook return type ───────────────────────────────────────────────────────────
+// ── Hook 返回类型 ───────────────────────────────────────────────────────────
 
 interface LinkInterceptorResult {
-  /** Replacement for App.tsx handleOpenFile — classifies and routes */
+  /** 替代 App.tsx handleOpenFile —— 分类并路由 */
   handleOpenFile: (path: string) => void
-  /** Replacement for App.tsx handleOpenUrl — always opens externally */
+  /** 替代 App.tsx handleOpenUrl —— 总是外部打开 */
   handleOpenUrl: (url: string) => void
-  /** Open file directly in external app, bypassing classification/preview */
+  /** 绕过分类/预览，直接用外部程序打开文件 */
   openFileExternal: (path: string) => void
-  /** Current preview state, drives which overlay renders in App.tsx */
+  /** 当前预览状态，驱动 App.tsx 渲染哪个浮层 */
   previewState: FilePreviewState | null
-  /** Close the preview overlay */
+  /** 关闭预览浮层 */
   closePreview: () => void
-  /** Open the currently previewed file in external app */
+  /** 用外部程序打开当前正在预览的文件 */
   openCurrentExternal: () => void
-  /** Reveal the currently previewed file in system file manager */
+  /** 在系统文件管理器中显示当前预览文件 */
   revealCurrentInFinder: () => void
-  /** Read file as data URL — passed to image overlays as their loader */
+  /** 以 data URL 读取文件 —— 传给图片浮层作为加载器 */
   readFileDataUrl: (path: string) => Promise<string>
-  /** Read file as binary — passed to PDF overlays for react-pdf */
+  /** 以二进制读取文件 —— 传给 PDF 浮层用于 react-pdf */
   readFileBinary: (path: string) => Promise<Uint8Array>
 }
 
-// ── Hook implementation ────────────────────────────────────────────────────────
+// ── Hook 实现 ───────────────────────────────────────────────────────────────
 
 export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterceptorResult {
   const [previewState, setPreviewState] = useState<FilePreviewState | null>(null)
 
-  // Use refs for options so callbacks remain referentially stable.
-  // Without this, every render creates a new options object → new callbacks → cascading
-  // re-renders of AppShellContext and PlatformProvider consumers.
+  // 用 ref 保存 options，使回调引用保持稳定。
+  // 否则每次渲染都会创建新的 options 对象 → 新回调 →
+  // AppShellContext 和 PlatformProvider 消费者级联重渲染。
   const optionsRef = useRef(options)
   useEffect(() => { optionsRef.current = options }, [options])
 
-  // Also track previewState in a ref for the openCurrentExternal/revealCurrentInFinder
-  // callbacks, so they don't need previewState in their dependency array.
+  // 同样把 previewState 也放到 ref 里，
+  // 这样 openCurrentExternal/revealCurrentInFinder 不需要把 previewState 放进依赖数组。
   const previewStateRef = useRef(previewState)
   useEffect(() => { previewStateRef.current = previewState }, [previewState])
 
   /**
-   * Main entry point for file link clicks.
-   * Classifies the file by extension, then either opens a preview overlay
-   * or falls back to opening externally.
+   * 文件链接点击的主入口。
+   * 按扩展名分类，然后要么打开预览浮层，要么回退到外部打开。
    *
-   * For text-based files (code, markdown, json, text), reads the content BEFORE
-   * showing the overlay — local filesystem reads are near-instant, so no loading
-   * state is needed. This avoids null-content issues in overlay components
-   * (e.g., @uiw/react-json-view crashes on null value).
+   * 文本类文件（code、markdown、json、text）先读取内容再展示浮层 ——
+   * 本地文件系统读取几乎是瞬时的，不需要 loading 状态。
+   * 这样可避免浮层组件遇到 null content 的问题
+   *（例如 @uiw/react-json-view 在 null 值上会崩溃）。
    */
   const handleOpenFile = useCallback(async (path: string) => {
     const classification = classifyFile(path)
 
     if (!classification.canPreview || !classification.type) {
-      // No preview available — open in default external app
+      // 没有预览能力，用默认外部程序打开
       optionsRef.current.openFileExternal(path)
       return
     }
 
     const type = classification.type
 
-    // For image/pdf: set state immediately — the overlay handles its own async loading
+    // 图片/PDF：立即设置状态，浮层内部自己处理异步加载
     if (type === 'image' || type === 'pdf') {
       setPreviewState({ type, filePath: path })
       return
     }
 
-    // For text-based files: read content first, then show overlay with content ready.
-    // Local filesystem reads are near-instant — no loading state needed.
+    // 文本类文件：先读取内容，再展示已准备好内容的浮层
     try {
       const content = await optionsRef.current.readFile(path)
       const state = buildInitialTextState(type, path)
@@ -165,48 +162,50 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
       const state = buildInitialTextState(type, path)
       setPreviewState({ ...state, content: '', error: errorMsg } as FilePreviewState)
     }
-  }, []) // Stable: uses optionsRef
+  }, []) // 稳定：依赖 optionsRef
 
-  /** Open file directly in external app, bypassing classification/preview.
-   * Used by overlay header badges — when already viewing a file, "Open" should launch the editor. */
+  /**
+   * 绕过分类/预览，直接用外部程序打开文件。
+   * 浮层顶部徽章的“打开”按钮使用它：已经在预览文件时，点击应启动编辑器。
+   */
   const openFileExternal = useCallback((path: string) => {
     optionsRef.current.openFileExternal(path)
-  }, []) // Stable: uses optionsRef
+  }, []) // 稳定：依赖 optionsRef
 
-  /** URLs always open externally — no in-app browser for security */
+  /** URL 总是外部打开 —— 不在应用内嵌浏览器，出于安全考虑 */
   const handleOpenUrl = useCallback((url: string) => {
     optionsRef.current.openUrl(url)
-  }, []) // Stable: uses optionsRef
+  }, []) // 稳定：依赖 optionsRef
 
   const closePreview = useCallback(() => {
     setPreviewState(null)
   }, [])
 
-  /** Open the currently previewed file in external app (from overlay header) */
+  /** 从浮层顶部用外部程序打开当前预览文件 */
   const openCurrentExternal = useCallback(() => {
     const state = previewStateRef.current
     if (state) {
       optionsRef.current.openFileExternal(state.filePath)
     }
-  }, []) // Stable: uses refs
+  }, []) // 稳定：依赖 refs
 
-  /** Reveal the currently previewed file in system file manager (from overlay header) */
+  /** 从浮层顶部在系统文件管理器中显示当前预览文件 */
   const revealCurrentInFinder = useCallback(() => {
     const state = previewStateRef.current
     if (state) {
       optionsRef.current.showInFolder(state.filePath)
     }
-  }, []) // Stable: uses refs
+  }, []) // 稳定：依赖 refs
 
-  /** Stable reference to readFileDataUrl for overlay components */
+  /** 稳定的 readFileDataUrl 引用，供图片浮层组件使用 */
   const readFileDataUrl = useCallback((path: string) => {
     return optionsRef.current.readFileDataUrl(path)
-  }, []) // Stable: uses optionsRef
+  }, []) // 稳定：依赖 optionsRef
 
-  /** Stable reference to readFileBinary for PDF overlay */
+  /** 稳定的 readFileBinary 引用，供 PDF 浮层使用 */
   const readFileBinary = useCallback((path: string) => {
     return optionsRef.current.readFileBinary(path)
-  }, []) // Stable: uses optionsRef
+  }, []) // 稳定：依赖 optionsRef
 
   return {
     handleOpenFile,
@@ -221,11 +220,11 @@ export function useLinkInterceptor(options: LinkInterceptorOptions): LinkInterce
   }
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+// ── 辅助函数 ─────────────────────────────────────────────────────────────────
 
 /**
- * Build the initial preview state for text-based file types.
- * Content is null initially (loading), and gets populated after async read.
+ * 为文本类文件类型构建初始预览状态。
+ * content 初始为 null（加载中），异步读取后再填充。
  */
 function buildInitialTextState(type: FilePreviewType, path: string): FilePreviewState {
   switch (type) {
@@ -238,7 +237,7 @@ function buildInitialTextState(type: FilePreviewType, path: string): FilePreview
     case 'text':
       return { type: 'text', filePath: path, content: null }
     default:
-      // Should never happen — image/pdf are handled before this function is called
+      // 正常不会走到这里 —— image/pdf 在此之前已处理
       return { type: 'text', filePath: path, content: null }
   }
 }

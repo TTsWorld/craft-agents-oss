@@ -1,10 +1,11 @@
 /**
- * Workspace Module
+ * workspaces 模块入口
  *
- * Re-exports types and storage functions for workspaces.
+ * 重新导出 workspace 相关的类型定义与存储操作函数。
+ * 其他模块通过 `import { ... } from './workspaces'` 即可使用这些 API。
  */
 
-// Types
+// 类型定义
 export type {
   WorkspaceConfig,
   CreateWorkspaceInput,
@@ -12,31 +13,31 @@ export type {
   WorkspaceSummary,
 } from './types.ts';
 
-// Storage functions
+// 存储操作函数
 export {
-  // Path utilities
+  // 路径工具
   getDefaultWorkspacesDir,
   ensureDefaultWorkspacesDir,
   getWorkspacePath,
   getWorkspaceSourcesPath,
   getWorkspaceSessionsPath,
   getWorkspaceSkillsPath,
-  // Config operations
+  // 配置操作
   loadWorkspaceConfig,
   saveWorkspaceConfig,
-  // Load operations
+  // 加载操作
   loadWorkspace,
   getWorkspaceSummary,
-  // Create/Delete operations
+  // 创建/删除操作
   generateSlug,
   generateUniqueWorkspacePath,
   createWorkspaceAtPath,
   deleteWorkspaceFolder,
   isValidWorkspace,
   renameWorkspaceFolder,
-  // Auto-discovery
+  // 自动发现
   discoverWorkspacesInDefaultLocation,
-  // Constants
+  // 常量
   CONFIG_DIR,
   DEFAULT_WORKSPACES_DIR,
 } from './storage.ts';

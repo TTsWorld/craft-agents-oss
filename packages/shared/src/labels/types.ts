@@ -1,102 +1,100 @@
 /**
- * Label Types
+ * 标签类型定义
  *
- * Types for configurable session labels.
- * Labels are additive tags (many-per-session), unlike statuses which are exclusive (one-per-session).
- * Stored at {workspaceRootPath}/labels/config.json
+ * 可配置会话标签的类型。标签是“叠加”的（一个 session 可多个），与 status 互斥（一个 session 一个）不同。
+ * 存储位置：{workspaceRootPath}/labels/config.json
  *
- * Hierarchy: Labels form a recursive JSON tree via the `children` array.
- * Array position determines display order (no separate order field).
- * IDs are simple slugs, globally unique across the entire tree.
+ * 层级：标签通过 children 数组组成递归 JSON 树。
+ * 数组位置决定显示顺序，不需要单独的 order 字段。
+ * ID 是简单 slug，在整个树中全局唯一。
  *
- * Visual: Labels are identified by color only (rendered as colored circles).
+ * 视觉：标签只通过颜色标识（UI 中渲染为彩色圆点）。
  *
- * Color format: EntityColor (system color string or custom color object)
- * - System: "accent", "foreground/50", "info/80" (uses CSS variables, auto light/dark)
- * - Custom: { light: "#EF4444", dark: "#F87171" } (explicit values)
+ * 颜色格式：EntityColor（系统颜色字符串或自定义颜色对象）
+ * - 系统："accent"、"foreground/50"、"info/80"（使用 CSS 变量，自动适配亮/暗模式）
+ * - 自定义：{ light: "#EF4444", dark: "#F87171" }（显式值）
  */
 
 import type { EntityColor } from '../colors/types.ts'
 
 /**
- * Auto-label rule: regex pattern that scans user messages and automatically
- * applies labels with extracted values.
+ * 自动标签规则：用正则扫描用户消息，自动应用标签并提取值。
  *
- * Uses capture groups ($1, $2, etc.) in the pattern and substitutes them
- * into the valueTemplate. Rules are evaluated in order. Multiple rules on
- * the same label means multiple ways to trigger it (e.g., URL regex + bare
- * key regex for issue IDs).
+ * 在 pattern 中使用捕获组（$1、$2...），然后替换到 valueTemplate。
+ * 规则按顺序求值。一个标签可以有多个规则，意味着多种触发方式
+ *（例如 URL 正则 + 裸 key 正则匹配 issue ID）。
+ *
+ * 类似 Golang：这里 interface 相当于 Go 的 interface，只描述字段形状。
  */
 export interface AutoLabelRule {
-  /** Regex pattern with capture groups for value extraction */
+  /** 用于提取值的正则表达式（含捕获组） */
   pattern: string
-  /** Regex flags (default: 'gi' for global, case-insensitive). 'g' is always enforced. */
+  /** 正则 flags（默认 'gi'，全局且忽略大小写）。'g' 一定会被强制加上。 */
   flags?: string
-  /** Template for the label value using $1, $2, etc. for capture group substitution */
+  /** 标签值模板，用 $1、$2 等替换捕获组 */
   valueTemplate?: string
-  /** Human-readable description of what this rule matches */
+  /** 这条规则匹配什么的可读说明 */
   description?: string
 }
 
 /**
- * Label configuration (stored in labels/config.json).
- * Recursive: each label can have nested children forming a tree.
- * Array position = display order (no explicit order field needed).
+ * 单个标签配置（存储在 labels/config.json）。
+ * 递归结构：每个标签可有嵌套 children 形成树。
+ * 数组位置 = 显示顺序。
  */
 export interface LabelConfig {
-  /** Unique ID — simple slug, globally unique across the tree (e.g., 'bug', 'frontend') */
+  /** 唯一 ID — 简单 slug，整棵树内全局唯一，例如 'bug'、'frontend' */
   id: string;
 
-  /** Display name */
+  /** 显示名称 */
   name: string;
 
-  /** Optional color. Rendered as a colored circle in the UI. */
+  /** 可选颜色，UI 中渲染为彩色圆点 */
   color?: EntityColor;
 
-  /** Child labels forming a sub-tree. Array position = display order. */
+  /** 子标签，构成子树。数组位置 = 显示顺序 */
   children?: LabelConfig[];
 
   /**
-   * Optional value type hint for UI rendering and agent affordances.
-   * When set, indicates this label carries a typed value (e.g., "priority::3").
-   * Parser always infers the type from raw value, but this hint tells UI
-   * what input widget to show and tells the agent what format to write.
-   * Omit for boolean (presence-only) labels.
+   * 可选的值类型提示，用于 UI 渲染和 Agent 输入提示。
+   * 设置后表示该标签携带一个有类型的值（如 "priority::3"）。
+   * 解析器总是从原始值推断类型，但这个提示告诉 UI 用什么输入控件，
+   * 并告诉 Agent 该写什么格式。
+   * 不设置表示布尔标签（只判断是否存在）。
    */
   valueType?: 'string' | 'number' | 'date' | 'link';
 
   /**
-   * Auto-label rules: regex patterns that scan user messages and automatically
-   * apply this label with extracted values.
-   * Multiple rules = multiple ways to trigger (evaluated in order, all matches collected).
+   * 自动标签规则：用正则扫描用户消息并自动应用该标签、提取值。
+   * 多个规则 = 多种触发方式（按顺序求值，收集所有匹配）。
    */
   autoRules?: AutoLabelRule[];
 }
 
 /**
- * Complete label configuration for a workspace
+ * 一个 workspace 的完整标签配置
  */
 export interface WorkspaceLabelConfig {
-  /** Schema version (start at 1) */
+  /** 配置版本号（从 1 开始） */
   version: number;
 
-  /** Root-level labels. Array position = display order. May contain nested children. */
+  /** 顶层标签数组。数组位置 = 显示顺序，可包含嵌套 children */
   labels: LabelConfig[];
 }
 
 /**
- * Input for creating a new label (via CRUD operations).
- * parentId determines where in the tree to insert (null/undefined = root level).
+ * 创建新标签的输入（CRUD 用）。
+ * parentId 决定插入位置（null/undefined 表示根级）。
  */
 export interface CreateLabelInput {
   name: string;
   color?: EntityColor;
-  parentId?: string; // Target parent label ID (null = root)
+  parentId?: string; // 目标父标签 ID（null 表示根级）
   valueType?: 'string' | 'number' | 'date' | 'link';
 }
 
 /**
- * Input for updating an existing label (name, color, valueType — cannot change ID or hierarchy)
+ * 更新已有标签的输入（只能改 name、color、valueType，不能改 ID 和层级）。
  */
 export interface UpdateLabelInput {
   name?: string;
@@ -105,23 +103,23 @@ export interface UpdateLabelInput {
 }
 
 /**
- * Parsed session label entry (after splitting on ::).
- * Session labels are stored as flat strings like "bug" or "priority::3".
- * This interface represents the parsed form for typed access.
+ * 解析后的会话标签条目（按 :: 切分后）。
+ * 会话标签存储为扁平字符串，如 "bug" 或 "priority::3"。
+ * 这个 interface 提供解析后的结构化访问。
  */
 export interface ParsedLabelEntry {
-  /** Label ID (the part before ::, or the entire string for boolean labels) */
+  /** 标签 ID（:: 前面的部分，布尔标签则是整个字符串） */
   id: string;
 
-  /** Raw string value (the part after ::), undefined for boolean labels */
+  /** 原始字符串值（:: 后面的部分），布尔标签为 undefined */
   rawValue?: string;
 
   /**
-   * Typed value inferred from rawValue:
-   * - number: if rawValue parses as a finite number
-   * - Date: if rawValue matches ISO date format (YYYY-MM-DD)
-   * - string: otherwise
-   * - undefined: for boolean labels (no :: separator)
+   * 从 rawValue 推断出的有类型值：
+   * - number：rawValue 能解析为有限数字
+   * - Date：rawValue 匹配 ISO 日期格式（YYYY-MM-DD）
+   * - string：其他情况
+   * - undefined：布尔标签（没有 :: 分隔符）
    */
   value?: string | number | Date;
 }

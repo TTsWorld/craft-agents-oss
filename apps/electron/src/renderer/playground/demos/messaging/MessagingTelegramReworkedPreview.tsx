@@ -1,10 +1,12 @@
 /**
  * MessagingTelegramReworkedPreview (playground only)
+ * MessagingTelegramReworkedPreview：Telegram 消息设置卡片的新布局原型（仅 playground）。
  *
  * Prototype layout for the Telegram messaging settings card. The current
  * production layout (see `MessagingSettingsPage`) renders direct-session
  * bindings and supergroup topic bindings as one flat list under the bot
  * row, which gets noisy fast. This rework groups them:
+ * 当前生产环境把直接会话和超级群组主题绑定平铺展示，信息噪音大；这里重新分组：
  *
  *   1. Bot header (unchanged shape)
  *   2. Direct sessions (DMs paired straight to the bot)
@@ -18,6 +20,7 @@
  * Self-contained on purpose — does NOT import `MessagingSettingsPage` or
  * touch any production atom. Lets us iterate on the design without
  * shipping until the user signs off.
+ * 这个组件是自包含的，不依赖任何生产 atom，方便在确认设计前快速迭代。
  */
 
 import * as React from 'react'
@@ -41,19 +44,23 @@ import { MessagingPlatformIcon } from '@/components/messaging/MessagingPlatformI
 // (22px); secondary icons (MessageSquare, Users) render visibly smaller and
 // at a lighter stroke inside the same slot for clear primary/secondary
 // hierarchy — see SubRowIcon.
+// 所有行预留 22px 宽的图标列，让列表左侧对齐成一条直线；次级图标实际更小更轻。
 const ROW_ICON_SIZE = 22
 const SUB_ROW_ICON_SIZE = 16
 const SUB_ROW_ICON_STROKE = 1.5
 
 // ---------------------------------------------------------------------------
 // Types + mock data
+// 类型与模拟数据
 // ---------------------------------------------------------------------------
 
+// 直接会话（DM）数据类型。
 interface DirectSession {
   id: string
   sessionTitle: string
 }
 
+// 超级群组主题绑定数据类型。
 interface TopicBinding {
   id: string
   sessionTitle: string
@@ -87,6 +94,7 @@ const TOPIC_BINDINGS: TopicBinding[] = [
 // Component
 // ---------------------------------------------------------------------------
 
+/** MessagingTelegramReworkedPreviewProps：组件 props 类型定义 */
 export interface MessagingTelegramReworkedPreviewProps {
   telegramConnected: boolean
   supergroupPaired: boolean
@@ -96,12 +104,14 @@ export interface MessagingTelegramReworkedPreviewProps {
   supergroupTopics: number
 }
 
+/** MessagingTelegramReworkedPreview：函数 */
 export function MessagingTelegramReworkedPreview({
   telegramConnected,
   supergroupPaired,
   directSessions,
   supergroupTopics,
 }: MessagingTelegramReworkedPreviewProps) {
+  // Math.max/Math.min 把传入数字限制在 [0, 数组长度] 范围内，再用 slice 截取对应数量。
   const directs = DIRECT_SESSIONS.slice(0, Math.max(0, Math.min(directSessions, DIRECT_SESSIONS.length)))
   const topics = TOPIC_BINDINGS.slice(0, Math.max(0, Math.min(supergroupTopics, TOPIC_BINDINGS.length)))
 
@@ -111,6 +121,7 @@ export function MessagingTelegramReworkedPreview({
         <SettingsCard>
           <BotHeader connected={telegramConnected} />
 
+          {/* 仅当 Telegram 已连接时才展示直接会话和超级群组区域。 */}
           {telegramConnected && (
             <>
               {directs.length > 0 ? (
@@ -136,6 +147,7 @@ export function MessagingTelegramReworkedPreview({
 
 // ---------------------------------------------------------------------------
 // Pieces
+// 局部子组件
 // ---------------------------------------------------------------------------
 
 function Separator() {
@@ -152,6 +164,7 @@ function BotHeader({ connected }: { connected: boolean }) {
           Bot API · {connected ? 'Valid bot: @CraftAgentsBot' : 'Not connected'}
         </div>
       </div>
+      {/* 根据连接状态展示“更多”按钮或“连接”按钮。 */}
       {connected ? (
         <button
           type="button"
@@ -176,6 +189,7 @@ function BotHeader({ connected }: { connected: boolean }) {
  * optional subtitle; children that should sit in the "icon-aligned" column
  * (e.g. topic rows under the supergroup) use `<IconSpacer />` instead of an
  * icon to inherit the same column geometry without rendering anything.
+ * IconSpacer：占位的 22px 空白，让子行和上方图标列保持严格对齐。
  */
 function IconSpacer() {
   return <div className="shrink-0" style={{ width: ROW_ICON_SIZE, height: ROW_ICON_SIZE }} />
@@ -187,6 +201,7 @@ function IconSpacer() {
  * defaults to 16px @ stroke-width 1.5 (light secondary look). Caller can
  * override `size` and `strokeWidth` for individual rows without breaking
  * column alignment — the slot stays 22px regardless.
+ * SubRowIcon：把 16px 小图标放进统一的 22px 槽位中，保证列对齐；调用者可覆盖 size/strokeWidth。
  */
 function SubRowIcon({
   icon: Icon,
@@ -276,6 +291,7 @@ function UnpairedSupergroupRow() {
 function PairedSupergroupSection({ topics }: { topics: TopicBinding[] }) {
   // Default open when there are topics to draw attention to them; default
   // closed when the supergroup is paired but unused.
+  // 有主题时默认展开，没有时折叠。
   const [isExpanded, setIsExpanded] = React.useState(topics.length > 0)
 
   return (
@@ -304,6 +320,7 @@ function PairedSupergroupSection({ topics }: { topics: TopicBinding[] }) {
         )}
       </button>
 
+      {/* 可折叠区域，带高度/透明度过渡动画。 */}
       <AnimatePresence initial={false}>
         {isExpanded && (
           <motion.div

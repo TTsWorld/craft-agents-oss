@@ -1,20 +1,21 @@
 /**
- * Shared PreToolUse utilities and centralized PreToolUse pipeline.
+ * 共享的 PreToolUse（工具调用前）工具函数与集中式 PreToolUse 流水线。
  *
- * Individual utility functions (path expansion, skill qualification, etc.)
- * are used by the centralized `runPreToolUseChecks()` pipeline, which both
- * agent backends (Claude and Pi) call with normalized input and then translate
- * the result to their SDK-specific format. Pi hosts non-Anthropic model
- * providers (OpenAI, GitHub Copilot, Bedrock, etc.) under a single backend,
- * so they inherit this pipeline transparently.
+ * 概念背景（给 Go 背景的同学）：
+ * - 在 Agent / tool use 体系里，"PreToolUse 钩子"是 SDK 在真正执行某个工具前
+ *   调用的一次回调，用来做权限校验、参数改写或拦截。类似 Go HTTP 中间件。
+ * - 各 agent 后端（Claude、Pi）把自己 SDK 特有的输入归一化后，统一调用
+ *   `runPreToolUseChecks()`，再把这个函数返回的判别联合（discriminated union）
+ *   结果翻译回各自 SDK 期望的格式。Pi 后端承载 OpenAI / Copilot / Bedrock 等
+ *   非 Anthropic 模型，因此它们自动复用同一套校验逻辑。
  *
- * Pipeline steps:
- * 1. Permission mode check: Block tools disallowed by current mode
- * 2. Source blocking: Block tools from inactive MCP sources
- * 3. Prerequisite check: Block source tools until guide.md is read
- * 4. call_llm detection: Intercept mcp__session__call_llm
- * 5. Input transforms: Path expansion, config validation, skill qualification, metadata stripping
- * 6. Ask-mode prompt decision: Determine if user approval is needed
+ * 流水线步骤：
+ * 1. 权限模式检查：根据当前模式（safe/ask/allow-all）拦截不被允许的工具
+ * 2. Source 拦截：拦截来自未激活 MCP source 的工具
+ * 3. 前置条件检查：在阅读 guide.md 之前拦截 source 工具
+ * 4. call_llm 检测：拦截 mcp__session__call_llm
+ * 5. 输入改写：路径展开、配置文件校验、skill 全限定、元数据剥离
+ * 6. Ask 模式提示决策：判断是否需要用户确认
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -50,51 +51,56 @@ import type { PrerequisiteCheckResult } from './prerequisite-manager.ts';
 import { rewriteBashWithRtk } from './rtk-rewrite.ts';
 
 // ============================================================
-// TYPES
+// 类型定义
 // ============================================================
 
+/** 单次 PreToolUse 调用上下文（工作区根、workspace id、调试回调） */
 export interface PreToolUseContext {
-  /** Current working directory or workspace root */
+  /** 当前工作目录或 workspace 根路径 */
   workspaceRootPath: string;
-  /** Workspace ID for skill qualification */
+  /** 用于 skill 全限定的 workspace ID */
   workspaceId: string;
-  /** Debug callback */
+  /** 可选调试回调 */
   onDebug?: (message: string) => void;
 }
 
+/** 路径展开结果：标记是否修改以及最终输入 */
 export interface PathExpansionResult {
-  /** Whether any paths were modified */
+  /** 是否修改过路径 */
   modified: boolean;
-  /** The updated input (or original if not modified) */
+  /** 更新后的 input（未修改则为原 input） */
   input: Record<string, unknown>;
 }
 
+/** skill 名称全限定结果 */
 export interface SkillQualificationResult {
-  /** Whether the skill name was qualified */
+  /** skill 名称是否被改写 */
   modified: boolean;
-  /** The updated input */
+  /** 更新后的 input */
   input: Record<string, unknown>;
 }
 
+/** 元数据剥离结果（去掉 _intent / _displayName 等 UI 专用字段） */
 export interface MetadataStrippingResult {
-  /** Whether metadata was stripped */
+  /** 是否剥离过字段 */
   modified: boolean;
-  /** The cleaned input */
+  /** 清理后的 input */
   input: Record<string, unknown>;
 }
 
+/** 配置文件写入校验结果 */
 export interface ConfigValidationResult {
-  /** Whether validation passed */
+  /** 是否通过校验 */
   valid: boolean;
-  /** Error message if validation failed */
+  /** 校验失败时的错误信息 */
   error?: string;
 }
 
 // ============================================================
-// BUILT-IN TOOLS
+// 内建工具
 // ============================================================
 
-/** SDK built-in tools that should NOT have metadata stripped */
+/** SDK 内建工具名集合；这些工具不应被剥离元数据 */
 export const BUILT_IN_TOOLS = new Set([
   'Bash',
   'Read',
@@ -116,7 +122,7 @@ export const BUILT_IN_TOOLS = new Set([
   'TaskStop',
 ]);
 
-/** Tools that operate on file paths */
+/** 操作文件路径的工具 */
 export const FILE_PATH_TOOLS = new Set([
   'Read',
   'Write',
@@ -127,29 +133,29 @@ export const FILE_PATH_TOOLS = new Set([
   'NotebookEdit',
 ]);
 
-/** Tools that can write config files */
+/** 可以写入配置文件的工具 */
 export const CONFIG_WRITE_TOOLS = new Set(['Write', 'Edit']);
 
-/** File tools blocked for labels domain. */
+/** labels 域禁止使用的文件工具 */
 export const LABELS_BLOCKED_FILE_TOOLS = new Set(['Read', 'Write', 'Edit']);
 
 
 // ============================================================
-// PATH EXPANSION
+// 路径展开
 // ============================================================
 
 /**
- * Expand ~ paths in file tool inputs.
+ * 展开文件工具入参中的 ~ 路径。
  *
- * Handles multiple path parameters:
- * - file_path: Used by Read, Write, Edit, MultiEdit
- * - notebook_path: Used by NotebookEdit
- * - path: Used by Glob, Grep
+ * 处理多种路径参数：
+ * - file_path：Read、Write、Edit、MultiEdit 使用
+ * - notebook_path：NotebookEdit 使用
+ * - path：Glob、Grep 使用
  *
- * @param toolName - The SDK tool name
- * @param input - The tool input object
- * @param onDebug - Optional debug callback
- * @returns PathExpansionResult with modified flag and updated input
+ * @param toolName - SDK 工具名
+ * @param input - 工具入参对象
+ * @param onDebug - 可选调试回调
+ * @returns 含 modified 标记与更新后 input 的 PathExpansionResult
  */
 export function expandToolPaths(
   toolName: string,
@@ -162,21 +168,21 @@ export function expandToolPaths(
 
   let updatedInput: Record<string, unknown> | null = null;
 
-  // Expand file_path if present and starts with ~
+  // 如果存在 file_path 且以 ~ 开头则展开
   if (typeof input.file_path === 'string' && input.file_path.startsWith('~')) {
     const expandedPath = expandPath(input.file_path);
     onDebug?.(`Expanding path: ${input.file_path} → ${expandedPath}`);
     updatedInput = { ...input, file_path: expandedPath };
   }
 
-  // Expand notebook_path if present and starts with ~
+  // 如果存在 notebook_path 且以 ~ 开头则展开
   if (typeof input.notebook_path === 'string' && input.notebook_path.startsWith('~')) {
     const expandedPath = expandPath(input.notebook_path);
     onDebug?.(`Expanding notebook path: ${input.notebook_path} → ${expandedPath}`);
     updatedInput = { ...(updatedInput || input), notebook_path: expandedPath };
   }
 
-  // Expand path if present and starts with ~ (for Glob, Grep)
+  // 如果存在 path 且以 ~ 开头则展开（针对 Glob、Grep）
   if (typeof input.path === 'string' && input.path.startsWith('~')) {
     const expandedPath = expandPath(input.path);
     onDebug?.(`Expanding search path: ${input.path} → ${expandedPath}`);
@@ -190,29 +196,27 @@ export function expandToolPaths(
 }
 
 // ============================================================
-// SKILL QUALIFICATION
+// Skill 名称全限定
 // ============================================================
 
 /**
- * Ensure skill names are fully-qualified with the correct plugin prefix.
+ * 确保 skill 名称带上正确的插件前缀，成为全限定名。
  *
- * The SDK resolves skills as `pluginName:skillSlug` where the plugin name is
- * read from `.claude-plugin/plugin.json` `name` field. Skills can live in 3 tiers:
- *   1. Workspace: {workspaceRoot}/skills/{slug}/ → plugin name from plugin.json
- *   2. Project:   {workingDir}/.agents/skills/{slug}/ → plugin name = ".agents"
- *   3. Global:    ~/.agents/skills/{slug}/ → plugin name = ".agents"
+ * SDK 以 `pluginName:skillSlug` 形式解析 skill，其中 pluginName 来自
+ * `.claude-plugin/plugin.json` 的 `name` 字段。skill 可存在于 3 个层级：
+ *   1. Workspace：{workspaceRoot}/skills/{slug}/ → plugin name 来自 plugin.json
+ *   2. Project：  {workingDir}/.agents/skills/{slug}/ → plugin name = ".agents"
+ *   3. Global：   ~/.agents/skills/{slug}/ → plugin name = ".agents"
  *
- * This function resolves the bare slug to the correct plugin prefix by checking
- * which directory actually contains the skill. It also handles re-qualifying
- * skills that were incorrectly qualified by the UI (which always uses the
- * workspace slug, even for global/project skills).
+ * 本函数通过检查 skill 实际落在哪个目录，把裸 slug 解析为正确的插件前缀；
+ * 同时会修正被 UI 错误全限定的 skill（UI 总是用 workspace slug，即使对 global/project skill 也是如此）。
  *
- * @param input - The Skill tool input ({ skill: string, args?: string })
- * @param workspaceSlug - The workspace slug (from .claude-plugin/plugin.json name)
- * @param workspaceRootPath - Absolute path to the workspace root
- * @param workingDirectory - Absolute path to the current working directory (optional)
- * @param onDebug - Optional debug callback
- * @returns SkillQualificationResult with modified flag and updated input
+ * @param input - Skill 工具入参（{ skill: string, args?: string }）
+ * @param workspaceSlug - workspace slug（来自 .claude-plugin/plugin.json 的 name）
+ * @param workspaceRootPath - workspace 根目录绝对路径
+ * @param workingDirectory - 当前工作目录绝对路径（可选）
+ * @param onDebug - 可选调试回调
+ * @returns 含 modified 标记与更新后 input 的 SkillQualificationResult
  */
 export function qualifySkillName(
   input: Record<string, unknown>,
@@ -224,11 +228,11 @@ export function qualifySkillName(
   const skill = input.skill as string | undefined;
   if (!skill) return { modified: false, input };
 
-  // Extract the bare slug — strip any existing qualifier (e.g. "CraftAgentWS:commit" → "commit")
+  // 提取裸 slug：去掉已有的插件前缀（例如 "CraftAgentWS:commit" → "commit"）
   const bareSlug = skill.includes(':') ? skill.split(':').pop()! : skill;
   if (!bareSlug) return { modified: false, input };
 
-  // If we don't have the workspace root path, fall back to simple workspace-only qualification
+  // 如果没有 workspace 根路径，则回退到仅按 workspace 简单全限定
   if (!workspaceRootPath) {
     if (skill.includes(':')) return { modified: false, input };
     const qualifiedSkill = `${workspaceSlug}:${skill}`;
@@ -236,11 +240,11 @@ export function qualifySkillName(
     return { modified: true, input: { ...input, skill: qualifiedSkill } };
   }
 
-  // Resolve which plugin tier contains this skill by checking SKILL.md existence
+  // 通过检查 SKILL.md 存在性判断该 skill 属于哪个插件层级
   const resolvedSkill = resolveSkillPlugin(bareSlug, workspaceSlug, workspaceRootPath, workingDirectory);
 
   if (resolvedSkill === skill) {
-    // Already correctly qualified
+    // 已经正确全限定
     return { modified: false, input };
   }
 
@@ -252,8 +256,7 @@ export function qualifySkillName(
 }
 
 /**
- * Resolve a skill slug to its fully-qualified plugin:slug name by checking
- * which plugin directory actually contains the skill.
+ * 通过检查 skill 实际位于哪个插件目录，把裸 slug 解析为 plugin:slug 全限定名。
  */
 function resolveSkillPlugin(
   bareSlug: string,
@@ -261,7 +264,7 @@ function resolveSkillPlugin(
   workspaceRootPath: string,
   workingDirectory?: string,
 ): string {
-  // Priority order matches loadAllSkills: project (highest) > workspace > global (lowest)
+  // 优先级与 loadAllSkills 一致：project（最高）> workspace > global（最低）
 
   // 1. Project: {workingDir}/.agents/skills/{slug}/SKILL.md
   if (workingDirectory && existsSync(join(workingDirectory, PROJECT_AGENT_SKILLS_DIR, bareSlug, 'SKILL.md'))) {
@@ -278,27 +281,26 @@ function resolveSkillPlugin(
     return `${AGENTS_PLUGIN_NAME}:${bareSlug}`;
   }
 
-  // Fallback: assume workspace plugin (original behavior)
+  // 兜底：假设为 workspace 插件（保持原有行为）
   return `${workspaceSlug}:${bareSlug}`;
 }
 
 // ============================================================
-// MCP METADATA STRIPPING
+// MCP 元数据剥离
 // ============================================================
 
 /**
- * Strip _intent and _displayName metadata from tool inputs.
+ * 从工具入参中剥除 _intent 与 _displayName 元数据。
  *
- * These fields are injected into all tool schemas by the network interceptor
- * so Claude provides semantic intent for UI display. They must be stripped
- * before execution to avoid SDK validation errors and MCP server rejections.
+ * 这些字段由网络拦截器注入到所有工具 schema，供 Claude 提供语义意图并在 UI 展示。
+ * 执行前必须剥除，否则会导致 SDK 校验失败或 MCP server 拒绝。
  *
- * The extraction for UI happens in tool-matching.ts BEFORE this stripping.
+ * UI 提取这些字段的逻辑在 tool-matching.ts 中，发生在本剥离之前。
  *
- * @param toolName - The tool name
- * @param input - The tool input object
- * @param onDebug - Optional debug callback
- * @returns MetadataStrippingResult with modified flag and cleaned input
+ * @param toolName - 工具名
+ * @param input - 工具入参对象
+ * @param onDebug - 可选调试回调
+ * @returns 含 modified 标记与清理后 input 的 MetadataStrippingResult
  */
 export function stripToolMetadata(
   toolName: string,
@@ -311,7 +313,7 @@ export function stripToolMetadata(
     return { modified: false, input };
   }
 
-  // Strip the metadata fields
+  // 剥除元数据字段
   const { _intent, _displayName, ...cleanInput } = input;
   onDebug?.(`Stripped tool metadata from ${toolName}: _intent=${!!_intent}, _displayName=${!!_displayName}`);
 
@@ -322,22 +324,21 @@ export function stripToolMetadata(
 }
 
 /**
- * @deprecated Use stripToolMetadata instead. This alias is kept for backwards compatibility.
+ * @deprecated 请改用 stripToolMetadata。保留此别名仅为向后兼容。
  */
 export const stripMcpMetadata = stripToolMetadata;
 
 // ============================================================
-// CONFIG FILE VALIDATION
+// 配置文件校验
 // ============================================================
 
 /**
- * Validate config file writes before they happen.
+ * 在配置文件真正落盘前校验写入内容。
  *
- * For Write/Edit operations on workspace config files, validates the
- * resulting content before allowing the write to proceed. This prevents
- * invalid configs from ever reaching disk.
+ * 针对 workspace 配置文件的 Write/Edit 操作，先校验最终内容再允许写入，
+ * 防止非法配置到达磁盘。
  *
- * Validates:
+ * 校验范围：
  * - sources/{slug}/config.json
  * - skills/{slug}/SKILL.md
  * - statuses/config.json
@@ -345,11 +346,11 @@ export const stripMcpMetadata = stripToolMetadata;
  * - theme.json
  * - tool-icons/tool-icons.json
  *
- * @param toolName - 'Write' or 'Edit'
- * @param input - The tool input (with expanded paths)
- * @param workspaceRootPath - The workspace root path for detection
- * @param onDebug - Optional debug callback
- * @returns ConfigValidationResult with valid flag and optional error
+ * @param toolName - 'Write' 或 'Edit'
+ * @param input - 工具入参（已展开路径）
+ * @param workspaceRootPath - 用于识别配置类型的 workspace 根路径
+ * @param onDebug - 可选调试回调
+ * @returns 含 valid 标记与可选 error 的 ConfigValidationResult
  */
 export function validateConfigWrite(
   toolName: string,
@@ -366,22 +367,22 @@ export function validateConfigWrite(
     return { valid: true };
   }
 
-  // Check workspace-scoped configs first, then app-level configs
+  // 先检查 workspace 级配置，再检查 app 级配置
   const detection: ConfigFileDetection | null =
     detectConfigFileType(filePath, workspaceRootPath) ?? detectAppConfigFileType(filePath);
 
   if (!detection) {
-    // Not a config file - allow
+    // 不是配置文件，直接放行
     return { valid: true };
   }
 
   let contentToValidate: string | null = null;
 
   if (toolName === 'Write') {
-    // For Write, the full file content is in input.content
+    // Write 工具的完整文件内容在 input.content 中
     contentToValidate = input.content as string;
   } else if (toolName === 'Edit') {
-    // For Edit, simulate the replacement on the current file content
+    // Edit 工具：在现有文件内容上模拟替换
     try {
       const currentContent = readFileSync(filePath, 'utf-8');
       const oldString = input.old_string as string;
@@ -391,7 +392,7 @@ export function validateConfigWrite(
         ? currentContent.replaceAll(oldString, newString)
         : currentContent.replace(oldString, newString);
     } catch {
-      // File doesn't exist yet or can't be read — skip validation
+      // 文件尚不存在或无法读取，跳过校验
       // (Write tool will create it; Edit will fail on its own)
       return { valid: true };
     }
@@ -416,6 +417,9 @@ export function validateConfigWrite(
   return { valid: true };
 }
 
+/**
+ * 为某个 CLI 域构造“请改用 craft-agent 命令”的拦截提示。
+ */
 function buildCliDomainBlockMessage(namespace: CliDomainNamespace, context: string): string {
   const policy = CLI_DOMAIN_POLICIES[namespace]
   const noun = namespace === 'automation' ? 'automation' : namespace
@@ -431,6 +435,9 @@ function buildCliDomainBlockMessage(namespace: CliDomainNamespace, context: stri
   ].join('\n')
 }
 
+/**
+ * 获取文件相对于 workspace 根目录的路径；不在 workspace 内返回 null。
+ */
 function getWorkspaceRelativePath(
   filePath: string,
   workspaceRootPath: string,
@@ -446,6 +453,9 @@ function getWorkspaceRelativePath(
   return normalizedPath.slice(normalizedWorkspaceRoot.length);
 }
 
+/**
+ * 判断相对路径是否匹配某个 scope 规则（支持 /**、*、精确匹配）。
+ */
 function matchesPathScope(relativePath: string, scope: string): boolean {
   if (scope.endsWith('/**')) {
     const prefix = scope.slice(0, -3)
@@ -462,6 +472,9 @@ function matchesPathScope(relativePath: string, scope: string): boolean {
   return relativePath === scope
 }
 
+/**
+ * 根据配置文件探测结果识别对应的 CLI domain namespace。
+ */
 function detectCliNamespaceFromConfigDetection(detection: ConfigFileDetection): CliDomainNamespace | null {
   if (detection.type === 'labels') return 'label'
   if (detection.type === 'automations') return 'automation'
@@ -471,11 +484,11 @@ function detectCliNamespaceFromConfigDetection(detection: ConfigFileDetection): 
 }
 
 /**
- * For selected config domains, enforce CLI usage instead of direct file operations.
- * - labels/**: strict block on Read/Write/Edit
- * - sources/{slug}/config.json: redirect on Write/Edit
- * - skills/{slug}/SKILL.md: redirect on Write/Edit
- * - automations.json: redirect on Write/Edit
+ * 对特定配置域强制使用 CLI 命令，而非直接文件操作。
+ * - labels/**：严格拦截 Read/Write/Edit
+ * - sources/{slug}/config.json：Write/Edit 时重定向到 CLI
+ * - skills/{slug}/SKILL.md：Write/Edit 时重定向到 CLI
+ * - automations.json：Write/Edit 时重定向到 CLI
  */
 export function getConfigCliRedirect(
   toolName: string,
@@ -521,8 +534,8 @@ export function getConfigCliRedirect(
 }
 
 /**
- * Block bash commands that operate on guarded config paths unless they use craft-agent commands.
- * Current guarded domains in Bash are declared in shared CLI domain policy.
+ * 拦截直接操作受保护配置路径的 Bash 命令，除非使用 craft-agent 命令。
+ * Bash 中当前受保护的域在共享 CLI domain policy 中声明。
  */
 export function getConfigDomainBashRedirect(
   input: Record<string, unknown>,
@@ -572,12 +585,12 @@ export function getConfigDomainBashRedirect(
 }
 
 // ============================================================
-// CENTRALIZED PRETOOLUSE PIPELINE
+// 集中式 PreToolUse 流水线
 // ============================================================
 
 /**
- * Discriminated union result from `runPreToolUseChecks()`.
- * Each agent translates these into its SDK-specific format via a simple switch.
+ * `runPreToolUseChecks()` 返回的可辨识联合类型结果。
+ * 各 agent 后端通过简单的 switch 把它翻译成各自 SDK 所需的格式。
  */
 export type PreToolUseCheckResult =
   | { type: 'allow' }
@@ -602,8 +615,8 @@ export type PreToolUseCheckResult =
   | { type: 'spawn_session_intercept'; input: Record<string, unknown> };
 
 /**
- * Input for `runPreToolUseChecks()`. Each agent builds this from its SDK-specific
- * hook input. All fields needed for the pipeline are normalized here.
+ * `runPreToolUseChecks()` 的输入。各 agent 从各自 SDK 的 hook 入参构造此对象，
+ * 流水线所需的所有字段都在这里做了归一化。
  */
 export interface PreToolUseInput {
   /** SDK-normalized tool name (PascalCase for built-in, mcp__server__tool for MCP) */
@@ -643,8 +656,8 @@ export interface PreToolUseInput {
 }
 
 /**
- * Minimal interface for PermissionManager that runPreToolUseChecks() depends on.
- * This keeps the pipeline testable without importing the full PermissionManager.
+ * runPreToolUseChecks() 依赖的 PermissionManager 最小接口。
+ * 这样流水线测试时无需引入完整的 PermissionManager。
  */
 export interface PermissionManagerLike {
   isCommandWhitelisted(command: string): boolean;
@@ -655,7 +668,7 @@ export interface PermissionManagerLike {
 }
 
 /**
- * Minimal interface for PrerequisiteManager.
+ * PrerequisiteManager 的最小接口。
  */
 export interface PrerequisiteManagerLike {
   checkPrerequisites(toolName: string): PrerequisiteCheckResult;
@@ -669,20 +682,7 @@ const BUILT_IN_MCP_SERVERS = new Set(['session', 'craft-agents-docs']);
 const FILE_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 
 /**
- * Centralized PreToolUse pipeline.
- *
- * Synchronous except for the final result — all async work (source activation,
- * user prompting) is handled by the calling agent based on the result type.
- *
- * Pipeline:
- * 1. Permission mode check (shouldAllowToolInMode)
- * 2. Source blocking (inactive MCP sources)
- * 3. Prerequisite check (guide.md before source tools)
- * 4. call_llm interception
- * 5. Input transforms (paths, config validation, skills, metadata)
- * 6. Ask-mode prompt decision
- *
- * @returns A discriminated union that the agent translates to its SDK format
+ * 把权限模式上下文（有效模式、模式变更来源与时间）追加到拦截原因中。
  */
 function withPermissionModeContext(reason: string, sessionId: string, effectiveMode: PermissionMode): string {
   if (reason.includes('Effective mode:')) return reason;
@@ -697,6 +697,22 @@ function withPermissionModeContext(reason: string, sessionId: string, effectiveM
   ].join('\n');
 }
 
+/**
+ * 集中式 PreToolUse 流水线。
+ *
+ * 除最终结果外均为同步执行：所有异步工作（source 激活、用户弹窗）都由调用方
+ * 根据返回结果类型自行处理。
+ *
+ * 流水线步骤：
+ * 1. 权限模式检查（shouldAllowToolInMode）
+ * 2. Source 拦截（未激活的 MCP source）
+ * 3. 前置条件检查（source 工具使用前必须先读 guide.md）
+ * 4. call_llm 拦截
+ * 5. 输入改写（路径、配置校验、skill、元数据）
+ * 6. ask 模式弹窗决策
+ *
+ * @returns agent 翻译成其 SDK 格式的可辨识联合类型
+ */
 export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult {
   const {
     toolName,
@@ -717,14 +733,14 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
     onDebug,
   } = ctx;
 
-  // Build permissions context for custom permissions.json rules
+  // 为自定义 permissions.json 规则构造权限上下文
   const permissionsContext: PermissionsContext = {
     workspaceRootPath,
     activeSourceSlugs,
   };
 
-  // Canonical mode source of truth for this session.
-  // Keep incoming permissionMode only for mismatch diagnostics.
+  // 本会话权限模式的权威来源。
+  // 仅把传入的 permissionMode 用于不一致诊断。
   const diagnostics = getPermissionModeDiagnostics(sessionId);
   const effectivePermissionMode = diagnostics.permissionMode;
 
@@ -775,9 +791,9 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
   // 3. PREREQUISITE CHECK (guide.md before source tools)
   // ============================================================
   if (prerequisiteManager) {
-    // Allow Bash through if it's reading a pending skill file (clears the prerequisite)
+    // 如果 Bash 正在读某个待读 skill 文件，则放行（这会清除前置条件）
     if (toolName === 'Bash' && prerequisiteManager.trackBashSkillRead(input)) {
-      // Prerequisite cleared — fall through to remaining pipeline steps
+      // 前置条件已清除，继续执行后续流水线步骤
     } else {
       const prereqResult = prerequisiteManager.checkPrerequisites(toolName);
       if (!prereqResult.allowed) {
@@ -854,10 +870,10 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
   }
 
   // 5g. RTK Bash rewrite (last input transform — flows into both 'modify' and 'prompt' results).
-  // Permission decisions above and the ask-mode prompt below operate on the
-  // ORIGINAL `input` parameter, so the LLM still believes it ran the original
-  // command and our permission system gates the original command — only the
-  // SDK's actual execution sees the rewritten form.
+  // 上面的权限判定和下面的 ask 模式弹窗都基于
+  // 原始的 input 参数进行，因此 LLM 仍认为它执行的是原始命令
+  // ；权限系统只拦截原始命令——只有
+  // SDK 实际执行时才会看到重写后的命令。
   if (ctx.rtkContext?.enabled && ctx.rtkContext.path) {
     const rtkResult = rewriteBashWithRtk(
       toolName,
@@ -911,7 +927,7 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
   }
 
   // ============================================================
-  // RESULT
+  // 返回结果
   // ============================================================
   if (wasModified) {
     return { type: 'modify', input: currentInput };
@@ -920,9 +936,12 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
 }
 
 // ============================================================
-// ASK-MODE PROMPT DECISION (centralized across backends)
+// ask 模式弹窗决策（跨后端统一）
 // ============================================================
 
+/**
+ * ask 模式下需要向用户展示的提示信息。
+ */
 interface PromptInfo {
   promptType: 'bash' | 'file_write' | 'mcp_mutation' | 'api_mutation' | 'admin_approval';
   description: string;
@@ -936,14 +955,23 @@ interface PromptInfo {
   approvalTtlSeconds?: number;
 }
 
+/**
+ * 用 SHA-256 对命令做哈希，用于“记住本次批准”。
+ */
 function hashCommand(command: string): string {
   return createHash('sha256').update(command, 'utf8').digest('hex');
 }
 
+/**
+ * 把命令 token 转成更友好的展示名称（如 brew-cask → Brew Cask）。
+ */
 function toDisplayName(token: string): string {
   return token.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+/**
+ * 判断某命令是否需要 macOS 管理员授权弹窗；命中则返回提示信息。
+ */
 function classifyAdminApproval(command: string): PromptInfo | null {
   const trimmed = command.trim();
   const normalized = trimmed.toLowerCase();
@@ -1000,8 +1028,11 @@ function classifyAdminApproval(command: string): PromptInfo | null {
   return null;
 }
 
+/**
+ * 把命令包装成 `osascript` 管理员权限执行形式（仅 macOS）。
+ */
 function wrapCommandForMacAdminPrompt(command: string): string {
-  // Escape for AppleScript shell string: \ -> \\, " -> \", $ -> \$
+  // 为 AppleScript shell 字符串转义：\ → \\, " → \", $ → \$
   const escaped = command
     .replace(/\\/g, '\\\\')
     .replace(/"/g, '\\"')
@@ -1011,13 +1042,12 @@ function wrapCommandForMacAdminPrompt(command: string): string {
 }
 
 /**
- * Determine if user approval is needed in 'ask' mode.
+ * 判断 ask 模式下是否需要用户批准。
  *
- * Returns prompt info if user should be asked, null if auto-allowed.
- * This is the single source of truth for ask-mode decisions across all agents.
- * `shouldAllowToolInMode()` always returns `{allowed: true}` in ask mode, so
- * the prompt decision lives here rather than being inferred from a permission
- * check.
+ * 如果需要询问则返回 prompt 信息，可自动放行则返回 null。
+ * 这是所有 agent 后端 ask 模式决策的唯一真相来源。
+ * `shouldAllowToolInMode()` 在 ask 模式下总是返回 `{allowed: true}`，
+ * 因此弹窗决策放在这里，而不是从权限检查中推断。
  */
 export function shouldPromptInAskMode(
   toolName: string,
@@ -1028,7 +1058,7 @@ export function shouldPromptInAskMode(
   onDebug?: (message: string) => void,
 ): PromptInfo | null {
 
-  // --- File writes ---
+  // --- 文件写入 ---
   if (FILE_WRITE_TOOLS.has(toolName)) {
     if (permissionManager.isCommandWhitelisted(toolName)) {
       onDebug?.(`Auto-allowing "${toolName}" (previously approved)`);
@@ -1042,7 +1072,7 @@ export function shouldPromptInAskMode(
     };
   }
 
-  // --- Bash commands ---
+  // --- Bash 命令 ---
   if (toolName === 'Bash') {
     const command = typeof input.command === 'string' ? input.command : '';
     const baseCommand = permissionManager.getBaseCommand(command);
@@ -1052,22 +1082,22 @@ export function shouldPromptInAskMode(
       return adminPrompt;
     }
 
-    // Auto-allow read-only commands using full AST-based validation
-    // (same pipeline as Explore mode — catches redirects, substitutions, pipes to write commands)
+    // 用基于完整 AST 的校验自动放行只读命令
+    // （与 safe 模式共用同一套校验，可识别重定向、替换、写入命令管道等）
     const mergedConfig = permissionsConfigCache.getMergedConfig(permissionsContext);
     if (isReadOnlyBashCommandWithConfig(command, mergedConfig)) {
       onDebug?.(`Auto-allowing read-only command: ${baseCommand}`);
       return null;
     }
 
-    // Check session whitelist (not dangerous)
+    // 检查会话白名单（非危险命令）
     if (permissionManager.isCommandWhitelisted(baseCommand) &&
         !permissionManager.isDangerousCommand(baseCommand)) {
       onDebug?.(`Auto-allowing "${baseCommand}" (previously approved)`);
       return null;
     }
 
-    // Check domain whitelist for curl/wget
+    // 检查 curl/wget 的域名白名单
     if (['curl', 'wget'].includes(baseCommand)) {
       const domain = permissionManager.extractDomainFromNetworkCommand(command);
       if (domain && permissionManager.isDomainWhitelisted(domain)) {
@@ -1083,14 +1113,14 @@ export function shouldPromptInAskMode(
     };
   }
 
-  // --- MCP mutations ---
+  // --- MCP 变更操作 ---
   if (toolName.startsWith('mcp__')) {
-    // Check if it would be blocked in safe mode (= it's a mutation)
+    // 判断该工具在 safe 模式下是否会被拦截（即是否属于变更操作）
     const safeModeResult = shouldAllowToolInMode(
       toolName, input, 'safe', { plansFolderPath }
     );
     if (!safeModeResult.allowed) {
-      // It's a mutation — check whitelist
+      // 是变更操作，检查白名单
       if (permissionManager.isCommandWhitelisted(toolName)) {
         onDebug?.(`Auto-allowing "${toolName}" (previously approved)`);
         return null;
@@ -1102,11 +1132,11 @@ export function shouldPromptInAskMode(
         command: toolName,
       };
     }
-    // Read-only MCP tool — no prompt needed
+    // 只读 MCP 工具，无需弹窗
     return null;
   }
 
-  // --- API mutations ---
+  // --- API 变更操作 ---
   if (toolName.startsWith('api_')) {
     const method = ((input?.method as string) || 'GET').toUpperCase();
     const path = input?.path as string | undefined;
@@ -1114,13 +1144,13 @@ export function shouldPromptInAskMode(
     if (method !== 'GET') {
       const apiDescription = `${method} ${path || ''}`;
 
-      // Check permissions.json whitelist
+      // 检查 permissions.json 白名单
       if (isApiEndpointAllowed(method, path, permissionsContext)) {
         onDebug?.(`Auto-allowing API "${apiDescription}" (whitelisted in permissions.json)`);
         return null;
       }
 
-      // Check session whitelist
+      // 检查会话白名单
       if (permissionManager.isCommandWhitelisted(apiDescription)) {
         onDebug?.(`Auto-allowing API "${apiDescription}" (previously approved)`);
         return null;

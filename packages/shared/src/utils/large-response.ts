@@ -1,10 +1,10 @@
 /**
- * Large Response Handling Utility
+ * 大响应处理工具
  *
- * Centralized save + prompt building + formatting for large tool results.
- * Follows the title-generator.ts pattern: pure functions only, no SDK/LLM calls.
+ * 对大工具结果进行统一的保存 + prompt 构建 + 格式化。
+ * 遵循 title-generator.ts 的模式：纯函数，不调用 SDK/LLM。
  *
- * Callers orchestrate via their agent's runMiniCompletion() for summarization.
+ * 调用方通过各自 Agent 的 runMiniCompletion() 来编排摘要过程。
  */
 
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
@@ -21,91 +21,76 @@ import {
 } from './binary-detection.ts';
 
 // ============================================================
-// Constants (re-exported from summarize.ts for convenience)
+// 常量（从 summarize.ts 重新导出以方便使用）
 // ============================================================
 
 /**
- * Default per-result summarization threshold (roughly ~48KB of plain text,
- * less for token-dense content like base64).
+ * 默认的单个结果摘要阈值（约 48KB 纯文本，base64 等 token 密集内容会更低）。
  *
- * Prefer {@link tokenLimitFor} at call sites that have the active model's
- * `contextWindow` available — model-aware sizing keeps moderate-context
- * models (e.g. 64k) from filling their window with a few sub-threshold tool
- * results that each pass individually.
+ * 调用点如果能拿到当前模型的 `contextWindow`，建议优先使用 {@link tokenLimitFor}——
+ * 模型感知的尺寸可以避免中等上下文模型（如 64k）被多个刚好低于阈值的工具结果撑满窗口。
  *
- * Lowered from 15k to 12k after observing a session poisoned by a single
- * 56KB base64-heavy Read result that estimated to ~14k tokens via the
- * 4-chars/token heuristic but cost far more in the real tokenizer. The
- * lower cap, combined with {@link estimateTokensDensityAware}, gives
- * headroom for that drift.
+ * 从 15k 降到 12k，是因为观察到单个 56KB 且富含 base64 的 Read 结果按 4 字符/token 估算约 14k token，
+ * 但实际 tokenizer 中消耗更高。降低上限并结合 {@link estimateTokensDensityAware} 留出余量。
  */
 export const TOKEN_LIMIT = 12000;
 
-/** Max tokens to send for summarization (~400KB). Beyond this, save to file + preview only. */
+/** 可送入摘要的最大 token 数（约 400KB）。超过则只保存文件 + 预览。 */
 export const MAX_SUMMARIZATION_INPUT = 100000;
 
-/** Canonical subfolder under session dir for full tool results */
+/** 会话目录下存放完整工具结果的规范子文件夹 */
 export const LONG_RESPONSES_DIR = 'long_responses';
 
 /**
- * Floor for the model-aware per-result threshold. Below this size the
- * file-reference + summary message is roughly the same size as the original
- * content, so summarization stops paying off.
+ * 模型感知单个结果阈值的地板。低于此大小时，
+ * "文件引用 + 摘要消息" 的长度与原内容差不多，摘要不再划算。
  */
 const TOKEN_LIMIT_FLOOR = 2_000;
 
-/** Fraction of the model's context window allocated to a single tool result
- *  before we summarize. 10% lets ~4 results fit before tightening. */
+/** 单个工具结果可占模型上下文窗口的比例。
+ *  10% 让大约 4 个结果在需要收紧前都能放下。 */
 const PER_RESULT_CONTEXT_FRACTION = 0.10;
 
 // ============================================================
-// Token Estimation
+// Token 估算
 // ============================================================
 
 /**
- * Estimate token count from text length (rough approximation: 4 chars per token)
+ * 根据文本长度估算 token 数（粗略：4 字符/token）。
  */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
 /**
- * Threshold above which base64-density correction kicks in. Below this size
- * the correction doesn't matter — the result fits anyway.
+ * 启用密度感知修正的最小长度。低于此大小时修正无意义，反正结果能放下。
  */
 const DENSITY_AWARE_MIN_LENGTH = 20_000;
 
-/** Minimum run length for a base64-dense span to count. Set to 60 to catch
- *  the common wrapping styles for line-broken base64 in the wild — RFC 2045
- *  MIME wraps at 76, PEM at 64, custom encoders sometimes 60. Short
- *  alphanumeric runs (URLs without `:/?&`, UUIDs, identifiers) sit below
- *  this threshold so the false-positive rate stays low.
+/** 被认定为 base64 密集段的最小连续长度。设为 60 可捕获野外常见的断行 base64——
+ *  RFC 2045 MIME 每 76 字符换行、PEM 每 64 字符、某些自定义编码 60 字符。
+ *  短字母数字串（不含 :/?& 的 URL、UUID、标识符）低于此阈值，误报率低。
  *
- *  Hex digests (SHA-256 = 64 chars, SHA-512 = 128) and JWTs do match — both
- *  are token-dense in real tokenizers, so a tool result dominated by them
- *  should spill anyway. */
+ *  十六进制摘要（SHA-256 = 64 字符，SHA-512 = 128）和 JWT 会命中——
+ *  它们在实际 tokenizer 中也是 token 密集的，因此以它们为主的工具结果理应溢出。 */
 const BASE64_RUN_MIN = 60;
 
-/** Fraction of total characters that must be inside long base64-style runs
- *  before the density correction applies. */
+/** 总字符中必须有多大比例位于长 base64 风格段内，才触发密度修正。 */
 const BASE64_DENSITY_THRESHOLD = 0.70;
 
-/** Effective chars-per-token for base64 in real tokenizers (Anthropic, GPT,
- *  Llama all land in the 1.3–1.7 range for base64-heavy content). */
+/** base64 在实际 tokenizer（Anthropic、GPT、Llama）中的有效字符/token 约 1.3–1.7。 */
 const BASE64_CHARS_PER_TOKEN = 1.5;
 
 /**
- * Density-aware token estimate. Mirrors {@link estimateTokens} for normal
- * text but corrects for base64-heavy content (email MIME bodies, JSON with
- * embedded binary, dumped certs, etc.) where the 4-chars/token heuristic
- * underestimates by ~2.5x.
+ * 密度感知 token 估算。普通文本与 {@link estimateTokens} 一致，
+ * 但会修正富含 base64 的内容（邮件 MIME 正文、含嵌入式二进制的 JSON、dump 的证书等），
+ * 因为这类内容按 4 字符/token 会低估约 2.5 倍。
  *
- * Trigger conditions (all must hold):
- *  - text length ≥ {@link DENSITY_AWARE_MIN_LENGTH}
- *  - ≥ {@link BASE64_DENSITY_THRESHOLD} of chars are inside unbroken
- *    base64-charset runs of length ≥ {@link BASE64_RUN_MIN}
+ * 触发条件（需同时满足）：
+ *  - 文本长度 ≥ {@link DENSITY_AWARE_MIN_LENGTH}
+ *  - ≥ {@link BASE64_DENSITY_THRESHOLD} 的字符位于长度 ≥ {@link BASE64_RUN_MIN} 的未中断 base64 字符集段内
  *
- * When triggered, returns `text.length / 1.5` instead of `text.length / 4`.
+ * 触发后返回 `text.length / 1.5` 而非 `text.length / 4`。
  */
 export function estimateTokensDensityAware(text: string): number {
   if (text.length < DENSITY_AWARE_MIN_LENGTH) return estimateTokens(text);
@@ -121,13 +106,14 @@ export function estimateTokensDensityAware(text: string): number {
 }
 
 /**
- * Per-result summarization threshold scaled to the active model's context
- * window. A 200k-window model returns the {@link TOKEN_LIMIT} cap (12k);
- * a 64k-window model returns 6_400; below ~20k window the floor (2_000)
- * kicks in.
+ * 根据当前模型上下文窗口缩放单个结果摘要阈值。
+ * 200k 窗口模型返回 {@link TOKEN_LIMIT} 上限（12k）；
+ * 64k 窗口模型返回 6_400；窗口低于约 20k 时触发地板（2_000）。
  *
- * Pass `undefined` when the call site has no model context — returns the
- * fixed default for backward compatibility.
+ * 调用点没有模型上下文时传 `undefined`，会返回固定默认值以保持向后兼容。
+ *
+ * @param contextWindow - 模型上下文窗口大小
+ * @returns 计算后的 token 阈值
  */
 export function tokenLimitFor(contextWindow: number | undefined): number {
   if (!contextWindow || contextWindow <= 0) return TOKEN_LIMIT;
@@ -138,25 +124,25 @@ export function tokenLimitFor(contextWindow: number | undefined): number {
 }
 
 // ============================================================
-// Save to Disk
+// 保存到磁盘
 // ============================================================
 
 export interface SaveResult {
-  /** Absolute path for Read/Grep access */
+  /** Read/Grep 使用的绝对路径 */
   absolutePath: string;
-  /** Relative path from session dir (e.g. "long_responses/2026-02-09_gmail_users_me.txt") for transform_data */
+  /** 相对会话目录的路径（例如 "long_responses/2026-02-09_gmail_users_me.txt"），供 transform_data 使用 */
   relativePath: string;
 }
 
 /**
- * Save large response to the session's long_responses/ folder.
- * Creates the folder if it doesn't exist.
+ * 将大响应保存到会话的 long_responses/ 文件夹。
+ * 不存在时自动创建文件夹。
  *
- * @param sessionPath - Path to the session folder
- * @param toolName - Name of the tool (e.g., "gmail", "api_stripe")
- * @param label - Additional label for the filename (e.g., API path)
- * @param content - The full response content to save
- * @returns Absolute and relative paths to the saved file
+ * @param sessionPath - 会话文件夹路径
+ * @param toolName - 工具名（如 "gmail"、"api_stripe"）
+ * @param label - 文件名附加标签（如 API 路径）
+ * @param content - 要保存的完整响应内容
+ * @returns 保存后的绝对路径和相对路径；失败返回 null
  */
 export function saveLargeResponse(
   sessionPath: string,
@@ -186,7 +172,7 @@ export function saveLargeResponse(
 }
 
 // ============================================================
-// Structured Media Extraction (JSON payloads)
+// 结构化媒体提取（JSON 载荷）
 // ============================================================
 
 interface SavedJsonArtifact extends SaveResult {
@@ -389,32 +375,35 @@ function formatStructuredMediaExtractionMessage(result: JsonAssetExtractionResul
 }
 
 // ============================================================
-// Summarization Prompt Builder
+// 摘要 Prompt 构建器
 // ============================================================
 
+/**
+ * 摘要上下文。
+ */
 export interface SummarizationContext {
-  /** Tool or API name */
+  /** 工具或 API 名称 */
   toolName: string;
-  /** Optional endpoint/path for API calls */
+  /** API 调用的可选端点/路径 */
   path?: string;
-  /** Tool input parameters */
+  /** 工具输入参数 */
   input?: Record<string, unknown>;
-  /** The model's stated intent before calling the tool */
+  /** 模型调用工具前声明的意图 */
   intent?: string;
-  /** The user's original request (fallback context) */
+  /** 用户原始请求（兜底上下文） */
   userRequest?: string;
 }
 
 /**
- * Build the prompt for summarizing a large tool result.
- * Pure function — no SDK calls.
+ * 为大工具结果构建摘要 prompt。
+ * 纯函数——不调用 SDK。
  *
- * @param text - The large response text
- * @param context - Context about the tool call
- * @returns Prompt string ready for runMiniCompletion()
+ * @param text - 大响应文本
+ * @param context - 工具调用上下文
+ * @returns 可直接传给 runMiniCompletion() 的 prompt 字符串
  */
 export function buildSummarizationPrompt(text: string, context: SummarizationContext): string {
-  // Safely stringify input
+  // 安全序列化输入
   let inputContext = 'No specific parameters provided.';
   if (context.input) {
     try {
@@ -426,14 +415,14 @@ export function buildSummarizationPrompt(text: string, context: SummarizationCon
 
   const endpointContext = context.path ? `Endpoint: ${context.path}` : '';
 
-  // Prefer model's stated intent, fall back to user request
+  // 优先使用模型声明的意图，其次用户请求
   const intentContext = context.intent
     ? `The AI assistant's goal: "${context.intent.slice(0, 500)}"`
     : context.userRequest
       ? `User's original request: "${context.userRequest.slice(0, 300)}"`
       : '';
 
-  // Truncate response to fit within summarization limits
+  // 截断响应以适配摘要限制
   const maxChars = MAX_SUMMARIZATION_INPUT * 4; // ~400KB
   const truncated = text.length > maxChars;
   const responseText = truncated
@@ -461,24 +450,24 @@ Provide a concise but comprehensive summary that captures the essential informat
 }
 
 // ============================================================
-// Result Message Formatting
+// 结果消息格式化
 // ============================================================
 
 export interface FormatOptions {
   estimatedTokens: number;
-  /** Relative path from session dir (for transform_data reference) */
+  /** 相对会话目录的路径（供 transform_data 引用） */
   relativePath: string;
-  /** Absolute path (for Read/Grep reference) */
+  /** 绝对路径（供 Read/Grep 引用） */
   absolutePath: string;
-  /** Summary from runMiniCompletion (if available) */
+  /** runMiniCompletion 提供的摘要（如果有） */
   summary?: string;
-  /** Fallback preview when no summary (first N chars of response) */
+  /** 无摘要时的回退预览（响应前 N 字符） */
   preview?: string;
 }
 
 /**
- * Format the message the model sees for a large response.
- * Includes file references for both Read/Grep and transform_data access.
+ * 格式化模型看到的大响应消息。
+ * 包含 Read/Grep 和 transform_data 两种文件引用。
  */
 export function formatLargeResponseMessage(opts: FormatOptions): string {
   const { estimatedTokens, relativePath, absolutePath, summary, preview } = opts;
@@ -501,44 +490,42 @@ export function formatLargeResponseMessage(opts: FormatOptions): string {
 }
 
 // ============================================================
-// High-level Pipeline (orchestrates save + summarize + format)
+// 高层管道（编排保存 + 摘要 + 格式化）
 // ============================================================
 
 export interface HandleLargeResponseOptions {
-  /** Full response text */
+  /** 完整响应文本 */
   text: string;
-  /** Path to the session folder */
+  /** 会话文件夹路径 */
   sessionPath: string;
-  /** Context about the tool call */
+  /** 工具调用上下文 */
   context: SummarizationContext;
-  /** Optional summarize callback — typically agent.runMiniCompletion.bind(agent) */
+  /** 可选的摘要回调——通常是 agent.runMiniCompletion.bind(agent) */
   summarize?: (prompt: string) => Promise<string | null>;
-  /** Active model's context window — see {@link guardLargeResult}. */
+  /** 当前模型的上下文窗口——参见 {@link guardLargeResult} */
   contextWindow?: number;
 }
 
 export interface HandleLargeResponseResult {
-  /** Formatted message for the model */
+  /** 返回给模型的格式化消息 */
   message: string;
-  /** Absolute path to saved file */
+  /** 保存文件的绝对路径 */
   filePath: string;
-  /** Whether the response was summarized (vs preview-only) */
+  /** 是否已摘要（相对于仅预览） */
   wasSummarized: boolean;
 }
 
 /**
- * Thin guard wrapper: returns the replacement text if the result is too large
- * or contains binary data, or null if the result should be passed through as-is.
+ * 轻量保护包装器：结果过大或包含二进制数据时返回替换文本，
+ * 否则返回 null，让结果原样透传。
  *
- * Accepts string | Buffer:
- * - Buffer: binary detection on raw bytes (preserves data integrity for file saving).
- *   Used by api-tools which has raw HTTP response buffers.
- * - string: binary detection via Buffer conversion. Used by MCP pool and Claude SDK
- *   where data is already a string.
+ * 接受 string | Buffer：
+ * - Buffer：对原始字节做二进制检测（保存文件时保证数据完整）。api-tools 使用，它有原始 HTTP 响应 buffer。
+ * - string：通过 Buffer 转换做二进制检测。MCP pool 和 Claude SDK 使用，那里数据已是字符串。
  *
- * Pipeline: binary check → (if text) size check → save + summarize.
+ * 管道：二进制检查 →（若是文本）大小检查 → 保存 + 摘要。
  *
- * Shared by McpClientPool.callTool(), api-tools.ts, and claude-agent.ts.
+ * 被 McpClientPool.callTool()、api-tools.ts、claude-agent.ts 共享。
  */
 export async function guardLargeResult(
   input: string | Buffer,
@@ -548,13 +535,12 @@ export async function guardLargeResult(
     input?: Record<string, unknown>;
     intent?: string;
     summarize?: (prompt: string) => Promise<string | null>;
-    /** Active model's context window — when provided, the per-result
-     *  summarization threshold scales via {@link tokenLimitFor}. Omit at
-     *  call sites without model knowledge to retain the fixed default. */
+    /** 当前模型的上下文窗口——提供时，单个结果阈值通过 {@link tokenLimitFor} 缩放；
+     *  调用点没有模型知识时省略，保留固定默认值。 */
     contextWindow?: number;
   }
 ): Promise<string | null> {
-  // 1. Binary detection — check before any text processing
+  // 1. 二进制检测——在任何文本处理之前先检查
   const buffer = Buffer.isBuffer(input) ? input : Buffer.from(input, 'utf-8');
   if (looksLikeBinary(buffer)) {
     debug('large-response', `${opts.toolName}: binary content detected (${buffer.length} bytes)`);
@@ -569,18 +555,18 @@ export async function guardLargeResult(
     return `[Binary content detected but save failed: ${result.error}]`;
   }
 
-  // 2. Convert to string (no-op if already string, toString if Buffer that passed binary check)
+  // 2. 转为字符串（已是 string 时无操作；通过二进制检查的 Buffer 则 toString）
   const text = typeof input === 'string' ? input : buffer.toString('utf-8');
 
-  // 2b. Structured JSON extraction path — preserve original JSON, extract binary assets,
-  // and emit a linked JSON that replaces base64 blobs with file references.
+  // 2b. 结构化 JSON 提取路径——保留原始 JSON，提取二进制资源，
+  // 并生成 linked JSON，把 base64 块替换为文件引用。
   const structuredExtraction = extractAssetsFromStructuredJson(text, opts.sessionPath, opts.toolName);
   if (structuredExtraction) {
     debug('large-response', `${opts.toolName}: extracted ${structuredExtraction.assets.length} media assets from structured JSON payload`);
     return formatStructuredMediaExtractionMessage(structuredExtraction);
   }
 
-  // 2c. Inline base64-encoded binary detection (data URLs and raw base64 blobs)
+  // 2c. 内联 base64 编码二进制检测（data URL 和原始 base64 块）
   const base64Result = extractBase64Binary(text);
   if (base64Result) {
     debug('large-response', `${opts.toolName}: ${base64Result.source} binary detected (${base64Result.buffer.length} decoded bytes)`);
@@ -594,9 +580,9 @@ export async function guardLargeResult(
     return `[Base64-encoded binary detected but save failed: ${result.error}]`;
   }
 
-  // 3. Existing size check + summarize flow (model-aware when contextWindow provided).
-  // Use density-aware estimate so base64-heavy text (MIME, JSON-embedded binary)
-  // can't slip past the 4-chars/token heuristic and poison conversation context.
+  // 3. 现有大小检查 + 摘要流程（提供 contextWindow 时启用模型感知）。
+  // 使用密度感知估算，让富含 base64 的文本（MIME、JSON 嵌入式二进制）
+  // 无法通过 4 字符/token 启发式溜进对话上下文。
   if (estimateTokensDensityAware(text) <= tokenLimitFor(opts.contextWindow)) return null;
   const result = await handleLargeResponse({
     text,
@@ -609,13 +595,13 @@ export async function guardLargeResult(
 }
 
 /**
- * Full pipeline: save to disk, optionally summarize, format result message.
+ * 完整管道：保存到磁盘、可选摘要、格式化结果消息。
  *
- * Call this when a tool result exceeds TOKEN_LIMIT.
- * If `summarize` callback is provided and tokens are within MAX_SUMMARIZATION_INPUT,
- * it will be called with the built prompt. Otherwise falls back to preview.
+ * 当工具结果超过 TOKEN_LIMIT 时调用。
+ * 如果提供了 `summarize` 回调且 token 数在 MAX_SUMMARIZATION_INPUT 内，
+ * 会用构建好的 prompt 调用它；否则回退到预览。
  *
- * @returns Formatted result, or null if the text is not large enough to handle
+ * @returns 格式化结果；文本不够大时返回 null
  */
 export async function handleLargeResponse(
   opts: HandleLargeResponseOptions
@@ -624,12 +610,12 @@ export async function handleLargeResponse(
   const estimatedTokens = estimateTokensDensityAware(text);
 
   if (estimatedTokens <= tokenLimitFor(contextWindow)) {
-    return null; // Not large enough — caller should return as-is
+    return null; // 不够大——调用方应原样返回
   }
 
   debug('large-response', `${context.toolName}: ${text.length} bytes, ~${estimatedTokens} tokens`);
 
-  // 1. Save full response to disk
+  // 1. 保存完整响应到磁盘
   const saveResult = saveLargeResponse(
     sessionPath,
     context.toolName,
@@ -638,7 +624,7 @@ export async function handleLargeResponse(
   );
 
   if (!saveResult) {
-    // File save failed — return preview without file references
+    // 保存失败——返回无文件引用的预览
     const preview = text.substring(0, 2000);
     return {
       message: `[Response too large (~${estimatedTokens} tokens)]\n\nPreview:\n${preview}...`,
@@ -649,7 +635,7 @@ export async function handleLargeResponse(
 
   const { absolutePath, relativePath } = saveResult;
 
-  // 2. Try summarization if within limits and callback provided
+  // 2. 如果在限制内且提供了回调，尝试摘要
   let summary: string | undefined;
   if (summarize && estimatedTokens <= MAX_SUMMARIZATION_INPUT) {
     try {
@@ -663,7 +649,7 @@ export async function handleLargeResponse(
     }
   }
 
-  // 3. Format message
+  // 3. 格式化消息
   const message = formatLargeResponseMessage({
     estimatedTokens,
     relativePath,

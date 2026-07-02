@@ -1,8 +1,8 @@
 /**
  * SettingsInput
  *
- * Text input with label for settings pages.
- * Supports password type with show/hide toggle.
+ * 设置页文本输入组件，带标签和描述。
+ * 支持普通文本、密码、邮箱、URL 等类型，并内置密码显示/隐藏切换。
  */
 
 import * as React from 'react'
@@ -14,36 +14,36 @@ import { cn } from '@/lib/utils'
 import { settingsUI } from './SettingsUIConstants'
 
 export interface SettingsInputProps {
-  /** Input label */
+  /** 输入框标签 */
   label?: string
-  /** Optional description below label */
+  /** 标签下方的描述说明 */
   description?: string
-  /** Current value */
+  /** 当前输入值 */
   value: string
-  /** Change handler */
+  /** 值变化时的回调 */
   onChange: (value: string) => void
-  /** Placeholder text */
+  /** 占位提示 */
   placeholder?: string
-  /** Input type */
+  /** 输入框类型 */
   type?: 'text' | 'password' | 'email' | 'url'
-  /** Disabled state */
+  /** 是否禁用 */
   disabled?: boolean
-  /** Error message */
+  /** 错误提示 */
   error?: string
-  /** Action button next to input */
+  /** 输入框右侧的操作按钮 */
   action?: React.ReactNode
-  /** Additional className */
+  /** 额外 className */
   className?: string
-  /** Whether inside a card */
+  /** 是否在卡片内部 */
   inCard?: boolean
-  /** onBlur handler */
+  /** 失去焦点时的回调 */
   onBlur?: () => void
-  /** onKeyDown handler */
+  /** 键盘按下事件回调 */
   onKeyDown?: (e: React.KeyboardEvent) => void
 }
 
 /**
- * SettingsInput - Text input with label
+ * SettingsInput - 带标签的文本输入框
  *
  * @example
  * <SettingsInput
@@ -69,8 +69,10 @@ export function SettingsInput({
   onKeyDown,
 }: SettingsInputProps) {
   const id = React.useId()
+  // 控制密码是否明文显示
   const [showPassword, setShowPassword] = React.useState(false)
   const isPassword = type === 'password'
+  // 密码框在显示状态下临时变成 text 类型，否则保持原类型
   const inputType = isPassword && showPassword ? 'text' : type
 
   return (
@@ -133,30 +135,30 @@ export function SettingsInput({
 }
 
 /**
- * SettingsInputRow - Inline input with label on left
+ * SettingsInputRow - 标签在左、输入框在右的横向布局
  *
- * For settings where the input should be on the right side
+ * 适合在一行里同时展示说明和输入控件。
  */
 export interface SettingsInputRowProps {
-  /** Row label */
+  /** 行标签 */
   label: string
-  /** Optional description below label */
+  /** 标签下方的描述说明 */
   description?: string
-  /** Current value */
+  /** 当前输入值 */
   value: string
-  /** Change handler */
+  /** 值变化时的回调 */
   onChange: (value: string) => void
-  /** Placeholder text */
+  /** 占位提示 */
   placeholder?: string
-  /** Input type */
+  /** 输入框类型 */
   type?: 'text' | 'password' | 'email' | 'url'
-  /** Disabled state */
+  /** 是否禁用 */
   disabled?: boolean
-  /** Error message */
+  /** 错误提示 */
   error?: string
-  /** Additional className */
+  /** 额外 className */
   className?: string
-  /** Whether inside a card */
+  /** 是否在卡片内部 */
   inCard?: boolean
 }
 
@@ -211,30 +213,30 @@ export function SettingsInputRow({
 }
 
 /**
- * SettingsSecretInput - Password input with show/hide and optional validation
+ * SettingsSecretInput - 密码/密钥输入框
  *
- * Specialized for API keys, tokens, etc.
+ * 专门用于 API key、token 等敏感信息，带显示/隐藏切换和错误提示。
  */
 export interface SettingsSecretInputProps {
-  /** Input label */
+  /** 输入框标签 */
   label?: string
-  /** Optional description */
+  /** 描述说明 */
   description?: string
-  /** Current value */
+  /** 当前输入值 */
   value: string
-  /** Change handler */
+  /** 值变化时的回调 */
   onChange: (value: string) => void
-  /** Placeholder text */
+  /** 占位提示 */
   placeholder?: string
-  /** Disabled state */
+  /** 是否禁用 */
   disabled?: boolean
-  /** Error message */
+  /** 错误提示 */
   error?: string
-  /** Additional className */
+  /** 额外 className */
   className?: string
-  /** Whether inside a card */
+  /** 是否在卡片内部 */
   inCard?: boolean
-  /** onBlur handler */
+  /** 失去焦点时的回调 */
   onBlur?: () => void
 }
 

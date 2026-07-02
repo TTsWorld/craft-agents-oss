@@ -1,21 +1,25 @@
 /**
  * Browser Tools (`browser_tool`)
  *
- * Session-scoped tooling that enables the agent to interact with built-in
- * in-app browser windows via a single CLI-like command wrapper.
- * Commands delegate to BrowserPaneFns callbacks wired by Electron's
- * SessionManager to BrowserPaneManager.
+ * 本文件向 Claude Agent SDK 注册一个名为 browser_tool 的会话级工具（session-scoped
+ * tool），让 Agent 通过一个类 CLI 命令封装对应用内置浏览器窗口的全部操作。
  *
- * The session → browser instance mapping is handled by the callback provider
- * (getOrCreateForSession pattern), so commands don't need instance IDs.
+ * 工具内部不直接操作浏览器，而是把请求委托给 BrowserPaneFns 这一注入接口；该接口
+ * 由 Electron 侧的 SessionManager 通过 getOrCreateForSession(sessionId) 绑定到
+ * BrowserPaneManager，把会话与具体浏览器窗口的映射关系交给调用方管理。
+ *
+ * Go 类比：相当于声明一个 tool handler，把请求转发给注入进来的接口实现，
+ * 而不由本文件关心具体窗口实例（instanceId）的查找逻辑。
  */
 
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { executeBrowserToolCommand } from './browser-tool-runtime.ts';
 
-// Tool result type - matches MCP CallToolResult content blocks
+// 工具返回类型 —— 与 MCP CallToolResult 的 content 块结构保持一致
 type ToolResult = {
+  // Array<T> 是 TS 的泛型数组类型，等价于 Go 的 []T；这里 content 是一个
+  // 联合类型的数组（每个元素要么是文本块，要么是图片块）
   content: Array<
     | { type: 'text'; text: string }
     | { type: 'image'; data: string; mimeType: string }
@@ -36,16 +40,17 @@ function successResponse(text: string): ToolResult {
   };
 }
 
+// 释放提示语：浏览器操作完成后追加到返回结果，提醒模型调用 close / release 释放控制权
 const BROWSER_RELEASE_HINT = '\n\nWhen you are done using the browser, call browser_tool with command "close" to close the window entirely, or "release" to dismiss the overlay and let the user continue browsing.';
 
 // ============================================================================
-// Browser Pane Function Interface
+// 浏览器面板功能接口（Browser Pane Function Interface）
 // ============================================================================
 
 /**
- * Abstraction over BrowserPaneManager for use in session-scoped tools.
- * The Electron session manager creates this by binding to a specific session's
- * browser instance via getOrCreateForSession(sessionId).
+ * 对 BrowserPaneManager 的抽象，供会话级工具使用。
+ * Electron 的会话管理器通过 getOrCreateForSession(sessionId) 把某个会话
+ * 绑定到具体的浏览器实例，从而创建出这一接口的实现。
  */
 export interface BrowserScreenshotArgs {
   mode?: 'raw' | 'agent'
@@ -58,17 +63,20 @@ export interface BrowserScreenshotArgs {
   jpegQuality?: number
 }
 
+/** 截图命令的返回结果：原始图片缓冲、图片格式以及可选的元信息 */
 export interface BrowserScreenshotResult {
   imageBuffer: Buffer
   imageFormat: 'png' | 'jpeg'
   metadata?: Record<string, unknown>
 }
 
+/** 获取控制台日志时的过滤参数：日志级别与条数上限 */
 export interface BrowserConsoleArgs {
   level?: 'all' | 'log' | 'info' | 'warn' | 'error'
   limit?: number
 }
 
+/** 区域截图参数：可按坐标/元素 ref/CSS 选择器指定截图范围 */
 export interface BrowserScreenshotRegionArgs {
   x?: number
   y?: number
@@ -81,11 +89,13 @@ export interface BrowserScreenshotRegionArgs {
   jpegQuality?: number
 }
 
+/** 窗口尺寸调整参数：目标宽高（像素） */
 export interface BrowserWindowResizeArgs {
   width: number
   height: number
 }
 
+/** 网络日志查询参数：支持按条数、HTTP 状态、请求方法、资源类型过滤 */
 export interface BrowserNetworkArgs {
   limit?: number
   status?: 'all' | 'failed' | '2xx' | '3xx' | '4xx' | '5xx'
@@ -93,6 +103,7 @@ export interface BrowserNetworkArgs {
   resourceType?: string
 }
 
+/** 等待条件参数：可等待选择器出现、文本出现、URL 变化或网络空闲 */
 export interface BrowserWaitArgs {
   kind: 'selector' | 'text' | 'url' | 'network-idle'
   value?: string
@@ -101,17 +112,20 @@ export interface BrowserWaitArgs {
   idleMs?: number
 }
 
+/** 按键参数：键名 + 可选修饰键（shift/control/alt/meta） */
 export interface BrowserKeyArgs {
   key: string
   modifiers?: Array<'shift' | 'control' | 'alt' | 'meta'>
 }
 
+/** 下载查询参数：列出或等待下载完成 */
 export interface BrowserDownloadsArgs {
   action?: 'list' | 'wait'
   limit?: number
   timeoutMs?: number
 }
 
+/** 窗口生命周期动作（关闭/隐藏/释放）的返回结果 */
 export interface BrowserLifecycleActionResult {
   action: 'closed' | 'hidden' | 'released' | 'noop'
   requestedInstanceId?: string
@@ -120,6 +134,16 @@ export interface BrowserLifecycleActionResult {
   reason?: string
 }
 
+/**
+ * 浏览器面板功能注入接口（BrowserPaneFns）。
+ *
+ * 这是本工具与真实浏览器实现之间的边界：所有浏览器操作都被声明为该接口上的方法，
+ * 具体实现由 Electron 侧的 SessionManager 绑定。Promise<T> 表示异步返回值，
+ * 类似 Go 里返回 (T, error) 的 future；调用方需 await 等待结果。
+ *
+ * 会话 ↔ 浏览器窗口 的映射由实现方（getOrCreateForSession）维护，
+ * 因此这些方法大多不需要 instanceId 参数。
+ */
 export interface BrowserPaneFns {
   openPanel: (options?: { background?: boolean }) => Promise<{ instanceId: string }>;
   navigate: (url: string) => Promise<{ url: string; title: string }>;

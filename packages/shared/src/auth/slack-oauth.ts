@@ -1,14 +1,14 @@
 /**
- * Slack OAuth flow using Slack's OAuth 2.0 v2
+ * Slack OAuth 流程
  *
- * This module handles the complete Slack OAuth flow for USER authentication:
- * 1. Opens browser for Slack consent screen
- * 2. Receives authorization code via local callback server
- * 3. Exchanges code for user access token
- * 4. Returns tokens and workspace info
+ * 使用 Slack OAuth 2.0 v2 进行用户认证（USER authentication）：
+ * 1. 打开浏览器展示 Slack 同意页
+ * 2. 通过本地回调服务器接收授权码
+ * 3. 用授权码换用户 access token
+ * 4. 返回 token 和工作区信息
  *
- * Uses user_scope (not scope) to authenticate as the user, not as a bot.
- * This allows posting messages as the authenticated user.
+ * 使用 user_scope（不是 scope）来以用户身份认证，而不是以 bot 身份安装应用。
+ * 这样可以以“你自己”的名义发消息。
  */
 
 import { URL } from 'url';
@@ -19,22 +19,22 @@ import type { SlackService } from '../sources/types.ts';
 import { type OAuthSessionContext, buildOAuthDeeplinkUrl } from './types.ts';
 import type { PreparedOAuthFlow, OAuthExchangeParams, OAuthExchangeResult } from './oauth-flow-types.ts';
 
-// Re-export for convenience
+// 再导出一次 SlackService 类型，方便外部使用
 export type { SlackService } from '../sources/types.ts';
 
-// Slack OAuth configuration - must be set via environment variables
-// These are baked into the build at compile time
+// Slack OAuth 配置：通过环境变量注入，编译时固化
 const SLACK_CLIENT_ID = process.env.SLACK_OAUTH_CLIENT_ID || '';
 const SLACK_CLIENT_SECRET = process.env.SLACK_OAUTH_CLIENT_SECRET || '';
 
-// Slack OAuth endpoints
+// Slack OAuth 端点
 const SLACK_AUTH_URL = 'https://slack.com/oauth/v2/authorize';
 const SLACK_TOKEN_URL = 'https://slack.com/api/oauth.v2.access';
 
 /**
- * Predefined USER scope sets for common Slack services
- * These are user scopes (user_scope), not bot scopes (scope)
- * User scopes allow acting as the authenticated user
+ * 常见 Slack 服务的预定义用户 scope 集合。
+ *
+ * 这些是 user_scope，不是 bot scope。
+ * user_scope 允许以认证用户的身份操作。
  */
 export const SLACK_SERVICE_SCOPES: Record<SlackService, string[]> = {
   messaging: ['chat:write'],
@@ -63,50 +63,50 @@ export const SLACK_SERVICE_SCOPES: Record<SlackService, string[]> = {
 };
 
 /**
- * Options for starting Slack OAuth flow
+ * 启动 Slack OAuth 流程的选项。
  */
 export interface SlackOAuthOptions {
-  /** Slack service to authenticate (uses predefined scopes) */
+  /** 要登录的 Slack 服务（使用预定义 scope） */
   service?: SlackService;
-  /** Custom user scopes (overrides service scopes if provided) */
+  /** 自定义用户 scope（提供时覆盖 service 的 scope） */
   userScopes?: string[];
-  /** App type for callback server styling */
+  /** 回调页面样式 */
   appType?: AppType;
-  /** Session context for building deeplink back to chat after OAuth */
+  /** OAuth 完成后跳回聊天 session 的上下文 */
   sessionContext?: OAuthSessionContext;
 }
 
 /**
- * Result of Slack OAuth flow
+ * Slack OAuth 流程结果。
  */
 export interface SlackOAuthResult {
   success: boolean;
-  /** User access token (xoxp-...) for acting as the user */
+  /** 用户 access token（xoxp-...），用于以用户身份操作 */
   accessToken?: string;
-  /** Refresh token for token rotation (if enabled in Slack app settings) */
+  /** 如果 Slack 应用启用了 token rotation，则有 refresh token */
   refreshToken?: string;
-  /** Token expiration timestamp (ms) - only if token rotation is enabled */
+  /** token 过期时间戳（毫秒），仅启用 token rotation 时存在 */
   expiresAt?: number;
-  /** Slack workspace ID */
+  /** Slack 工作区 ID */
   teamId?: string;
-  /** Slack workspace name */
+  /** Slack 工作区名称 */
   teamName?: string;
-  /** Authenticated user ID */
+  /** 认证用户 ID */
   userId?: string;
-  /** Error message if failed */
+  /** 失败时的错误信息 */
   error?: string;
 }
 
 /**
- * Generate random state for CSRF protection
+ * 生成随机 state，防止 CSRF。
  */
 function generateState(): string {
   return randomBytes(16).toString('hex');
 }
 
 /**
- * Exchange authorization code for tokens
- * Slack uses HTTP Basic auth for token exchange
+ * 用授权码换 token。
+ * Slack token exchange 使用 HTTP Basic auth。
  */
 async function exchangeCodeForTokens(
   code: string,
@@ -119,7 +119,7 @@ async function exchangeCodeForTokens(
   teamName: string;
   userId: string;
 }> {
-  // Use HTTP Basic auth as recommended by Slack
+  // Slack 推荐用 HTTP Basic auth：client_id:client_secret 做 base64
   const authHeader = Buffer.from(`${SLACK_CLIENT_ID}:${SLACK_CLIENT_SECRET}`).toString('base64');
 
   const params = new URLSearchParams({
@@ -139,7 +139,7 @@ async function exchangeCodeForTokens(
   const data = (await response.json()) as {
     ok: boolean;
     error?: string;
-    // For user tokens, these come from authed_user
+    // 用户 token 在 authed_user 里
     authed_user?: {
       id: string;
       access_token?: string;
@@ -153,7 +153,7 @@ async function exchangeCodeForTokens(
     throw new Error(`Slack token exchange failed: ${data.error || 'Unknown error'}`);
   }
 
-  // User token is in authed_user.access_token
+  // 用户 token 在 authed_user.access_token
   if (!data.authed_user?.access_token) {
     throw new Error('No user access token received. Make sure user_scope is set in the OAuth request.');
   }
@@ -169,8 +169,8 @@ async function exchangeCodeForTokens(
 }
 
 /**
- * Refresh Slack access token using refresh token
- * Note: Token rotation must be enabled in Slack app settings for refresh tokens
+ * 用 refresh token 刷新 Slack access token。
+ * 注意：需要在 Slack 应用设置里启用 token rotation 才会有 refresh token。
  */
 export async function refreshSlackToken(
   refreshToken: string,
@@ -212,47 +212,47 @@ export async function refreshSlackToken(
 }
 
 /**
- * Check if Slack OAuth is configured (client ID and secret are set)
+ * 检查 Slack OAuth 是否已配置（client ID 和 secret 都已设置）。
  */
 export function isSlackOAuthConfigured(): boolean {
   return Boolean(SLACK_CLIENT_ID && SLACK_CLIENT_SECRET);
 }
 
 /**
- * Get user scopes for a Slack service or use custom scopes
+ * 根据 service 或自定义 userScopes 获取最终 scope 列表。
  */
 export function getSlackScopes(options: SlackOAuthOptions): string[] {
-  // Custom scopes take precedence
+  // 自定义 scope 优先级最高
   if (options.userScopes && options.userScopes.length > 0) {
     return options.userScopes;
   }
 
-  // Use predefined service scopes
+  // 使用预定义服务 scope
   if (options.service && options.service in SLACK_SERVICE_SCOPES) {
     return SLACK_SERVICE_SCOPES[options.service];
   }
 
-  // Default to full workspace scopes
+  // 默认用完整工作区 scope
   return SLACK_SERVICE_SCOPES.full;
 }
 
 /**
- * Options for preparing a Slack OAuth flow (server-side, no browser interaction)
+ * 准备 Slack OAuth 流程的选项（服务端，不打开浏览器）。
  */
 export interface PrepareSlackOAuthOptions {
   service?: SlackService;
   userScopes?: string[];
-  /** Port for the local callback server (Electron). One of callbackPort or callbackUrl required. */
+  /** 本地回调服务器端口（Electron）。callbackPort 和 callbackUrl 至少传一个 */
   callbackPort?: number;
-  /** Full callback URL (WebUI). Takes precedence over callbackPort. */
+  /** 完整回调 URL（WebUI）。优先级高于 callbackPort */
   callbackUrl?: string;
 }
 
 /**
- * Prepare a Slack OAuth flow without starting a callback server or opening a browser.
- * Returns everything needed to construct the auth URL and later exchange the code.
+ * 准备 Slack OAuth 流程，不启动回调服务器也不打开浏览器。
+ * 返回构造授权 URL 和后续换 token 所需的一切。
  *
- * Slack uses a Cloudflare relay for HTTPS redirects since Slack requires HTTPS redirect URIs.
+ * 由于 Slack 要求 HTTPS 回调地址，本地场景下使用 Cloudflare relay。
  */
 export function prepareSlackOAuth(options: PrepareSlackOAuthOptions): PreparedOAuthFlow {
   if (!isSlackOAuthConfigured()) {
@@ -264,7 +264,7 @@ export function prepareSlackOAuth(options: PrepareSlackOAuthOptions): PreparedOA
   const userScopes = getSlackScopes(options);
   const state = generateState();
 
-  // Slack requires HTTPS → use Cloudflare relay when using callbackPort
+  // Slack 要求 HTTPS；使用 callbackPort 时通过 Cloudflare relay 转发
   const redirectUri = options.callbackUrl
     ?? `https://agents.craft.do/auth/slack/callback?port=${options.callbackPort}`;
 
@@ -277,7 +277,7 @@ export function prepareSlackOAuth(options: PrepareSlackOAuthOptions): PreparedOA
   return {
     authUrl: authUrl.toString(),
     state,
-    codeVerifier: '',  // Slack doesn't use PKCE
+    codeVerifier: '',  // Slack 不使用 PKCE
     tokenEndpoint: SLACK_TOKEN_URL,
     clientId: SLACK_CLIENT_ID,
     clientSecret: SLACK_CLIENT_SECRET,
@@ -287,8 +287,8 @@ export function prepareSlackOAuth(options: PrepareSlackOAuthOptions): PreparedOA
 }
 
 /**
- * Exchange a Slack authorization code for tokens (server-side).
- * Slack uses HTTP Basic auth (client_id:client_secret) for token exchange.
+ * 在服务端用 Slack 授权码换 token。
+ * Slack 使用 HTTP Basic auth（client_id:client_secret）做 token exchange。
  */
 export async function exchangeSlackOAuth(params: OAuthExchangeParams): Promise<OAuthExchangeResult> {
   try {
@@ -299,7 +299,7 @@ export async function exchangeSlackOAuth(params: OAuthExchangeParams): Promise<O
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       expiresAt: tokens.expiresIn ? Date.now() + tokens.expiresIn * 1000 : undefined,
-      email: tokens.teamName,  // Use teamName as the identifier
+      email: tokens.teamName,  // 用 teamName 作为标识字段
     };
   } catch (error) {
     return {
@@ -310,28 +310,28 @@ export async function exchangeSlackOAuth(params: OAuthExchangeParams): Promise<O
 }
 
 /**
- * Start Slack OAuth flow for USER authentication
+ * 启动完整的 Slack 用户认证流程。
  *
- * Opens browser for Slack consent, handles callback, and returns user token + workspace info.
- * Uses user_scope to authenticate as the user (not a bot), allowing you to post as yourself.
+ * 打开浏览器展示 Slack 同意页，处理回调，返回用户 token 和工作区信息。
+ * 使用 user_scope 以用户身份认证（不是安装 bot），允许以你自己的名义发消息。
  *
  * @example
- * // Authenticate with full workspace access
+ * // 用完整工作区权限登录
  * const result = await startSlackOAuth({ service: 'full' });
  *
  * @example
- * // Authenticate for messaging only
+ * // 只请求消息权限
  * const result = await startSlackOAuth({ service: 'messaging' });
  *
  * @example
- * // Authenticate with custom scopes
+ * // 用自定义 scope 登录
  * const result = await startSlackOAuth({
  *   userScopes: ['chat:write', 'users:read']
  * });
  */
 export async function startSlackOAuth(options: SlackOAuthOptions = {}): Promise<SlackOAuthResult> {
   try {
-    // Verify OAuth credentials are configured
+    // 检查凭据是否已配置
     if (!isSlackOAuthConfigured()) {
       return {
         success: false,
@@ -340,41 +340,41 @@ export async function startSlackOAuth(options: SlackOAuthOptions = {}): Promise<
       };
     }
 
-    // Get user scopes for this request
+    // 获取本次请求需要的用户 scope
     const userScopes = getSlackScopes(options);
 
-    // Generate state for CSRF protection
+    // 生成 state，防止 CSRF
     const state = generateState();
 
-    // Start local HTTP callback server with deeplink for returning to chat session
+    // 启动本地 HTTP 回调服务器，并带上跳回聊天 session 的 deeplink
     const appType = options.appType || 'electron';
     const deeplinkUrl = buildOAuthDeeplinkUrl(options.sessionContext);
     const callbackServer = await createCallbackServer({ appType, deeplinkUrl });
 
-    // Extract port from local callback URL
+    // 从本地回调 URL 里取出端口
     const localUrl = new URL(callbackServer.url);
     const port = localUrl.port;
 
-    // Use Cloudflare Worker relay for Slack OAuth (Slack requires HTTPS)
-    // The relay redirects: https://agents.craft.do/auth/slack/callback → http://localhost:{port}/callback
+    // 使用 Cloudflare Worker relay 处理 Slack OAuth（Slack 要求 HTTPS）
+    // relay 会把 https://agents.craft.do/auth/slack/callback 重定向到 http://localhost:{port}/callback
     const redirectUri = `https://agents.craft.do/auth/slack/callback?port=${port}`;
 
-    // Build authorization URL
-    // Use user_scope (not scope) to get a user token instead of bot token
+    // 构造授权 URL
+    // 用 user_scope（不是 scope）来获取用户 token，而不是 bot token
     const authUrl = new URL(SLACK_AUTH_URL);
     authUrl.searchParams.set('client_id', SLACK_CLIENT_ID);
     authUrl.searchParams.set('redirect_uri', redirectUri);
     authUrl.searchParams.set('state', state);
-    // user_scope = authenticate as user, scope = install bot
+    // user_scope = 以用户身份认证；scope = 安装 bot
     authUrl.searchParams.set('user_scope', userScopes.join(','));
 
-    // Open browser for authorization
+    // 打开浏览器授权
     await openUrl(authUrl.toString());
 
-    // Wait for callback
+    // 等待回调
     const callback = await callbackServer.promise;
 
-    // Verify state
+    // 校验 state
     if (callback.query.state !== state) {
       return {
         success: false,
@@ -382,7 +382,7 @@ export async function startSlackOAuth(options: SlackOAuthOptions = {}): Promise<
       };
     }
 
-    // Check for error
+    // 检查回调错误
     if (callback.query.error) {
       return {
         success: false,
@@ -390,7 +390,7 @@ export async function startSlackOAuth(options: SlackOAuthOptions = {}): Promise<
       };
     }
 
-    // Get authorization code
+    // 获取授权码
     const code = callback.query.code;
     if (!code) {
       return {
@@ -399,7 +399,7 @@ export async function startSlackOAuth(options: SlackOAuthOptions = {}): Promise<
       };
     }
 
-    // Exchange code for tokens
+    // 用授权码换 token
     const tokens = await exchangeCodeForTokens(code, redirectUri);
 
     return {

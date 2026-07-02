@@ -1,15 +1,20 @@
 /**
  * SourceCredentialManager
  *
- * Unified credential management for sources. Consolidates credential CRUD,
- * credential ID resolution, expiry checking, and OAuth flows.
+ * Source 的统一凭证管理器。把分散在各处的凭证增删改查、
+ * 凭证 ID 解析、过期检查、OAuth 流程等逻辑集中到一起。
  *
- * This replaces scattered credential logic across:
+ * 它取代了原来散落在以下地方的凭证逻辑：
  * - SourceService.getSourceToken()
  * - SourceService.getApiCredential()
  * - SourceService.getCredentialId()
- * - session-scoped-tools OAuth triggers
- * - IPC handlers for credential storage
+ * - session-scoped-tools 里的 OAuth 触发
+ * - 凭证存储的 IPC handler
+ *
+ * TS 小知识：
+ * - `import { type Xxx }` 是只导入类型，不会生成运行时代码（类似 Go 的 import 类型但编译期擦除）。
+ * - `export interface` / `export type` 会被其他模块导入使用。
+ * - `cred is MultiHeaderCredential` 这种返回类型叫“类型守卫”。
  */
 
 import {
@@ -63,17 +68,17 @@ import { debug } from '../utils/debug.ts';
 import { markSourceAuthenticated, loadSourceConfig, saveSourceConfig } from './storage.ts';
 
 /**
- * Result of authentication attempt
+ * 认证尝试结果
  */
 export interface AuthResult {
   success: boolean;
   error?: string;
-  /** For Gmail OAuth, includes user's email */
+  /** Gmail OAuth 成功时返回用户邮箱 */
   email?: string;
 }
 
 /**
- * API credential types (string for simple auth, object for basic auth or multi-header)
+ * API 凭证类型：字符串用于简单认证，对象用于 basic auth 或多 header 认证
  */
 export interface BasicAuthCredential {
   username: string;
@@ -81,16 +86,16 @@ export interface BasicAuthCredential {
 }
 
 /**
- * Multi-header credentials stored as Record<string, string>
- * Used for APIs like Datadog that require multiple auth headers (DD-API-KEY + DD-APPLICATION-KEY)
+ * 多 header 凭证，格式为 Record<string, string>。
+ * 用于 Datadog 这类需要多个认证头（DD-API-KEY + DD-APPLICATION-KEY）的 API。
  */
 export type MultiHeaderCredential = Record<string, string>;
 
 export type ApiCredential = string | BasicAuthCredential | MultiHeaderCredential;
 
 /**
- * Type guard to check if credential is a MultiHeaderCredential.
- * Returns true for Record<string, string> objects that are NOT BasicAuthCredential.
+ * 类型守卫：判断 credential 是否是 MultiHeaderCredential。
+ * 返回 true 当：是 Record<string, string> 对象且不是 BasicAuthCredential。
  */
 export function isMultiHeaderCredential(cred: ApiCredential): cred is MultiHeaderCredential {
   return (
@@ -101,19 +106,19 @@ export function isMultiHeaderCredential(cred: ApiCredential): cred is MultiHeade
 }
 
 /**
- * SourceCredentialManager - unified credential operations for sources
+ * SourceCredentialManager - source 的统一凭证管理类
  *
- * Usage:
+ * 用法示例：
  * ```typescript
  * const credManager = new SourceCredentialManager();
  *
- * // Save credentials
+ * // 保存凭证
  * await credManager.save(source, { value: 'token123' });
  *
- * // Load credentials
+ * // 加载凭证
  * const cred = await credManager.load(source);
  *
- * // Run OAuth flow
+ * // 执行 OAuth 流程
  * const result = await credManager.authenticate(source, {
  *   onStatus: (msg) => console.log(msg),
  *   onError: (err) => console.error(err),
@@ -121,16 +126,16 @@ export function isMultiHeaderCredential(cred: ApiCredential): cred is MultiHeade
  * ```
  */
 export class SourceCredentialManager {
-  // Track in-flight refresh promises to prevent concurrent refreshes for the same source
-  // This prevents race conditions (especially important for Microsoft which rotates refresh tokens)
+  // 跟踪正在进行的刷新 Promise，防止同一个 source 并发刷新。
+  // 这对 Microsoft 很重要：它的 refresh token 会轮换，并发刷新可能导致 token 失效。
   private pendingRefreshes = new Map<string, Promise<string | null>>();
 
   // ============================================================
-  // Core CRUD Operations
+  // 核心增删改查
   // ============================================================
 
   /**
-   * Save credential for a source
+   * 为 source 保存凭证
    */
   async save(source: LoadedSource, credential: StoredCredential): Promise<void> {
     const credentialId = this.getCredentialId(source);
@@ -140,30 +145,29 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Load credential for a source
+   * 加载 source 的凭证
    *
-   * For MCP sources, tries both OAuth and bearer credentials as fallback
-   * (credentials may have been stored via different auth modes)
+   * 对 MCP source，会同时尝试 OAuth 和 bearer 两种凭证作为兜底
+   *（因为凭证可能通过不同认证模式存进来）。
    */
   async load(source: LoadedSource): Promise<StoredCredential | null> {
     const manager = getCredentialManager();
 
-    // For MCP sources, try both OAuth and bearer credentials
-    // (stdio transport doesn't need credentials)
+    // MCP source：同时尝试 OAuth 和 bearer 凭证
+    //（stdio 传输不需要凭证）
     if (source.config.type === 'mcp' && source.config.mcp?.transport !== 'stdio' && source.config.mcp?.authType !== 'none') {
       return this.loadMcpCredential(source);
     }
 
-    // API sources with authType:'none' must never read the shared source_apikey
-    // slot. 'none', 'header', and 'query' all map to source_apikey for storage
-    // compatibility; reading here would resurrect stale header/query credentials
-    // after a source is switched to public/default-header auth.
+    // API source 且 authType 为 'none' 时，禁止读取共享的 source_apikey 槽位。
+    // 'none'、'header'、'query' 在存储时都映射到 source_apikey 以保持兼容；
+    // 如果这里读取，source 切到公开/default-header 认证后可能复活旧凭证。
     if (source.config.type === 'api' && source.config.api?.authType === 'none') {
       debug(`[SourceCredentialManager] Skipping credential load for public API source ${source.config.slug}`);
       return null;
     }
 
-    // For other sources, use the credential ID based on authType
+    // 其他 source 按 authType 取对应 credential ID
     const credentialId = this.getCredentialId(source);
     const cred = await manager.get(credentialId);
 
@@ -175,7 +179,7 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Load MCP credential with fallback (OAuth -> bearer)
+   * 加载 MCP 凭证，按 OAuth -> bearer 的顺序兜底
    */
   private async loadMcpCredential(source: LoadedSource): Promise<StoredCredential | null> {
     const manager = getCredentialManager();
@@ -184,14 +188,14 @@ export class SourceCredentialManager {
       sourceId: source.config.slug,
     };
 
-    // Try OAuth first
+    // 先尝试 OAuth
     const oauthCreds = await manager.get({ type: 'source_oauth', ...baseId });
     if (oauthCreds?.value) {
       debug(`[SourceCredentialManager] Found source_oauth for ${source.config.slug}`);
       return oauthCreds;
     }
 
-    // Fall back to bearer
+    // 再兜底到 bearer
     const bearerCreds = await manager.get({ type: 'source_bearer', ...baseId });
     if (bearerCreds?.value) {
       debug(`[SourceCredentialManager] Found source_bearer for ${source.config.slug}`);
@@ -203,7 +207,7 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Delete credential for a source
+   * 删除 source 的凭证
    */
   async delete(source: LoadedSource): Promise<boolean> {
     const credentialId = this.getCredentialId(source);
@@ -216,8 +220,8 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Delete credential for a source synchronously.
-   * Used by sync config-save paths to avoid stale credential reads on immediate reload.
+   * 同步删除 source 的凭证。
+   * 用于同步的配置保存路径，避免立即重载时读到旧凭证。
    */
   deleteSync(source: LoadedSource): boolean {
     const credentialId = this.getCredentialId(source);
@@ -230,14 +234,14 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Get token value for a source (convenience method)
-   * Returns null if no credential exists or if expired
+   * 获取 source 的 token 值（便捷方法）
+   * 没有凭证或已过期时返回 null
    */
   async getToken(source: LoadedSource): Promise<string | null> {
     const cred = await this.load(source);
     if (!cred?.value) return null;
 
-    // Check expiry
+    // 检查是否过期
     if (this.isExpired(cred)) {
       debug(`[SourceCredentialManager] Token expired for ${source.config.slug}`);
       return null;
@@ -247,35 +251,35 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Get API credential for a source (handles basic auth and multi-header JSON parsing)
+   * 获取 API source 的凭证（处理 basic auth 和多 header 的 JSON 解析）
    */
   async getApiCredential(source: LoadedSource): Promise<ApiCredential | null> {
     const cred = await this.load(source);
-    // Check both API and MCP headerNames (same credential store pattern)
+    // API 和 MCP 都可能有 headerNames，共用同一套凭证存储模式
     const headerNames = source.config.api?.headerNames || source.config.mcp?.headerNames;
     debug(`[SourceCredentialManager] getApiCredential for ${source.config.slug}: cred.value exists=${!!cred?.value}, headerNames=${JSON.stringify(headerNames)}`);
     if (!cred?.value) return null;
 
-    // Check for multi-header auth (JSON with header names as keys)
-    // Works for both API sources (api.headerNames) and MCP sources (mcp.headerNames)
+    // 多 header 认证：凭证值是 JSON，key 为 header 名
+    // 对 API source（api.headerNames）和 MCP source（mcp.headerNames）都生效
     if (headerNames?.length) {
       debug(`[SourceCredentialManager] Attempting multi-header parse for ${source.config.slug}, raw value length=${cred.value.length}`);
       try {
         const parsed = JSON.parse(cred.value);
         debug(`[SourceCredentialManager] Parsed JSON keys: ${Object.keys(parsed).join(', ')}`);
-        // Validate all required headers are present
+        // 校验所有需要的 header 都存在
         const hasAllHeaders = headerNames.every((h) => h in parsed);
         debug(`[SourceCredentialManager] hasAllHeaders=${hasAllHeaders}`);
         if (hasAllHeaders) {
           return parsed as MultiHeaderCredential;
         }
       } catch (e) {
-        // Not JSON, fall through to other auth types
+        // 不是 JSON，继续走其他认证类型
         debug(`[SourceCredentialManager] JSON parse failed: ${e}`);
       }
     }
 
-    // Check for basic auth (JSON with username/password)
+    // basic auth：JSON 里含 username/password
     if (source.config.api?.authType === 'basic') {
       try {
         const parsed = JSON.parse(cred.value);
@@ -283,7 +287,7 @@ export class SourceCredentialManager {
           return parsed as BasicAuthCredential;
         }
       } catch {
-        // Not JSON, treat as regular credential
+        // 不是 JSON，按普通凭证处理
       }
     }
 
@@ -291,15 +295,15 @@ export class SourceCredentialManager {
   }
 
   // ============================================================
-  // Credential ID Resolution
+  // 凭证 ID 解析
   // ============================================================
 
   /**
-   * Get the credential ID for a source
+   * 获取 source 对应的凭证 ID
    *
-   * Determines the correct credential type based on:
-   * - Source type (mcp, api, local)
-   * - Auth type (oauth, bearer, header, etc.)
+   * 根据以下因素决定凭证类型：
+   * - source 类型（mcp、api、local）
+   * - 认证类型（oauth、bearer、header 等）
    */
   getCredentialId(source: LoadedSource): CredentialId {
     const mcp = source.config.mcp;
@@ -310,18 +314,18 @@ export class SourceCredentialManager {
     if (source.config.type === 'mcp') {
       type = mcp?.authType === 'bearer' ? 'source_bearer' : 'source_oauth';
     } else if (source.config.type === 'api') {
-      // Order matters: provider-specific checks first, then generic OAuth fallback
+      // 顺序很重要：先判断 provider-specific，再判断通用 OAuth
       if (isApiOAuthProvider(source.config.provider)) {
         type = 'source_oauth';
       } else if (api?.authType === 'oauth') {
-        // Generic OAuth API sources — explicit config or auto-discovery
+        // 通用 OAuth API source —— 显式配置或自动发现
         type = 'source_oauth';
       } else if (api?.authType === 'bearer') {
         type = 'source_bearer';
       } else if (api?.authType === 'basic') {
         type = 'source_basic';
       } else {
-        // header, query, or other → stored as apikey
+        // header、query 等映射到 apikey 存储
         type = 'source_apikey';
       }
     } else {
@@ -336,11 +340,11 @@ export class SourceCredentialManager {
   }
 
   // ============================================================
-  // Expiry Checking
+  // 过期检查
   // ============================================================
 
   /**
-   * Check if a credential is expired
+   * 判断凭证是否已过期
    */
   isExpired(credential: StoredCredential): boolean {
     if (!credential.expiresAt) return false;
@@ -348,7 +352,7 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Check if a credential needs refresh (within 5 min of expiry)
+   * 判断凭证是否需要刷新（距离过期不到 5 分钟）
    */
   needsRefresh(credential: StoredCredential): boolean {
     if (!credential.expiresAt) return false;
@@ -357,9 +361,9 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Mark a source as needing re-authentication.
-   * Called when token is missing/expired or token refresh fails.
-   * Updates config.json so the UI shows "needs auth" and the agent gets proper context.
+   * 标记 source 需要重新认证。
+   * 在 token 缺失/过期或刷新失败时调用。
+   * 更新 config.json，让 UI 显示“需要认证”，并让 agent 拿到正确上下文。
    */
   markSourceNeedsReauth(source: LoadedSource, errorMessage: string): void {
     try {
@@ -377,7 +381,7 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Check if source has valid (non-expired) credentials
+   * 判断 source 是否有有效（未过期）凭证
    */
   async hasValidCredentials(source: LoadedSource): Promise<boolean> {
     const token = await this.getToken(source);
@@ -385,31 +389,31 @@ export class SourceCredentialManager {
   }
 
   // ============================================================
-  // Server-Owned OAuth (Prepare / Exchange)
+  // Server-Owned OAuth（Prepare / Exchange）
   // ============================================================
 
   /**
-   * Detect the OAuth provider for a source.
+   * 探测 source 使用的 OAuth provider
    */
   detectProvider(source: LoadedSource): OAuthProvider {
-    // Order matters: provider-specific checks first, then generic OAuth fallback
+    // 顺序很重要：先判断具体 provider，再兜底通用 OAuth
     if (source.config.provider === 'google') return 'google';
     if (source.config.provider === 'slack') return 'slack';
     if (source.config.provider === 'microsoft') return 'microsoft';
-    // Generic OAuth: either explicit oauth config block or authType 'oauth' with auto-discovery
+    // 通用 OAuth：显式 oauth 配置块，或 authType 'oauth' 走自动发现
     if (source.config.api?.authType === 'oauth') return 'generic';
     return 'mcp';
   }
 
   /**
-   * Prepare an OAuth flow for a source (server-side).
+   * 为 source 准备 OAuth 流程（服务端）。
    *
-   * Generates PKCE, state, and auth URL without opening a browser or starting
-   * a callback server. The caller provides either callbackPort (Electron local
-   * server) or callbackUrl (WebUI server endpoint) for the redirect URI.
+   * 生成 PKCE、state、授权 URL，但不开浏览器、不启动回调服务器。
+   * 调用方提供 callbackPort（Electron 本地服务器）或 callbackUrl（WebUI 服务端点）
+   * 作为 redirect URI。
    *
-   * Returns a PreparedOAuthFlow that should be stored in the flow store
-   * and partially returned to the client (authUrl, state, flowId).
+   * 返回的 PreparedOAuthFlow 应存在 flow store 中，
+   * 并把 authUrl、state、flowId 返回给客户端。
    */
   async prepareOAuth(
     source: LoadedSource,
@@ -417,9 +421,9 @@ export class SourceCredentialManager {
   ): Promise<PreparedOAuthFlow> {
     const { callbackPort } = options;
     const relayReturnTo = options.callbackUrl;
-    // When callbackUrl is provided (WebUI), keep the provider-facing redirect_uri
-    // stable so providers like Google only need a single registered callback.
-    // The relay unwraps the real server callback target from the outer state.
+    // 当提供 callbackUrl（WebUI）时，让 provider 看到的 redirect_uri 固定，
+    // 这样 Google 等只需注册一个回调地址。
+    // relay 会从外层 state 里解出真实的服务器回调目标。
     const providerCallbackUrl = relayReturnTo
       ? OAUTH_RELAY_CALLBACK_URL
       : undefined;
@@ -501,17 +505,17 @@ export class SourceCredentialManager {
       case 'generic': {
         const oauthConfig = source.config.api?.oauth;
         if (oauthConfig) {
-          // Static config: endpoints provided in config.json
+          // 静态配置：端点在 config.json 里直接给出
           prepared = prepareGenericOAuth({ oauthConfig, callbackPort, callbackUrl: providerCallbackUrl });
         } else {
-          // Auto-discovery: hit baseUrl, discover OAuth metadata via RFC 9728/8414,
-          // dynamically register a client — same flow as MCP OAuth.
+          // 自动发现：访问 baseUrl，通过 RFC 9728/8414 发现 OAuth 元数据，
+          // 并动态注册客户端 —— 内部复用 MCP OAuth 逻辑。
           const baseUrl = source.config.api?.baseUrl;
           if (!baseUrl) {
             throw new Error(`Source '${source.config.slug}' missing api.baseUrl for OAuth discovery`);
           }
           prepared = await prepareMcpOAuth(baseUrl, { callbackPort, callbackUrl: providerCallbackUrl });
-          // Relabel as generic (discovery used MCP internals but this is an API source)
+          // 重新标记为 generic（虽然内部用了 MCP 自动发现，但本质是 API source）
           prepared = { ...prepared, provider: 'generic' };
         }
         break;
@@ -532,11 +536,10 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Exchange an authorization code for tokens and store them (server-side).
+   * 用授权码换取 token 并保存（服务端）。
    *
-   * Called after the client forwards the code from the OAuth callback.
-   * Routes to the correct provider exchange, saves credentials, and marks
-   * the source as authenticated.
+   * 客户端把 OAuth 回调拿到的 code 转发过来后调用本函数。
+   * 它会路由到对应 provider 的 exchange，保存凭证，并标记 source 已认证。
    */
   async exchangeAndStore(
     source: LoadedSource,
@@ -567,7 +570,7 @@ export class SourceCredentialManager {
       return { success: false, error: result.error };
     }
 
-    // Save credentials
+    // 保存凭证
     await this.save(source, {
       value: result.accessToken!,
       refreshToken: result.refreshToken,
@@ -576,7 +579,7 @@ export class SourceCredentialManager {
       clientSecret: result.oauthClientSecret,
     });
 
-    // Mark source as authenticated in config.json
+    // 在 config.json 里标记 source 已认证
     markSourceAuthenticated(source.workspaceRootPath, source.config.slug);
 
     debug(`[SourceCredentialManager] OAuth exchange+store complete for ${source.config.slug}`);
@@ -584,14 +587,14 @@ export class SourceCredentialManager {
   }
 
   // ============================================================
-  // OAuth Authentication (Monolithic — convenience wrapper for CLI/test)
+  // OAuth 认证（一站式便捷包装，主要用于 CLI/测试）
   // ============================================================
 
   /**
-   * Authenticate source via OAuth
+   * 通过 OAuth 认证 source
    *
-   * Handles both MCP OAuth and Gmail OAuth flows.
-   * On success, credentials are automatically saved.
+   * 处理 MCP OAuth 和 Gmail OAuth 等流程。
+   * 成功后会自动保存凭证。
    */
   async authenticate(
     source: LoadedSource,
@@ -604,27 +607,27 @@ export class SourceCredentialManager {
     };
     const cb = callbacks || defaultCallbacks;
 
-    // Google APIs use Google OAuth
+    // Google API 用 Google OAuth
     if (source.config.provider === 'google') {
       return this.authenticateGoogle(source, cb, sessionContext);
     }
 
-    // Slack APIs use Slack OAuth
+    // Slack API 用 Slack OAuth
     if (source.config.provider === 'slack') {
       return this.authenticateSlack(source, cb, sessionContext);
     }
 
-    // Microsoft APIs use Microsoft OAuth
+    // Microsoft API 用 Microsoft OAuth
     if (source.config.provider === 'microsoft') {
       return this.authenticateMicrosoft(source, cb, sessionContext);
     }
 
-    // Generic OAuth (explicit config or auto-discovery from baseUrl)
+    // 通用 OAuth（显式配置或从 baseUrl 自动发现）
     if (source.config.api?.authType === 'oauth') {
       return this.authenticateGeneric(source, cb, sessionContext);
     }
 
-    // MCP OAuth flow
+    // MCP OAuth 流程
     if (source.config.type === 'mcp' && source.config.mcp?.authType === 'oauth') {
       return this.authenticateMcp(source, cb, sessionContext);
     }
@@ -636,7 +639,7 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Authenticate MCP source via OAuth
+   * 通过 OAuth 认证 MCP source
    */
   private async authenticateMcp(
     source: LoadedSource,
@@ -656,7 +659,7 @@ export class SourceCredentialManager {
 
       const { tokens, clientId } = await oauth.authenticate();
 
-      // Save the credentials
+      // 保存凭证
       await this.save(source, {
         value: tokens.accessToken,
         refreshToken: tokens.refreshToken,
@@ -665,7 +668,7 @@ export class SourceCredentialManager {
         tokenType: tokens.tokenType,
       });
 
-      // Mark source as authenticated in config.json
+      // 在 config.json 里标记 source 已认证
       markSourceAuthenticated(source.workspaceRootPath, source.config.slug);
 
       return { success: true };
@@ -677,12 +680,12 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Authenticate Google API source via Google OAuth
+   * 通过 Google OAuth 认证 Google API source
    *
-   * Supports multiple Google services (Gmail, Calendar, Drive) via:
-   * - provider: "google" with googleService field
-   * - provider: "google" with custom googleScopes
-   * - Inferred from baseUrl (e.g., gmail.googleapis.com → gmail)
+   * 支持多种 Google 服务（Gmail、Calendar、Drive 等）：
+   * - provider: "google" 并设置 googleService
+   * - provider: "google" 并设置自定义 googleScopes
+   * - 从 baseUrl 推断（例如 gmail.googleapis.com → gmail）
    */
   private async authenticateGoogle(
     source: LoadedSource,
@@ -690,19 +693,19 @@ export class SourceCredentialManager {
     sessionContext?: OAuthSessionContext
   ): Promise<AuthResult> {
     try {
-      // Determine service/scopes from config
+      // 从配置中确定 service/scopes
       const api = source.config.api;
       let service: GoogleService | undefined;
       let scopes: string[] | undefined;
 
       if (api?.googleScopes && api.googleScopes.length > 0) {
-        // Custom scopes take precedence
+        // 自定义 scope 优先级最高
         scopes = api.googleScopes;
       } else if (api?.googleService) {
-        // Use predefined service scopes
+        // 使用预定义服务的 scope
         service = api.googleService;
       } else {
-        // Infer from baseUrl
+        // 从 baseUrl 推断
         service = inferGoogleServiceFromUrl(api?.baseUrl);
         if (!service) {
           return {
@@ -719,7 +722,7 @@ export class SourceCredentialManager {
         service,
         scopes,
         appType: 'electron',
-        // Pass user-provided OAuth credentials from source config (if available)
+        // 如果 source 配置里提供了用户自己的 OAuth 凭据，则传进去
         clientId: api?.googleOAuthClientId,
         clientSecret: api?.googleOAuthClientSecret,
         sessionContext,
@@ -731,7 +734,7 @@ export class SourceCredentialManager {
         return { success: false, error: result.error || 'Google OAuth failed' };
       }
 
-      // Save the credentials (including clientId/clientSecret for token refresh)
+      // 保存凭证（包含 clientId/clientSecret，用于后续 token 刷新）
       await this.save(source, {
         value: result.accessToken!,
         refreshToken: result.refreshToken,
@@ -740,7 +743,7 @@ export class SourceCredentialManager {
         clientSecret: result.clientSecret,
       });
 
-      // Mark source as authenticated in config.json
+      // 在 config.json 里标记 source 已认证
       markSourceAuthenticated(source.workspaceRootPath, source.config.slug);
 
       callbacks.onStatus(`${serviceName} authentication successful`);
@@ -753,12 +756,12 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Authenticate Slack API source via Slack OAuth
+   * 通过 Slack OAuth 认证 Slack API source
    *
-   * Supports multiple Slack services via:
-   * - provider: "slack" with slackService field
-   * - provider: "slack" with custom slackBotScopes/slackUserScopes
-   * - Inferred from baseUrl (slack.com → full)
+   * 支持多种 Slack 服务：
+   * - provider: "slack" 并设置 slackService
+   * - provider: "slack" 并设置自定义 slackBotScopes/slackUserScopes
+   * - 从 baseUrl 推断（slack.com → full）
    */
   private async authenticateSlack(
     source: LoadedSource,
@@ -766,19 +769,19 @@ export class SourceCredentialManager {
     sessionContext?: OAuthSessionContext
   ): Promise<AuthResult> {
     try {
-      // Determine service/scopes from config
+      // 从配置中确定 service/scopes
       const api = source.config.api;
       let service: SlackService | undefined;
       let userScopes: string[] | undefined;
 
       if (api?.slackUserScopes && api.slackUserScopes.length > 0) {
-        // Custom scopes take precedence
+        // 自定义 scope 优先级最高
         userScopes = api.slackUserScopes;
       } else if (api?.slackService) {
-        // Use predefined service scopes
+        // 使用预定义服务的 scope
         service = api.slackService;
       } else {
-        // Infer from baseUrl (defaults to 'full')
+        // 从 baseUrl 推断（默认 full）
         service = inferSlackServiceFromUrl(api?.baseUrl) || 'full';
       }
 
@@ -798,18 +801,18 @@ export class SourceCredentialManager {
         return { success: false, error: result.error || 'Slack OAuth failed' };
       }
 
-      // Save the credentials
+      // 保存凭证
       await this.save(source, {
         value: result.accessToken!,
         refreshToken: result.refreshToken,
         expiresAt: result.expiresAt,
       });
 
-      // Mark source as authenticated in config.json
+      // 在 config.json 里标记 source 已认证
       markSourceAuthenticated(source.workspaceRootPath, source.config.slug);
 
       callbacks.onStatus(`${serviceName} authentication successful`);
-      // Use teamName as the identifier (similar to email for Google)
+      // 用 teamName 作为标识（类似 Google 的 email）
       return { success: true, email: result.teamName };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -819,12 +822,12 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Authenticate Microsoft API source via Microsoft OAuth
+   * 通过 Microsoft OAuth 认证 Microsoft API source
    *
-   * Supports multiple Microsoft services (Outlook, OneDrive, Calendar, Teams) via:
-   * - provider: "microsoft" with microsoftService field
-   * - provider: "microsoft" with custom microsoftScopes
-   * - Inferred from baseUrl (e.g., graph.microsoft.com → outlook)
+   * 支持多种 Microsoft 服务（Outlook、OneDrive、Calendar、Teams 等）：
+   * - provider: "microsoft" 并设置 microsoftService
+   * - provider: "microsoft" 并设置自定义 microsoftScopes
+   * - 从 baseUrl 推断（例如 graph.microsoft.com → outlook）
    */
   private async authenticateMicrosoft(
     source: LoadedSource,
@@ -832,19 +835,19 @@ export class SourceCredentialManager {
     sessionContext?: OAuthSessionContext
   ): Promise<AuthResult> {
     try {
-      // Determine service/scopes from config
+      // 从配置中确定 service/scopes
       const api = source.config.api;
       let service: MicrosoftService | undefined;
       let scopes: string[] | undefined;
 
       if (api?.microsoftScopes && api.microsoftScopes.length > 0) {
-        // Custom scopes take precedence
+        // 自定义 scope 优先级最高
         scopes = api.microsoftScopes;
       } else if (api?.microsoftService) {
-        // Use predefined service scopes
+        // 使用预定义服务的 scope
         service = api.microsoftService;
       } else {
-        // Infer from baseUrl
+        // 从 baseUrl 推断
         service = inferMicrosoftServiceFromUrl(api?.baseUrl);
         if (!service) {
           return {
@@ -870,14 +873,14 @@ export class SourceCredentialManager {
         return { success: false, error: result.error || 'Microsoft OAuth failed' };
       }
 
-      // Save the credentials
+      // 保存凭证
       await this.save(source, {
         value: result.accessToken!,
         refreshToken: result.refreshToken,
         expiresAt: result.expiresAt,
       });
 
-      // Mark source as authenticated in config.json
+      // 在 config.json 里标记 source 已认证
       markSourceAuthenticated(source.workspaceRootPath, source.config.slug);
 
       callbacks.onStatus(`${serviceName} authentication successful`);
@@ -890,27 +893,27 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Refresh token for a source
+   * 刷新 source 的 token
    *
-   * Returns the new access token, or null if refresh fails.
-   * On success, credentials are automatically updated.
+   * 返回新的 access token；刷新失败返回 null。
+   * 成功后会自动更新已存凭证。
    *
-   * Uses promise deduplication to prevent concurrent refresh requests for the same source.
-   * This is important because:
-   * - Multiple API calls may hit refresh simultaneously when token is expiring
-   * - Microsoft rotates refresh tokens, so concurrent refreshes could cause token invalidation
+   * 使用 Promise 去重，防止同一个 source 并发刷新。
+   * 这很重要，因为：
+   * - token 快过期时多个 API 调用可能同时触发刷新
+   * - Microsoft 会轮换 refresh token，并发刷新可能导致 token 失效
    */
   async refresh(source: LoadedSource): Promise<string | null> {
     const key = source.config.slug;
 
-    // Return existing refresh promise if one is in progress
+    // 如果已有正在刷新的 Promise，直接复用
     const pending = this.pendingRefreshes.get(key);
     if (pending) {
       debug(`[SourceCredentialManager] Reusing pending refresh for ${key}`);
       return pending;
     }
 
-    // Create and track new refresh promise
+    // 创建并跟踪新的刷新 Promise
     const refreshPromise = this.doRefresh(source).finally(() => {
       this.pendingRefreshes.delete(key);
     });
@@ -920,7 +923,7 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Internal refresh implementation
+   * 内部刷新实现
    */
   private async doRefresh(source: LoadedSource): Promise<string | null> {
     const cred = await this.load(source);
@@ -929,41 +932,40 @@ export class SourceCredentialManager {
       return null;
     }
 
-    // API renew endpoint (non-OAuth token refresh) — check before provider routing.
-    // These sources may not have a separate refreshToken; they use the current
-    // access token for renewal.
+    // API 续期端点（非 OAuth token 刷新）—— 在按 provider 路由前先检查。
+    // 这类 source 可能没有单独 refreshToken，而是用当前 access token 续期。
     if (hasRenewEndpoint(source)) {
       return this.refreshApiRenew(source, cred);
     }
 
-    // For all other refresh strategies, a refreshToken is required.
+    // 其他刷新策略都需要 refreshToken
     if (!cred.refreshToken) {
       debug(`[SourceCredentialManager] No refresh token for ${source.config.slug}`);
       return null;
     }
 
-    // Google API refresh
+    // Google API 刷新
     if (source.config.provider === 'google') {
       return this.refreshGoogle(source, cred);
     }
 
-    // Slack API refresh
+    // Slack API 刷新
     if (source.config.provider === 'slack') {
       return this.refreshSlack(source, cred);
     }
 
-    // Microsoft API refresh
+    // Microsoft API 刷新
     if (source.config.provider === 'microsoft') {
       return this.refreshMicrosoft(source, cred);
     }
 
-    // Generic OAuth refresh
+    // 通用 OAuth 刷新
     if (source.config.api?.authType === 'oauth') {
       if (source.config.api?.oauth?.tokenUrl) {
-        // Static config: tokenUrl from config.json
+        // 静态配置：tokenUrl 来自 config.json
         return this.refreshGeneric(source, cred);
       }
-      // Auto-discovered: re-discover token endpoint from baseUrl via MCP OAuth refresh
+      // 自动发现：从 baseUrl 重新发现 token 端点，走 MCP OAuth 刷新
       if (source.config.api?.baseUrl && cred.clientId) {
         return this.refreshMcp(
           { ...source, config: { ...source.config, type: 'mcp', mcp: { url: source.config.api.baseUrl, authType: 'oauth' } } },
@@ -973,7 +975,7 @@ export class SourceCredentialManager {
       return null;
     }
 
-    // MCP refresh
+    // MCP 刷新
     if (source.config.type === 'mcp' && source.config.mcp?.url) {
       return this.refreshMcp(source, cred);
     }
@@ -982,8 +984,8 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Refresh token via a custom API renew endpoint (non-OAuth).
-   * Uses the current access token for renewal — no separate refresh token needed.
+   * 通过自定义 API 续期端点刷新 token（非 OAuth）。
+   * 用当前 access token 续期，不需要单独 refresh token。
    */
   private async refreshApiRenew(
     source: LoadedSource,
@@ -997,30 +999,30 @@ export class SourceCredentialManager {
     const currentToken = cred.value;
 
     try {
-      // 1. Resolve URL
+      // 1. 解析 URL
       const url = renewConfig.path.startsWith('http')
         ? renewConfig.path
         : new URL(renewConfig.path, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`).toString();
 
-      // 2. Build headers: defaultHeaders < renewEndpoint.headers < Authorization
+      // 2. 构造请求头：defaultHeaders < renewEndpoint.headers < Authorization
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         ...source.config.api!.defaultHeaders,
         ...substituteTokenInHeaders(renewConfig.headers, currentToken),
       };
-      // Add Authorization unless explicitly overridden in renewEndpoint.headers
+      // 除非 renewEndpoint.headers 里显式覆盖了 Authorization，否则加上默认 Authorization
       if (!renewConfig.headers?.['Authorization'] && !renewConfig.headers?.['authorization']) {
         headers['Authorization'] = buildAuthorizationHeader(authScheme, currentToken);
       }
 
-      // 3. Build body with {{token}} substitution
+      // 3. 构造 body，替换 {{token}} 占位符
       const method = renewConfig.method ?? 'POST';
       const fetchOptions: RequestInit = { method, headers };
       if (renewConfig.body && method !== 'GET') {
         fetchOptions.body = JSON.stringify(substituteTokenInBody(renewConfig.body, currentToken));
       }
 
-      // 4. Execute
+      // 4. 发送请求
       const response = await fetch(url, fetchOptions);
 
       if (!response.ok) {
@@ -1030,14 +1032,14 @@ export class SourceCredentialManager {
 
       const json = await response.json() as Record<string, unknown>;
 
-      // 5. Extract new token
+      // 5. 提取新 token
       const tokenField = renewConfig.tokenField ?? 'access_token';
       const newToken = json[tokenField];
       if (typeof newToken !== 'string' || !newToken) {
         throw new Error(`Renew response missing "${tokenField}" field`);
       }
 
-      // 6. Extract expiry
+      // 6. 提取过期时间
       const expiresInField = renewConfig.expiresInField ?? 'expires_in';
       const expiresInRaw = json[expiresInField];
       let expiresAt: number | undefined;
@@ -1046,10 +1048,9 @@ export class SourceCredentialManager {
       } else if (renewConfig.fallbackTtlSecs) {
         expiresAt = Date.now() + renewConfig.fallbackTtlSecs * 1000;
       }
-      // If neither is available, expiresAt stays undefined — needsRefresh() will
-      // trigger refresh on next session start (safe but noisy).
+      // 如果都没有，expiresAt 保持 undefined —— needsRefresh() 会在下次会话启动时触发刷新（安全但吵闹）
 
-      // 7. Save updated credential
+      // 7. 保存更新后的凭证
       await this.save(source, {
         ...cred,
         value: newToken,
@@ -1067,21 +1068,21 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Refresh Google OAuth token
+   * 刷新 Google OAuth token
    */
   private async refreshGoogle(
     source: LoadedSource,
     cred: StoredCredential
   ): Promise<string | null> {
     try {
-      // Pass stored credentials (or fall back to env vars via undefined)
+      // 传入已保存的凭据（未填则回退到环境变量）
       const result = await refreshGoogleToken(
         cred.refreshToken!,
         cred.clientId,
         cred.clientSecret
       );
 
-      // Update stored credentials
+      // 更新存储的凭证
       await this.save(source, {
         ...cred,
         value: result.accessToken,
@@ -1099,7 +1100,7 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Refresh Slack OAuth token
+   * 刷新 Slack OAuth token
    */
   private async refreshSlack(
     source: LoadedSource,
@@ -1108,7 +1109,7 @@ export class SourceCredentialManager {
     try {
       const result = await refreshSlackToken(cred.refreshToken!, cred.clientId);
 
-      // Update stored credentials
+      // 更新存储的凭证
       await this.save(source, {
         ...cred,
         value: result.accessToken,
@@ -1126,7 +1127,7 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Refresh Microsoft OAuth token
+   * 刷新 Microsoft OAuth token
    */
   private async refreshMicrosoft(
     source: LoadedSource,
@@ -1135,7 +1136,7 @@ export class SourceCredentialManager {
     try {
       const result = await refreshMicrosoftToken(cred.refreshToken!);
 
-      // Update stored credentials (Microsoft may rotate refresh tokens)
+      // 更新存储的凭证（Microsoft 可能会轮换 refresh token）
       await this.save(source, {
         ...cred,
         value: result.accessToken,
@@ -1154,8 +1155,8 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Authenticate source via generic OAuth flow (CLI/test convenience wrapper).
-   * Note: The session-based UI flow goes through prepareOAuth() + exchangeAndStore() instead.
+   * 通过通用 OAuth 流程认证 source（CLI/测试用的便捷包装）。
+   * 注意：桌面端的会话级 UI 流程走 prepareOAuth() + exchangeAndStore()。
    */
   private async authenticateGeneric(
     source: LoadedSource,
@@ -1167,14 +1168,13 @@ export class SourceCredentialManager {
       return { success: false, error: 'Source missing api.oauth config block' };
     }
 
-    // CLI generic OAuth is not yet implemented — the desktop app handles this
-    // through the source_oauth_trigger → prepareOAuth → exchangeAndStore pipeline.
+    // CLI 通用 OAuth 还没实现 —— 桌面端通过 source_oauth_trigger → prepareOAuth → exchangeAndStore 流程处理
     return { success: false, error: 'Generic OAuth CLI flow not supported — use the desktop app or source_oauth_trigger tool' };
   }
 
   /**
-   * Refresh generic OAuth token.
-   * tokenUrl from source config, clientId/clientSecret from stored credential falling back to config.
+   * 刷新通用 OAuth token。
+   * tokenUrl 来自 source 配置，clientId/clientSecret 优先用已存凭证，回退到配置。
    */
   private async refreshGeneric(
     source: LoadedSource,
@@ -1213,7 +1213,7 @@ export class SourceCredentialManager {
   }
 
   /**
-   * Refresh MCP OAuth token
+   * 刷新 MCP OAuth token
    */
   private async refreshMcp(
     source: LoadedSource,
@@ -1226,9 +1226,9 @@ export class SourceCredentialManager {
     }
 
     try {
-      // Only HTTP/SSE transport can refresh tokens - stdio doesn't use OAuth
+      // 只有 HTTP/SSE 传输能刷新 token —— stdio 不走 OAuth
       if (!source.config.mcp?.url) {
-        // This is expected for stdio transport - not an error
+        // stdio 传输没有 URL，这是预期行为，不算错误
         debug(`[SourceCredentialManager] No URL for MCP token refresh (stdio transport)`);
         return null;
       }
@@ -1243,7 +1243,7 @@ export class SourceCredentialManager {
 
       const tokens = await oauth.refreshAccessToken(cred.refreshToken!, cred.clientId);
 
-      // Update stored credentials
+      // 更新存储的凭证
       await this.save(source, {
         ...cred,
         value: tokens.accessToken,
@@ -1263,12 +1263,12 @@ export class SourceCredentialManager {
 }
 
 // ============================================================
-// Token substitution helpers for renew endpoint
+// renew endpoint 的 {{token}} 替换辅助函数
 // ============================================================
 
 /**
- * Recursively substitute {{token}} in string leaves of an object.
- * Supports nested objects and arrays.
+ * 递归替换对象字符串叶子节点里的 {{token}}。
+ * 支持嵌套对象和数组。
  */
 function substituteTokenInBody(obj: Record<string, unknown>, token: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
@@ -1290,7 +1290,7 @@ function substituteTokenInBody(obj: Record<string, unknown>, token: string): Rec
 }
 
 /**
- * Substitute {{token}} in header values.
+ * 替换 header 值里的 {{token}} 占位符。
  */
 function substituteTokenInHeaders(
   headers: Record<string, string> | undefined,
@@ -1305,45 +1305,45 @@ function substituteTokenInHeaders(
 }
 
 // ============================================================
-// Helper Functions
+// 辅助函数
 // ============================================================
 
 /**
- * Check if a single source needs authentication.
- * Returns true if the source requires auth but isn't yet authenticated.
+ * 判断单个 source 是否需要认证。
+ * 返回 true 当 source 需要认证但还没认证。
  *
- * This is the **inverse** of the auth portion of isSourceUsable().
- * - isSourceUsable() → Is the source ready to use? (enabled AND auth OK)
- * - sourceNeedsAuthentication() → Does the source need auth to become usable?
+ * 这是 isSourceUsable() 认证部分的**反逻辑**：
+ * - isSourceUsable() → source 是否可用？（已启用 AND 认证 OK）
+ * - sourceNeedsAuthentication() → source 是否需要认证才能变得可用？
  *
- * Use this to prompt users for authentication, not for filtering sources.
- * For filtering sources, use isSourceUsable() from storage.ts.
+ * 用这个函数来提示用户认证，而不是用来过滤 source。
+ * 过滤 source 请用 storage.ts 的 isSourceUsable()。
  *
- * This correctly handles:
- * - MCP sources with authType: "none" → never needs auth
- * - MCP sources with stdio transport → never needs auth (runs locally)
- * - MCP sources with oauth/bearer → needs auth if not authenticated
- * - API sources with authType: "none" → never needs auth
- * - API sources with bearer/basic/header/query auth → needs auth if not authenticated
+ * 正确处理以下情况：
+ * - MCP authType: "none" → 永远不需要认证
+ * - MCP stdio 传输 → 永远不需要认证（本地运行）
+ * - MCP oauth/bearer → 未认证时需要认证
+ * - API authType: "none" → 永远不需要认证
+ * - API bearer/basic/header/query → 未认证时需要认证
  */
 export function sourceNeedsAuthentication(source: LoadedSource): boolean {
   const mcp = source.config.mcp;
   const api = source.config.api;
 
-  // MCP sources with oauth/bearer auth (stdio transport never needs auth)
+  // MCP source：oauth/bearer 需要认证（stdio 本地运行不需要）
   if (source.config.type === 'mcp' && mcp) {
     if (mcp.transport === 'stdio') {
-      // Stdio sources run locally and don't need authentication
+      // stdio source 本地运行，不需要认证
       return false;
     }
-    // Only require auth if authType is explicitly set to 'oauth' or 'bearer'
-    // Undefined or 'none' means no authentication required
+    // 只有 authType 显式为 'oauth' 或 'bearer' 时才需要认证
+    // 未定义或 'none' 表示不需要认证
     if (mcp.authType && mcp.authType !== 'none' && !source.config.isAuthenticated) {
       return true;
     }
   }
 
-  // API sources with auth requirements
+  // API source：有认证要求时需要认证
   if (source.config.type === 'api' && api) {
     if (api.authType !== 'none' && api.authType !== undefined && !source.config.isAuthenticated) {
       return true;
@@ -1354,8 +1354,8 @@ export function sourceNeedsAuthentication(source: LoadedSource): boolean {
 }
 
 /**
- * Get sources that need authentication
- * Returns enabled sources that require auth but aren't yet authenticated
+ * 获取所有需要认证的 source。
+ * 返回已启用、需要认证但尚未认证的 source。
  */
 export function getSourcesNeedingAuth(sources: LoadedSource[]): LoadedSource[] {
   return sources.filter((source) => {
@@ -1364,11 +1364,11 @@ export function getSourcesNeedingAuth(sources: LoadedSource[]): LoadedSource[] {
   });
 }
 
-// Singleton instance
+// 单例
 let instance: SourceCredentialManager | null = null;
 
 /**
- * Get shared SourceCredentialManager instance
+ * 获取共享的 SourceCredentialManager 实例
  */
 export function getSourceCredentialManager(): SourceCredentialManager {
   if (!instance) {

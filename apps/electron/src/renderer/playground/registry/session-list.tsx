@@ -1,3 +1,10 @@
+/**
+ * session-list 注册项
+ *
+ * 演示真实的 SessionItem / SessionSearchHeader 组件在 playground 里的各种状态：
+ * 普通列表、搜索高亮、匹配徽章、加载中、无结果等。
+ * 涉及概念：session（一次对话）、workspace（会话所属工作区）。
+ */
 import * as React from 'react'
 import type { ComponentEntry } from './types'
 import type { SessionMeta } from '@/atoms/sessions'
@@ -10,7 +17,7 @@ import { SessionListProvider, type SessionListContextValue } from '@/context/Ses
 import { ActionRegistryProvider } from '@/actions/registry'
 
 // ============================================================================
-// Mock Todo States (minimal set for playground)
+// 模拟会话状态（playground 用的最小集合）
 // ============================================================================
 
 const mockSessionStatuses: SessionStatus[] = [
@@ -41,7 +48,7 @@ const mockSessionStatuses: SessionStatus[] = [
 ]
 
 // ============================================================================
-// Sample Session Data
+// 示例会话数据
 // ============================================================================
 
 const sampleSessions: SessionMeta[] = [
@@ -82,6 +89,7 @@ const sampleSessions: SessionMeta[] = [
   },
 ]
 
+// 构造一个最小 SessionListContext，让 SessionItem 能在没有真实上下文的情况下渲染。
 function createMockContext(overrides: Partial<SessionListContextValue> = {}): SessionListContextValue {
   return {
     onRenameClick: () => {},
@@ -104,23 +112,23 @@ function createMockContext(overrides: Partial<SessionListContextValue> = {}): Se
 const noopKeyDown = () => {}
 
 // ============================================================================
-// SessionListSearchPreview - Renders REAL SessionItem components with context
+// SessionListSearchPreview - 在上下文里渲染真实 SessionItem 组件
 // ============================================================================
 
 interface SessionListSearchPreviewProps {
-  /** Current search query (highlights matches in titles) */
+  /** 当前搜索关键词（标题匹配会高亮） */
   searchQuery?: string
-  /** Show search input bar */
+  /** 是否显示搜索输入栏 */
   showSearchInput?: boolean
-  /** Show loading state in status row */
+  /** 是否显示搜索中加载状态 */
   isSearching?: boolean
-  /** Index of currently selected session (0-based) */
+  /** 当前选中会话的索引（从 0 开始） */
   selectedIndex?: number
-  /** Match count for selected session (shows yellow badge) */
+  /** 选中会话的匹配数（显示黄色徽章） */
   chatMatchCount?: number
-  /** Whether to show "no results" state */
+  /** 是否展示“无结果”状态 */
   showNoResults?: boolean
-  /** Explicit result count to display (defaults to filtered session count) */
+  /** 显式指定结果数量（默认用过滤后的会话数） */
   resultCount?: number
 }
 
@@ -213,7 +221,7 @@ function SessionListSearchPreview({
 }
 
 // ============================================================================
-// SessionItemPreview - Single real SessionItem with context providers
+// SessionItemPreview - 单个真实 SessionItem 的预览
 // ============================================================================
 
 interface SessionItemPreviewProps {
@@ -272,9 +280,10 @@ function SessionItemPreview({
 }
 
 // ============================================================================
-// Registry Entries
+// 组件注册表条目（Component Registry Entries）
 // ============================================================================
 
+/** session-list 组件注册列表。 */
 export const sessionListComponents: ComponentEntry[] = [
   {
     id: 'session-list-search',

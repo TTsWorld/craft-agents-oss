@@ -1,13 +1,12 @@
 import { useState, useEffect, type RefObject } from 'react'
 
 /**
- * Tracks the inline-size (width) of a DOM element using ResizeObserver.
+ * 用 ResizeObserver 跟踪某个 DOM 元素的内联宽度（即内容宽度）。
  *
- * Used by AppShell to derive `isAutoCompact` — when the shell container
- * is narrower than the mobile threshold, sidebar/navigator auto-collapse
- * and panels switch to single-panel mode.
+ * AppShell 用它推导 isAutoCompact：当外壳容器宽度小于移动端阈值时，
+ * 侧边栏/导航器自动折叠，面板切换为单栏模式。
  *
- * Returns 0 until the element is first measured.
+ * 在首次测量前返回 0。
  */
 export function useContainerWidth(ref: RefObject<HTMLElement | null>): number {
   const [width, setWidth] = useState(0)

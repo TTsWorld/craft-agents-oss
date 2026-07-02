@@ -7,25 +7,33 @@ import { Input } from "../ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select"
 import { AddWorkspaceContainer, AddWorkspaceStepHeader, AddWorkspacePrimaryButton, AddWorkspaceSecondaryButton } from "./primitives"
 
+/** 下拉框中表示“新建远程工作区”的特殊值 */
 const CREATE_NEW_VALUE = '__create_new__'
 
 interface AddWorkspaceStep_ConnectRemoteProps {
+  /** 返回上一步 */
   onBack: () => void
+  /** 创建本地工作区并关联远程服务器 */
   onCreate: (folderPath: string, name: string, remoteServer: { url: string; token: string; remoteWorkspaceId: string }) => Promise<void>
+  /** 是否正在处理中 */
   isCreating: boolean
-  /** Pre-fill the server URL (for reconnect flow) */
+  /** 重连流程中预填充服务器 URL */
   initialUrl?: string
-  /** Pre-fill the token (for reconnect flow) */
+  /** 重连流程中预填充 token */
   initialToken?: string
-  /** When set, updating an existing workspace's remote config instead of creating */
+  /**
+   * 若传入，则进入“重连模式”：
+   * 不再创建新工作区，而是更新已有工作区的远程服务器配置。
+   */
   reconnectWorkspace?: { id: string; name: string; remoteWorkspaceId: string }
-  /** Called when reconnect updates the remote server config */
+  /** 重连时调用，用于更新已有工作区的远程配置 */
   onUpdate?: (workspaceId: string, remoteServer: { url: string; token: string; remoteWorkspaceId: string }) => Promise<void>
 }
 
 /**
- * Resolve a unique local workspace slug by appending suffixes if needed.
- * Tries: baseName → baseName-remote → baseName-2 → baseName-3 → ...
+ * 为远程工作区生成唯一的本地 slug。
+ * 尝试顺序：baseName → baseName-remote → baseName-2 → baseName-3 → ...
+ * 若超过 20 次仍未找到唯一值，则追加时间戳作为安全兜底。
  */
 async function resolveUniqueSlug(baseName: string): Promise<{ slug: string; path: string }> {
   const baseSlug = slugify(baseName)
@@ -43,18 +51,20 @@ async function resolveUniqueSlug(baseName: string): Promise<{ slug: string; path
     attempt++
     slug = attempt === 1 ? `${baseSlug}-remote` : `${baseSlug}-${attempt}`
     if (attempt > 20) {
-      // Safety valve — shouldn't happen in practice
+      // 安全兜底，实际几乎不会触发
       return { slug: `${baseSlug}-${Date.now()}`, path: result.path.replace(baseSlug, `${baseSlug}-${Date.now()}`) }
     }
   }
 }
 
 /**
- * AddWorkspaceStep_ConnectRemote - Connect to a remote Craft Agent Server
+ * AddWorkspaceStep_ConnectRemote - 连接远程 Craft Agent Server
  *
- * Two paths:
- * 1. Connect to existing workspace — select from dropdown, no name needed, auto-resolve local slug
- * 2. Create new workspace — type a name, creates on server, then connects
+ * 两种主要路径：
+ * 1. 连接已有远程工作区：从下拉框选择，无需输入名称，自动解析本地 slug
+ * 2. 新建远程工作区：输入名称，先在远端创建，再关联到本地
+ *
+ * 另外支持 reconnectWorkspace 重连模式，用于更新已有工作区的远程服务器地址或 token。
  */
 export function AddWorkspaceStep_ConnectRemote({
   onBack,
@@ -66,16 +76,25 @@ export function AddWorkspaceStep_ConnectRemote({
   onUpdate,
 }: AddWorkspaceStep_ConnectRemoteProps) {
   const { t } = useTranslation()
+
   const isReconnectMode = !!reconnectWorkspace
   const [serverUrl, setServerUrl] = useState(initialUrl ?? '')
   const [token, setToken] = useState(initialToken ?? '')
   const [homeDir, setHomeDir] = useState('')
+
+  // 连接测试状态：idle / testing / ok / error
   const [testState, setTestState] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle')
   const [testError, setTestError] = useState<string | null>(null)
+
+  // 远程服务器上的工作区列表
   const [remoteWorkspaces, setRemoteWorkspaces] = useState<Array<{ id: string; name: string }>>([])
-  const [selectedValue, setSelectedValue] = useState<string | null>(null) // workspace ID or CREATE_NEW_VALUE
+
+  // 当前下拉框选中值：工作区 ID 或 CREATE_NEW_VALUE
+  const [selectedValue, setSelectedValue] = useState<string | null>(null)
   const [newWorkspaceName, setNewWorkspaceName] = useState('')
   const [serverVersion, setServerVersion] = useState<string | null>(null)
+
+  // 用于 Select 下拉框的 portal 挂载点，确保在 Dialog 内能正常接收鼠标事件
   const selectPortalRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -84,10 +103,11 @@ export function AddWorkspaceStep_ConnectRemote({
 
   const isCreateNew = selectedValue === CREATE_NEW_VALUE
   const selectedWorkspace = !isCreateNew ? remoteWorkspaces.find(w => w.id === selectedValue) : null
-  // Fresh server (no workspaces at all) — always in create mode
+
+  // 刚连上的服务器没有任何工作区时，直接进入创建模式
   const isFreshServer = testState === 'ok' && remoteWorkspaces.length === 0
 
-  // Reset test state when URL or token changes
+  // URL 或 token 变化时重置测试状态，避免旧结果误导用户
   useEffect(() => {
     setTestState('idle')
     setTestError(null)
@@ -96,6 +116,7 @@ export function AddWorkspaceStep_ConnectRemote({
     setNewWorkspaceName('')
   }, [serverUrl, token])
 
+  // 测试与远程服务器的连接
   const handleTestConnection = useCallback(async () => {
     if (!serverUrl || !token) return
     setTestState('testing')
@@ -107,7 +128,7 @@ export function AddWorkspaceStep_ConnectRemote({
         setTestState('ok')
         setServerVersion(result.serverVersion ?? null)
         if (result.needsWorkspace) {
-          // Fresh server — no workspaces, go straight to create mode
+          // 新服务器没有工作区，直接进入创建模式
           setRemoteWorkspaces([])
           setSelectedValue(null)
         } else {
@@ -127,10 +148,11 @@ export function AddWorkspaceStep_ConnectRemote({
     }
   }, [serverUrl, token])
 
+  // 连接/创建/重连主逻辑
   const handleConnect = useCallback(async () => {
     if (!serverUrl || !token) return
 
-    // Reconnect mode — update existing workspace config
+    // 重连模式：更新现有工作区的远程配置
     if (isReconnectMode && onUpdate) {
       try {
         await onUpdate(reconnectWorkspace!.id, {
@@ -150,7 +172,7 @@ export function AddWorkspaceStep_ConnectRemote({
     const defaultBasePath = `${homeDir}/.craft-agent/workspaces`
 
     if (isCreateNew || isFreshServer) {
-      // Create new workspace on remote server via direct RPC, then connect locally
+      // 通过 RPC 在远端直接创建工作区，再在本地关联
       const name = newWorkspaceName.trim()
       if (!name) return
 
@@ -168,7 +190,7 @@ export function AddWorkspaceStep_ConnectRemote({
         return
       }
     } else if (selectedWorkspace) {
-      // Connect to existing workspace — auto-resolve local slug
+      // 连接已有远程工作区，自动解析本地唯一 slug
       const { slug, path } = await resolveUniqueSlug(selectedWorkspace.name)
       const finalPath = path || `${defaultBasePath}/${slug}`
       await onCreate(finalPath, selectedWorkspace.name, { url: serverUrl, token, remoteWorkspaceId: selectedWorkspace.id })
@@ -186,7 +208,7 @@ export function AddWorkspaceStep_ConnectRemote({
 
   return (
     <AddWorkspaceContainer>
-      {/* Back button */}
+      {/* 返回按钮 */}
       <button
         onClick={onBack}
         disabled={isCreating}
@@ -208,7 +230,7 @@ export function AddWorkspaceStep_ConnectRemote({
       />
 
       <div className="mt-6 w-full space-y-5">
-        {/* Server URL */}
+        {/* 服务器 URL */}
         <div className="space-y-2">
           <label className="block text-sm font-medium text-foreground">
             Server URL
@@ -242,7 +264,7 @@ export function AddWorkspaceStep_ConnectRemote({
           </div>
         </div>
 
-        {/* Test Connection */}
+        {/* 测试连接 */}
         <div className="flex items-center gap-3">
           <AddWorkspaceSecondaryButton
             onClick={handleTestConnection}
@@ -270,7 +292,7 @@ export function AddWorkspaceStep_ConnectRemote({
           )}
         </div>
 
-        {/* Old server warning */}
+        {/* 旧服务器警告 */}
         {testState === 'ok' && !serverVersion && (
           <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-xs text-yellow-700 dark:text-yellow-400">
             <XCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
@@ -278,10 +300,10 @@ export function AddWorkspaceStep_ConnectRemote({
           </div>
         )}
 
-        {/* Portal container for Select — must be inside the Dialog to receive pointer events */}
+        {/* Select 下拉框的 portal 挂载点，必须位于 Dialog 内才能接收指针事件 */}
         <div ref={selectPortalRef} />
 
-        {/* Workspace selector — pick existing or create new (hidden in reconnect mode) */}
+        {/* 工作区选择器：选择已有或新建（重连模式下隐藏） */}
         {!isReconnectMode && testState === 'ok' && remoteWorkspaces.length > 0 && !isCreateNew && (
           <div className="space-y-2">
             <label className="block text-sm font-medium text-foreground">
@@ -317,7 +339,7 @@ export function AddWorkspaceStep_ConnectRemote({
           </div>
         )}
 
-        {/* New workspace name — shown for fresh servers or "Create new" selection (hidden in reconnect mode) */}
+        {/* 新建工作区名称输入：适用于全新服务器或选择“新建”时（重连模式下隐藏） */}
         {!isReconnectMode && testState === 'ok' && showCreateMode && (
           <div className="space-y-2">
             <label className="block text-sm font-medium text-foreground">
@@ -352,7 +374,7 @@ export function AddWorkspaceStep_ConnectRemote({
           </div>
         )}
 
-        {/* Connect / Create and Connect */}
+        {/* 连接 / 创建并连接 */}
         <AddWorkspacePrimaryButton
           onClick={handleConnect}
           disabled={!canConnect}

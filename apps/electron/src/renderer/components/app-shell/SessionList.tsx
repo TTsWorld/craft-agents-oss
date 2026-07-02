@@ -1,3 +1,8 @@
+/**
+ * SessionList — React 组件
+ * 
+ * 所属目录：app-shell
+ */
 import { useState, useCallback, useEffect, useMemo, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import { useSetAtom } from "jotai"
@@ -32,11 +37,15 @@ import type { ViewConfig } from "@craft-agent/shared/views"
 import type { SessionStatusId, SessionStatus } from "@/config/session-status-config"
 import { buildCollapsedGroupsScopeSuffix } from "@/utils/session-list-collapse"
 
+/**
+ * SessionListRow：EntityList 内部使用的行数据类型。
+ * 这里把 SessionMeta 包成对象，是为了和通用列表组件的数据结构保持一致。
+ */
 export interface SessionListRow {
   item: SessionMeta
 }
 
-/** Grouping mode for chat list */
+/** 会话列表的分组方式：按日期 / 按状态 / 按未读 / 按项目 */
 export type ChatGroupingMode = 'date' | 'status' | 'unread' | 'project'
 
 interface SessionListProps {
@@ -49,58 +58,58 @@ interface SessionListProps {
   onMarkUnread: (sessionId: string) => void
   onSessionStatusChange: (sessionId: string, state: SessionStatusId) => void
   onRename: (sessionId: string, name: string) => void
-  /** Called when Enter is pressed to focus chat input for a specific session */
+  /** 按 Enter 时把焦点切到对应会话的聊天输入框 */
   onFocusChatInput?: (sessionId?: string) => void
-  /** Called when a session is selected */
+  /** 选中某个会话时的回调 */
   onSessionSelect?: (session: SessionMeta) => void
-  /** Called when user wants to open a session in a new window */
+  /** 用户想把会话在新窗口打开时的回调 */
   onOpenInNewWindow?: (session: SessionMeta) => void
-  /** Called to navigate to a specific view (e.g., 'allSessions', 'flagged') */
+  /** 切换到指定视图（如 allSessions / flagged）时的回调 */
   onNavigateToView?: (view: 'allSessions' | 'flagged') => void
-  /** Unified session options per session (real-time state) */
+  /** 每个会话的实时选项（运行时状态） */
   sessionOptions?: Map<string, import('../../hooks/useSessionOptions').SessionOptions>
-  /** Whether search mode is active */
+  /** 是否处于搜索模式 */
   searchActive?: boolean
-  /** Current search query */
+  /** 当前搜索关键字 */
   searchQuery?: string
-  /** Called when search query changes */
+  /** 搜索关键字变化时的回调 */
   onSearchChange?: (query: string) => void
-  /** Called when search is closed */
+  /** 关闭搜索时的回调 */
   onSearchClose?: () => void
-  /** Dynamic todo states from workspace config */
+  /** 工作区配置里的动态会话状态列表 */
   sessionStatuses?: SessionStatus[]
-  /** View evaluator — evaluates a session and returns matching view configs */
+  /** 视图评估器：判断一个会话命中哪些视图配置 */
   evaluateViews?: (meta: SessionMeta) => ViewConfig[]
-  /** Label configs for resolving session label IDs to display info */
+  /** 标签配置，用于把会话的标签 ID 解析成展示信息 */
   labels?: LabelConfig[]
-  /** Callback when session labels are toggled (for labels submenu in SessionMenu) */
+  /** 会话标签被切换时的回调（供 SessionMenu 的标签子菜单使用） */
   onLabelsChange?: (sessionId: string, labels: string[]) => void
-  /** Workspace projects (for the Projects submenu in SessionMenu) */
+  /** 工作区项目（供 SessionMenu 中的项目子菜单使用） */
   projects?: Array<{ id: string; slug: string; name: string; color?: string }>
-  /** Callback to bind/unbind a session to a project (null = unbind) */
+  /** 绑定/解绑会话到项目的回调（null 表示解绑） */
   onSetProjectId?: (sessionId: string, projectId: string | null) => void
-  /** How to group sessions: 'date' (default) or 'status' */
+  /** 分组方式：默认按日期，也支持按状态/未读/项目 */
   groupingMode?: ChatGroupingMode
-  /** Workspace ID for content search (optional - if not provided, content search is disabled) */
+  /** 工作区 ID，用于内容搜索；不传则禁用内容搜索 */
   workspaceId?: string
-  /** Secondary status filter (status chips in "All Sessions" view) - for search result grouping */
+  /** 二级状态筛选（“All Sessions” 里的状态芯片），影响搜索结果分组 */
   statusFilter?: Map<string, FilterMode>
-  /** Secondary label filter (label chips) - for search result grouping */
+  /** 二级标签筛选（标签芯片），影响搜索结果分组 */
   labelFilterMap?: Map<string, FilterMode>
-  /** Override which session is highlighted (for multi-panel focused panel tracking) */
+  /** 覆盖当前高亮的会话（多面板场景下追踪焦点面板） */
   focusedSessionId?: string | null
-  /** Override navigation target (for multi-panel: focuses existing panel or navigates focused panel) */
+  /** 覆盖导航目标：多面板时聚焦已有面板，或在焦点面板中导航 */
   onNavigateToSession?: (sessionId: string) => void
-  /** Session-level pending prompt marker (permission/admin approval) */
+  /** 判断某会话是否有待处理的权限/管理员审批提示 */
   hasPendingPrompt?: (sessionId: string) => boolean
-  /** DOM-verified match info for the active session (from ChatDisplay) */
+  /** 当前会话在 DOM 中实际命中的匹配信息（由 ChatDisplay 传入） */
   activeChatMatchInfo?: { sessionId: string | null; count: number; isHighlighting?: boolean }
 }
 
-// Re-export SessionStatusId for use by parent components
+// 把 SessionStatusId 重新导出，方便父组件直接使用
 export type { SessionStatusId }
 
-// Note: uses date-fns format for non-today/yesterday dates; Today/Yesterday translated at render time
+// 说明：今天/昨天单独走 i18n 翻译；其他日期用 date-fns 按语言格式化
 function formatDateGroupLabel(date: Date, t: (key: string) => string, lang: string): string {
   if (isToday(date)) return t('common.today')
   if (isYesterday(date)) return t('common.yesterday')
@@ -108,13 +117,13 @@ function formatDateGroupLabel(date: Date, t: (key: string) => string, lang: stri
 }
 
 /**
- * SessionList - Scrollable list of session cards with keyboard navigation
+ * SessionList：可滚动的会话卡片列表，支持键盘导航。
  *
- * Keyboard shortcuts:
- * - Arrow Up/Down: Navigate and select sessions (immediate selection)
- * - Arrow Left/Right: Navigate between zones
- * - Enter: Focus chat input
- * - Home/End: Jump to first/last session
+ * 键盘快捷键：
+ * - ↑/↓：导航并立即选中有焦点的会话
+ * - ←/→：在焦点区域之间切换
+ * - Enter：聚焦聊天输入框
+ * - Home/End：跳到第一个/最后一个会话
  */
 export function SessionList({
   items,
@@ -151,7 +160,7 @@ export function SessionList({
   const { t, i18n } = useTranslation()
   const setSendToWorkspace = useSetAtom(sendToWorkspaceAtom)
 
-  // --- Selection (atom-backed, shared with ChatDisplay + BatchActionPanel) ---
+  // --- 选择状态（由 atom 共享，ChatDisplay 和 BatchActionPanel 也会读写） ---
   const {
     select: selectSession,
     toggle: toggleSession,
@@ -165,19 +174,19 @@ export function SessionList({
   const navState = useNavigationState()
   const { showEscapeOverlay } = useEscapeInterrupt()
 
-  // Pre-flatten label tree once for efficient ID lookups in each SessionItem
+  // 提前把标签树拍平一次，方便在每个 SessionItem 里快速按 ID 查找
   const flatLabels = useMemo(() => flattenLabels(labels), [labels])
 
-  // Get current filter from navigation state (for preserving context in tab routes)
+  // 从导航状态拿到当前筛选条件，用于在标签路由之间保持上下文
   const currentFilter = isSessionsNavigation(navState) ? navState.filter : undefined
 
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
   const [renameSessionId, setRenameSessionId] = useState<string | null>(null)
   const [renameName, setRenameName] = useState("")
-  // Track if search input has actual DOM focus (for proper keyboard navigation gating)
+  // 记录搜索输入框是否真正拥有 DOM 焦点，用来正确控制键盘导航的生效条件
   const [isSearchInputFocused, setIsSearchInputFocused] = useState(false)
 
-  // Collapsed group keys (for collapsible group headers) — persisted per workspace/filter/grouping context
+  // 可折叠分组的 key 集合；按工作区 / 筛选条件 / 分组方式做持久化，避免不同视图互相串
   const collapseScopeSuffix = useMemo(() => {
     return buildCollapsedGroupsScopeSuffix({
       workspaceId,
@@ -193,6 +202,7 @@ export function SessionList({
     currentFilter && 'viewId' in currentFilter ? currentFilter.viewId : undefined,
   ])
 
+  // 读取指定 scope 下已折叠的分组；不存在时回退到旧版全局 key 做迁移
   const readCollapsedGroupsForScope = useCallback((scopeSuffix: string): Set<string> => {
     const scopedRaw = storage.getRaw(KEYS.collapsedSessionGroups, scopeSuffix)
     if (scopedRaw !== null) {
@@ -204,8 +214,8 @@ export function SessionList({
       }
     }
 
-    // Legacy fallback: previous versions used a single global key with no scope suffix.
-    // Use as migration source only when this scope has never been written.
+    // 兼容旧版本：早期没有 scope 后缀，使用单一全局 key。
+    // 仅在当前 scope 从未写入过时作为迁移来源。
     const legacy = storage.get<string[]>(KEYS.collapsedSessionGroups, [])
     return new Set(legacy)
   }, [])
@@ -220,7 +230,7 @@ export function SessionList({
   }, [collapseScopeSuffix, readCollapsedGroupsForScope])
 
   useEffect(() => {
-    // Avoid writing stale groups from a previous scope during context switches.
+    // 切换上下文时，避免把上一个 scope 的旧数据写回本地存储
     if (collapseScopeRef.current !== collapseScopeSuffix) return
     storage.set(KEYS.collapsedSessionGroups, Array.from(collapsedGroups), collapseScopeSuffix)
   }, [collapsedGroups, collapseScopeSuffix])
@@ -234,7 +244,7 @@ export function SessionList({
     })
   }, [])
 
-  // --- Data pipeline (search, filtering, pagination, grouping) ---
+  // --- 数据处理流水线：搜索、筛选、分页、分组 ---
   const scrollViewportRef = useRef<HTMLDivElement>(null)
 
   const {
@@ -265,6 +275,7 @@ export function SessionList({
     scrollViewportRef,
   })
 
+  // 根据当前模式把 flatItems 加工成 EntityList 需要的行数据与分组结构
   const rowData = useMemo(() => {
     if (isSearchMode) {
       const matchingRows: SessionListRow[] = matchingFilterItems.map(item => ({ item }))
@@ -284,17 +295,15 @@ export function SessionList({
       }
     }
 
-    // flatItems only contains visible (expanded + paginated) items.
-    // collapsedGroupsMeta provides key + count for collapsed groups so we
-    // can insert header-only placeholder groups in the correct position.
+    // flatItems 只包含当前可见项（已展开 + 已分页）。
+    // collapsedGroupsMeta 提供已折叠分组的 key 和数量，
+    // 这样即使分组被折叠，我们也能在正确位置插入“仅标题”占位分组。
     const rows: SessionListRow[] = flatItems.map(item => ({ item }))
 
     if (groupingMode === 'unread') {
-      // Two fixed buckets: unread on top, read below. Within each, items keep
-      // the same `lastMessageAt`-descending order they already arrive in.
-      // Both buckets always render — even when empty — so the user can see at
-      // a glance which mode they're in. The header shows a count, so an empty
-      // bucket is unambiguous (e.g. "Unread (0)").
+      // 固定两个桶：未读在上，已读在下；桶内保持 lastMessageAt 降序。
+      // 即使某个桶为空也渲染标题，让用户一眼就知道当前模式；
+      // 标题会显示数量，所以空桶也不会歧义（例如“未读 (0)”）。
       const unreadRows: SessionListRow[] = []
       const readRows: SessionListRow[] = []
       for (const row of rows) {
@@ -307,8 +316,7 @@ export function SessionList({
       const collapsedUnread = collapsedGroupsMeta.find(m => m.key === 'unread-yes')
       const collapsedRead = collapsedGroupsMeta.find(m => m.key === 'unread-no')
 
-      // For collapsed groups prefer the persisted count (matches how the
-      // date/status branches surface the size of a collapsed bucket).
+      // 已折叠时优先用持久化里的数量（和日期/状态分组的处理方式一致）
       const unreadCount = collapsedUnread ? collapsedUnread.count : unreadRows.length
       const readCount = collapsedRead ? collapsedRead.count : readRows.length
 
@@ -317,7 +325,7 @@ export function SessionList({
           key: 'unread-yes',
           label: t('session.unreadGroup', { count: unreadCount }),
           items: unreadRows,
-          // Empty groups have nothing to collapse into; suppress the caret.
+          // 空分组没有可折叠的内容，隐藏折叠箭头
           collapsible: unreadRows.length > 0 || !!collapsedUnread,
           ...(collapsedUnread ? { collapsedCount: collapsedUnread.count } : {}),
         },
@@ -340,7 +348,7 @@ export function SessionList({
       const statusOrder = new Map<string, number>()
       sessionStatuses.forEach((state, index) => statusOrder.set(state.id, index))
 
-      // Build groups from visible items
+      // 按可见项的状态 ID 建分组
       const groupsByKey = new Map<string, { rows: SessionListRow[], statusId: string }>()
       for (const row of rows) {
         const statusId = getSessionStatus(row.item)
@@ -349,7 +357,7 @@ export function SessionList({
         groupsByKey.get(key)!.rows.push(row)
       }
 
-      // Insert collapsed placeholder groups
+      // 插入已折叠分组的占位项，保持顺序
       for (const meta of collapsedGroupsMeta) {
         if (!groupsByKey.has(meta.key)) {
           const statusId = meta.key.replace('status-', '')
@@ -371,13 +379,14 @@ export function SessionList({
           ...(collapsedMeta ? { collapsedCount: collapsedMeta.count } : {}),
         })
       }
+      // 按工作区配置里的状态顺序排序
       orderedGroups.sort((a, b) => {
         const aOrder = statusOrder.get(a.key.replace('status-', '')) ?? 999
         const bOrder = statusOrder.get(b.key.replace('status-', '')) ?? 999
         return aOrder - bOrder
       })
 
-      // If only one group exists, disable collapsing — there's nothing to collapse into
+      // 只有一个分组时没必要折叠
       if (orderedGroups.length === 1) {
         orderedGroups[0].collapsible = false
       }
@@ -389,9 +398,9 @@ export function SessionList({
     }
 
     if (groupingMode === 'project') {
-      // Build groups from visible items, bucketed by projectId.
-      // Sessions without a projectId (or with an unknown projectId) go to the
-      // "no-project" bucket so they're never silently dropped from the list.
+      // 从可见项构建分组，按 projectId 分桶。
+      // 没有 projectId（或 projectId 未知）的会话归入“无项目”桶，
+      // 不会被静默丢弃。
       const projectOrder = new Map<string, number>()
       ;(projects ?? []).forEach((p, index) => projectOrder.set(p.id, index))
       const projectNameById = new Map<string, string>()
@@ -406,7 +415,7 @@ export function SessionList({
         groupsByKey.get(key)!.rows.push(row)
       }
 
-      // Insert collapsed placeholder groups (header-only, items: [])
+      // 插入已折叠分组的占位项（仅标题，items 为空）
       for (const meta of collapsedGroupsMeta) {
         if (!groupsByKey.has(meta.key)) {
           const idPart = meta.key.replace('project-', '')
@@ -431,7 +440,7 @@ export function SessionList({
         })
       }
       orderedGroups.sort((a, b) => {
-        // No-project bucket sinks to the bottom, configured projects in registration order
+        // 无项目桶沉到底部，已配置项目按注册顺序排列
         if (a.key === 'project-__none__') return 1
         if (b.key === 'project-__none__') return -1
         const aOrder = projectOrder.get(a.key.replace('project-', '')) ?? 999
@@ -449,7 +458,7 @@ export function SessionList({
       }
     }
 
-    // Default: group by date
+    // 默认：按日期分组
     const groupsByKey = new Map<string, EntityListGroup<SessionListRow>>()
     const groupDates = new Map<string, Date>()
 
@@ -469,7 +478,7 @@ export function SessionList({
       groupsByKey.get(groupKey)!.items.push(row)
     }
 
-    // Insert collapsed placeholder groups (header-only, items: [])
+    // 插入已折叠的日期占位分组（只渲染标题，items 为空）
     for (const meta of collapsedGroupsMeta) {
       if (!groupsByKey.has(meta.key)) {
         const date = new Date(meta.key)
@@ -484,14 +493,14 @@ export function SessionList({
       }
     }
 
-    // Sort all groups by date descending
+    // 所有日期分组按时间倒序排列
     const orderedKeys = Array.from(groupDates.entries())
       .sort(([, a], [, b]) => b.getTime() - a.getTime())
       .map(([key]) => key)
 
     const orderedGroups = orderedKeys.map(key => groupsByKey.get(key)!)
 
-    // If only one group exists, disable collapsing — there's nothing to collapse into
+    // 只有一个分组时禁用折叠
     if (orderedGroups.length === 1) {
       orderedGroups[0].collapsible = false
     }
@@ -529,6 +538,7 @@ export function SessionList({
     setCollapsedGroups(new Set())
   }, [])
 
+  // 建立会话 ID 到 flatRows 索引的映射，方便后续快速定位
   const rowIndexMap = useMemo(() => {
     const map = new Map<string, number>()
     flatRows.forEach((row, index) => {
@@ -537,7 +547,7 @@ export function SessionList({
     return map
   }, [flatRows])
 
-  // --- Action handlers with toast feedback ---
+  // --- 操作回调（内部会弹出 toast 提示） ---
   const {
     handleFlagWithToast,
     handleUnflagWithToast,
@@ -546,14 +556,14 @@ export function SessionList({
     handleDeleteWithToast,
   } = useSessionActions({ onFlag, onUnflag, onArchive, onUnarchive, onDelete })
 
-  // --- Focus zone ---
+  // --- 焦点区域 ---
   const { focusZone } = useFocusContext()
   const { zoneRef, isFocused, shouldMoveDOMFocus } = useFocusZone({ zoneId: 'navigator' })
 
-  // Keyboard eligibility: zone-focused OR search input focused (for arrow navigation)
+  // 键盘导航生效条件：焦点在当前区域，或者搜索框被聚焦（用于方向键导航）
   const isKeyboardEligible = isFocused || (searchActive && isSearchInputFocused)
 
-  // --- Interactions (keyboard navigation + selection via shared atom) ---
+  // --- 交互逻辑：键盘导航 + 通过共享 atom 进行多选 ---
   const interactions = useEntityListInteractions<SessionListRow>({
     items: flatRows,
     getId: (row) => row.item.id,
@@ -562,7 +572,7 @@ export function SessionList({
         navigateToSession(row.item.id)
       }, [navigateToSession]),
       onActivate: useCallback((row: SessionListRow) => {
-        // Only navigate when not in multi-select (matches original behavior)
+        // 多选模式下不导航，保持原有行为；只触发聚焦输入框
         if (!MultiSelect.isMultiSelectActive(selectionStore.state)) {
           navigateToSession(row.item.id)
         }
@@ -576,7 +586,7 @@ export function SessionList({
     selectedIdOverride: focusedSessionId,
   })
 
-  // Sync activeIndex when selection changes externally (e.g. from ChatDisplay)
+  // 外部修改选中项（如 ChatDisplay）时，同步当前活动索引
   useEffect(() => {
     const newIndex = flatRows.findIndex(row => row.item.id === selectionStore.state.selected)
     if (newIndex >= 0 && newIndex !== interactions.keyboard.activeIndex) {
@@ -584,14 +594,14 @@ export function SessionList({
     }
   }, [selectionStore.state.selected, flatRows, interactions.keyboard])
 
-  // Focus active item when zone gains keyboard focus
+  // 当导航区域获得键盘焦点时，把 DOM 焦点移到当前活动项
   useEffect(() => {
     if (shouldMoveDOMFocus && flatRows.length > 0 && !(searchActive ?? false)) {
       interactions.keyboard.focusActiveItem()
     }
   }, [shouldMoveDOMFocus, flatRows.length, searchActive, interactions.keyboard])
 
-  // --- Global keyboard shortcuts ---
+  // --- 全局键盘快捷键 ---
   const isFocusWithinZone = () => zoneRef.current?.contains(document.activeElement) ?? false
 
   useAction('navigator.selectAll', () => {
@@ -608,7 +618,7 @@ export function SessionList({
     enabled: () => isMultiSelectActive && !showEscapeOverlay,
   }, [isMultiSelectActive, showEscapeOverlay, interactions.selection, selectionStore.state.selected, navigateToSession])
 
-  // --- Click handlers ---
+  // --- 鼠标点击处理 ---
   const handleSelectSession = useCallback((row: SessionListRow, index: number) => {
     selectSession(row.item.id, index)
     navigateToSession(row.item.id)
@@ -635,7 +645,7 @@ export function SessionList({
     selectRange(toIndex, allIds)
   }, [focusZone, flatRows, selectRange])
 
-  // Arrow key shortcuts for zone navigation (left → sidebar, right → chat)
+  // 方向键切换焦点区域：左 → 侧边栏，右 → 聊天区
   const handleKeyDown = useCallback((e: React.KeyboardEvent, _item: SessionMeta) => {
     if (e.key === 'ArrowLeft') {
       e.preventDefault()
@@ -649,7 +659,7 @@ export function SessionList({
     }
   }, [focusZone])
 
-  // --- Rename dialog ---
+  // --- 重命名弹窗 ---
   const handleRenameClick = useCallback((sessionId: string, currentName: string) => {
     setRenameSessionId(sessionId)
     setRenameName(currentName)
@@ -667,7 +677,7 @@ export function SessionList({
     setRenameName("")
   }
 
-  // --- Search input key handler ---
+  // --- 搜索框键盘处理 ---
   const handleSearchKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
       e.preventDefault()
@@ -679,11 +689,11 @@ export function SessionList({
       onFocusChatInput?.(selectionStore.state.selected ?? undefined)
       return
     }
-    // Forward arrow keys via interactions
+    // 把方向键事件转给交互层处理
     interactions.searchInputProps.onKeyDown(e)
   }, [searchInputRef, onFocusChatInput, interactions.searchInputProps, selectionStore.state.selected])
 
-  // --- Context value (shared across all SessionItems) ---
+  // --- 上下文值（共享给所有 SessionItem） ---
   const handleFocusZone = useCallback(() => focusZone('navigator', { intent: 'click', moveFocus: false }), [focusZone])
   const handleOpenInNewWindow = useCallback((item: SessionMeta) => onOpenInNewWindow?.(item), [onOpenInNewWindow])
   const resolvedSearchQuery = isSearchMode ? highlightQuery : searchQuery
@@ -727,8 +737,8 @@ export function SessionList({
     sessionOptions, contentSearchResults, activeChatMatchInfo, hasPendingPrompt,
   ])
 
-  // --- Empty state (non-search) — render before EntityList ---
-  // Don't show empty state when there are collapsed groups with content
+  // --- 空状态（非搜索模式）—— 在 EntityList 之前返回 ---
+  // 如果有已折叠分组（即使当前没有展开项）也不显示空状态
   if (flatRows.length === 0 && rowData.groups.length === 0 && !searchActive) {
     if (currentFilter?.kind === 'archived') {
       return (
@@ -763,7 +773,7 @@ export function SessionList({
     )
   }
 
-  // --- Render ---
+  // --- 渲染 ---
   return (
     <div className="flex flex-col flex-1 min-h-0">
       <SessionListProvider value={listContext}>
@@ -850,7 +860,7 @@ export function SessionList({
       />
       </SessionListProvider>
 
-      {/* Rename Dialog */}
+      {/* 重命名弹窗 */}
       <RenameDialog
         open={renameDialogOpen}
         onOpenChange={setRenameDialogOpen}

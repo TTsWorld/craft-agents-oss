@@ -1,20 +1,27 @@
 /**
- * IBrowserPaneManager — interface for browser pane operations used by SessionManager.
+ * 文件：browser-pane-manager-interface.ts
+ * 位置：packages/server-core/src/handlers
+ * 职责：定义 SessionManager 所需的浏览器面板管理器接口 IBrowserPaneManager。
  *
- * Covers all 40 methods SessionManager calls on BrowserPaneManager.
- * The concrete BrowserPaneManager in apps/electron implements this.
+ * 架构角色：
+ *   - handlers 层负责把 domain 逻辑和具体运行时绑定；这里只声明“我需要什么样的能力”，
+ *     不实现浏览器窗口。
+ *   - 具体实现位于 apps/electron 的 BrowserPaneManager。
+ *   - 类似 Go 中在 handler 包里定义接口，由 app 层提供实现，避免循环依赖。
  *
- * Structurally compatible with BrowserOwnershipReleaser (domain layer)
- * so releaseBrowserOwnershipOnForcedStop() accepts IBrowserPaneManager.
+ * Agent 开发关注点：
+ *   - browser_tool 是 Agent 与浏览器交互的入口；本接口覆盖了近 40 个浏览器操作。
+ *   - 为了支持远程 server（WebUI 通过 WebSocket 调用），每个同步方法都配了 Async 版本，
+ *     因为远程调用无法同步返回结果。
  */
 
 import type { BrowserInstanceInfo } from '@craft-agent/shared/protocol'
 
 // ---------------------------------------------------------------------------
-// Supporting types — minimal subsets of BPM's internal types
+// 辅助类型 —— 只取 BPM 内部类型的最小子集
 // ---------------------------------------------------------------------------
 
-/** Subset of BrowserInstance fields accessed by SessionManager */
+/** SessionManager 访问 BrowserInstance 时只用到的字段子集。 */
 export interface BrowserInstanceSnapshot {
   ownerType: 'session' | 'manual'
   ownerSessionId: string | null
@@ -24,6 +31,7 @@ export interface BrowserInstanceSnapshot {
 }
 
 export interface BrowserScreenshotOptions {
+  /** raw 表示原始截图；agent 表示给 Agent 看的高亮/标注版本。 */
   mode?: 'raw' | 'agent'
   refs?: string[]
   includeLastAction?: boolean
@@ -134,99 +142,113 @@ export interface AccessibilitySnapshot {
 }
 
 // ---------------------------------------------------------------------------
-// Interface
+// 接口
 // ---------------------------------------------------------------------------
 
+/**
+ * 浏览器面板管理器接口。
+ *
+ * TS 特性：
+ *   - 接口里所有属性默认都是 public，不需要额外访问修饰符。
+ *   - `options?: {...}` 中的 `?` 表示该参数/字段可选，类似 Go 里 struct 指针字段 nil 表示未传。
+ *   - 方法重载在 TS 接口中不常用；这里用 `xxx` + `xxxAsync` 成对出现来弥补“远程调用不能同步返回”。
+ *   - `Buffer` 是 Node.js 的类型，TS 通过 @types/node 提供声明。
+ */
 export interface IBrowserPaneManager {
-  // -- Session lifecycle ---------------------------------------------------
+  // -- 会话生命周期 --------------------------------------------------------
 
-  /** Register a callback that resolves session IDs to file paths */
+  /** 注册一个回调，用于把 sessionId 解析成文件路径。 */
   setSessionPathResolver(fn: (sessionId: string) => string | null): void
 
-  /** Destroy all browser instances bound to a session */
+  /** 销毁所有绑定到某个 session 的浏览器实例。 */
   destroyForSession(sessionId: string): void
 
-  /** Clear agent control overlay and native overlay state for a session */
+  /** 清除某 session 的 Agent 控制浮层和原生浮层状态。 */
   clearVisualsForSession(sessionId: string): Promise<void>
 
-  /** Unbind all browser instances from a session (non-destructive) */
+  /** 解绑某 session 的所有浏览器实例（非破坏性，只解除归属）。 */
   unbindAllForSession(sessionId: string): void
 
-  /** Get or create a browser instance for a session, returning the instance ID */
+  /**
+   * 获取或创建某 session 的浏览器实例，返回实例 ID。
+   * workspaceId 可选，用于多 workspace 场景下的实例隔离。
+   */
   getOrCreateForSession(sessionId: string, options?: { workspaceId?: string | null }): string
 
   /**
-   * Async equivalent of {@link getOrCreateForSession}. Required for the remote
-   * bridge — the WS round-trip can't fit into a sync return.
+   * getOrCreateForSession 的异步版本。
+   *
+   * 为什么需要：远程 browser pane manager 通过 WebSocket 通信，无法同步拿到返回值。
    */
   getOrCreateForSessionAsync(sessionId: string, options?: { workspaceId?: string | null }): Promise<string>
 
-  /** Activate or update the agent control overlay for a session */
+  /**
+   * 激活或更新某 session 的 Agent 控制浮层。
+   * meta 可携带 displayName、intent 等给 UI 展示的信息。
+   */
   setAgentControl(
     sessionId: string,
     meta: { displayName?: string; intent?: string },
     options?: { workspaceId?: string | null },
   ): void
 
-  // -- Instance management -------------------------------------------------
+  // -- 实例管理 ------------------------------------------------------------
 
-  /** Create a browser instance for a session (optionally shown) */
+  /** 为 session 创建一个浏览器实例；options.show 控制是否立即显示窗口。 */
   createForSession(sessionId: string, options?: { show?: boolean; workspaceId?: string | null }): string
 
-  /**
-   * Async equivalent of {@link createForSession}. Required for the remote bridge.
-   */
+  /** createForSession 的异步版本。 */
   createForSessionAsync(sessionId: string, options?: { show?: boolean; workspaceId?: string | null }): Promise<string>
 
-  /** Get instance info by ID (sync; local-only). For remote-aware code use {@link getInstanceAsync}. */
+  /**
+   * 根据实例 ID 获取实例快照（同步；仅本地）。
+   * 需要支持远程时改用 getInstanceAsync。
+   */
   getInstance(id: string): BrowserInstanceSnapshot | undefined
 
-  /**
-   * Async equivalent of {@link getInstance} — required for the remote bridge,
-   * which can't synchronously return real data without a WS round-trip.
-   */
+  /** getInstance 的异步版本，用于远程调用。 */
   getInstanceAsync(id: string): Promise<BrowserInstanceSnapshot | undefined>
 
-  /** List all browser instances with their public info (sync; local-only). For remote-aware code use {@link listInstancesAsync}. */
+  /**
+   * 列出所有浏览器实例（同步；仅本地）。
+   * 需要支持远程时改用 listInstancesAsync。
+   */
   listInstances(): BrowserInstanceInfo[]
 
-  /**
-   * Async equivalent of {@link listInstances} — required for the remote bridge,
-   * which can't synchronously return real data without a WS round-trip.
-   */
+  /** listInstances 的异步版本，用于远程调用。 */
   listInstancesAsync(): Promise<BrowserInstanceInfo[]>
 
-  /** Focus the bound browser instance for a session, creating if needed */
+  /** 聚焦某 session 绑定的浏览器实例，没有则创建。 */
   focusBoundForSession(sessionId: string, options?: { workspaceId?: string | null }): string
 
-  /** Async equivalent of {@link focusBoundForSession}. */
+  /** focusBoundForSession 的异步版本。 */
   focusBoundForSessionAsync(sessionId: string, options?: { workspaceId?: string | null }): Promise<string>
 
-  /** Bind a browser instance to a session */
+  /** 把一个浏览器实例绑定到某个 session。 */
   bindSession(id: string, sessionId: string, options?: { workspaceId?: string | null }): void
 
-  /** Focus a browser instance window */
+  /** 聚焦某个浏览器实例窗口。 */
   focus(id: string): void
 
-  /** Destroy a browser instance */
+  /** 销毁某个浏览器实例。 */
   destroyInstance(id: string): void
 
-  /** Hide a browser instance window */
+  /** 隐藏某个浏览器实例窗口。 */
   hide(id: string): void
 
-  /** Clear agent control overlay for all instances in a session */
+  /** 清除某 session 所有实例的 Agent 控制浮层。 */
   clearAgentControl(sessionId: string): void
 
-  /** Clear agent control overlay for a specific instance */
+  /** 清除某个具体实例的 Agent 控制浮层；返回是否成功释放及原因。 */
   clearAgentControlForInstance(instanceId: string, sessionId?: string): { released: boolean; reason?: string }
 
-  // -- Navigation ----------------------------------------------------------
+  // -- 页面导航 ------------------------------------------------------------
 
   navigate(id: string, url: string): Promise<{ url: string; title: string }>
   goBack(id: string): Promise<void>
   goForward(id: string): Promise<void>
 
-  // -- Interaction ---------------------------------------------------------
+  // -- 页面交互 ------------------------------------------------------------
 
   getAccessibilitySnapshot(id: string): Promise<AccessibilitySnapshot>
   clickElement(id: string, ref: string, options?: { waitFor?: 'none' | 'navigation' | 'network-idle'; timeoutMs?: number }): Promise<void>
@@ -242,12 +264,12 @@ export interface IBrowserPaneManager {
   uploadFile(id: string, ref: string, filePaths: string[]): Promise<unknown>
   evaluate(id: string, expression: string): Promise<unknown>
 
-  // -- Screenshot ----------------------------------------------------------
+  // -- 截图 ----------------------------------------------------------------
 
   screenshot(id: string, options?: BrowserScreenshotOptions): Promise<BrowserScreenshotResult>
   screenshotRegion(id: string, target: BrowserScreenshotRegionTarget): Promise<BrowserScreenshotResult>
 
-  // -- Monitoring ----------------------------------------------------------
+  // -- 监控 ----------------------------------------------------------------
 
   getConsoleLogs(id: string, options?: BrowserConsoleOptions): BrowserConsoleEntry[]
   windowResize(id: string, width: number, height: number): { width: number; height: number }

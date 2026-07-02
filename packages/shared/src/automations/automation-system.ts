@@ -1,18 +1,18 @@
 /**
- * AutomationSystem - Unified Facade for the Automations System
+ * AutomationSystem - 自动化系统统一外观类
  *
- * Single entry point that:
- * - Creates EventBus instance (per workspace)
- * - Creates and registers all handlers
- * - Loads automations.json configuration
- * - Manages scheduler service
- * - Provides diffing for session metadata changes
- * - Provides dispose() for cleanup
+ * 单一入口，负责：
+ * - 为每个 workspace 创建 EventBus 实例
+ * - 创建并注册所有 handler
+ * - 加载 automations.json 配置
+ * - 管理调度器服务
+ * - 对会话元数据变化做 diff 并触发事件
+ * - 提供 dispose() 清理资源
  *
- * Benefits:
- * - No global state - each AutomationSystem instance is self-contained
- * - Easy to create for testing
- * - SessionManager uses ~30 lines instead of ~300
+ * 优点：
+ * - 无全局状态，每个 AutomationSystem 实例自包含
+ * - 测试时容易构造
+ * - SessionManager 只需约 30 行而非约 300 行
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -29,37 +29,37 @@ import { SchedulerService, type SchedulerTickPayload } from '../scheduler/schedu
 
 const log = createLogger('automation-system');
 
-// Re-export SessionMetadataSnapshot from types (single source of truth)
+// 从 types.ts 重新导出 SessionMetadataSnapshot（单一来源）
 export type { SessionMetadataSnapshot } from './types.ts';
 import type { SessionMetadataSnapshot } from './types.ts';
 
 // ============================================================================
-// AutomationSystem Options
+// AutomationSystem 选项
 // ============================================================================
 
 export interface AutomationSystemOptions {
-  /** Workspace root path (where automations.json lives) */
+  /** Workspace 根目录（automations.json 所在目录） */
   workspaceRootPath: string;
-  /** Workspace ID for logging and events */
+  /** Workspace ID，用于日志和事件 */
   workspaceId: string;
-  /** Working directory for command execution */
+  /** 命令执行的工作目录 */
   workingDir?: string;
-  /** Active source slugs for permission rules */
+  /** 权限规则中生效的 source slug 列表 */
   activeSourceSlugs?: string[];
-  /** Whether to start the scheduler service (default: false) */
+  /** 是否启动调度器服务（默认 false） */
   enableScheduler?: boolean;
-  /** Called when prompts are ready to be executed */
+  /** prompt 准备好后通过此回调执行 */
   onPromptsReady?: (prompts: PendingPrompt[]) => void;
-  /** Called when webhook results are available */
+  /** webhook 结果可用时的回调 */
   onWebhookResults?: (results: WebhookActionResult[]) => void;
-  /** Called when an error occurs during automation execution */
+  /** 自动化执行出错时的回调 */
   onError?: (event: AutomationEvent, error: Error) => void;
-  /** Called when events are lost after retries */
+  /** 事件在重试后丢失时的回调 */
   onEventLost?: (events: string[], error: Error) => void;
 }
 
 // ============================================================================
-// AutomationSystem Implementation
+// AutomationSystem 实现
 // ============================================================================
 
 export class AutomationSystem implements AutomationsConfigProvider {
@@ -73,20 +73,20 @@ export class AutomationSystem implements AutomationsConfigProvider {
   private scheduler: SchedulerService | null = null;
   private disposed = false;
 
-  // Session metadata tracking (moved from SessionManager)
+  // 会话元数据追踪（从 SessionManager 迁移过来）
   private readonly lastKnownMetadata: Map<string, SessionMetadataSnapshot> = new Map();
 
   constructor(options: AutomationSystemOptions) {
     this.options = options;
     this.eventBus = new WorkspaceEventBus(options.workspaceId);
 
-    // Load configuration
+    // 加载配置
     this.loadConfig();
 
-    // Create handlers
+    // 创建 handler
     this.createHandlers();
 
-    // Start scheduler if enabled
+    // 如果启用则启动调度器
     if (options.enableScheduler) {
       this.startScheduler();
     }
@@ -95,12 +95,13 @@ export class AutomationSystem implements AutomationsConfigProvider {
   }
 
   // ============================================================================
-  // Configuration
+  // 配置管理
   // ============================================================================
 
   /**
-   * Read, parse, and validate automations.json. Shared pipeline for loadConfig/reloadConfig.
-   * Returns the raw parsed JSON alongside validation results (avoids re-reading for backfillIds).
+   * 读取、解析并校验 automations.json。
+   * loadConfig/reloadConfig 共用此流程。
+   * 返回原始 JSON 和校验结果，避免 backfillIds 时重复读盘。
    */
   private readAndValidateConfig(configPath: string): { raw: unknown; validation: import('./types.ts').AutomationsValidationResult } {
     const raw = JSON.parse(readFileSync(configPath, 'utf-8'));
@@ -109,7 +110,7 @@ export class AutomationSystem implements AutomationsConfigProvider {
   }
 
   /**
-   * Load automations configuration from automations.json.
+   * 从 automations.json 加载自动化配置。
    */
   private loadConfig(): void {
     const configPath = resolveAutomationsConfigPath(this.options.workspaceRootPath);
@@ -142,8 +143,8 @@ export class AutomationSystem implements AutomationsConfigProvider {
   }
 
   /**
-   * Reload automations configuration.
-   * Call this when automations.json changes.
+   * 重新加载 automations.json。
+   * 在 automations.json 变更后调用。
    */
   reloadConfig(): { success: boolean; automationCount: number; errors: string[] } {
     const configPath = resolveAutomationsConfigPath(this.options.workspaceRootPath);
@@ -172,9 +173,9 @@ export class AutomationSystem implements AutomationsConfigProvider {
   }
 
   /**
-   * Backfill missing IDs on matchers in the raw config.
-   * Operates on the already-parsed raw JSON to avoid re-reading from disk.
-   * Only writes if IDs were actually missing — no-op on subsequent loads.
+   * 为 raw 配置中缺少 ID 的 matcher 补齐 ID。
+   * 直接操作已经解析好的 raw JSON，避免再次读盘。
+   * 只在确实有缺失 ID 时才写回文件 - 后续加载通常是 no-op。
    */
   private backfillIds(configPath: string, raw: unknown): void {
     try {
@@ -195,26 +196,26 @@ export class AutomationSystem implements AutomationsConfigProvider {
         log.debug('[AutomationSystem] Backfilled missing matcher IDs');
       }
     } catch {
-      // Non-critical — IDs will be backfilled on next mutation via IPC
+      // 非关键操作 - 下次 IPC 变更时还会再补齐
     }
   }
 
   /**
-   * Compact automations-history.jsonl on startup: two-tier retention.
-   * 1) Keep only the last N entries per automation ID.
-   * 2) If total still exceeds the global cap, drop oldest globally.
-   * Runs synchronously during init — single-threaded, no race with concurrent appends.
+   * 启动时压缩 automations-history.jsonl：双层保留策略。
+   * 1) 每个 automation ID 只保留最近 N 条。
+   * 2) 如果总数仍超过全局上限，则丢弃最旧的记录。
+   * 在初始化时同步运行 - 此时单线程，不会和异步追加竞争。
    */
   private rotateHistory(): void {
     try {
       compactAutomationHistorySync(this.options.workspaceRootPath);
     } catch {
-      // Non-critical — compaction failure doesn't affect functionality
+      // 非关键 - 压缩失败不影响功能
     }
   }
 
   /**
-   * Get total number of actions.
+   * 获取 action 总数。
    */
   private getActionCount(): number {
     if (!this.config) return 0;
@@ -225,7 +226,7 @@ export class AutomationSystem implements AutomationsConfigProvider {
   }
 
   // ============================================================================
-  // AutomationsConfigProvider Implementation
+  // AutomationsConfigProvider 实现
   // ============================================================================
 
   getConfig(): AutomationsConfig | null {
@@ -237,14 +238,14 @@ export class AutomationSystem implements AutomationsConfigProvider {
   }
 
   // ============================================================================
-  // Handlers
+  // Handler（处理器）
   // ============================================================================
 
   /**
-   * Create and register all handlers.
+   * 创建并注册所有 handler。
    */
   private createHandlers(): void {
-    // Prompt handler
+    // Prompt 处理器
     this.promptHandler = new PromptHandler(
       {
         workspaceId: this.options.workspaceId,
@@ -256,7 +257,7 @@ export class AutomationSystem implements AutomationsConfigProvider {
     );
     this.promptHandler.subscribe(this.eventBus);
 
-    // Webhook handler
+    // Webhook 处理器
     this.webhookHandler = new WebhookHandler(
       {
         workspaceId: this.options.workspaceId,
@@ -268,7 +269,7 @@ export class AutomationSystem implements AutomationsConfigProvider {
     );
     this.webhookHandler.subscribe(this.eventBus);
 
-    // Event log handler
+    // Event log 处理器
     this.eventLogHandler = new EventLogHandler({
       workspaceRootPath: this.options.workspaceRootPath,
       workspaceId: this.options.workspaceId,
@@ -280,11 +281,11 @@ export class AutomationSystem implements AutomationsConfigProvider {
   }
 
   // ============================================================================
-  // Scheduler
+  // 调度器
   // ============================================================================
 
   /**
-   * Start the scheduler service.
+   * 启动调度器服务。
    */
   private startScheduler(): void {
     if (this.scheduler) return;
@@ -303,7 +304,7 @@ export class AutomationSystem implements AutomationsConfigProvider {
   }
 
   /**
-   * Stop the scheduler service.
+   * 停止调度器服务。
    */
   stopScheduler(): void {
     if (this.scheduler) {
@@ -314,18 +315,18 @@ export class AutomationSystem implements AutomationsConfigProvider {
   }
 
   // ============================================================================
-  // Session Metadata Diffing
+  // 会话元数据 Diff
   // ============================================================================
 
   /**
-   * Update session metadata and emit events for changes.
+   * 更新会话元数据，并为变化触发相应事件。
    *
-   * This replaces the diffing logic that was in SessionManager.
-   * Call this whenever session metadata changes.
+   * 这替代了原先 SessionManager 中的 diff 逻辑。
+   * 在会话元数据变化时调用。
    *
-   * @param sessionId - The session ID
-   * @param next - The new metadata snapshot
-   * @returns The events that were emitted
+   * @param sessionId - 会话 ID
+   * @param next - 新的元数据快照
+   * @returns 实际触发的事件列表
    */
   async updateSessionMetadata(
     sessionId: string,
@@ -335,11 +336,11 @@ export class AutomationSystem implements AutomationsConfigProvider {
     const emittedEvents: AppEvent[] = [];
     const timestamp = Date.now();
 
-    // Common fields for all events
+    // 所有事件共用的字段
     const sessionName = next.sessionName;
     const labels = next.labels ?? [];
 
-    // Permission mode change
+    // 权限模式变化
     if (prev.permissionMode !== next.permissionMode) {
       await this.eventBus.emit('PermissionModeChange', {
         sessionId,
@@ -353,7 +354,7 @@ export class AutomationSystem implements AutomationsConfigProvider {
       emittedEvents.push('PermissionModeChange');
     }
 
-    // Labels (array diff)
+    // 标签变化（数组 diff）
     const prevLabels = new Set(prev.labels ?? []);
     const nextLabels = new Set(next.labels ?? []);
 
@@ -385,7 +386,7 @@ export class AutomationSystem implements AutomationsConfigProvider {
       }
     }
 
-    // Flag change
+    // 标记变化
     const wasFlagged = prev.isFlagged ?? false;
     const isFlagged = next.isFlagged ?? false;
     if (wasFlagged !== isFlagged) {
@@ -400,7 +401,7 @@ export class AutomationSystem implements AutomationsConfigProvider {
       emittedEvents.push('FlagChange');
     }
 
-    // Session status change
+    // 会话状态变化
     if (prev.sessionStatus !== next.sessionStatus) {
       await this.eventBus.emit('SessionStatusChange', {
         sessionId,
@@ -414,7 +415,7 @@ export class AutomationSystem implements AutomationsConfigProvider {
       emittedEvents.push('SessionStatusChange');
     }
 
-    // Update stored metadata
+    // 更新存储的元数据
     this.lastKnownMetadata.set(sessionId, { ...next });
 
     if (emittedEvents.length > 0) {
@@ -425,8 +426,8 @@ export class AutomationSystem implements AutomationsConfigProvider {
   }
 
   /**
-   * Remove session metadata tracking.
-   * Call this when a session is deleted.
+   * 移除会话元数据追踪。
+   * 在会话被删除时调用。
    */
   removeSessionMetadata(sessionId: string): void {
     this.lastKnownMetadata.delete(sessionId);
@@ -434,27 +435,27 @@ export class AutomationSystem implements AutomationsConfigProvider {
   }
 
   /**
-   * Get stored metadata for a session.
+   * 获取某会话已存储的元数据。
    */
   getSessionMetadata(sessionId: string): SessionMetadataSnapshot | undefined {
     return this.lastKnownMetadata.get(sessionId);
   }
 
   /**
-   * Set initial metadata for a session (without emitting events).
-   * Call this when loading existing sessions.
+   * 设置会话初始元数据（不触发事件）。
+   * 在加载已有会话时调用。
    */
   setInitialSessionMetadata(sessionId: string, metadata: SessionMetadataSnapshot): void {
     this.lastKnownMetadata.set(sessionId, { ...metadata });
   }
 
   // ============================================================================
-  // Direct Event Emission
+  // 直接事件触发
   // ============================================================================
 
   /**
-   * Emit a LabelConfigChange event.
-   * Call this when labels/config.json changes.
+   * 触发 LabelConfigChange 事件。
+   * 在 labels/config.json 变更时调用。
    */
   async emitLabelConfigChange(): Promise<void> {
     await this.eventBus.emit('LabelConfigChange', {
@@ -464,28 +465,26 @@ export class AutomationSystem implements AutomationsConfigProvider {
   }
 
   /**
-   * Emit an event directly (for edge cases).
+   * 直接触发事件（用于边界情况）。
    */
   async emit<T extends AutomationEvent>(event: T, payload: EventPayloadMap[T]): Promise<void> {
     await this.eventBus.emit(event, payload);
   }
 
   // ============================================================================
-  // Agent Event Execution (Backend-Agnostic)
+  // Agent 事件执行（后端无关）
   // ============================================================================
 
   /**
-   * Execute agent event automations directly (without going through the Claude SDK).
-   * This is the backend-agnostic entry point for non-Claude backends (Codex, Copilot, Pi)
-   * to fire agent events from automations.json.
+   * 直接执行 agent 事件自动化（不经过 Claude SDK）。
+   * 这是非 Claude 后端（Codex、Copilot、Pi）从 automations.json 触发 agent 事件的后端无关入口。
    *
-   * For each matching automation matcher, builds env vars and evaluates matching.
-   * Command execution has been removed — all automation actions now go through prompt-based
-   * execution (creating agent sessions via PromptHandler).
-   * Catches all errors — automations must never break the agent flow.
+   * 对每个匹配 matcher 构建环境变量并评估匹配。
+   * 命令执行已移除 - 现在所有自动化动作都通过 prompt 方式（由 PromptHandler 创建会话）执行。
+   * 捕获所有错误 - 自动化不能打断 agent 主流程。
    *
-   * @param signal - Optional AbortSignal for cancelling automation execution on abort
-   * @returns Number of matched matchers (for diagnostics/testing)
+   * @param signal - 可选的 AbortSignal，用于取消执行
+   * @returns 匹配到的 matcher 数量（用于诊断/测试）
    */
   async executeAgentEvent(event: AgentEvent, input: SdkAutomationInput, signal?: AbortSignal): Promise<number> {
     if (!this.config) return 0;
@@ -500,9 +499,8 @@ export class AutomationSystem implements AutomationsConfigProvider {
 
       matchedCount++;
 
-      // Note: Command execution has been removed. Prompt-based execution for
-      // non-Claude backends is not yet implemented. This method currently only
-      // validates matching (including condition gating) — actual execution is a no-op.
+      // 注意：命令执行已移除。非 Claude 后端的 prompt 执行尚未实现。
+      // 当前方法仅校验匹配（包括 condition 门控）- 实际执行是空操作。
       log.debug(`[AutomationSystem] Matched ${event} automation (prompt-based execution pending)`);
     }
 
@@ -510,51 +508,50 @@ export class AutomationSystem implements AutomationsConfigProvider {
   }
 
   // ============================================================================
-  // SDK Automation Integration
+  // SDK 自动化集成
   // ============================================================================
 
   /**
-   * Build SDK hook callbacks from automations.json definitions.
+   * 从 automations.json 定义构建 SDK hook 回调。
    *
-   * Command execution has been removed — all automation actions now go through prompt-based
-   * execution (creating agent sessions via PromptHandler). Agent event automations are not
-   * currently supported via prompts, so this returns empty.
+   * 命令执行已移除 - 所有自动化动作现在通过 prompt 方式执行（PromptHandler 创建会话）。
+   * Agent 事件自动化目前还不支持通过 prompt 触发，因此返回空对象。
    */
   buildSdkHooks(): Partial<Record<AgentEvent, SdkAutomationCallbackMatcher[]>> {
     return {};
   }
 
   // ============================================================================
-  // Lifecycle
+  // 生命周期
   // ============================================================================
 
   /**
-   * Check if the system has been disposed.
+   * 检查系统是否已 dispose。
    */
   isDisposed(): boolean {
     return this.disposed;
   }
 
   /**
-   * Dispose the automation system, cleaning up all resources.
+   * dispose 自动化系统，清理所有资源。
    */
   async dispose(): Promise<void> {
     if (this.disposed) return;
 
     log.debug(`[AutomationSystem] Disposing for workspace: ${this.options.workspaceId}`);
 
-    // Stop scheduler
+    // 停止调度器
     this.stopScheduler();
 
-    // Dispose handlers
+    // dispose handler
     this.promptHandler?.dispose();
     this.webhookHandler?.dispose();
     await this.eventLogHandler?.dispose();
 
-    // Dispose event bus
+    // dispose 事件总线
     this.eventBus.dispose();
 
-    // Clear metadata
+    // 清理元数据
     this.lastKnownMetadata.clear();
 
     this.disposed = true;

@@ -1,3 +1,9 @@
+/**
+ * LabelMenu — 输入框中的 #Label / State 自动完成菜单
+ *
+ * 用户在输入框里输入 # 时触发，显示可过滤的 Label（标签）和 State（工作流状态）列表。
+ * 如果传了 states，菜单上方会显示“States”分组，下方是“Labels”分组。
+ */
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, Plus } from 'lucide-react'
@@ -10,30 +16,37 @@ import { getStatusIconStyle, type SessionStatus } from '@/config/session-status-
 export { createLabelMenuItems, filterItems, type LabelMenuItem } from './label-menu-utils'
 
 // ============================================================================
-// Types
+// 类型
 // ============================================================================
 
 export interface InlineLabelMenuProps {
+  /** 菜单是否打开 */
   open: boolean
+  /** 打开状态变化回调 */
   onOpenChange: (open: boolean) => void
+  /** Label 菜单项 */
   items: LabelMenuItem[]
+  /** 选择 Label 时调用 */
   onSelect: (labelId: string) => void
-  /** Called when user picks "Add New Label" (receives the current filter text as prefill) */
+  /** 用户选择“Add New Label”时调用，传入当前 filter 文本作为预填充 */
   onAddLabel?: (prefill: string) => void
+  /** 当前过滤文本 */
   filter?: string
+  /** 菜单位置 */
   position: { x: number; y: number }
+  /** 额外 className */
   className?: string
-  // ── State selection (optional — when provided, shows a "States" section) ──
-  /** Available workflow states to show in the menu */
+  // ── 状态选择（可选，传了会显示 States 分组）──
+  /** 菜单中显示的工作流状态 */
   states?: SessionStatus[]
-  /** Currently active state ID (shows checkmark) */
+  /** 当前激活的状态 ID（显示勾选） */
   activeStateId?: string
-  /** Callback when a state is selected */
+  /** 选择状态时调用 */
   onSelectState?: (stateId: string) => void
 }
 
 // ============================================================================
-// Shared Styles (matching slash-command-menu and mention-menu)
+// 共享样式（与 slash-command-menu、mention-menu 保持一致）
 // ============================================================================
 
 const MENU_CONTAINER_STYLE = 'overflow-hidden rounded-[8px] bg-background text-foreground shadow-modal-small'
@@ -42,12 +55,12 @@ const MENU_ITEM_STYLE = 'flex cursor-pointer select-none items-center gap-2.5 ro
 const MENU_ITEM_SELECTED = 'bg-foreground/5'
 
 // ============================================================================
-// Filter utilities
+// 过滤工具
 // ============================================================================
 
 /**
- * Filter states by a simple text match on the state label.
- * Uses the same segmentScore logic for consistency with label filtering.
+ * 按状态标签文本做简单过滤。
+ * 与 Label 过滤共用 segmentScore 逻辑，保证一致性。
  */
 export function filterSessionStatuses(states: SessionStatus[], filter: string): SessionStatus[] {
   if (!filter) return states
@@ -55,7 +68,7 @@ export function filterSessionStatuses(states: SessionStatus[], filter: string): 
   const segments = filter.toLowerCase().split('/').map(s => s.trim()).filter(Boolean)
   if (segments.length === 0) return states
 
-  // States are flat (no hierarchy), so just match the first segment against the label
+  // States 是平级（无层级），所以只用第一个 segment 匹配标签
   const segment = segments[0]
   const scored: { state: SessionStatus; score: number }[] = []
 
@@ -71,13 +84,12 @@ export function filterSessionStatuses(states: SessionStatus[], filter: string): 
 }
 
 // ============================================================================
-// InlineLabelMenu Component
+// InlineLabelMenu 组件
 // ============================================================================
 
 /**
- * Inline autocomplete menu for labels and states, triggered by # in the input.
- * When states are provided, shows a "States" section above the labels section.
- * Appears above the cursor position and allows keyboard navigation across both sections.
+ * 内联 Label/State 自动完成菜单。
+ * 输入框中输入 # 触发，显示在光标上方，支持跨 States 和 Labels 分组的键盘导航。
  */
 export function InlineLabelMenu({
   open,
@@ -99,19 +111,19 @@ export function InlineLabelMenu({
   const filteredItems = filterItems(items, filter)
   const filteredStates_ = filterSessionStatuses(states, filter)
 
-  // Build a unified flat index for keyboard navigation:
-  // [0..filteredStates_.length-1] = states, [filteredStates_.length..] = labels
+  // 构建统一的扁平索引用于键盘导航：
+  // [0..filteredStates_.length-1] = states，[filteredStates_.length..] = labels
   const totalItemCount = filteredStates_.length + filteredItems.length
 
-  // When no items exist at all but onAddLabel is provided, show the "Add New Label" row
+  // 没有任何匹配项但提供了 onAddLabel 时，显示“Add New Label”行
   const showAddLabel = totalItemCount === 0 && !!onAddLabel
 
-  // Reset selection when filter changes
+  // filter 变化时重置选中项
   React.useEffect(() => {
     setSelectedIndex(0)
   }, [filter])
 
-  // Scroll selected item into view
+  // 选中项滚动到可视区域
   React.useEffect(() => {
     if (!listRef.current) return
     const selectedEl = listRef.current.querySelector('[data-selected="true"]')
@@ -120,7 +132,7 @@ export function InlineLabelMenu({
     }
   }, [selectedIndex])
 
-  // Keyboard navigation (unified across states and labels)
+  // 键盘导航（跨 States 和 Labels 统一处理）
   React.useEffect(() => {
     if (!open) return
     if (totalItemCount === 0 && !showAddLabel) return
@@ -146,11 +158,11 @@ export function InlineLabelMenu({
             onAddLabel?.(filter)
             onOpenChange(false)
           } else if (selectedIndex < filteredStates_.length) {
-            // Selected item is a state
+            // 选中的是 state
             onSelectState?.(filteredStates_[selectedIndex].id)
             onOpenChange(false)
           } else {
-            // Selected item is a label
+            // 选中的是 label
             const labelIndex = selectedIndex - filteredStates_.length
             if (filteredItems[labelIndex]) {
               onSelect(filteredItems[labelIndex].id)
@@ -169,7 +181,7 @@ export function InlineLabelMenu({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [open, filteredStates_, filteredItems, totalItemCount, selectedIndex, onSelect, onSelectState, onAddLabel, onOpenChange, showAddLabel, filter])
 
-  // Close on click outside
+  // 点击外部关闭
   React.useEffect(() => {
     if (!open) return
 
@@ -183,15 +195,15 @@ export function InlineLabelMenu({
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [open, onOpenChange])
 
-  // Hide if not open, or if no items and no "Add New Label" fallback
+  // 未打开或无匹配项且无“Add New Label”回退时不渲染
   if (!open || (totalItemCount === 0 && !showAddLabel)) return null
 
-  // Position menu above cursor
+  // 菜单位于光标上方
   const bottomPosition = typeof window !== 'undefined'
     ? window.innerHeight - Math.round(position.y) + 8
     : 0
 
-  // Whether to show section headers (only when both states and labels are present)
+  // 只有同时存在 states 和 labels 时才显示分组标题
   const showSectionHeaders = filteredStates_.length > 0 && filteredItems.length > 0
 
   return (
@@ -203,7 +215,7 @@ export function InlineLabelMenu({
     >
       <div ref={listRef} className={MENU_LIST_STYLE}>
         {showAddLabel ? (
-          /* "Add New Label" fallback row when nothing matches the filter */
+          /* 没有匹配项时显示“Add New Label”回退行 */
           <div
             data-selected="true"
             onClick={() => {
@@ -219,7 +231,7 @@ export function InlineLabelMenu({
           </div>
         ) : (
           <>
-            {/* ── States section ── */}
+            {/* ── States 分组 ── */}
             {filteredStates_.length > 0 && (
               <>
                 {showSectionHeaders && (
@@ -245,7 +257,7 @@ export function InlineLabelMenu({
                         isActive && 'bg-foreground/7',
                       )}
                     >
-                      {/* State icon with resolved color */}
+                      {/* 带解析颜色的状态图标 */}
                       <span
                         className="shrink-0 flex items-center w-4 h-4 [&>svg]:w-full [&>svg]:h-full [&>img]:w-full [&>img]:h-full [&>span]:text-sm"
                         style={getStatusIconStyle(state)}
@@ -253,7 +265,7 @@ export function InlineLabelMenu({
                         {state.icon}
                       </span>
                       <div className="flex-1 min-w-0 truncate">{state.label}</div>
-                      {/* Checkmark on active state */}
+                      {/* 激活状态显示勾选 */}
                       {isActive && (
                         <Check className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                       )}
@@ -263,12 +275,12 @@ export function InlineLabelMenu({
               </>
             )}
 
-            {/* ── Separator between sections ── */}
+            {/* ── 分组分隔线 ── */}
             {showSectionHeaders && (
               <div className="my-1 mx-2 border-t border-border/40" />
             )}
 
-            {/* ── Labels section ── */}
+            {/* ── Labels 分组 ── */}
             {filteredItems.length > 0 && (
               <>
                 {showSectionHeaders && (
@@ -277,7 +289,7 @@ export function InlineLabelMenu({
                   </div>
                 )}
                 {filteredItems.map((item, index) => {
-                  // Offset index by state count for unified selectedIndex
+                  // 在统一索引中加上 state 数量偏移
                   const flatIndex = filteredStates_.length + index
                   const isSelected = flatIndex === selectedIndex
                   return (
@@ -294,9 +306,9 @@ export function InlineLabelMenu({
                         isSelected && MENU_ITEM_SELECTED
                       )}
                     >
-                      {/* Label icon */}
+                      {/* Label 图标 */}
                       <LabelIcon label={item.config} size="lg" />
-                      {/* Label name with optional parent path */}
+                      {/* Label 名称，可选父路径 */}
                       <div className="flex-1 min-w-0 truncate">
                         {item.parentPath && (
                           <span className="text-muted-foreground">{item.parentPath}</span>
@@ -327,6 +339,7 @@ export interface LabelMenuInputElement {
   selectionStart: number
 }
 
+/** UseInlineLabelMenuOptions：选项类型定义 */
 export interface UseInlineLabelMenuOptions {
   /** Ref to the input element */
   inputRef: React.RefObject<LabelMenuInputElement | null>
@@ -343,6 +356,7 @@ export interface UseInlineLabelMenuOptions {
   activeStateId?: string
 }
 
+/** UseInlineLabelMenuReturn：类型定义 */
 export interface UseInlineLabelMenuReturn {
   isOpen: boolean
   filter: string

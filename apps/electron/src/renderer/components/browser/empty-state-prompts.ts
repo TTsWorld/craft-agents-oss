@@ -1,3 +1,5 @@
+// 浏览器空态页面展示的示例提示词列表。
+// 注意：这些是业务提示词（prompt）文案，按需求保留英文原文，不翻译。
 import type { BrowserEmptyPromptSample } from '@craft-agent/ui'
 
 export const EMPTY_STATE_PROMPT_SAMPLES: readonly BrowserEmptyPromptSample[] = [

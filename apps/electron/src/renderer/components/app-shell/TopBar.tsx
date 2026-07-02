@@ -1,10 +1,9 @@
 /**
- * TopBar - Persistent top bar above all panels (Slack-style)
+ * TopBar - 固定在所有面板上方的顶部栏（Slack 风格）。
  *
- * Layout: [Sidebar] [Menu] [Back] [Forward] [Workspace selector] ... [Browser strip] [+] [Help]
+ * 布局：[侧边栏开关] [菜单] [后退] [前进] [工作区切换器] … [浏览器标签条] [+] [帮助]
  *
- * Fixed at top of window, 48px tall.
- * macOS: offset left to avoid stoplight controls.
+ * 固定在窗口顶部，高 48px；macOS 下左侧留出红绿灯区域。
  */
 
 import { useTranslation } from "react-i18next"
@@ -57,10 +56,11 @@ interface TopBarProps {
   onToggleFocusMode: () => void
   onAddSessionPanel: () => void
   onAddBrowserPanel: () => void
-  /** When true, hides controls that don't apply in compact/mobile layout */
+  /** 为 true 时隐藏不适用的紧凑/移动端控件 */
   isCompact?: boolean
 }
 
+/** TopBar - 应用顶部栏 */
 export function TopBar({
   workspaces,
   activeWorkspaceId,
@@ -124,10 +124,8 @@ export function TopBar({
     }
   }, [workspaces.length, activeWorkspaceId])
 
-  // Stoplight padding clears macOS traffic-light controls, which only exist
-  // in the Electron desktop window. The webui runs in a regular browser tab
-  // and has no traffic lights regardless of host OS — collapse to a normal
-  // 12px inset so the logo sits at the edge.
+  // macOS 红绿灯只在 Electron 桌面窗口存在；WebUI 在普通浏览器标签页运行，
+  // 没有红绿灯，因此使用常规的 12px 内边距，让 logo 贴边。
   const menuLeftPadding = isMac && !isWebUI ? 86 : 12
 
   return (
@@ -136,10 +134,9 @@ export function TopBar({
       style={{ height: 'var(--topbar-height)' }}
     >
       <div className="flex h-full w-full items-center justify-between gap-2">
-      {/* === LEFT: Sidebar + Menu + Navigation + Workspace === */}
-      {/* Keep this container draggable. Only individual interactive controls should use titlebar-no-drag. */}
-      {/* In compact mode the right slot is hidden, so we add right padding here
-          so the workspace pill doesn't run flush against the viewport edge. */}
+      {/* === 左侧：侧边栏开关 + 菜单 + 导航 + 工作区切换器 === */}
+      {/* 整个容器保持可拖拽；只有具体的交互控件才加 titlebar-no-drag。 */}
+      {/* 紧凑模式下右侧槽隐藏，因此在这里加右内边距，避免工作区 pill 贴到视口边缘。 */}
       <div
         className="pointer-events-auto flex min-w-0 flex-1 items-center gap-0.5"
         style={{ paddingLeft: menuLeftPadding, paddingRight: isCompact ? 12 : 0 }}
@@ -168,11 +165,9 @@ export function TopBar({
         />
         </div>
 
-        {/* Back / Forward / Workspace selector (moved from center).
-            In compact mode the back/forward buttons are dropped — the iOS-style
-            drill-in chevron in PanelHeader plus the browser's native back gesture
-            cover that affordance, and the freed width lets the workspace pill
-            actually fit on phone-width viewports. */}
+        {/* 后退/前进/工作区切换器（从中间区域移过来）。
+            紧凑模式下隐藏后退/前进按钮：PanelHeader 的 iOS 式返回箭头 + 浏览器原生返回手势已足够，
+            省出的宽度让工作区 pill 在窄视口下也能放下。 */}
         <div className={cn("ml-1 flex min-w-0 items-center gap-1", isCompact ? "flex-1" : "w-[clamp(220px,42vw,640px)]")}>
           {!isCompact && (
             <>
@@ -221,7 +216,7 @@ export function TopBar({
         </div>
       </div>
 
-      {/* === RIGHT: Browser strip + add + help === */}
+      {/* === 右侧：浏览器标签条 + 添加 + 帮助 === */}
       {!isCompact && (
       <div ref={rightSlotRef} className="flex min-w-0 shrink-0 items-center justify-end gap-1" style={{ paddingRight: 12 }}>
         <div className="min-w-0">

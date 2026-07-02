@@ -1,3 +1,9 @@
+/**
+ * workspace.ts —— 工作区与窗口相关 RPC handler。
+ *
+ * 处理远程连接测试、打开工作区、在新窗口打开会话、关闭窗口、
+ * 控制 macOS 交通灯按钮等请求。
+ */
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from './handler-deps'
@@ -13,10 +19,11 @@ export const GUI_HANDLED_CHANNELS = [
 ] as const
 
 /**
- * Connect to a remote server and wait for handshake.
- * When workspaceId is provided, the handshake is scoped to that workspace so
- * workspace-context RPC handlers (for example sessions:export) can resolve it.
- * Returns the connected client or null + error message.
+ * 连接远程服务器并等待握手完成。
+ *
+ * 如果提供 workspaceId，握手会限定在该工作区上下文，这样像 sessions:export 这类
+ * 需要 workspace 上下文的 handler 才能正确解析。
+ * 返回 { client, error }，连接失败时 client 为 null。
  */
 export async function connectToRemote(url: string, token: string, workspaceId?: string) {
   const { WsRpcClient } = await import('../../transport/client')
@@ -55,14 +62,13 @@ export async function connectToRemote(url: string, token: string, workspaceId?: 
 export function registerWorkspaceGuiHandlers(server: RpcServer, deps: HandlerDeps): void {
   const windowManager = deps.windowManager
 
-  // Test connection to a remote Craft Agent Server.
-  // Pure discovery — returns list of existing workspaces or needsWorkspace flag.
-  // Workspace creation is handled separately via invokeOnServer → server:createWorkspace.
+  // 测试与远程 Craft Agent Server 的连接。
+  // 纯探测：返回已有工作区列表或 needsWorkspace 标记；创建工作区走单独的 invokeOnServer。
   server.handle(RPC_CHANNELS.remote.TEST_CONNECTION, async (_ctx, url: string, token: string) => {
     const { client, error } = await connectToRemote(url, token)
     if (!client) return { ok: false, error }
 
-    // Read server version from handshake_ack (null for old servers)
+    // 从 handshake_ack 读取服务器版本（旧服务器为 null）
     const serverVersion = client.getServerVersion() ?? undefined
 
     try {
@@ -79,7 +85,7 @@ export function registerWorkspaceGuiHandlers(server: RpcServer, deps: HandlerDep
         ok: true,
         serverVersion,
         remoteWorkspaces: workspaces,
-        // Convenience: auto-select if exactly one
+        // 只有一个工作区时自动选中，省去用户再点一次
         remoteWorkspaceId: workspaces.length === 1 ? workspaces[0].id : undefined,
         remoteWorkspaceName: workspaces.length === 1 ? workspaces[0].name : undefined,
       }
@@ -93,13 +99,13 @@ export function registerWorkspaceGuiHandlers(server: RpcServer, deps: HandlerDep
     }
   })
 
-  // Open workspace in new window (or focus existing)
+  // 打开工作区：聚焦已有窗口或创建新窗口
   server.handle(RPC_CHANNELS.window.OPEN_WORKSPACE, async (_ctx, workspaceId: string) => {
     if (!windowManager) return
     windowManager.focusOrCreateWindow(workspaceId)
   })
 
-  // Open a session in a new window
+  // 在新窗口打开某个会话
   server.handle(RPC_CHANNELS.window.OPEN_SESSION_IN_NEW_WINDOW, async (_ctx, workspaceId: string, sessionId: string) => {
     if (!windowManager) return
     const deepLink = `craftagents://allSessions/session/${sessionId}`
@@ -110,25 +116,25 @@ export function registerWorkspaceGuiHandlers(server: RpcServer, deps: HandlerDep
     })
   })
 
-  // Close the calling window (triggers close event which may be intercepted)
+  // 关闭调用窗口（会触发 close 事件，可能被渲染进程拦截）
   server.handle(RPC_CHANNELS.window.CLOSE, (ctx) => {
     if (!windowManager) return
     windowManager.closeWindow(ctx.webContentsId!)
   })
 
-  // Confirm close - force close the window (bypasses interception).
+  // 确认关闭：强制关闭窗口，绕过拦截逻辑
   server.handle(RPC_CHANNELS.window.CONFIRM_CLOSE, (ctx) => {
     if (!windowManager) return
     windowManager.forceCloseWindow(ctx.webContentsId!)
   })
 
-  // Cancel close - renderer handled the request (closed a modal/panel).
+  // 取消关闭：渲染进程已处理（例如关掉了弹窗/面板），清除兜底超时
   server.handle(RPC_CHANNELS.window.CANCEL_CLOSE, (ctx) => {
     if (!windowManager) return
     windowManager.cancelPendingClose(ctx.webContentsId!)
   })
 
-  // Show/hide macOS traffic light buttons (for fullscreen overlays)
+  // 显示/隐藏 macOS 交通灯按钮（用于全屏浮层，防止误点）
   server.handle(RPC_CHANNELS.window.SET_TRAFFIC_LIGHTS, (ctx, visible: boolean) => {
     if (!windowManager) return
     windowManager.setTrafficLightsVisible(ctx.webContentsId!, visible)

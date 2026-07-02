@@ -1,11 +1,11 @@
 /**
- * Generic OAuth 2.0 for API Sources
+ * 通用 OAuth 2.0（用于 API Source）
  *
- * Supports any OAuth 2.0 provider (GitHub, Linear, Notion, Spotify, etc.)
- * configured via ApiOAuthConfig in source config.json.
+ * 支持任何通过 source config.json 里的 ApiOAuthConfig 配置的 OAuth 2.0 提供商：
+ * GitHub、Linear、Notion、Spotify 等。
  *
- * Uses PKCE for all flows. Handles both JSON and application/x-www-form-urlencoded
- * token responses (GitHub returns form-encoded by default).
+ * 所有流程都用 PKCE。同时兼容 JSON 和 application/x-www-form-urlencoded
+ * 两种 token 响应格式（GitHub 默认返回 form-encoded）。
  */
 
 import type { ApiOAuthConfig } from '../sources/types.ts';
@@ -13,20 +13,25 @@ import type { PreparedOAuthFlow, OAuthExchangeParams, OAuthExchangeResult } from
 import { generatePKCE, generateState } from './pkce.ts';
 
 /**
- * Parse a token endpoint response that may be JSON or application/x-www-form-urlencoded.
- * GitHub (and some other providers) return form-encoded unless you send Accept: application/json.
- * We send Accept: application/json but tolerate form-encoded as a fallback.
+ * 解析 token 端点响应。
+ *
+ * 有些提供商（如 GitHub）默认返回 form-encoded，即使我们发了 Accept: application/json。
+ * 所以我们先发 Accept，同时把 form-encoded 作为兜底。
+ *
+ * @param body - 响应体字符串
+ * @param contentType - 响应 Content-Type
+ * @returns 解析后的键值对象
  */
 function parseTokenResponse(body: string, contentType: string | null): Record<string, string> {
   if (contentType?.includes('application/json')) {
     return JSON.parse(body);
   }
-  // Try JSON first (many providers return JSON regardless of Content-Type)
+  // 先尝试按 JSON 解析（很多提供商不管 Content-Type 都返回 JSON）
   try {
     const parsed = JSON.parse(body);
     if (typeof parsed === 'object' && parsed !== null) return parsed;
   } catch {
-    // Not JSON — try form-urlencoded
+    // 不是 JSON，再按 form-urlencoded 解析
   }
   return Object.fromEntries(new URLSearchParams(body));
 }
@@ -35,6 +40,9 @@ function parseTokenResponse(body: string, contentType: string | null): Record<st
 // Prepare
 // ============================================================
 
+/**
+ * 准备通用 OAuth 流程的选项。
+ */
 export interface PrepareGenericOAuthOptions {
   oauthConfig: ApiOAuthConfig;
   callbackPort?: number;
@@ -42,8 +50,9 @@ export interface PrepareGenericOAuthOptions {
 }
 
 /**
- * Prepare the authorization URL for a generic OAuth flow.
- * Generates PKCE challenge and builds the auth URL with all configured parameters.
+ * 准备通用 OAuth 授权 URL。
+ *
+ * 生成 PKCE challenge，并把 config 里的参数全部拼进 authUrl。
  */
 export function prepareGenericOAuth(options: PrepareGenericOAuthOptions): PreparedOAuthFlow {
   const { oauthConfig, callbackPort, callbackUrl } = options;
@@ -59,13 +68,15 @@ export function prepareGenericOAuth(options: PrepareGenericOAuthOptions): Prepar
   authUrl.searchParams.set('code_challenge', pkce.codeChallenge);
   authUrl.searchParams.set('code_challenge_method', 'S256');
 
+  // scope：如果配置里有就拼进去，多个 scope 用空格分隔
   if (oauthConfig.scopes?.length) {
     authUrl.searchParams.set('scope', oauthConfig.scopes.join(' '));
   }
+  // audience：部分提供商需要
   if (oauthConfig.audience) {
     authUrl.searchParams.set('audience', oauthConfig.audience);
   }
-  // Extra provider-specific params (e.g. access_type=offline)
+  // 额外参数：例如 access_type=offline
   if (oauthConfig.extraParams) {
     for (const [key, value] of Object.entries(oauthConfig.extraParams)) {
       authUrl.searchParams.set(key, value);
@@ -89,8 +100,9 @@ export function prepareGenericOAuth(options: PrepareGenericOAuthOptions): Prepar
 // ============================================================
 
 /**
- * Exchange an authorization code for tokens at the generic OAuth token endpoint.
- * Handles both JSON and form-urlencoded responses.
+ * 在通用 OAuth token 端点用授权码换 token。
+ *
+ * 兼容 JSON 和 form-urlencoded 响应。
  */
 export async function exchangeGenericOAuth(params: OAuthExchangeParams): Promise<OAuthExchangeResult> {
   try {
@@ -149,9 +161,10 @@ export async function exchangeGenericOAuth(params: OAuthExchangeParams): Promise
 // ============================================================
 
 /**
- * Refresh a generic OAuth token.
- * tokenUrl and clientId come from the source config (not stored in credential).
- * clientSecret comes from stored credential, falling back to config.
+ * 刷新通用 OAuth token。
+ *
+ * tokenUrl 和 clientId 来自 source config（不会存进凭据里），
+ * clientSecret 来自已存储的凭据，如果凭据里没有则回退到 config。
  */
 export async function refreshGenericOAuthToken(
   refreshToken: string,

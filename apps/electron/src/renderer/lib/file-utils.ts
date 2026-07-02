@@ -1,10 +1,10 @@
 /**
- * File utilities for language detection and path formatting.
- * Shared across code preview, diff preview, and multi-file diff components.
+ * 文件工具函数：语言检测与路径格式化。
+ * 在代码预览、diff 预览、多文件 diff 等组件中复用。
  */
 
 /**
- * Map of file extensions to Monaco editor language IDs.
+ * 文件扩展名到 Monaco 编辑器语言 ID 的映射表。
  */
 export const LANGUAGE_MAP: Record<string, string> = {
   ts: 'typescript',
@@ -40,10 +40,10 @@ export const LANGUAGE_MAP: Record<string, string> = {
 }
 
 /**
- * Get Monaco language ID from a file path.
- * @param filePath - The file path to detect language from
- * @param explicit - Optional explicit language override
- * @returns Monaco language ID (defaults to 'plaintext')
+ * 根据文件路径获取 Monaco 语言 ID。
+ * @param filePath - 待检测的文件路径
+ * @param explicit - 可选的显式语言覆盖
+ * @returns Monaco 语言 ID（默认返回 'plaintext'）
  */
 export function getLanguageFromPath(filePath: string, explicit?: string): string {
   if (explicit) return explicit
@@ -53,9 +53,9 @@ export function getLanguageFromPath(filePath: string, explicit?: string): string
 }
 
 /**
- * Format file path for display, replacing home directory with ~.
- * @param filePath - The file path to format
- * @returns Formatted path (e.g., /Users/john/code/file.ts → ~/code/file.ts)
+ * 格式化文件路径用于展示，把 /Users/xxx 前缀替换为 ~。
+ * @param filePath - 待格式化的文件路径
+ * @returns 格式化后的路径，例如 /Users/john/code/file.ts → ~/code/file.ts
  */
 export function formatFilePath(filePath: string): string {
   const homeMatch = filePath.match(/^\/Users\/[^/]+\/(.+)$/)

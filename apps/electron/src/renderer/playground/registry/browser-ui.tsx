@@ -1,3 +1,10 @@
+/**
+ * browser-ui 注册项
+ *
+ * 这个文件演示应用内浏览器相关的 UI：浏览器控制栏、标签页条、
+ * Agent 控制浏览器时的实时动效（live effects）、以及 BrowserTraceSidebar（工具执行轨迹）。
+ * 涉及概念：tool use（browser_open / browser_click 等）、session（绑定到浏览器窗口）、stream（运行状态）。
+ */
 import { useCallback, useMemo, useState } from 'react'
 import * as Icons from 'lucide-react'
 import type { ComponentEntry } from './types'
@@ -528,8 +535,8 @@ function BrowserEmptyStatePlayground({
 type BrowserTabStripMode = 'auto' | 'live' | 'mock'
 type BrowserTabStripMockPreset = 'default' | 'long-names' | 'many-running' | 'stress-mix'
 
-// NOTE: Theme colors below are derived from the same extraction logic used by browser-pane-manager
-// (meta tags + top-surface sampling fallback) and then applied to realistic mock scenarios.
+// 下面的主题色模拟了真实浏览器从 <meta name="theme-color"> 和页面采样得到的逻辑，
+// 再应用到几种常见的标签栏场景（默认、长标题、多个运行中、混合压力）。
 const MOCK_BROWSER_PRESETS: Record<BrowserTabStripMockPreset, BrowserInstanceInfo[]> = {
   default: [
     {
@@ -907,6 +914,7 @@ function BrowserTabStripPlayground({
   )
 }
 
+/** browser-ui 组件注册列表。 */
 export const browserUiComponents: ComponentEntry[] = [
   {
     id: 'browser-frame-playground',

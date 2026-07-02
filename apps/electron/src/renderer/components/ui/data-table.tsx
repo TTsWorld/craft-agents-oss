@@ -1,3 +1,8 @@
+/**
+ * DataTable — 基于 @tanstack/react-table 的数据表格。
+ *
+ * 支持排序、过滤、分页、列宽调整、树形展开等常见表格能力。
+ */
 import * as React from 'react'
 import type {
   ColumnDef,
@@ -33,35 +38,36 @@ import { cn } from '@/lib/utils'
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[]
   data: TData[]
-  /** Global filter value (searches across all columns) */
+  /** 全局过滤值（搜索所有列） */
   globalFilter?: string
-  /** Column ID to apply column-specific filter to */
+  /** 要过滤的列 ID */
   filterColumn?: string
-  /** Column-specific filter value */
+  /** 列过滤值 */
   filterValue?: string
-  /** Custom class for the table container */
+  /** 外层容器自定义 className */
   className?: string
-  /** Empty state content */
+  /** 空状态内容 */
   emptyContent?: React.ReactNode
-  /** Callback to get table instance for external control */
+  /** 表格实例准备就绪时的回调，方便外部控制 */
   onTableReady?: (table: TableInstance<TData>) => void
-  /** Skip the border wrapper (when parent provides it) */
+  /** 去掉边框包装（父组件已提供边框时） */
   noBorder?: boolean
-  /** Skip the table overflow wrapper (required for sticky headers) */
+  /** 去掉表格 overflow 包装（粘性表头需要） */
   noWrapper?: boolean
-  /** Enable pagination */
+  /** 是否启用分页 */
   pagination?: boolean
-  /** Page size when pagination is enabled (default: 50) */
+  /** 分页页大小（默认 50） */
   pageSize?: number
   /**
-   * Enable tree/hierarchical rows. Provide a function that returns child rows.
-   * When set, rows can be expanded/collapsed. All rows start expanded by default.
+   * 启用树形/层级行。传入返回子行的函数。
+   * 设置后行可展开/折叠，默认全部展开。
    */
   getSubRows?: (row: TData) => TData[] | undefined
-  /** Initial expanded state (default: all expanded when getSubRows is provided) */
+  /** 初始展开状态（默认在提供 getSubRows 时全部展开） */
   defaultExpanded?: boolean
 }
 
+/** DataTable：函数 */
 export function DataTable<TData, TValue>({
   columns,
   data,
@@ -86,23 +92,22 @@ export function DataTable<TData, TValue>({
     pageIndex: 0,
     pageSize,
   })
-  // Tree expand state: default to all expanded when getSubRows is provided
+  // 树形展开状态：提供 getSubRows 且默认展开时设为全部展开
   const [expanded, setExpanded] = React.useState<ExpandedState>(
     getSubRows && defaultExpanded ? true : {}
   )
 
-  // Sync external global filter and reset pagination
+  // 同步外部全局过滤，并切换过滤时回到第一页
   React.useEffect(() => {
     if (globalFilter !== undefined) {
       setInternalGlobalFilter(globalFilter)
-      // Reset to first page when filter changes
       if (paginationEnabled) {
         setPagination(prev => ({ ...prev, pageIndex: 0 }))
       }
     }
   }, [globalFilter, paginationEnabled])
 
-  // Update column filter when filterValue changes
+  // 列过滤变化时同步状态
   React.useEffect(() => {
     if (filterColumn && filterValue !== undefined) {
       setColumnFilters([{ id: filterColumn, value: filterValue }])
@@ -118,7 +123,7 @@ export function DataTable<TData, TValue>({
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     ...(paginationEnabled && { getPaginationRowModel: getPaginationRowModel() }),
-    // Tree/expand support: only enabled when getSubRows is provided
+    // 仅在提供 getSubRows 时启用树形展开
     ...(getSubRows && { getExpandedRowModel: getExpandedRowModel(), getSubRows }),
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
@@ -139,7 +144,7 @@ export function DataTable<TData, TValue>({
     },
   })
 
-  // Expose table instance
+  // 把表格实例暴露给父组件
   React.useEffect(() => {
     onTableReady?.(table)
   }, [table, onTableReady])
@@ -155,7 +160,7 @@ export function DataTable<TData, TValue>({
                 | undefined
               const minSize = header.column.columnDef.minSize
               const currentSize = header.getSize()
-              // Only apply explicit width if user has resized or there's a minSize
+              // 只有用户调整过列宽或存在 minSize 时才写死宽度
               const hasResized = columnSizing[header.id] !== undefined
               return (
                 <TableHead
@@ -291,8 +296,8 @@ export function DataTable<TData, TValue>({
 }
 
 /**
- * Sortable column header component
- * Use in column definitions: header: ({ column }) => <SortableHeader column={column} title="Name" />
+ * 可排序列头组件。
+ * 在列定义中使用：header: ({ column }) => <SortableHeader column={column} title="名称" />
  */
 interface SortableHeaderProps<TData, TValue> {
   column: Column<TData, TValue>
@@ -300,6 +305,7 @@ interface SortableHeaderProps<TData, TValue> {
   className?: string
 }
 
+/** 可排序列头 */
 export function SortableHeader<TData, TValue>({
   column,
   title,

@@ -1,3 +1,9 @@
+/**
+ * menu.ts —— Electron 原生应用菜单（macOS）。
+ *
+ * 构建并设置 Craft Agents 的顶部菜单栏。Windows/Linux 使用应用内自定义菜单，
+ * 这里只负责 macOS 原生菜单。菜单点击通过 RPC event sink 通知渲染进程执行动作。
+ */
 import { Menu, app, shell, BrowserWindow } from 'electron'
 import { i18n } from '@craft-agent/shared/i18n'
 import { RPC_CHANNELS, type BroadcastEventMap } from '../shared/types'
@@ -9,16 +15,15 @@ import { mainLog, isDebugMode } from './logger'
 
 type ClientResolver = (webContentsId: number) => string | undefined
 
-// Store references for rebuilding menu
+// 缓存引用，方便更新菜单时重建
 let cachedWindowManager: WindowManager | null = null
 let cachedEventSink: EventSink | null = null
 let cachedClientResolver: ClientResolver | null = null
 
 /**
- * Creates and sets the application menu for macOS.
- * Includes only relevant items for the Craft Agents app.
+ * 创建并设置 macOS 应用菜单。
  *
- * Call rebuildMenu() when update state changes to refresh the menu.
+ * 更新状态变化时调用 rebuildMenu() 刷新菜单项。
  */
 export function createApplicationMenu(windowManager: WindowManager, sink?: EventSink, resolver?: ClientResolver): void {
   cachedWindowManager = windowManager
@@ -28,8 +33,8 @@ export function createApplicationMenu(windowManager: WindowManager, sink?: Event
 }
 
 /**
- * Set the event sink and client resolver after server creation.
- * Called separately from createApplicationMenu since the server may not exist at menu init time.
+ * server 创建后设置事件 sink 和 client 解析器。
+ * 与 createApplicationMenu 分开调用，因为菜单初始化时 server 可能还不存在。
  */
 export function setMenuEventSink(sink: EventSink, resolver: ClientResolver): void {
   cachedEventSink = sink
@@ -37,11 +42,10 @@ export function setMenuEventSink(sink: EventSink, resolver: ClientResolver): voi
 }
 
 /**
- * Rebuilds the application menu with current update state.
- * Call this when update availability changes.
+ * 用当前更新状态重建应用菜单。
  *
- * On Windows/Linux: Menu is hidden - all functionality is in the Craft logo menu.
- * On macOS: Native menu is required by Apple guidelines, so we keep it synced.
+ * Windows/Linux：隐藏原生菜单，功能都在应用内 Craft logo 菜单里。
+ * macOS：按 Apple 规范保留原生菜单。
  */
 export async function rebuildMenu(): Promise<void> {
   if (!cachedWindowManager) return
@@ -49,19 +53,18 @@ export async function rebuildMenu(): Promise<void> {
   const windowManager = cachedWindowManager
   const isMac = process.platform === 'darwin'
 
-  // On Windows/Linux, hide the native menu entirely
-  // Users access menu via the Craft logo dropdown in the app
+  // Windows/Linux 完全隐藏原生菜单
   if (!isMac) {
     Menu.setApplicationMenu(null)
     return
   }
 
-  // Get current update state
+  // 获取当前更新状态
   const { getUpdateInfo, installUpdate, checkForUpdates } = await import('./auto-update')
   const updateInfo = getUpdateInfo()
   const updateReady = updateInfo.available && updateInfo.downloadState === 'ready'
 
-  // Build the update menu item based on state
+  // 根据更新状态构建菜单项
   const updateMenuItem: Electron.MenuItemConstructorOptions = updateReady
     ? {
         label: i18n.t("menu.installUpdateVersion", { version: updateInfo.latestVersion }),
@@ -77,7 +80,7 @@ export async function rebuildMenu(): Promise<void> {
       }
 
   const template: Electron.MenuItemConstructorOptions[] = [
-    // App menu (macOS only)
+    // 应用菜单（仅 macOS）
     ...(isMac ? [{
       label: 'Craft Agents',
       submenu: [
@@ -87,7 +90,7 @@ export async function rebuildMenu(): Promise<void> {
         {
           label: i18n.t("menu.settings"),
           accelerator: 'CmdOrCtrl+,',
-          registerAccelerator: false,  // Action registry handles the keyboard shortcut
+          registerAccelerator: false,  // 快捷键由 Action registry 统一处理，这里不注册原生快捷键
           click: () => sendToRenderer(RPC_CHANNELS.menu.OPEN_SETTINGS)
         },
         { type: 'separator' as const },
@@ -99,20 +102,20 @@ export async function rebuildMenu(): Promise<void> {
       ]
     }] : []),
 
-    // File menu
+    // 文件菜单
     {
       label: i18n.t("menu.file"),
       submenu: [
         {
           label: i18n.t("menu.newChat"),
           accelerator: 'CmdOrCtrl+N',
-          registerAccelerator: false,  // Action registry handles the keyboard shortcut
+          registerAccelerator: false,  // 键盘快捷键由 Action registry 处理
           click: () => sendToRenderer(RPC_CHANNELS.menu.NEW_CHAT)
         },
         {
           label: i18n.t("menu.newWindow"),
           accelerator: 'CmdOrCtrl+Shift+N',
-          registerAccelerator: false,  // Action registry handles the keyboard shortcut
+          registerAccelerator: false,  // 键盘快捷键由 Action registry 处理
           click: () => {
             const focused = BrowserWindow.getFocusedWindow()
             if (focused) {
@@ -128,18 +131,18 @@ export async function rebuildMenu(): Promise<void> {
       ]
     },
 
-    // Edit menu (from shared schema)
+    // 编辑菜单（来自共享 schema）
     {
       label: i18n.t(EDIT_MENU.labelKey),
       submenu: EDIT_MENU.items.map(toElectronMenuItem),
     },
 
-    // View menu (from shared schema + dev-only items)
+    // 视图菜单（来自共享 schema + 开发专用项）
     {
       label: i18n.t(VIEW_MENU.labelKey),
       submenu: [
         ...VIEW_MENU.items.map(toElectronMenuItem),
-        // Dev tools — available in dev mode or when started with --debug
+        // 开发者工具——开发模式或带 --debug 启动时可用
         ...(!app.isPackaged || isDebugMode ? [
           { type: 'separator' as const },
           ...(!app.isPackaged ? [
@@ -177,7 +180,7 @@ export async function rebuildMenu(): Promise<void> {
       ]
     },
 
-    // Window menu (from shared schema + macOS-specific items)
+    // 窗口菜单（来自共享 schema + macOS 专用项）
     {
       label: i18n.t(WINDOW_MENU.labelKey),
       submenu: [
@@ -189,7 +192,7 @@ export async function rebuildMenu(): Promise<void> {
       ]
     },
 
-    // Debug menu (development only)
+    // 调试菜单（仅开发模式）
     ...(!app.isPackaged ? [{
       label: i18n.t("menu.debug"),
       submenu: [
@@ -228,7 +231,7 @@ export async function rebuildMenu(): Promise<void> {
       ]
     }] : []),
 
-    // Help menu
+    // 帮助菜单
     {
       label: i18n.t("menu.help"),
       submenu: [
@@ -239,7 +242,7 @@ export async function rebuildMenu(): Promise<void> {
         {
           label: i18n.t("menu.keyboardShortcuts"),
           accelerator: 'CmdOrCtrl+/',
-          registerAccelerator: false,  // Action registry handles the keyboard shortcut
+          registerAccelerator: false,  // 键盘快捷键由 Action registry 处理
           click: () => sendToRenderer(RPC_CHANNELS.menu.KEYBOARD_SHORTCUTS)
         }
       ]
@@ -250,11 +253,11 @@ export async function rebuildMenu(): Promise<void> {
   Menu.setApplicationMenu(menu)
 }
 
-/** Menu channels that are main→renderer push events in BroadcastEventMap */
+/** 菜单里需要主进程向渲染进程推送的 channel 类型 */
 type MenuBroadcastChannel = Extract<keyof BroadcastEventMap, `menu:${string}`>
 
 /**
- * Sends an event to the focused renderer window via the RPC event sink.
+ * 通过 RPC event sink 向当前聚焦的渲染窗口发送事件。
  */
 function sendToRenderer(channel: MenuBroadcastChannel): void {
   if (!cachedEventSink || !cachedClientResolver) return
@@ -268,7 +271,7 @@ function sendToRenderer(channel: MenuBroadcastChannel): void {
 }
 
 /**
- * Converts a MenuItem from the shared schema to Electron MenuItemConstructorOptions.
+ * 把共享菜单 schema 里的 MenuItem 转成 Electron 的 MenuItemConstructorOptions。
  */
 function toElectronMenuItem(item: MenuItem): Electron.MenuItemConstructorOptions {
   if (item.type === 'separator') {
@@ -276,7 +279,7 @@ function toElectronMenuItem(item: MenuItem): Electron.MenuItemConstructorOptions
   }
 
   if (item.type === 'role') {
-    // Use Electron's built-in role - it handles accelerators automatically
+    // 使用 Electron 内置 role，自动处理快捷键
     return { role: item.role as Electron.MenuItemConstructorOptions['role'] }
   }
 
@@ -284,11 +287,11 @@ function toElectronMenuItem(item: MenuItem): Electron.MenuItemConstructorOptions
     return {
       label: i18n.t(item.labelKey),
       accelerator: item.shortcut,
-      registerAccelerator: false,  // Action registry handles the keyboard shortcut
+      registerAccelerator: false,  // 键盘快捷键由 Action registry 处理
       click: () => sendToRenderer(item.ipcChannel as MenuBroadcastChannel),
     }
   }
 
-  // Should never reach here
+  // 不应走到这里
   return { type: 'separator' }
 }

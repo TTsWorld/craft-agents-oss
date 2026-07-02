@@ -1,32 +1,34 @@
 /**
- * EntityListBadge — Generic configurable pill badge for use inside EntityRow badge rows.
+ * EntityListBadge — 实体列表行内的通用胶囊徽标。
  *
- * Two variants:
- * - "text" (default): Fixed-height text pill (h-[18px]) with padding.
- * - "icon": 18×18 centered icon box (no text padding).
+ * 两种变体：
+ * - "text"（默认）：固定高度 18px 的文本胶囊，带内边距。
+ * - "icon"：18×18 的图标居中盒子，无文本内边距。
  *
- * Color is caller-controlled via `colorClass` or inline `style`.
+ * 颜色由调用方通过 `colorClass` 或内联 `style` 控制。
  */
 
 import * as React from 'react'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@craft-agent/ui'
 import { cn } from '@/lib/utils'
 
+/** EntityListBadge 的 props。 */
 export interface EntityListBadgeProps {
-  /** Badge content (text or icon) */
+  /** 徽标内容（文本或图标） */
   children: React.ReactNode
-  /** "text" (default) = text pill, "icon" = 18×18 centered icon box */
+  /** "text"（默认）= 文本胶囊，"icon" = 18×18 图标盒子 */
   variant?: 'text' | 'icon'
-  /** Color classes, e.g. "bg-accent/10 text-accent" */
+  /** 颜色类名，例如 "bg-accent/10 text-accent" */
   colorClass?: string
-  /** Inline styles — for runtime-computed colors (e.g. label color-mix) */
+  /** 内联样式，用于运行时计算颜色（如 label 的 color-mix） */
   style?: React.CSSProperties
-  /** Optional tooltip text (shown on hover) */
+  /** 可选的 tooltip 文本（hover 时显示） */
   tooltip?: string
-  /** Additional className */
+  /** 额外 className */
   className?: string
 }
 
+/** 实体列表徽标 */
 export function EntityListBadge({ children, variant = 'text', colorClass, style, tooltip, className }: EntityListBadgeProps) {
   const badge = (
     <span

@@ -1,12 +1,12 @@
 /**
- * AutomationMenu - Shared menu content for automation actions
+ * AutomationMenu - 自动化操作共享菜单内容
  *
- * Used by:
- * - AutomationsListPanel (dropdown via "..." button, context menu via right-click)
- * - AutomationInfoPage (title dropdown menu)
+ * 使用方：
+ * - AutomationsListPanel（通过“...”按钮下拉、右键上下文菜单）
+ * - AutomationInfoPage（标题下拉菜单）
  *
- * Uses MenuComponents context to render with either DropdownMenu or ContextMenu
- * primitives, following the same dual-menu pattern as SourceMenu.
+ * 使用 MenuComponents 上下文来渲染 DropdownMenu 或 ContextMenu 的原语，
+ * 遵循与 SourceMenu 相同的双菜单模式。
  */
 
 import { useTranslation } from 'react-i18next'
@@ -30,7 +30,7 @@ export interface AutomationMenuProps {
   onDuplicate?: () => void
   onEditJson?: () => void
   onDelete?: () => void
-  /** Send to another workspace (omit to hide the option) */
+  /** 发送到其他工作区（不传则隐藏该选项） */
   onSendToWorkspace?: () => void
 }
 
@@ -50,7 +50,7 @@ export function AutomationMenu({
 
   return (
     <>
-      {/* Toggle enabled/disabled */}
+      {/* 启用 / 禁用切换 */}
       {onToggleEnabled && (
         <MenuItem onClick={onToggleEnabled}>
           {enabled ? (
@@ -62,7 +62,7 @@ export function AutomationMenu({
         </MenuItem>
       )}
 
-      {/* Test Automation */}
+      {/* 测试自动化 */}
       {onTest && (
         <MenuItem onClick={onTest}>
           <Play className="h-3.5 w-3.5" />
@@ -70,7 +70,7 @@ export function AutomationMenu({
         </MenuItem>
       )}
 
-      {/* Duplicate */}
+      {/* 复制 */}
       {onDuplicate && (
         <MenuItem onClick={onDuplicate}>
           <Copy className="h-3.5 w-3.5" />
@@ -78,7 +78,7 @@ export function AutomationMenu({
         </MenuItem>
       )}
 
-      {/* Send to another workspace */}
+      {/* 发送到其他工作区 */}
       {onSendToWorkspace && (
         <MenuItem onClick={onSendToWorkspace}>
           <Send className="h-3.5 w-3.5" />
@@ -86,7 +86,7 @@ export function AutomationMenu({
         </MenuItem>
       )}
 
-      {/* Edit automations.json */}
+      {/* 编辑 automations.json */}
       {onEditJson && (
         <MenuItem onClick={onEditJson}>
           <FileCode className="h-3.5 w-3.5" />
@@ -96,7 +96,7 @@ export function AutomationMenu({
 
       <Separator />
 
-      {/* Delete */}
+      {/* 删除 */}
       {onDelete && (
         <MenuItem onClick={onDelete} variant="destructive">
           <Trash2 className="h-3.5 w-3.5" />

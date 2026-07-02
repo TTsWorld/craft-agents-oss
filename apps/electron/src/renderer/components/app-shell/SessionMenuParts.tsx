@@ -1,3 +1,8 @@
+/**
+ * SessionMenuParts — React 组件
+ * 
+ * 所属目录：app-shell
+ */
 import * as React from 'react'
 import { useTranslation } from "react-i18next"
 import { Check, Globe, Copy, RefreshCw, Link2Off } from 'lucide-react'
@@ -6,23 +11,28 @@ import { getStatusIconStyle, type SessionStatusId, type SessionStatus } from '@/
 import { sortLabelsForDisplay, type LabelConfig } from '@craft-agent/shared/labels'
 import { LabelIcon } from '@/components/ui/label-icon'
 
+/** ShareMenuItemsProps：组件 props 类型定义 */
 export interface ShareMenuItemsProps {
-  /** Open the published share URL in the system browser. */
+  /**
+   */
   onOpenInBrowser: () => void
-  /** Copy the published share URL to the clipboard. */
+  /**
+   * 将发布的共享 URL 复制到剪贴板。  
+   */
   onCopyLink: () => void | Promise<void>
-  /** Re-publish the share (bumps the snapshot). */
+  /**
+   */
   onUpdateShare: () => void | Promise<void>
-  /** Revoke the share. */
+  /**
+   * 撤销分享。  
+   */
   onRevokeShare: () => void | Promise<void>
   menu: Pick<MenuComponents, 'MenuItem' | 'Separator'>
 }
 
 /**
- * Render-only — side effects come from `useSessionMenuActions`. Both the
- * desktop dropdown and the compact drawer wire the same hook callbacks
- * through this component (compact uses its own row primitives, but the
- * action set is identical).
+ * ShareMenuItems - 纯渲染组件，分享相关菜单项。
+ * 副作用由 useSessionMenuActions 提供；桌面端下拉菜单和紧凑端抽屉都通过该组件接入同一套回调。
  */
 export function ShareMenuItems({
   onOpenInBrowser,
@@ -57,6 +67,7 @@ export function ShareMenuItems({
   )
 }
 
+/** StatusMenuItemsProps：组件 props 类型定义 */
 export interface StatusMenuItemsProps {
   sessionStatuses: SessionStatus[]
   activeStateId?: SessionStatusId | null
@@ -64,6 +75,7 @@ export interface StatusMenuItemsProps {
   menu: Pick<MenuComponents, 'MenuItem'>
 }
 
+/** StatusMenuItems - 状态单选菜单项列表 */
 export function StatusMenuItems({
   sessionStatuses,
   activeStateId,
@@ -75,6 +87,7 @@ export function StatusMenuItems({
   return (
     <>
       {sessionStatuses.map((state) => {
+        // 复制图标元素并传入 bare 模式，避免图标自带额外样式
         const bareIcon = React.isValidElement(state.icon)
           ? React.cloneElement(state.icon as React.ReactElement<{ bare?: boolean }>, { bare: true })
           : state.icon
@@ -95,6 +108,7 @@ export function StatusMenuItems({
   )
 }
 
+/** LabelMenuItemsProps：组件 props 类型定义 */
 export interface LabelMenuItemsProps {
   labels: LabelConfig[]
   appliedLabelIds: Set<string>
@@ -103,9 +117,8 @@ export interface LabelMenuItemsProps {
 }
 
 /**
- * Count how many labels in a subtree (including the root) are currently applied.
- * Used to show selection counts on parent SubTriggers so users can see
- * where in the tree their selections are.
+ * 统计某标签子树（含自身）里当前已选中的标签数量。
+ * 用于在父级 SubTrigger 上显示计数，让用户一眼看到选择集中在哪里。
  */
 function countAppliedInSubtree(label: LabelConfig, appliedIds: Set<string>): number {
   let count = appliedIds.has(label.id) ? 1 : 0
@@ -118,12 +131,12 @@ function countAppliedInSubtree(label: LabelConfig, appliedIds: Set<string>): num
 }
 
 /**
- * LabelMenuItems - Recursive component for rendering label tree as nested sub-menus.
+ * LabelMenuItems - 递归地把标签树渲染成嵌套子菜单。
  *
- * Labels with children render as nested Sub/SubTrigger/SubContent menus (the parent
- * itself appears as the first toggleable item inside its submenu, followed by children).
- * Leaf labels render as simple toggleable menu items with checkmarks.
- * Parent triggers show a count of applied descendants so users can see where selections are.
+ * 规则：
+ * - 有子标签的节点渲染为 Sub/SubTrigger/SubContent 嵌套菜单；父标签本身也会作为子菜单里第一个可勾选项出现。
+ * - 叶子标签渲染为简单可勾选菜单项。
+ * - 父级触发器上显示后代已选数量，方便定位当前选择。
  */
 export function LabelMenuItems({
   labels,
@@ -157,6 +170,7 @@ export function LabelMenuItems({
               <SubContent>
                 <MenuItem
                   onSelect={(e: Event) => {
+                    // 阻止默认行为，自己处理勾选/取消勾选
                     e.preventDefault()
                     onToggle(label.id)
                   }}

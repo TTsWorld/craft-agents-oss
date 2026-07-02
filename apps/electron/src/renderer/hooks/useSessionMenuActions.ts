@@ -1,27 +1,21 @@
 /**
  * useSessionMenuActions
  *
- * Single source of truth for session-menu side effects (share / refresh title /
- * copy path / show in finder / open in new panel / share-submenu actions / label
- * toggle). Consumed by both `SessionMenu` (desktop dropdown / context menu) and
- * `CompactSessionMenu` (compact-mode drawer) so a new session action only has
- * to be wired through one place.
+ * 会话菜单副作用（分享 / 刷新标题 / 复制路径 / 在 Finder 中显示 / 在新面板打开 /
+ * 分享子菜单操作 / 标签切换）的单一事实来源。
+ * 同时被 `SessionMenu`（桌面端下拉/上下文菜单）和 `CompactSessionMenu`
+ *（紧凑模式抽屉）消费，因此新增会话操作只需在一个地方接线。
  *
- * Also owns **optimistic label state**: the parent's labels-changed pipeline
- * (`onLabelsChange` → IPC → server → `labels_changed` event → atom → re-render)
- * is asynchronous, so a fast second tap that derived from the prop's stale
- * `item.labels` would compute against an out-of-date snapshot and could
- * overwrite the first tap's update. The hook keeps a local optimistic copy
- * mirrored in a `useRef` so toggles read the latest value synchronously
- * (without going through React's update queue, which would be impure under
- * Strict Mode and could double-fire `onLabelsChange`). Prop sync only runs
- * when the server has acknowledged our latest local change (tracked via
- * `lastSentKeyRef`) — avoids a brief checkmark-flash without needing a full
- * request-tracking layer. State is hard-reset when `item.id` changes so
- * pending optimistic state from a previous session can't leak into a new one.
+ * 还拥有**乐观标签状态**：父组件的标签变化管道
+ *（`onLabelsChange` → IPC → 服务端 → `labels_changed` 事件 → atom → re-render）
+ * 是异步的，如果第二次快速点击基于 props 中仍然过期的 `item.labels` 计算，
+ * 就会覆盖第一次点击的更新。本 hook 用 `useRef` 维护一份本地乐观副本，
+ * 使切换操作能同步读取最新值（不经过 React 更新队列，避免 Strict Mode 下不纯地重复触发 onLabelsChange）。
+ * 只有当服务端确认了我们的最近一次本地变更（通过 `lastSentKeyRef` 跟踪）时才从 prop 同步，
+ * 避免勾选闪烁，且无需完整请求追踪层。会话 ID 变化时状态会硬重置，
+ * 防止上一个会话的待定乐观状态泄漏到新会话。
  *
- * Pure label-mutation logic lives in `@craft-agent/shared/labels`
- * (`toggleLabelInList`) and is unit-tested there.
+ * 纯标签变更逻辑位于 `@craft-agent/shared/labels`（`toggleLabelInList`）并在那里做单元测试。
  */
 
 import * as React from 'react'
@@ -37,27 +31,27 @@ export interface UseSessionMenuActionsOptions {
 }
 
 export interface SessionMenuActions {
-  /** Set of base label IDs currently applied (optimistic). */
+  /** 当前已应用（乐观）的基础标签 ID 集合 */
   appliedLabelIds: Set<string>
-  /** Toggle a label (add if absent, remove all entries with this base ID if present). */
+  /** 切换标签：不存在则添加，存在则移除该基础 ID 的所有条目 */
   toggleLabel: (labelId: string) => void
   share: () => Promise<void>
   showInFinder: () => void
   copyPath: () => Promise<void>
   refreshTitle: () => Promise<void>
   openInNewPanel: () => void
-  /** Open the session's published share URL in the system browser (no-op if not shared). */
+  /** 在系统浏览器中打开会话的已发布分享链接（未分享则无操作） */
   openSharedInBrowser: () => void
-  /** Copy the session's published share URL to the clipboard (no-op if not shared). */
+  /** 复制会话的已发布分享链接到剪贴板（未分享则无操作） */
   copySharedLink: () => Promise<void>
-  /** Re-publish the share to bump the snapshot. */
+  /** 重新发布分享以刷新快照 */
   updateShare: () => Promise<void>
-  /** Revoke the share. */
+  /** 撤销分享 */
   revokeShare: () => Promise<void>
 }
 
-// SOH (U+0001) — non-printable so it can't collide with label IDs (which
-// validate to [a-z0-9-]) or values (which may themselves contain '::').
+// SOH (U+0001) —— 不可打印字符，不会与标签 ID（校验规则 [a-z0-9-]）
+// 或值（本身可能含 '::'）冲突。
 const LABEL_KEY_SEPARATOR = String.fromCharCode(1)
 
 function joinLabelKey(labels: readonly string[] | undefined): string {
@@ -74,33 +68,29 @@ export function useSessionMenuActions({
   const propLabels = item.labels
 
   const [optimisticLabels, setOptimisticLabels] = React.useState<string[]>(() => propLabels ?? [])
-  // Mirror of `optimisticLabels` so toggles can read the latest value
-  // synchronously without going through React's update queue. Reading from
-  // a state-updater callback would be impure (Strict Mode can invoke updaters
-  // twice in dev), which would double-fire onLabelsChange.
+  // `optimisticLabels` 的镜像，让切换操作能同步读取最新值，
+  // 不经过 React 更新队列。在 state updater 里读取会不纯（dev 下 Strict Mode 可能调用两次），
+  // 导致 onLabelsChange 重复触发。
   const optimisticLabelsRef = React.useRef<string[]>(propLabels ?? [])
   const propKey = React.useMemo(() => joinLabelKey(propLabels), [propLabels])
   const lastSentKeyRef = React.useRef<string | null>(null)
 
-  // Hard-reset on session change so optimistic state from a previous session
-  // cannot leak into a new one (e.g. user toggles `bug` on session A, navigates
-  // to B before the IPC ACK — without this reset, lastSentKeyRef would block
-  // the prop sync and B would briefly render A's labels).
+  // 会话切换时硬重置，避免上一个会话的乐观状态泄漏到新会话
+  //（例如用户在会话 A 切换 `bug` 标签，在 IPC 确认前切换到 B，
+  //  不重置会导致 lastSentKeyRef 阻塞 prop 同步，B 短暂显示 A 的标签）。
   React.useEffect(() => {
     const next = propLabels ?? []
     optimisticLabelsRef.current = next
     lastSentKeyRef.current = null
     setOptimisticLabels(next)
-    // Intentionally only depending on sessionId — propLabels changes within
-    // the same session are handled by the prop-sync effect below.
+    // 故意只依赖 sessionId —— 同一会话内的 prop 变化由下面的 prop 同步 effect 处理
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
   React.useEffect(() => {
-    // Sync from prop only when the server has caught up to (or surpassed)
-    // our last sent value — otherwise an in-flight prop update would briefly
-    // erase a queued local toggle. lastSentKeyRef === null means we have
-    // no pending local changes, so the prop is authoritative.
+    // 只有当服务端已经追上（或超过）我们最近一次发送的值时才从 prop 同步，
+    // 否则飞行中的 prop 更新会短暂抹去已排队的本地切换。
+    // lastSentKeyRef === null 表示没有待处理的本地变更，此时 prop 是权威的。
     if (lastSentKeyRef.current === null || lastSentKeyRef.current === propKey) {
       const next = propLabels ?? []
       optimisticLabelsRef.current = next
@@ -116,10 +106,9 @@ export function useSessionMenuActions({
 
   const toggleLabel = React.useCallback((labelId: string) => {
     if (!onLabelsChange) return
-    // Read the canonical latest value from the ref, mutate refs, fire the
-    // callback, and only THEN call setState. All side effects happen outside
-    // any state-updater callback so they fire exactly once per user tap
-    // even under Strict Mode's double-render checks.
+    // 从 ref 读取权威最新值，变更 ref，触发回调，最后才 setState。
+    // 所有副作用都在 state updater 外部执行，保证每次用户点击只触发一次，
+    // 即使在 Strict Mode 的双渲染检查下也是如此。
     const next = toggleLabelInList(optimisticLabelsRef.current, labelId)
     optimisticLabelsRef.current = next
     lastSentKeyRef.current = joinLabelKey(next)

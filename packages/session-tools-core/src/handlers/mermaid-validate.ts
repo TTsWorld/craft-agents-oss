@@ -1,8 +1,8 @@
 /**
- * Mermaid Validate Handler
+ * Mermaid Validate Handler（Mermaid 图表语法校验处理器）
  *
- * Validates Mermaid diagram syntax using beautiful-mermaid renderer.
- * No DOM required - works identically in Claude and Codex.
+ * 使用 beautiful-mermaid 的渲染器校验图表语法是否合法。
+ * 不需要 DOM，在 Claude 和 Codex 两种环境下行为一致。
  */
 
 import type { SessionToolContext } from '../context.ts';
@@ -10,19 +10,18 @@ import type { ToolResult } from '../types.ts';
 import { renderMermaidSVG } from 'beautiful-mermaid';
 import { normalizeMermaidSource } from '../validation.ts';
 
+// mermaid_validate 参数：code 为图表源码，render 当前未实际使用
 export interface MermaidValidateArgs {
   code: string;
   render?: boolean;
 }
 
 /**
- * Handle the mermaid_validate tool call.
+ * 处理 mermaid_validate tool 调用。
  *
- * Uses renderMermaidSVG from beautiful-mermaid to validate the same diagram
- * families the renderer accepts, including xychart-beta. YAML frontmatter is
- * stripped before validation because it is metadata rather than diagram syntax.
- * If rendering succeeds, the diagram is valid. If rendering throws, returns the
- * error message.
+ * 通过 renderMermaidSVG 来校验图表：能渲染成功即视为语法合法。
+ * 校验前会先 normalizeMermaidSource 去掉 YAML frontmatter（那是元数据，不是图表语法）。
+ * 如果渲染抛异常，就把错误信息返回给模型。
  */
 export async function handleMermaidValidate(
   _ctx: SessionToolContext,
@@ -31,8 +30,8 @@ export async function handleMermaidValidate(
   const { code } = args;
 
   try {
-    // renderMermaidSVG throws if syntax/layout is invalid. Use the renderer path
-    // rather than parseMermaid(), which only understands flowchart/state syntax.
+    // renderMermaidSVG 在语法或布局错误时会抛异常。
+    // 这里用渲染路径而不是 parseMermaid()，后者只支持流程图/状态图等少数类型。
     renderMermaidSVG(normalizeMermaidSource(code));
 
     return {

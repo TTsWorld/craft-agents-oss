@@ -4,19 +4,32 @@ import { cn } from "@/lib/utils"
 import { AddWorkspaceContainer, AddWorkspaceStepHeader } from "./primitives"
 
 interface AddWorkspaceStep_ChoiceProps {
+  /** 用户选择“新建工作区” */
   onCreateNew: () => void
+  /** 用户选择“打开已有文件夹” */
   onOpenFolder: () => void
+  /** 用户选择“连接远程服务器” */
   onConnectRemote: () => void
 }
 
 interface ChoiceCardProps {
+  /** 卡片左侧图标 */
   icon: React.ReactNode
+  /** 卡片标题 */
   title: string
+  /** 卡片说明 */
   description: string
+  /** 点击卡片触发的回调 */
   onClick: () => void
+  /** 视觉变体，primary 表示推荐选项 */
   variant?: 'primary' | 'secondary'
 }
 
+/**
+ * ChoiceCard - 选择步骤中的大卡片按钮
+ *
+ * 左侧图标、右侧标题与说明，整体作为一个 button 响应点击。
+ */
 function ChoiceCard({ icon, title, description, onClick, variant = 'secondary' }: ChoiceCardProps) {
   return (
     <button
@@ -48,11 +61,12 @@ function ChoiceCard({ icon, title, description, onClick, variant = 'secondary' }
 }
 
 /**
- * AddWorkspaceStep_Choice - Initial step to choose creation method
+ * AddWorkspaceStep_Choice - 添加工作区的初始选择步骤
  *
- * Two options:
- * 1. Create new workspace - Creates a fresh workspace folder
- * 2. Open folder as workspace - Use an existing folder
+ * 提供三个入口：
+ * 1. 新建工作区：在本地创建全新的工作区文件夹
+ * 2. 打开已有文件夹：把本地已有文件夹作为工作区打开
+ * 3. 连接远程服务器：连接到远程 Craft Agent Server 上的工作区
  */
 export function AddWorkspaceStep_Choice({
   onCreateNew,

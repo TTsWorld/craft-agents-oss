@@ -1,13 +1,11 @@
 /**
- * ApiKeyInput - Reusable API key entry form control
+ * ApiKeyInput - 可复用的 API Key 录入表单控件
  *
- * Renders a password input for the API key, a preset selector for Base URL,
- * and an optional Model override field.
+ * 渲染密码形式的 API Key 输入框、Base URL 预设选择器，以及可选的模型覆盖字段。
  *
- * Does NOT include layout wrappers or action buttons — the parent
- * controls placement via the form ID ("api-key-form") for submit binding.
+ * 不包含布局外壳与操作按钮——父组件通过表单 ID（"api-key-form"）绑定外部提交按钮来控制布局。
  *
- * Used in: Onboarding CredentialsStep, Settings API dialog
+ * 使用位置：Onboarding CredentialsStep、Settings API dialog
  */
 
 import { useState, useEffect, useCallback, useRef } from "react"
@@ -33,65 +31,79 @@ import {
 
 import type { CustomEndpointApi, CustomEndpointConfig } from '@config/llm-connections'
 
+/** API Key 校验状态：idle 未校验 / validating 校验中 / success 成功 / error 失败。 */
 export type ApiKeyStatus = 'idle' | 'validating' | 'success' | 'error'
 
+/** 将内部使用的 CustomEndpointApi 类型再导出，方便外部引用。 */
 export type { CustomEndpointApi }
 
+/**
+ * 提交时传给父组件的数据结构。
+ * 在 Electron renderer 层，最终会通过 electronAPI 发送到 main 进程，由 Pi SDK / Claude SDK 建立连接。
+ */
 export interface ApiKeySubmitData {
   apiKey: string
   baseUrl?: string
   connectionDefaultModel?: string
+  /** 三档模型列表，用于 Pi API key 流程。 */
   models?: string[]
+  /** Pi SDK 需要的 provider 标识，例如 'anthropic'、'openai'、'amazon-bedrock'。 */
   piAuthProvider?: string
+  /** 模型选择模式：从 provider 自动同步，或用户自定义三档。 */
   modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
-  /** Custom endpoint protocol — set when user configures an arbitrary API endpoint */
+  /** 自定义端点协议——用户配置任意 API 端点时生效。 */
   customEndpoint?: CustomEndpointConfig
-  /** IAM credentials for Pi+Bedrock (piAuthProvider='amazon-bedrock') setup */
+  /** Pi+Bedrock 的 IAM 凭证（piAuthProvider='amazon-bedrock' 时使用）。 */
   iamCredentials?: {
     accessKeyId: string
     secretAccessKey: string
     sessionToken?: string
   }
-  /** AWS region for Pi+Bedrock */
+  /** Pi+Bedrock 的 AWS 区域。 */
   awsRegion?: string
-  /** Bedrock authentication method — determines auth type for Pi+Bedrock connections */
+  /** Bedrock 鉴权方式：决定 Pi+Bedrock 使用 IAM 凭证还是环境凭证。 */
   bedrockAuthMethod?: 'iam_credentials' | 'environment'
 }
 
 export interface ApiKeyInputProps {
-  /** Current validation status */
+  /** 当前校验状态 */
   status: ApiKeyStatus
-  /** Error message to display when status is 'error' */
+  /** 状态为 error 时显示的错误信息 */
   errorMessage?: string
-  /** Called when the form is submitted with the key and optional endpoint config */
+  /** 表单提交时的回调，携带 key 与可选的端点配置 */
   onSubmit: (data: ApiKeySubmitData) => void
-  /** Form ID for external submit button binding (default: "api-key-form") */
+  /** 表单 ID，供外部提交按钮绑定，默认 "api-key-form" */
   formId?: string
-  /** Disable the input (e.g. during validation) */
+  /** 是否禁用输入（例如校验过程中） */
   disabled?: boolean
-  /** Provider type determines which presets and placeholders to show */
+  /** Provider 类型，决定展示哪些预设与占位文案 */
   providerType?: 'anthropic' | 'openai' | 'pi' | 'google' | 'pi_api_key'
-  /** Pre-fill values when editing an existing connection */
+  /** 编辑已有连接时的预填值 */
   initialValues?: {
     apiKey?: string
     baseUrl?: string
     connectionDefaultModel?: string
     activePreset?: string
     models?: string[]
-    /** Pre-fill the protocol toggle for custom endpoints */
+    /** 自定义端点协议的预填值 */
     customApi?: CustomEndpointApi
   }
 }
 
+/** 单个 Endpoint 预设项。 */
 interface Preset {
+  /** 预设键名。 */
   key: PresetKey
+  /** 下拉框中展示的标签。 */
   label: string
+  /** 对应的基础 URL。 */
   url: string
+  /** API Key 输入框的占位提示。 */
   placeholder?: string
 }
 
-// Anthropic provider presets - for Claude Code backend
-// Also used by Pi API key flow (same providers, routed via Pi SDK)
+/** Anthropic 模式下的预设列表——对应 Claude Code 后端。
+ * 也被 pi_api_key 流程复用（同样的 provider，通过 Pi SDK 路由）。 */
 const ANTHROPIC_PRESETS: Preset[] = [
   { key: 'anthropic', label: 'Anthropic', url: 'https://api.anthropic.com', placeholder: 'sk-ant-...' },
   { key: 'openai', label: 'OpenAI', url: 'https://api.openai.com/v1', placeholder: 'sk-...' },
@@ -117,53 +129,60 @@ const ANTHROPIC_PRESETS: Preset[] = [
 ]
 
 /**
- * Presets without a Pi SDK provider entry that nonetheless expose a known
- * OpenAI-compatible protocol. They behave like 'custom' on submit (customEndpoint
- * gets pinned to openai-completions) but stay branded in the dropdown.
+ * 这些 preset 在 Pi SDK 中没有独立 provider 条目，但暴露了已知的 OpenAI 兼容协议。
+ * 提交时行为类似 'custom'（customEndpoint 固定为 openai-completions），
+ * 但在下拉框中仍保留品牌名称。
  */
 const OPENAI_COMPAT_CUSTOM_URL_PRESETS: ReadonlySet<string> = new Set(['manifest'])
 
-// OpenAI provider presets - for Codex backend
-// Only direct OpenAI is supported; 3PP providers (OpenRouter, Vercel, Ollama) should be
-// configured via the Anthropic/Claude connection which routes through the Claude Agent SDK.
+/** OpenAI 模式下的预设列表——对应 Codex 后端。
+ *  仅支持直接 OpenAI；第三方 OpenAI 兼容服务（OpenRouter、Vercel、Ollama 等）
+ *  应通过 Anthropic/Claude 连接配置，由 Claude Agent SDK 路由。 */
 const OPENAI_PRESETS: Preset[] = [
   { key: 'openai', label: 'OpenAI', url: '' },
 ]
 
-// Pi provider presets - unified API for 20+ LLM providers
+/** Pi 模式下的预设列表——统一接入 20+ LLM provider 的后端。 */
 const PI_PRESETS: Preset[] = [
   { key: 'pi', label: 'Craft Agents Backend (Direct)', url: '' },
   { key: 'openrouter', label: 'OpenRouter', url: 'https://openrouter.ai/api' },
   { key: 'custom', label: 'Custom', url: '' },
 ]
 
-// Google AI Studio preset - single endpoint, no custom URL needed
+/** Google AI Studio 模式下的预设——单一端点，无需自定义 URL。 */
 const GOOGLE_PRESETS: Preset[] = [
   { key: 'google', label: 'Google AI Studio', url: '' },
 ]
 
-/** Presets that require the Pi SDK for authentication — hidden in Anthropic API Key mode */
+/** 仅在 Pi SDK 模式下才显示的预设键。在 Anthropic API Key 模式下隐藏。 */
 const PI_ONLY_PRESET_KEYS: ReadonlySet<string> = new Set(['minimax-global', 'minimax-cn'])
 
+/** Anthropic 兼容推荐模型列表，用于预填 OpenRouter/Vercel/Custom 等端点。 */
 const COMPAT_ANTHROPIC_DEFAULTS = 'claude-opus-4-8, claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5'
+/** OpenAI 兼容推荐模型列表，用于 Codex 或 OpenAI 兼容端点。 */
 const COMPAT_OPENAI_DEFAULTS = 'openai/gpt-5.2-codex, openai/gpt-5.1-codex-mini'
+/** Minimax 推荐模型列表。 */
 const COMPAT_MINIMAX_DEFAULTS = 'MiniMax-M2.5, MiniMax-M2.5-highspeed'
+/** Kimi 推荐模型列表。 */
 const COMPAT_KIMI_DEFAULTS = 'k2p5, kimi-k2-thinking'
 
+/** 根据 providerType 返回对应的预设列表。 */
 function getPresetsForProvider(providerType: 'anthropic' | 'openai' | 'pi' | 'google' | 'pi_api_key'): Preset[] {
   if (providerType === 'pi_api_key') return ANTHROPIC_PRESETS
   if (providerType === 'google') return GOOGLE_PRESETS
   if (providerType === 'pi') return PI_PRESETS
   if (providerType === 'openai') return OPENAI_PRESETS
-  // Anthropic mode: exclude presets that only work via Pi SDK
+  // Anthropic 模式：过滤掉仅支持 Pi SDK 的预设
   return ANTHROPIC_PRESETS.filter(p => !PI_ONLY_PRESET_KEYS.has(p.key))
 }
 
+/** 根据 URL 反查对应的预设键；匹配不到则返回 'custom'。 */
 function getPresetForUrl(url: string, presets: Preset[]): PresetKey {
   const match = presets.find(p => p.key !== 'custom' && p.url === url)
   return match?.key ?? 'custom'
 }
 
+/** 将逗号分隔的模型字符串解析成数组，并去除空项。 */
 function parseModelList(value: string): string[] {
   return value
     .split(',')
@@ -172,7 +191,7 @@ function parseModelList(value: string): string[] {
 }
 
 // ============================================================
-// Pi model tier selection (for providers with many models)
+// Pi 模型分档选择（模型很多的 provider 使用三档下拉）
 // ============================================================
 
 export function ApiKeyInput({
@@ -184,11 +203,11 @@ export function ApiKeyInput({
   providerType = 'anthropic',
   initialValues,
 }: ApiKeyInputProps) {
-  // Get presets based on provider type
+  // 根据 provider 类型拿到可用预设
   const presets = getPresetsForProvider(providerType)
   const defaultPreset = presets[0]
 
-  // Compute initial preset: explicit (Pi piAuthProvider), derived from URL, or default
+  // 计算初始 preset：优先用显式值，其次根据 baseUrl 反查，最后取默认
   const initialPreset = initialValues?.activePreset
     ?? (initialValues?.baseUrl ? getPresetForUrl(initialValues.baseUrl, presets) : defaultPreset.key)
 
@@ -204,14 +223,14 @@ export function ApiKeyInput({
   const [customApi, setCustomApi] = useState<CustomEndpointApi>(initialValues?.customApi ?? 'openai-completions')
   const [modelError, setModelError] = useState<string | null>(null)
 
-  // Bedrock auth state
+  // Bedrock 鉴权相关状态
   const [bedrockAuthMethod, setBedrockAuthMethod] = useState<'iam_credentials' | 'environment'>('iam_credentials')
   const [awsAccessKeyId, setAwsAccessKeyId] = useState('')
   const [awsSecretAccessKey, setAwsSecretAccessKey] = useState('')
   const [awsSessionToken, setAwsSessionToken] = useState('')
   const [awsRegion, setAwsRegion] = useState('us-east-1')
 
-  // Pi model tier state (for providers with many models like OpenRouter, Vercel)
+  // Pi 模型三档状态（用于 OpenRouter、Vercel 等模型众多的 provider）
   const [piModels, setPiModels] = useState<PiModelInfo[]>([])
   const [piModelsLoading, setPiModelsLoading] = useState(false)
   const [bestModel, setBestModel] = useState('')
@@ -227,11 +246,11 @@ export function ApiKeyInput({
 
   const isPiApiKeyFlow = providerType === 'pi_api_key'
   const isBedrock = activePreset === 'amazon-bedrock'
-  // Hide endpoint/model fields for providers with well-known endpoints handled by the SDK
+  // 对 SDK 已有知名端点的 provider，隐藏 Base URL / Model 输入
   const DEFAULT_ENDPOINT_PROVIDERS = new Set(['anthropic', 'openai', 'pi', 'google'])
   const isDefaultProviderPreset = DEFAULT_ENDPOINT_PROVIDERS.has(activePreset)
 
-  // Provider-specific placeholders from the active preset
+  // 当前预设决定的 API Key 占位提示
   const activePresetObj = presets.find(p => p.key === activePreset)
   const apiKeyPlaceholder = activePresetObj?.placeholder
     ?? (providerType === 'google' ? 'AIza...'
@@ -239,8 +258,10 @@ export function ApiKeyInput({
     : providerType === 'openai' ? 'sk-...'
     : 'Paste your key here...')
 
-  // Fetch Pi SDK models when a provider is selected in pi_api_key flow.
-  // Returns all models sorted by cost (expensive-first) for the searchable tier dropdowns.
+  /**
+   * 在 pi_api_key 流程中，当选中某个 provider 时加载该 provider 的模型列表。
+   * 返回按成本降序排列的全部模型，用于可搜索的三档下拉框。
+   */
   const loadPiModels = useCallback(async (provider: string) => {
     if (!isPiApiKeyFlow || !provider || provider === 'custom' || DEFAULT_ENDPOINT_PROVIDERS.has(provider) || OPENAI_COMPAT_CUSTOM_URL_PRESETS.has(provider)) {
       setPiModels([])
@@ -248,9 +269,11 @@ export function ApiKeyInput({
     }
     setPiModelsLoading(true)
     try {
+      // 通过 Electron preload 暴露的 electronAPI 调用 main 进程获取模型列表。
       const result = await window.electronAPI.getPiProviderModels(provider)
       setPiModels(result.models)
 
+      // 首次为该 provider 加载模型时，用已保存的档位或自动默认值初始化三档。
       if (hydratedTierProviderRef.current !== provider) {
         const tiers = resolveTierModels(result.models, provider === initialPreset ? initialValues?.models : undefined)
         setBestModel(tiers.best)
@@ -270,9 +293,10 @@ export function ApiKeyInput({
     loadPiModels(activePreset)
   }, [activePreset, loadPiModels])
 
-  // Whether to show 3 tier dropdowns instead of text input
+  // 是否展示三档下拉（而非单行模型输入）
   const hasPiModels = isPiApiKeyFlow && piModels.length > 0 && !isDefaultProviderPreset && activePreset !== 'custom' && !isBedrock
 
+  /** 用户从下拉框选择某个 preset 后的处理。 */
   const handlePresetSelect = (preset: Preset) => {
     setActivePreset(preset.key)
     if (preset.key !== 'custom') {
@@ -284,8 +308,7 @@ export function ApiKeyInput({
       setBaseUrl(preset.url)
     }
     setModelError(null)
-    // Pre-fill recommended model for Ollama; clear for all others
-    // (Default provider presets hide the field entirely, others default to provider model IDs when empty)
+    // 为部分 provider 预填推荐模型；其余情况清空
     if (preset.key === 'ollama') {
       setConnectionDefaultModel('qwen3-coder')
     } else if (preset.key === 'openrouter' || preset.key === 'vercel-ai-gateway') {
@@ -303,6 +326,7 @@ export function ApiKeyInput({
     }
   }
 
+  /** Base URL 输入框变化时：尝试反查 preset 并更新状态。 */
   const handleBaseUrlChange = (value: string) => {
     setBaseUrl(value)
     const presetKey = getPresetForUrl(value, presets)
@@ -331,6 +355,7 @@ export function ApiKeyInput({
     }
   }
 
+  /** 表单提交：根据当前模式组装 ApiKeySubmitData。 */
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -338,7 +363,7 @@ export function ApiKeyInput({
       ? resolvePiAuthProviderForSubmit(activePreset, lastNonCustomPreset)
       : undefined
 
-    // Pi API key flow with tier dropdowns — submit selected models
+    // 分支一：Pi API key 流程 + 三档下拉 → 提交选中的三档模型
     if (hasPiModels) {
       if (!bestModel || !defaultModel || !cheapModel) {
         setModelError('Please select a model for each tier.')
@@ -356,8 +381,7 @@ export function ApiKeyInput({
       return
     }
 
-    // Bedrock — routes through Pi SDK with piAuthProvider='amazon-bedrock'.
-    // Submit with auth method and optional IAM credentials.
+    // 分支二：Bedrock → 通过 Pi SDK 以 piAuthProvider='amazon-bedrock' 提交，附带鉴权方式与可选 IAM 凭证。
     if (isBedrock) {
       if (bedrockAuthMethod === 'iam_credentials' && !awsAccessKeyId.trim()) {
         setModelError('Access Key ID is required for IAM authentication.')
@@ -397,9 +421,8 @@ export function ApiKeyInput({
       return
     }
 
-    // Include custom endpoint protocol when user configured a custom base URL.
-    // Branded openai-compat presets (e.g. Manifest) are pinned to openai-completions
-    // and routed via the Pi SDK's openai adapter.
+    // 分支三：常规提交。用户配置了自定义 Base URL 时附带 customEndpoint。
+    // 品牌化的 OpenAI 兼容预设（如 Manifest）固定为 openai-completions，并通过 Pi SDK 的 openai 适配器路由。
     const { customEndpoint, piAuthProvider: resolvedPiAuthProvider } = resolveCustomEndpointPayload({
       activePreset,
       baseUrl: effectiveBaseUrl,
@@ -421,6 +444,7 @@ export function ApiKeyInput({
     })
   }
 
+  // 三档配置：Best（最强）、Balanced（均衡）、Fast（最快/经济）
   const tierConfigs = [
     { label: 'Best', desc: 'most capable', value: bestModel, onChange: setBestModel },
     { label: 'Balanced', desc: 'good for everyday use', value: defaultModel, onChange: setDefaultModel },
@@ -430,7 +454,7 @@ export function ApiKeyInput({
 
   return (
     <form id={formId} onSubmit={handleSubmit} className="space-y-6">
-      {/* API Key — hidden for Bedrock (uses IAM/Environment auth) */}
+      {/* API Key 输入区：Bedrock 使用 IAM/环境鉴权，因此隐藏 */}
       {!isBedrock && (<div className="space-y-2">
         <Label htmlFor="api-key">API Key</Label>
         <div className={cn(
@@ -465,7 +489,7 @@ export function ApiKeyInput({
         </div>
       </div>)}
 
-      {/* Endpoint/Provider Preset Selector - hidden when only one preset (e.g. Codex/OpenAI direct) */}
+      {/* Endpoint/Provider 预设选择器：仅一个预设时隐藏（如 Codex/OpenAI 直连） */}
       {presets.length > 1 && (
       <div className="space-y-2">
         <div className="flex items-center justify-between">
@@ -492,7 +516,7 @@ export function ApiKeyInput({
             </StyledDropdownMenuContent>
           </DropdownMenu>
         </div>
-        {/* Base URL input - hidden for default provider presets (Anthropic/OpenAI) and Bedrock */}
+        {/* Base URL 输入框：对默认 provider 预设（Anthropic/OpenAI）和 Bedrock 隐藏 */}
         {!isDefaultProviderPreset && !isBedrock && (
           <div className={cn(
             "rounded-md shadow-minimal transition-colors",
@@ -512,7 +536,7 @@ export function ApiKeyInput({
       </div>
       )}
 
-      {/* Protocol Toggle — visible as soon as Custom preset is selected */}
+      {/* 协议开关：选中 Custom 预设后显示 */}
       {activePreset === 'custom' && !isDefaultProviderPreset && (
         <div className="space-y-2">
           <Label>Protocol</Label>
@@ -547,10 +571,10 @@ export function ApiKeyInput({
         </div>
       )}
 
-      {/* Bedrock Auth Section */}
+      {/* Bedrock 鉴权区块 */}
       {isBedrock && (
         <>
-          {/* Auth Method Toggle */}
+          {/* 鉴权方式开关 */}
           <div className="space-y-2">
             <Label>Authentication</Label>
             <div className={cn(
@@ -580,7 +604,7 @@ export function ApiKeyInput({
             </div>
           </div>
 
-          {/* IAM Credential Fields */}
+          {/* IAM 凭证输入框 */}
           {bedrockAuthMethod === 'iam_credentials' && (
             <div className="space-y-3">
               <div className="space-y-1.5">
@@ -643,7 +667,7 @@ export function ApiKeyInput({
             </div>
           )}
 
-          {/* Environment info */}
+          {/* 环境鉴权说明 */}
           {bedrockAuthMethod === 'environment' && (
             <div className="rounded-md bg-foreground-2 p-3">
               <p className="text-xs text-foreground/50">
@@ -672,7 +696,7 @@ export function ApiKeyInput({
         </>
       )}
 
-      {/* Model Selection — 3 tier dropdowns for Pi providers, text input for custom/compat */}
+      {/* 模型选择区：Pi provider 使用三档下拉，自定义/兼容端点使用文本输入 */}
       {hasPiModels ? (
         <div className="space-y-3">
           {piModelsLoading ? (
@@ -822,7 +846,7 @@ export function ApiKeyInput({
         </div>
       )}
 
-      {/* Error message */}
+      {/* 错误信息 */}
       {status === 'error' && errorMessage && (
         <p className="text-sm text-destructive">{errorMessage}</p>
       )}

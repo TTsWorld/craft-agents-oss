@@ -1,23 +1,25 @@
 /**
- * Classification of external URLs for `shell.openExternal`-style handlers.
+ * 外部 URL 分类工具，用于 shell.openExternal 风格的处理器。
  *
- * We use a blocklist instead of an allowlist: the OS only dispatches URL
- * schemes that have a registered handler, so passing through
- * `obsidian://`, `vscode://`, etc. is safe in practice. Known-dangerous
- * schemes (XSS primitives and `file:` as an RCE vector on Windows) stay
- * explicitly blocked, with a per-scheme reason so blocked attempts produce a
- * useful error message instead of a generic "Invalid URL".
+ * 采用黑名单而非白名单：操作系统只会分发已注册处理程序的 URL scheme，
+ * 因此 obsidian://、vscode:// 等实际上可以安全透传。
+ * 已知危险的 scheme（XSS 原语以及 Windows 上可作为 RCE 向量的 file:）
+ * 被显式拦截，并附带每条 scheme 的原因，方便给用户展示有意义的提示。
  */
 
+/**
+ * URL 分类结果。
+ * TS 中的 `type` 是“类型别名”，这里用联合类型表示三种互斥结果。
+ * 类比 Go：类似一个只有一个字段区分的 interface/struct 联合。
+ */
 export type UrlClassification =
   | { kind: 'dangerous'; scheme?: string; reason: string }
   | { kind: 'internal-deeplink' }
   | { kind: 'safe-external' }
 
 /**
- * Blocked URL schemes (including trailing `:`) mapped to a human-readable
- * reason. The reason flows through to the toast users see when a blocked
- * URL gets clicked, so it should explain *why* not just *what*.
+ * 被拦截的 URL scheme（包含尾部 `:`）到可读原因的映射。
+ * 原因会展示给用户，因此应解释“为什么”而不只是“是什么”。
  */
 const DANGEROUS_SCHEMES: ReadonlyMap<string, string> = new Map([
   ['javascript:', 'JavaScript URLs can execute arbitrary code in the renderer (XSS vector).'],
@@ -32,6 +34,12 @@ const DANGEROUS_SCHEMES: ReadonlyMap<string, string> = new Map([
 
 const INTERNAL_DEEPLINK_SCHEME = 'craftagents:'
 
+/**
+ * 对外部 URL 进行分类。
+ *
+ * @param rawUrl - 原始 URL 字符串
+ * @returns UrlClassification，说明 URL 是危险、内部深链还是安全外部链接
+ */
 export function classifyExternalUrl(rawUrl: string): UrlClassification {
   if (typeof rawUrl !== 'string' || rawUrl.trim() === '') {
     return { kind: 'dangerous', reason: 'URL is empty or whitespace-only.' }
@@ -58,13 +66,16 @@ export function classifyExternalUrl(rawUrl: string): UrlClassification {
   return { kind: 'safe-external' }
 }
 
+/**
+ * 判断 URL 是否为安全的外部 URL。
+ */
 export function isSafeExternalUrl(rawUrl: string): boolean {
   return classifyExternalUrl(rawUrl).kind === 'safe-external'
 }
 
 /**
- * Format a `dangerous` classification into a user-facing error message.
- * Returns an empty string for non-dangerous classifications.
+ * 将 `dangerous` 分类格式化为面向用户的错误信息。
+ * 非危险分类返回空字符串。
  */
 export function formatBlockedUrlError(classification: UrlClassification): string {
   if (classification.kind !== 'dangerous') return ''

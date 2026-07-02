@@ -1,45 +1,45 @@
 /**
- * Documentation Utilities
+ * 文档工具集
  *
- * Provides access to built-in documentation that Claude can reference
- * when performing configuration tasks (sources, agents, permissions, etc.).
+ * 提供对内建文档的访问。Claude 在执行配置任务（如 source、agent、permissions 等）时可以引用这些文档。
  *
- * Docs are stored at ~/.craft-agent/docs/ and synced from bundled assets.
- * Source content lives in apps/electron/resources/docs/*.md for easier editing.
+ * 文档会同步到 ~/.craft-agent/docs/，原始内容位于 apps/electron/resources/docs/*.md，方便编辑。
  */
 
+// Node.js 内置模块：path 处理路径，os 获取用户主目录，fs 读写文件。
 import { join } from 'path';
 import { homedir } from 'os';
 import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from 'fs';
+// 项目内共享工具：getBundledAssetsDir 解析资源目录，debug 输出调试日志。
 import { getBundledAssetsDir } from '../utils/paths.ts';
 import { debug } from '../utils/debug.ts';
 
+// ~/.craft-agent 配置目录；~ 用 os.homedir() 解析为实际路径。
 const CONFIG_DIR = join(homedir(), '.craft-agent');
+// 文档最终落盘目录：~/.craft-agent/docs
 const DOCS_DIR = join(CONFIG_DIR, 'docs');
 
-// Track if docs have been initialized this session (prevents re-init on hot reload)
+// 标记本进程是否已经初始化过文档。防止热重载（hot reload）时重复写入。
 let docsInitialized = false;
 
-// Resolve the bundled docs assets directory using the shared asset resolver.
-// Handles all environments: dev (resources/docs), bundled (dist/resources/docs),
-// and packaged Electron (setBundledAssetsRoot sets the base path at startup).
+// 使用共享的资源解析器定位内建文档目录。
+// 兼容三种环境：开发（resources/docs）、打包（dist/resources/docs）、Electron 安装包（启动时通过 setBundledAssetsRoot 设置根目录）。
 function getAssetsDir(): string {
   return getBundledAssetsDir('docs')
-    // Fallback: development path (will fail gracefully if files don't exist)
+    // 兜底：开发目录。若文件不存在，后续读取会优雅降级为空。
     ?? join(process.cwd(), 'resources', 'docs');
 }
 
 /**
- * Load bundled docs from asset files.
- * Called once at module initialization.
- * Returns empty strings if files don't exist (graceful degradation).
+ * 从资源目录加载内建文档。
+ * 模块初始化时调用一次；文件不存在时返回空字符串（优雅降级）。
  */
 function loadBundledDocs(): Record<string, string> {
   const assetsDir = getAssetsDir();
+  // Record<string, string> 类似 Go 的 map[string]string：文件名 -> 文件内容。
   const docs: Record<string, string> = {};
 
-  // Auto-discover all files in the bundled docs directory.
-  // No hardcoded list — any file dropped into resources/docs/ is synced automatically.
+  // 自动发现资源目录下的所有文件：不硬编码列表，丢进 resources/docs/ 的文件会自动同步。
   let files: string[];
   try {
     files = existsSync(assetsDir) ? readdirSync(assetsDir) : [];
@@ -60,14 +60,13 @@ function loadBundledDocs(): Record<string, string> {
   return docs;
 }
 
-// Lazy-loaded bundled docs cache.
-// IMPORTANT: Must NOT load at module initialization because setBundledAssetsRoot()
-// hasn't been called yet. Loading eagerly causes empty docs on fresh install.
+// 内建文档的懒加载缓存。
+// 重要：不能在模块初始化时立即加载，因为此时 setBundledAssetsRoot() 还没被调用， eager load 会导致新安装时读到空文档。
 let _bundledDocs: Record<string, string> | null = null;
 
 /**
- * Get bundled docs, loading them lazily on first access.
- * This ensures docs are loaded AFTER setBundledAssetsRoot() has been called.
+ * 获取内建文档内容，首次访问时才真正加载（懒加载）。
+ * 确保在 setBundledAssetsRoot() 调用完成后再读取资源。
  */
 function getBundledDocs(): Record<string, string> {
   if (_bundledDocs === null) {
@@ -77,28 +76,29 @@ function getBundledDocs(): Record<string, string> {
 }
 
 /**
- * Get the docs directory path
+ * 获取文档目录的完整路径。
  */
 export function getDocsDir(): string {
   return DOCS_DIR;
 }
 
 /**
- * Get path to a specific doc file
+ * 获取某个文档文件的完整路径。
+ * @param filename 文档文件名，例如 "sources.md"
  */
 export function getDocPath(filename: string): string {
   return join(DOCS_DIR, filename);
 }
 
-// App root path reference for prompt/display text only.
-// IMPORTANT: This is intentionally a human-readable, non-instance-aware path.
-// Do NOT use APP_ROOT for real filesystem reads/writes.
-// For runtime filesystem paths, use CONFIG_DIR from config/paths.ts.
+// 仅用于提示词或展示文本的应用根路径。
+// 重要：这是给人看的固定字符串，不代表真实运行实例路径；不要用它做实际文件读写。
+// 运行时路径请使用 config/paths.ts 里的 CONFIG_DIR。
 export const APP_ROOT = '~/.craft-agent';
 
 /**
- * Documentation file references for use in error messages and tool descriptions.
- * Use these constants instead of hardcoding paths to keep references in sync.
+ * 文档引用常量集合，用于错误提示和工具描述。
+ * 统一从这里取路径，避免在多处硬编码导致不一致。
+ * `as const` 让 TS 推断出最窄的只读字面量类型，类似 Go 的 const 字符串。
  */
 export const DOC_REFS = {
   appRoot: APP_ROOT,
@@ -125,14 +125,14 @@ export const DOC_REFS = {
 } as const;
 
 /**
- * Check if docs directory exists
+ * 检查文档目录是否存在。
  */
 export function docsExist(): boolean {
   return existsSync(DOCS_DIR);
 }
 
 /**
- * List available doc files
+ * 列出已同步到本地的 Markdown 文档文件名。
  */
 export function listDocs(): string[] {
   if (!existsSync(DOCS_DIR)) return [];
@@ -140,26 +140,26 @@ export function listDocs(): string[] {
 }
 
 /**
- * Initialize docs directory with bundled documentation.
- * Always writes all docs on launch to ensure consistency across debug and release modes.
+ * 用内建文档初始化本地文档目录。
+ * 每次启动都会全量写入，保证 debug 和 release 模式行为一致，始终与当前版本同步。
  */
 export function initializeDocs(): void {
-  // Skip if already initialized this session (prevents re-init on hot reload)
+  // 如果本进程已初始化过，直接跳过（防止热重载重复写入）。
   if (docsInitialized) {
     return;
   }
   docsInitialized = true;
 
   if (!existsSync(DOCS_DIR)) {
+    // recursive: true 表示递归创建父目录，类似 mkdir -p。
     mkdirSync(DOCS_DIR, { recursive: true });
   }
 
-  // Load bundled docs lazily (after setBundledAssetsRoot has been called)
+  // 懒加载内建文档（确保 setBundledAssetsRoot 已执行）。
   const bundledDocs = getBundledDocs();
 
-  // Always write bundled docs to disk on launch.
-  // This ensures consistent behavior between debug and release modes —
-  // docs are always up-to-date with the running version.
+  // 启动时始终将内建文档写回磁盘。
+  // 这样 debug 和 release 行为一致：文档始终与当前运行版本保持一致。
   for (const [filename, content] of Object.entries(bundledDocs)) {
     const docPath = join(DOCS_DIR, filename);
     writeFileSync(docPath, content, 'utf-8');
@@ -168,10 +168,11 @@ export function initializeDocs(): void {
   debug(`[docs] Synced ${Object.keys(bundledDocs).length} docs`);
 }
 
-// Export the lazy getter for external access
+// 将懒加载 getter 导出，供外部在需要时读取原始内建文档内容。
 export { getBundledDocs };
 
-// Re-export source guides utilities (parsing only - bundled guides removed)
+// 从 source-guides.ts 重新导出解析工具（内建 guide 已移除，只剩解析逻辑）。
+// `type Xxx` 表示只导出类型，不会生成运行时导入；类似 Go 只暴露接口定义。
 export {
   parseSourceGuide,
   getSourceGuide,
@@ -183,7 +184,7 @@ export {
   type SourceGuideFrontmatter,
 } from './source-guides.ts';
 
-// Re-export doc links (for UI help popovers)
+// 从 doc-links.ts 重新导出文档链接，供 UI 帮助气泡使用。
 export {
   getDocUrl,
   getDocInfo,

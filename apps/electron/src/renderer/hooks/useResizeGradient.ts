@@ -7,12 +7,12 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /**
- * Creates the gradient style for the resize indicator.
+ * 生成垂直方向拖动指示器的渐变样式。
  *
- * Behavior:
- * - Fade always resolves to transparent at the very top/bottom edges.
- * - Gradient center follows cursor Y, but is clamped to stay at least
- *   RESIZE_GRADIENT_EDGE_BUFFER_PX from either edge (when height allows).
+ * 行为：
+ * - 渐变在最顶部/最底部边缘始终过渡为透明。
+ * - 渐变中心跟随鼠标 Y 坐标，但会被限制在距离边缘至少
+ *   RESIZE_GRADIENT_EDGE_BUFFER_PX 的范围内（高度足够时）。
  */
 export function getResizeGradientStyle(
   mouseY: number | null,
@@ -55,13 +55,13 @@ export function getResizeGradientStyle(
 }
 
 /**
- * useResizeGradient - Hook for resize handle gradient that follows cursor
+ * useResizeGradient - 垂直拖动条的鼠标跟随渐变 hook
  *
- * Returns:
- * - ref: Attach to the touch area element
- * - mouseY: Current Y position (null when not hovering)
- * - handlers: onMouseMove, onMouseLeave, onMouseDown for the touch area
- * - gradientStyle: CSS style object for the visual indicator
+ * 返回：
+ * - ref: 绑定到可响应鼠标事件的触摸区域元素
+ * - mouseY: 当前 Y 坐标（未悬停时为 null）
+ * - handlers: 触摸区域需要的 onMouseMove、onMouseLeave、onMouseDown
+ * - gradientStyle: 视觉指示器的 CSS 样式对象
  */
 export function useResizeGradient() {
   const [mouseY, setMouseY] = React.useState<number | null>(null)
@@ -85,7 +85,7 @@ export function useResizeGradient() {
     setIsDragging(true)
   }, [])
 
-  // Track mouse position during drag and cleanup on mouseup
+  // 拖动期间持续跟踪鼠标位置，并在 mouseup 时清理
   React.useEffect(() => {
     if (!isDragging) return
 

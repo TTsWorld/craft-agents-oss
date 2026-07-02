@@ -1,4 +1,4 @@
-/** fs/promises shim — not available in browser. */
+/** fs/promises 浏览器垫片：浏览器没有文件系统 API，这些方法会抛出错误或空操作。 */
 export const readFile = async () => { throw new Error('fs.promises not available in browser') }
 export const writeFile = async () => { throw new Error('fs.promises not available in browser') }
 export const mkdir = async () => {}

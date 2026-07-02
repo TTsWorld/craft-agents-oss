@@ -3,17 +3,20 @@ import { ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { CategoryGroup } from './registry'
 
+/** Sidebar 组件 props：分类列表、当前选中组件 id、选择回调 */
 interface SidebarProps {
   categories: CategoryGroup[]
   selectedId: string | null
   onSelect: (id: string) => void
 }
 
+/** localStorage 键：记录哪些分类是展开状态 */
 const STORAGE_KEY = 'playground-expanded-categories'
 
+/** 左侧分类 + 组件列表 */
 export function Sidebar({ categories, selectedId, onSelect }: SidebarProps) {
   const [expandedCategories, setExpandedCategories] = React.useState<Set<string>>(() => {
-    // Try to restore from localStorage, otherwise collapse all by default
+    // 尝试从 localStorage 恢复展开的分类；默认全部折叠
     try {
       const stored = localStorage.getItem(STORAGE_KEY)
       if (stored) {
@@ -21,20 +24,21 @@ export function Sidebar({ categories, selectedId, onSelect }: SidebarProps) {
         return new Set(parsed)
       }
     } catch {
-      // Ignore parse errors
+      // 忽略解析异常
     }
     return new Set<string>()
   })
 
-  // Persist expanded categories to localStorage
+  // 持久化展开状态到 localStorage
   React.useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify([...expandedCategories]))
     } catch {
-      // Ignore storage errors
+      // 忽略存储异常
     }
   }, [expandedCategories])
 
+  /** 切换某个分类的展开/折叠状态 */
   const toggleCategory = (name: string) => {
     setExpandedCategories(prev => {
       const next = new Set(prev)
@@ -55,7 +59,7 @@ export function Sidebar({ categories, selectedId, onSelect }: SidebarProps) {
 
           return (
             <div key={category.name}>
-              {/* Category header */}
+              {/* 分类标题：点击展开/折叠 */}
               <button
                 onClick={() => toggleCategory(category.name)}
                 className="w-full flex items-center gap-1.5 px-2 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
@@ -72,7 +76,7 @@ export function Sidebar({ categories, selectedId, onSelect }: SidebarProps) {
                 </span>
               </button>
 
-              {/* Component list */}
+              {/* 该分类下的组件列表 */}
               {isExpanded && (
                 <div className="ml-2 space-y-0.5">
                   {category.components.map(component => (

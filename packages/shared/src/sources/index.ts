@@ -1,10 +1,10 @@
 /**
  * Sources Module
  *
- * Public exports for source management.
+ * Source 管理模块的公开导出入口。
  */
 
-// Types
+// 类型
 export type {
   SourceType,
   SourceMcpAuthType,
@@ -23,7 +23,7 @@ export type {
   ApiRenewEndpoint,
 } from './types.ts';
 
-// Constants and helpers
+// 常量与辅助函数
 export {
   API_OAUTH_PROVIDERS,
   isApiOAuthProvider,
@@ -32,40 +32,40 @@ export {
   isRefreshableSource,
 } from './types.ts';
 
-// Storage functions
+// 存储相关函数
 export {
-  // Directory utilities
+  // 目录工具
   ensureSourcesDir,
   getSourcePath,
-  // Config operations
+  // 配置读写
   loadSourceConfig,
   saveSourceConfig,
   markSourceAuthenticated,
-  // Guide operations
+  // guide 读写
   loadSourceGuide,
   saveSourceGuide,
-  // Icon operations
+  // 图标操作
   findSourceIcon,
   downloadSourceIcon,
   sourceNeedsIconDownload,
   isIconUrl,
-  // Load operations
+  // 加载操作
   loadSource,
   loadWorkspaceSources,
   loadAllSources,
   getEnabledSources,
   isSourceUsable,
   getSourcesBySlugs,
-  // Create/Delete operations
+  // 创建/删除操作
   generateSourceSlug,
   createSource,
   deleteSource,
   sourceExists,
-  // Parsing utilities
+  // 解析工具
   parseGuideMarkdown,
 } from './storage.ts';
 
-// Credential Manager (unified credential operations)
+// 凭证管理器（统一凭证操作）
 export {
   SourceCredentialManager,
   getSourceCredentialManager,
@@ -77,7 +77,7 @@ export type {
   BasicAuthCredential,
 } from './credential-manager.ts';
 
-// Server Builder (builds MCP/API servers from sources)
+// Server Builder（从 source 构建 MCP/API server）
 export {
   SourceServerBuilder,
   getSourceServerBuilder,
@@ -90,17 +90,17 @@ export type {
   BuiltServers,
 } from './server-builder.ts';
 
-// Built-in Sources (always available in every workspace)
+// 内置 Source（每个 workspace 默认可用）
 export {
   getDocsSource,
   getBuiltinSources,
   isBuiltinSource,
 } from './builtin-sources.ts';
 
-// API Tools (types)
+// API Tools（类型）
 export type { SummarizeCallback } from './api-tools.ts';
 
-// Token Refresh Manager (handles OAuth token refresh with rate limiting)
+// Token Refresh Manager（带速率限制的 OAuth token 刷新）
 export {
   TokenRefreshManager,
   createTokenGetter,

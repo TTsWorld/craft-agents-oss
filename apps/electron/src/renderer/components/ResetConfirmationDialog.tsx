@@ -1,3 +1,8 @@
+/**
+ * ResetConfirmationDialog — React 组件
+ * 
+ * 所属目录：components
+ */
 import { useState, useMemo } from "react"
 import { useTranslation, Trans } from "react-i18next"
 import {

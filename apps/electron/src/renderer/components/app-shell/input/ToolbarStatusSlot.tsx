@@ -1,15 +1,13 @@
 /**
- * ToolbarStatusSlot
+ * ToolbarStatusSlot - 输入工具栏底部行的优先级覆盖层。
  *
- * Priority-based overlay slot for the input toolbar bottom row.
- * Shows contextual status indicators — escape-to-interrupt hint (highest priority),
- * browser session state, or future status types.
+ * 用于显示上下文状态提示：
+ * - 最高优先级：按 Esc 中断 agent 的提示
+ * - 次优先级：浏览器会话状态
+ * - 未来可扩展其他状态类型
  *
- * Positioned absolute inset-0 over the toolbar's relative container.
- * Uses AnimatePresence for smooth fade transitions between states.
- *
- * Browser state is consumed directly from Jotai atoms (same pattern as BrowserTabStrip)
- * to avoid threading props through 4 component levels.
+ * 通过绝对定位覆盖在工具栏容器上，用 AnimatePresence 做状态切换淡入淡出。
+ * 浏览器状态直接从 Jotai atom 读取（和 BrowserTabStrip 同一套模式），避免把 props 穿透多层组件。
  */
 
 import * as React from 'react'
@@ -26,20 +24,19 @@ import { useAppShellContext } from '@/context/AppShellContext'
 import type { BrowserInstanceInfo } from '../../../../shared/types'
 
 interface ToolbarStatusSlotProps {
-  /** Whether the escape interrupt overlay should be visible (highest priority) */
+  /** 是否显示“按 Esc 中断”覆盖层（最高优先级） */
   showEscapeOverlay: boolean
-  /** Session ID to find the bound browser instance */
+  /** 用于查找绑定到当前会话的浏览器实例 */
   sessionId?: string
 }
 
+/** ToolbarStatusSlot - 工具栏状态覆盖层 */
 export function ToolbarStatusSlot({
   showEscapeOverlay,
   sessionId,
 }: ToolbarStatusSlotProps) {
-  // Filter to the active workspace so a session here doesn't surface a
-  // browser-status banner for an agent running in a different workspace.
-  // Accept both the local workspace id (manual tabs) and the remote-mirror
-  // workspace id (tabs stamped by the remote agent over the WS bridge).
+  // 只过滤当前工作区的浏览器实例，避免当前会话显示其它工作区 agent 的状态。
+  // 同时接受本地工作区 ID（手动标签页）和远程镜像工作区 ID（远程 agent 通过 WS 桥盖戳的标签页）。
   const { activeWorkspaceId, workspaces } = useAppShellContext()
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
   const remoteWorkspaceId = activeWorkspace?.remoteServer?.remoteWorkspaceId ?? null
@@ -49,8 +46,8 @@ export function ToolbarStatusSlot({
     [allInstances, activeWorkspaceId, remoteWorkspaceId],
   )
 
-  // Find the visible browser instance bound to this session with active agent control.
-  // Hidden instances are intentionally excluded so the status slot mirrors actual visibility.
+  // 查找绑定到当前会话、且 agent 正在控制的可见浏览器实例。
+  // 隐藏实例被故意排除，保证状态槽只反映实际可见的浏览器。
   const browserInstance = React.useMemo(() => {
     if (!sessionId) return null
 
@@ -62,7 +59,7 @@ export function ToolbarStatusSlot({
     return visibleCandidates.at(-1) ?? null
   }, [browserInstances, sessionId])
 
-  // Priority resolution: escape interrupt > browser status
+  // 优先级判定：Esc 中断提示 > 浏览器状态
   const showBrowser = !showEscapeOverlay && browserInstance !== null
 
   const handleBrowserClick = React.useCallback((instanceId: string) => {
@@ -112,8 +109,8 @@ export function ToolbarStatusSlot({
 }
 
 /**
- * Browser status bar — shows when the agent is actively using a browser window.
- * Uses the site's theme color as background with luminance-based text contrast.
+ * BrowserStatusBar - agent 正在使用浏览器窗口时显示的状态条。
+ * 使用网站的主题色作为背景，并根据亮度计算文字对比色。
  */
 function BrowserStatusBar({
   instance,
@@ -128,7 +125,7 @@ function BrowserStatusBar({
   const themeLuminance = themeColor ? getThemeLuminance(themeColor) : null
   const isDarkTheme = themeLuminance !== null && themeLuminance < 0.42
 
-  // Compute styles based on whether we have a theme color
+  // 根据是否有主题色计算背景样式
   const backgroundStyle = themeColor
     ? { backgroundColor: themeColor }
     : { backgroundColor: 'color-mix(in srgb, var(--accent) 15%, var(--background))' }
@@ -163,7 +160,7 @@ function BrowserStatusBar({
       } as React.CSSProperties}
       onClick={onClick}
     >
-      {/* Accent gradient loading line at top of banner */}
+      {/* 横幅顶部的高亮渐变 loading 线 */}
       <div className="absolute top-0 left-0 right-0 h-[2px] z-10 overflow-hidden">
         <div
           className="h-full w-full animate-shimmer-loading"

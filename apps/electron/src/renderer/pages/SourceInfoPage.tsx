@@ -1,8 +1,9 @@
 /**
  * SourceInfoPage
  *
- * Displays source details including connection info, authentication status,
- * documentation (guide.md), and metadata. View-only.
+ * Source 详情页：展示某个 source（Agent 可调用的外部能力来源）的连接信息、认证状态、文档和元数据。
+ * Source 分三类：mcp（MCP 服务器）、api（自定义 API）、local（本地文件/命令）。
+ * 页面为只读，编辑通过 EditPopover 跳转到对应配置文件。
  */
 
 import * as React from 'react'
@@ -33,12 +34,12 @@ import type { PermissionsConfigFile } from '@craft-agent/shared/agent/modes'
 interface SourceInfoPageProps {
   sourceSlug: string
   workspaceId: string
-  /** Optional callback when source is deleted */
+  /** source 被删除时的可选回调 */
   onDelete?: () => void
 }
 
 /**
- * Format timestamp to relative time
+ * 将时间戳格式化为相对时间（刚刚、X 分钟前、X 小时前、X 天前）
  */
 function formatRelativeTime(timestamp: number | undefined, t: (key: string, options?: Record<string, unknown>) => string): string {
   if (!timestamp) return t('common.never')
@@ -56,7 +57,7 @@ function formatRelativeTime(timestamp: number | undefined, t: (key: string, opti
 }
 
 /**
- * Get source URL for display
+ * 根据 source 类型提取用于展示的 URL / 路径
  */
 function getSourceUrl(source: LoadedSource): string | null {
   const { type, mcp, api, local } = source.config
@@ -69,26 +70,26 @@ function getSourceUrl(source: LoadedSource): string | null {
 }
 
 /**
- * Convert permissions config to PermissionRow[] for API/local sources
+ * 将权限配置转换成 API / local source 的表格数据
  */
 function buildApiPermissionsData(config: PermissionsConfigFile): PermissionRow[] {
   const rows: PermissionRow[] = []
 
-  // Blocked Tools
+  // 被屏蔽的工具
   config.blockedTools?.forEach((item) => {
     const pattern = typeof item === 'string' ? item : item.pattern
     const comment = typeof item === 'string' ? null : item.comment
     rows.push({ access: 'blocked', type: 'tool', pattern, comment })
   })
 
-  // Allowed Bash Patterns
+  // 允许的 Bash 命令模式
   config.allowedBashPatterns?.forEach((item) => {
     const pattern = typeof item === 'string' ? item : item.pattern
     const comment = typeof item === 'string' ? null : item.comment
     rows.push({ access: 'allowed', type: 'bash', pattern, comment })
   })
 
-  // Allowed API Endpoints
+  // 允许的 API 端点
   config.allowedApiEndpoints?.forEach((item) => {
     const pattern = `${item.method} ${item.path}`
     const comment = typeof item === 'object' && 'comment' in item ? item.comment : null
@@ -99,19 +100,19 @@ function buildApiPermissionsData(config: PermissionsConfigFile): PermissionRow[]
 }
 
 /**
- * Convert permissions config to PermissionRow[] for MCP sources
+ * 将权限配置转换成 MCP source 的表格数据
  */
 function buildMcpPermissionsData(config: PermissionsConfigFile): PermissionRow[] {
   const rows: PermissionRow[] = []
 
-  // Blocked Tools
+  // 被屏蔽的工具
   config.blockedTools?.forEach((item) => {
     const pattern = typeof item === 'string' ? item : item.pattern
     const comment = typeof item === 'string' ? null : item.comment
     rows.push({ access: 'blocked', type: 'mcp', pattern, comment })
   })
 
-  // Allowed MCP Patterns
+  // 允许的 MCP 工具模式
   config.allowedMcpPatterns?.forEach((item) => {
     const pattern = typeof item === 'string' ? item : item.pattern
     const comment = typeof item === 'string' ? null : item.comment
@@ -122,7 +123,7 @@ function buildMcpPermissionsData(config: PermissionsConfigFile): PermissionRow[]
 }
 
 /**
- * Convert MCP tools to ToolRow[]
+ * 把 MCP 工具列表转换成表格展示数据
  */
 function buildToolsData(tools: McpToolWithPermission[]): ToolRow[] {
   return tools.map((tool) => ({
@@ -133,7 +134,7 @@ function buildToolsData(tools: McpToolWithPermission[]): ToolRow[] {
 }
 
 /**
- * Get contextual description for Connection section based on source type
+ * 根据 source 类型返回“连接”区块的说明文案
  */
 function getConnectionDescription(source: LoadedSource, t: (key: string) => string): string {
   const { type, mcp } = source.config
@@ -154,7 +155,7 @@ function getConnectionDescription(source: LoadedSource, t: (key: string) => stri
 }
 
 /**
- * Get contextual description for Permissions section based on source type
+ * 根据 source 类型返回“权限”区块的说明文案
  */
 function getPermissionsDescription(source: LoadedSource, t: (key: string) => string): string {
   const { type } = source.config
@@ -181,7 +182,7 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
   const [localMcpEnabled, setLocalMcpEnabled] = useState(true)
 
 
-  // Load source data
+  // 加载 source 基础数据与权限配置
   useEffect(() => {
     let isMounted = true
     setLoading(true)
@@ -219,7 +220,7 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
     }
   }, [workspaceId, sourceSlug])
 
-  // Load MCP tools when source is loaded and is MCP type
+  // 当 source 是 MCP 类型时，加载其可用工具列表
   useEffect(() => {
     if (!source || source.config.type !== 'mcp') {
       setMcpTools(null)
@@ -256,7 +257,7 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
     }
   }, [source, workspaceId, sourceSlug])
 
-  // Load workspace settings (for localMcpEnabled)
+  // 读取 workspace 设置，用于判断本地 MCP 是否被禁用
   useEffect(() => {
     if (!workspaceId) return
     window.electronAPI.getWorkspaceSettings(workspaceId).then((settings) => {
@@ -264,11 +265,11 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
         setLocalMcpEnabled(settings.localMcpEnabled ?? true)
       }
     }).catch((err) => {
-      console.error('[SourceInfoPage] Failed to load workspace settings:', err)
+      console.error('[SourceInfoPage] 加载 workspace 设置失败:', err)
     })
   }, [workspaceId])
 
-  // Listen for source folder changes
+  // 监听 source 目录变更，实时刷新详情
   useEffect(() => {
     if (!window.electronAPI?.onSourcesChanged) return
 
@@ -284,7 +285,7 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
             const config = await window.electronAPI.getSourcePermissionsConfig(workspaceId, sourceSlug)
             setPermissionsConfig(config)
           } catch (err) {
-            console.error('[SourceInfoPage] Failed to reload permissions config:', err)
+            console.error('[SourceInfoPage] 刷新权限配置失败:', err)
           }
         }
         loadPermissionsConfig()
@@ -294,10 +295,10 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
     return cleanup
   }, [sourceSlug, workspaceId])
 
-  // Compute source URL
+  // 计算展示用的 URL
   const sourceUrl = useMemo(() => source ? getSourceUrl(source) : null, [source])
 
-  // Build data for PermissionsDataTable
+  // 为权限表格准备数据
   const apiPermissionsData = useMemo(() => {
     if (!permissionsConfig || source?.config.type === 'mcp') return []
     return buildApiPermissionsData(permissionsConfig)
@@ -308,13 +309,13 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
     return buildMcpPermissionsData(permissionsConfig)
   }, [permissionsConfig, source])
 
-  // Build data for ToolsDataTable
+  // 为工具表格准备数据
   const toolsData = useMemo(() => {
     if (!mcpTools) return []
     return buildToolsData(mcpTools)
   }, [mcpTools])
 
-  // Handle opening URL (website or folder)
+  // 点击 URL：网页用浏览器打开，本地路径用文件管理器打开
   const handleOpenUrl = useCallback(async () => {
     if (!source || !sourceUrl) return
     if (window.electronAPI) {
@@ -326,7 +327,7 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
     }
   }, [source, sourceUrl])
 
-  // Handle opening source folder
+  // 在文件管理器中打开 source 所在目录
   const handleOpenSourceFolder = useCallback(async () => {
     if (!source) return
     if (window.electronAPI) {
@@ -334,13 +335,13 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
     }
   }, [source])
 
-  // Handle deleting source (navigates to source list, preserving current filter)
+  // 删除 source，删除后回到 source 列表并保留当前筛选条件
   const handleDelete = useCallback(async () => {
     if (!source) return
     try {
       await window.electronAPI.deleteSource(workspaceId, sourceSlug)
       toast.success(t('sourceInfo.deletedSource', { name: source.config.name }))
-      navigateToSource() // Navigate to source list, preserving filter
+      navigateToSource()
       onDelete?.()
     } catch (err) {
       toast.error(t('sourceInfo.failedToDelete'), {
@@ -349,12 +350,12 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
     }
   }, [source, workspaceId, sourceSlug, onDelete, navigateToSource])
 
-  // Handle opening in new window
+  // 在新窗口打开 source 详情
   const handleOpenInNewWindow = useCallback(() => {
     window.electronAPI.openUrl(`craftagents://sources/source/${sourceSlug}?window=focused`)
   }, [sourceSlug])
 
-  // Get source name for header
+  // 标题栏使用 source 名称，没有则回退到 slug
   const sourceName = source?.config.name || sourceSlug
 
   return (
@@ -378,14 +379,14 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
 
       {source && (
         <Info_Page.Content>
-          {/* Hero: Avatar, title, and tagline */}
+          {/* 顶部：头像、名称、标语 */}
           <Info_Page.Hero
             avatar={<SourceAvatar source={source} fluid />}
             title={source.config.name}
             tagline={source.config.tagline}
           />
 
-          {/* Disabled Warning */}
+          {/* 本地 MCP 被禁用的警告 */}
           {source.config.mcp?.transport === 'stdio' && !localMcpEnabled && (
             <Info_Alert variant="warning" icon={<AlertCircle className="h-4 w-4" />}>
               <Info_Alert.Title>{t('sourceInfo.sourceDisabled')}</Info_Alert.Title>
@@ -395,12 +396,12 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
             </Info_Alert>
           )}
 
-          {/* Connection */}
+          {/* 连接信息 */}
           <Info_Section
             title={t('sourceInfo.connection')}
             description={getConnectionDescription(source, t)}
             actions={
-              // EditPopover for AI-assisted config.json editing with "Edit File" as secondary action
+              // EditPopover：AI 辅助编辑 config.json，同时提供“直接编辑文件”入口
               <EditPopover
                 trigger={<EditButton />}
                 {...getEditConfig('source-config', source.folderPath)}
@@ -436,13 +437,13 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
             </Info_Table>
           </Info_Section>
 
-          {/* Permissions - for API and local sources */}
+          {/* 权限：API / local source */}
           {source.config.type !== 'mcp' && permissionsConfig && apiPermissionsData.length > 0 && (
             <Info_Section
               title={t('sourceInfo.permissions')}
               description={getPermissionsDescription(source, t)}
               actions={
-                // EditPopover for AI-assisted permissions.json editing
+                // EditPopover：AI 辅助编辑 permissions.json
                 <EditPopover
                   trigger={<EditButton />}
                   {...getEditConfig('source-permissions', source.folderPath)}
@@ -457,13 +458,13 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
             </Info_Section>
           )}
 
-          {/* Tools - for MCP sources */}
+          {/* 工具：MCP source */}
           {source.config.type === 'mcp' && (
             <Info_Section
               title={t('sourceInfo.tools')}
               description={t('sourceInfo.toolsDesc')}
               actions={
-                // EditPopover for AI-assisted tool permissions editing
+                // EditPopover：AI 辅助编辑工具权限
                 <EditPopover
                   trigger={<EditButton />}
                   {...getEditConfig('source-tool-permissions', source.folderPath)}
@@ -482,13 +483,13 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
             </Info_Section>
           )}
 
-          {/* Permissions - for MCP sources */}
+          {/* 权限：MCP source */}
           {source.config.type === 'mcp' && permissionsConfig && mcpPermissionsData.length > 0 && (
             <Info_Section
               title={t('sourceInfo.permissions')}
               description={getPermissionsDescription(source, t)}
               actions={
-                // EditPopover for AI-assisted permissions.json editing
+                // EditPopover：AI 辅助编辑 permissions.json
                 <EditPopover
                   trigger={<EditButton />}
                   {...getEditConfig('source-permissions', source.folderPath)}
@@ -503,13 +504,13 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
             </Info_Section>
           )}
 
-          {/* Documentation */}
+          {/* 文档：guide.md */}
           {source.guide?.raw && (
             <Info_Section
               title={t('sourceInfo.documentation')}
               description={t('sourceInfo.documentationDesc')}
               actions={
-                // EditPopover for AI-assisted guide.md editing with "Edit File" as secondary action
+                // EditPopover：AI 辅助编辑 guide.md
                 <EditPopover
                   trigger={<EditButton />}
                   {...getEditConfig('source-guide', source.folderPath)}

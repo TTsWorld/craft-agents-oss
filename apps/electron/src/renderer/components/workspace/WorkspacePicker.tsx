@@ -1,6 +1,8 @@
 /**
- * WorkspacePicker — shown when a thin client connects without a workspace ID.
- * Lists remote server workspaces and allows selection or creation.
+ * WorkspacePicker - 当瘦客户端（thin client）未携带工作区 ID 时展示
+ *
+ * 作用：向远程 Craft Agent Server 拉取工作区列表，让用户选择已有工作区或新建一个。
+ * 对应 Electron 架构中的 renderer 进程，通过 window.electronAPI 调用 preload 暴露的接口。
  */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -15,18 +17,23 @@ import {
 } from './primitives'
 
 interface WorkspacePickerProps {
+  /** 用户选择工作区后触发的回调，参数为工作区 ID */
   onSelectWorkspace: (workspaceId: string) => void
 }
 
 export function WorkspacePicker({ onSelectWorkspace }: WorkspacePickerProps) {
   const { t } = useTranslation()
+
+  // workspaces：从远程服务器加载的工作区列表
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // creating / newName：底部“新建工作区”输入框的状态
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
 
-  // Load workspaces from server
+  // 组件挂载时从服务器拉取工作区列表
   useEffect(() => {
     window.electronAPI.getServerWorkspaces()
       .then(ws => {
@@ -39,6 +46,7 @@ export function WorkspacePicker({ onSelectWorkspace }: WorkspacePickerProps) {
       })
   }, [])
 
+  // 在服务器上新建工作区，成功后通知上层选中该工作区
   const handleCreate = useCallback(async () => {
     if (!newName.trim()) return
     setCreating(true)
@@ -74,7 +82,7 @@ export function WorkspacePicker({ onSelectWorkspace }: WorkspacePickerProps) {
           <p className="mt-3 w-full text-center text-sm text-destructive">{error}</p>
         )}
 
-        {/* Workspace list */}
+        {/* 工作区列表 */}
         {workspaces.length > 0 && (
           <div className="mt-5 w-full space-y-1.5">
             {workspaces.map(ws => (
@@ -95,10 +103,10 @@ export function WorkspacePicker({ onSelectWorkspace }: WorkspacePickerProps) {
           </div>
         )}
 
-        {/* Divider */}
+        {/* 分隔线 */}
         <div className="mt-5 mb-4 w-full border-t" />
 
-        {/* Create new */}
+        {/* 新建工作区区域 */}
         <div className="w-full space-y-2">
           <input
             type="text"

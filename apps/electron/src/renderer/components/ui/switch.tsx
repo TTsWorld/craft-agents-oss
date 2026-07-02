@@ -1,3 +1,7 @@
+/**
+ * 开关组件（Switch）。
+ * 基于 Radix UI Switch，支持 checked/unchecked 两种状态切换。
+ */
 "use client"
 
 import * as React from "react"
@@ -5,6 +9,7 @@ import * as SwitchPrimitive from "@radix-ui/react-switch"
 
 import { cn } from "@/lib/utils"
 
+/** 开关组件。 */
 function Switch({
   className,
   ...props

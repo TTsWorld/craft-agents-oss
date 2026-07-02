@@ -1,10 +1,9 @@
 /**
  * SettingsNavigator
  *
- * Navigator panel content for settings. Displays a list of settings sections
- * (App, Workspace, Shortcuts, Preferences) that can be selected to show in the details panel.
- *
- * Styling follows SessionList/SourcesListPanel patterns for visual consistency.
+ * 设置左侧导航面板：列出所有设置分类（App、Workspace、Shortcuts、Preferences 等），
+ * 点击后在右侧详情面板展示对应页面。
+ * 视觉样式与 SessionList/SourcesListPanel 保持一致。
  */
 
 import { useState, useMemo } from 'react'
@@ -31,12 +30,11 @@ export const meta: DetailsPageMeta = {
 
 interface SettingsNavigatorProps {
   /**
-   * Currently selected settings subpage. `null` means the bare `settings`
-   * route (no row highlighted) — happens in compact mode where the navigator
-   * stands alone before the user drills into a subpage.
+   * 当前选中的设置子页面。`null` 表示纯 `settings` 路由（没有高亮行），
+   * 在紧凑模式下导航面板单独显示、用户尚未钻取到子页面时会出现。
    */
   selectedSubpage: SettingsSubpage | null
-  /** Called when a subpage is selected */
+  /** 选中子页面时的回调 */
   onSelectSubpage: (subpage: SettingsSubpage) => void
 }
 
@@ -55,30 +53,30 @@ interface SettingsItemRowProps {
 }
 
 /**
- * SettingsItemRow - Individual settings item with dropdown menu
- * Tracks menu open state to keep "..." button visible when menu is open
+ * 单个设置项行：带下拉菜单。
+ * 记录菜单打开状态，使菜单打开时“...”按钮保持可见。
  */
 function SettingsItemRow({ item, isSelected, isFirst, onSelect }: SettingsItemRowProps) {
   const { t } = useTranslation()
   const [menuOpen, setMenuOpen] = useState(false)
   const Icon = item.icon
 
-  // Open settings page in a new window via deep link
+  // 通过自定义协议 deep link 在新窗口打开设置页
   const handleOpenInNewWindow = () => {
     window.electronAPI.openUrl(`craftagents://settings/${item.id}?window=focused`)
   }
 
   return (
     <div className="settings-item" data-selected={isSelected || undefined}>
-      {/* Separator - only show if not first */}
+      {/* 分隔线：第一项不显示 */}
       {!isFirst && (
         <div className="settings-separator pl-12 pr-4">
           <Separator />
         </div>
       )}
-      {/* Wrapper for button with proper margins */}
+      {/* 按钮外层：控制边距 */}
       <div className="settings-content relative group select-none pl-2 mr-2">
-        {/* Icon - positioned absolutely for consistent alignment */}
+        {/* 图标：绝对定位，保证多行对齐 */}
         <div className="absolute left-[20px] top-[14px] z-10">
           <Icon
             className={cn(
@@ -87,22 +85,22 @@ function SettingsItemRow({ item, isSelected, isFirst, onSelect }: SettingsItemRo
             )}
           />
         </div>
-        {/* Main content button */}
+        {/* 主按钮 */}
         <button
           type="button"
           onClick={onSelect}
           className={cn(
             'flex w-full items-start gap-2 pl-2 pr-4 py-3 text-left text-sm outline-none rounded-[8px]',
-            // Fast hover transition (75ms vs default 150ms)
+            // 悬停过渡比默认 150ms 更快（75ms）
             'transition-[background-color] duration-75',
             isSelected
               ? 'bg-foreground/5 hover:bg-foreground/7'
               : 'hover:bg-foreground/2'
           )}
         >
-          {/* Spacer for icon */}
+          {/* 占位：给图标留空 */}
           <div className="w-6 h-5 shrink-0" />
-          {/* Content column */}
+          {/* 文字列 */}
           <div className="flex flex-col min-w-0 flex-1">
             <span
               className={cn(
@@ -117,7 +115,7 @@ function SettingsItemRow({ item, isSelected, isFirst, onSelect }: SettingsItemRo
             </span>
           </div>
         </button>
-        {/* Action buttons - visible on hover or when menu is open */}
+        {/* 操作按钮：悬停或菜单打开时显示 */}
         <div
           data-touch-reveal="true"
           className={cn(
@@ -154,6 +152,7 @@ export default function SettingsNavigator({
 }: SettingsNavigatorProps) {
   const { t } = useTranslation()
 
+  // 把静态配置与图标、翻译组合成渲染用的列表数据
   const settingsItems: SettingsItem[] = useMemo(() =>
     SETTINGS_ITEMS.map((item) => ({
       id: item.id,

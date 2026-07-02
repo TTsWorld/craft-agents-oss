@@ -1,10 +1,13 @@
+/** CraftAgentsLogo 的 props：这里只接收一个可选的 className */
 interface CraftAgentsLogoProps {
   className?: string
 }
 
 /**
- * Craft Agents pixel art logo - uses accent color from theme
- * Apply text-accent class to get the brand purple color
+ * Craft Agents 像素风 Logo。
+ *
+ * 图标内部使用 `currentColor`，因此外层传入 `text-accent` 等类名即可应用主题强调色。
+ * 对 Go 同学的小提示：这相当于一个“接收样式类并返回 SVG 的纯函数组件”。
  */
 export function CraftAgentsLogo({ className }: CraftAgentsLogoProps) {
   return (

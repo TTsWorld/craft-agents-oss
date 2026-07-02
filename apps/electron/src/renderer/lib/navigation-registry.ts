@@ -1,130 +1,127 @@
 /**
- * Navigation Registry
+ * 导航注册表
  *
- * Type-safe registry that defines the relationships between navigators and details pages.
- * This ensures compile-time safety: you cannot add a page without registering it here,
- * and the app won't compile if relationships are incomplete.
+ * 用类型安全的方式定义 navigator（导航器）与详情页之间的对应关系。
+ * 这样能在编译期保证：新增页面必须在这里注册，关系不完整会导致编译失败。
  *
- * Structure:
- *   Navigator → Details Pages → Components
+ * 结构：Navigator → Details Pages → Components
  *
- * Each navigator has:
- * - A list of valid details page types
- * - A default details page (or null for empty state)
- * - Logic to get the first item for auto-selection
+ * 每个 navigator 包含：
+ * - 合法的详情页类型列表
+ * - 默认详情页（null 表示允许空状态）
+ * - 自动选中第一项的逻辑
  */
 
 import type { ComponentType } from 'react'
 import type { SessionFilter } from '../../shared/types'
 
 // =============================================================================
-// Types
+// 类型
 // =============================================================================
 
 /**
- * Props passed to navigator components
+ * 传给 navigator 组件的 props
  */
 export interface NavigatorProps {
-  /** Called when a details item is selected */
+  /** 选中详情项时的回调 */
   onSelectDetails: (detailsType: string, detailsId: string) => void
-  /** Currently selected details */
+  /** 当前选中的详情 */
   selectedDetails?: { type: string; id: string }
 }
 
 /**
- * Props passed to details page components
+ * 传给详情页组件的 props
  */
 export interface DetailsProps {
-  /** The ID of the selected item */
+  /** 选中项的 ID */
   id: string
-  /** Additional props specific to the page */
+  /** 页面特有的额外 props */
   [key: string]: unknown
 }
 
 /**
- * Context data available for navigation inference
+ * 用于导航推断的上下文数据
  */
 export interface NavigationData {
-  /** All sessions in the current filter */
+  /** 当前过滤条件下的所有会话 */
   sessions: Array<{ id: string; isFlagged?: boolean; stateId?: string }>
-  /** All sources */
+  /** 所有 sources */
   sources: Array<{ slug: string }>
-  /** Current session filter (if in sessions mode) */
+  /** sessions 模式下的当前过滤条件 */
   sessionFilter?: SessionFilter
 }
 
 /**
- * Configuration for a single navigator
+ * 单个 navigator 的配置
  */
 export interface NavigatorConfig<TDetailsPages extends Record<string, ComponentType<DetailsProps>>> {
-  /** Display name for the navigator */
+  /** navigator 的显示名称 */
   displayName: string
-  /** Valid details page types and their components */
+  /** 合法的详情页类型及其对应组件 */
   detailsPages: TDetailsPages
-  /** Default details page when navigating to this navigator (null = allow empty state) */
+  /** 导航到该 navigator 时的默认详情页（null 表示允许空状态） */
   defaultDetails: (keyof TDetailsPages & string) | null
-  /** Get the first item ID for auto-selection (returns null if empty) */
+  /** 获取自动选中的第一项 ID（为空时返回 null） */
   getFirstItem: (context: NavigationData) => string | null
 }
 
 // =============================================================================
-// Navigator Types
+// Navigator 类型
 // =============================================================================
 
 /**
- * All navigator types in the app
+ * 应用中所有的 navigator 类型
  */
 export type NavigatorType = 'sessions' | 'sources' | 'settings'
 
 /**
- * Session filter kinds that map to sidebar routes
+ * 映射到侧边栏路由的会话过滤种类
  */
 export type SessionFilterKind = 'allSessions' | 'flagged' | 'state'
 
 // =============================================================================
-// Details Page Metadata
+// 详情页元数据
 // =============================================================================
 
 /**
- * Metadata that each details page should export
- * This helps with reverse lookups and validation
+ * 每个详情页应导出的元数据。
+ * 用于反向查找与校验。
  */
 export interface DetailsPageMeta {
-  /** The navigator this page belongs to */
+  /** 所属 navigator */
   navigator: NavigatorType
-  /** The slug used in routes */
+  /** 路由中使用的 slug */
   slug: string
 }
 
 // =============================================================================
-// Registry Definition
+// 注册表定义
 // =============================================================================
 
 /**
- * Placeholder components - will be replaced with real imports
- * These ensure type safety during the transition
+ * 占位组件，迁移期间确保类型安全。
  */
 const PlaceholderComponent: ComponentType<DetailsProps> = () => null
 
 /**
- * The central navigation registry
+ * 中央导航注册表
  *
- * IMPORTANT: This object defines ALL valid navigation paths in the app.
- * Adding a new page requires:
- * 1. Creating the component
- * 2. Adding it to the appropriate navigator's detailsPages
- * 3. Exporting meta from the component
+ * 重要：本对象定义了应用中所有合法的导航路径。
+ * 新增页面需要：
+ * 1. 创建组件
+ * 2. 把它加入对应 navigator 的 detailsPages
+ * 3. 在组件中导出 meta
  */
 export const NavigationRegistry = {
   sessions: {
     displayName: 'Sessions',
     detailsPages: {
-      session: PlaceholderComponent, // Will be: ChatPage
+      session: PlaceholderComponent, // 未来替换为 ChatPage
     },
-    defaultDetails: null, // Empty state when no sessions
+    defaultDetails: null, // 没有会话时显示空状态
     getFirstItem: (ctx: NavigationData) => {
       if (!ctx.sessions.length) return null
-      // Filter based on current session filter
+      // 根据当前会话过滤条件筛选
       const filter = ctx.sessionFilter
       if (!filter) return ctx.sessions[0]?.id ?? null
 
@@ -138,7 +135,7 @@ export const NavigationRegistry = {
           break
         case 'allSessions':
         default:
-          // allSessions shows all sessions
+          // allSessions 显示全部会话
           break
       }
       return filtered[0]?.id ?? null
@@ -148,9 +145,9 @@ export const NavigationRegistry = {
   sources: {
     displayName: 'Sources',
     detailsPages: {
-      source: PlaceholderComponent, // Will be: SourceInfoPage
+      source: PlaceholderComponent, // 未来替换为 SourceInfoPage
     },
-    defaultDetails: null, // Empty state when no sources
+    defaultDetails: null, // 没有 source 时显示空状态
     getFirstItem: (ctx: NavigationData) => ctx.sources[0]?.slug ?? null,
   },
 
@@ -167,34 +164,33 @@ export const NavigationRegistry = {
       shortcuts: PlaceholderComponent, // ShortcutsPage
       preferences: PlaceholderComponent, // PreferencesPage
     },
-    defaultDetails: 'app', // Always has a default
+    defaultDetails: 'app', // 设置页始终有默认项
     getFirstItem: () => 'app',
   },
 } as const satisfies Record<NavigatorType, NavigatorConfig<Record<string, ComponentType<DetailsProps>>>>
 
 // =============================================================================
-// Type Utilities
+// 类型工具
 // =============================================================================
 
 /**
- * Extract details page types for a given navigator
+ * 提取某个 navigator 下的详情页类型
  */
 export type DetailsType<N extends NavigatorType> = keyof (typeof NavigationRegistry)[N]['detailsPages'] & string
 
 /**
- * All possible details types across all navigators
+ * 所有 navigator 中可能的详情类型
  */
 export type AnyDetailsType = DetailsType<'sessions'> | DetailsType<'sources'> | DetailsType<'settings'>
 
 // =============================================================================
-// Navigation State Types
+// 导航状态类型
 // =============================================================================
 
 /**
- * Represents the full navigation state
+ * 完整的导航状态
  */
 export type NavigationState =
   | { navigator: 'sessions'; sessionFilter: SessionFilter; details: { type: 'session'; id: string } | null }
   | { navigator: 'sources'; details: { type: 'source'; id: string } | null }
   | { navigator: 'settings'; details: { type: DetailsType<'settings'>; id: string } }
-

@@ -1,3 +1,9 @@
+/**
+ * Input — 基础输入框组件
+ *
+ * 用 React.forwardRef 把底层 input 的 ref 转发给父组件，
+ * 这样父组件可以直接操作 DOM（类似 Go 里持有对象引用）。
+ */
 import * as React from "react"
 import { cn } from "@/lib/utils"
 

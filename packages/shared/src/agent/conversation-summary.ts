@@ -1,3 +1,16 @@
+/**
+ * 文件：会话摘要与恢复上下文构造
+ *
+ * 角色：在 session 转移、分支或恢复失败时，把历史消息压缩成一段可注入上下文的文本，
+ * 让 agent 在新环境里快速获得之前对话的关键信息。
+ *
+ * 重点：
+ * - buildConversationSummaryTranscript：截断单条消息与总长度，避免占用过多上下文。
+ * - generateConversationSummary：调用后端 mini completion 生成自然语言摘要。
+ * - buildTransferredSessionContext：生成 <session_transfer_summary> 包裹，用于跨
+ *   workspace 转移 session。
+ */
+
 import type { RecoveryMessage } from './core/index.ts';
 
 const MAX_MESSAGE_CHARS = 500;

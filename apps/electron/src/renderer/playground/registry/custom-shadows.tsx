@@ -1,3 +1,9 @@
+/**
+ * custom-shadows 注册项
+ *
+ * 这个文件是一个设计系统审查工具：展示已批准的阴影变体（Shadow Showcase），
+ * 以及仍然使用非标准阴影的组件/运行时覆盖层（Custom Shadows Audit）。
+ */
 import * as React from 'react'
 import type { ComponentEntry } from './types'
 import { cn } from '@/lib/utils'
@@ -17,7 +23,7 @@ interface ShadowSpec {
   previewStyle?: React.CSSProperties
 }
 
-// Only unresolved items stay here intentionally.
+// 这里只保留未解决的（非标准阴影）条目；已解决的会被移除。
 const activeShadowSpecs: ShadowSpec[] = [
   {
     id: 'sortable-list-overlay',
@@ -274,6 +280,7 @@ function ShadowShowcase() {
   )
 }
 
+/** custom-shadows 组件注册列表。 */
 export const customShadowsComponents: ComponentEntry[] = [
   {
     id: 'shadow-showcase',

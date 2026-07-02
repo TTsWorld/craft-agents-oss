@@ -1,8 +1,8 @@
 /**
- * Shared Utilities for Automations System
+ * 自动化系统共享工具
  *
- * Common helper functions used by both the legacy functional API (index.ts)
- * and the new Event Bus handlers (command-handler.ts, prompt-handler.ts).
+ * 同时被旧式函数 API（index.ts）和新的事件总线 handler
+ *（command-handler.ts、prompt-handler.ts）使用的公共辅助函数。
  */
 
 import type { BaseEventPayload } from './event-bus.ts';
@@ -12,11 +12,11 @@ import { sanitizeForShell } from './security.ts';
 import { evaluateConditions } from './conditions.ts';
 
 // ============================================================================
-// String Utilities
+// 字符串工具
 // ============================================================================
 
 /**
- * Convert camelCase to SNAKE_CASE.
+ * 把 camelCase 转成 SNAKE_CASE。
  *
  * @example
  * toSnakeCase('newStatus') // 'new_status'
@@ -27,8 +27,8 @@ export function toSnakeCase(str: string): string {
 }
 
 /**
- * Expand environment variables in a string.
- * Supports both $VAR and ${VAR} syntax.
+ * 展开字符串中的环境变量。
+ * 支持 $VAR 和 ${VAR} 两种语法。
  *
  * @example
  * expandEnvVars('Hello $NAME', { NAME: 'World' }) // 'Hello World'
@@ -36,30 +36,30 @@ export function toSnakeCase(str: string): string {
  */
 export function expandEnvVars(str: string, env: Record<string, string>): string {
   return str
-    // Replace ${VAR} syntax
+    // 替换 ${VAR} 语法
     .replace(/\$\{([^}]+)\}/g, (_, varName) => env[varName] ?? '')
-    // Replace $VAR syntax (word boundary)
+    // 替换 $VAR 语法（单词边界）
     .replace(/\$([A-Z_][A-Z0-9_]*)/gi, (_, varName) => env[varName] ?? '');
 }
 
 // ============================================================================
-// Prompt Utilities
+// Prompt 工具
 // ============================================================================
 
 /**
- * Parse @mentions from a prompt (sources and skills both use @name syntax).
+ * 从 prompt 中解析 @mention（source 和 skill 都使用 @name 语法）。
  *
- * Syntax:
- * - @name - references a source or skill (e.g., @linear, @github, @commit, @review-pr)
+ * 语法：
+ * - @name - 引用 source 或 skill，例如 @linear、@github、@commit、@review-pr
  *
- * References are case-insensitive and support hyphens (e.g., @my-source, @my-skill).
- * The caller should resolve which mentions are sources vs skills based on available configurations.
+ * 引用不区分大小写，支持连字符（如 @my-source）。
+ * 调用方需根据可用配置判断哪些是 source、哪些是 skill。
  */
 export function parsePromptReferences(prompt: string): PromptReferences {
   const mentions: string[] = [];
 
-  // Match @name (word characters and hyphens)
-  // Avoid matching email addresses by requiring whitespace or start of string before @
+  // 匹配 @name（单词字符和连字符）
+  // 要求 @ 前面是空白或字符串开头，避免误匹配邮箱地址
   const matches = prompt.matchAll(/(?:^|[\s(])@([a-zA-Z][a-zA-Z0-9-]*)/g);
   for (const match of matches) {
     const captured = match[1];
@@ -75,14 +75,14 @@ export function parsePromptReferences(prompt: string): PromptReferences {
 }
 
 // ============================================================================
-// Event Matching Utilities
+// 事件匹配工具
 // ============================================================================
 
 /**
- * Get the match value for regex matching based on event type.
- * Uses the most complete version with data.data?.tool_name fallback for tool events.
+ * 根据事件类型获取用于正则匹配的值。
+ * 对工具事件会回退到 data.data?.tool_name。
  *
- * Accepts both plain data objects (legacy API) and BaseEventPayload (handler API).
+ * 同时接受普通数据对象（旧 API）和 BaseEventPayload（handler API）。
  */
 export function getMatchValue(event: AutomationEvent, data: Record<string, unknown>): string {
   switch (event) {
@@ -90,7 +90,7 @@ export function getMatchValue(event: AutomationEvent, data: Record<string, unkno
     case 'LabelRemove':
       return String(data.label ?? '');
     case 'LabelConfigChange':
-      return ''; // Always matches
+      return ''; // 永远匹配
     case 'PermissionModeChange':
       return String(data.newMode ?? '');
     case 'FlagChange':
@@ -101,7 +101,7 @@ export function getMatchValue(event: AutomationEvent, data: Record<string, unkno
     case 'PostToolUse':
       return String(data.toolName ?? (data.data as Record<string, unknown>)?.tool_name ?? '');
     case 'SchedulerTick':
-      // SchedulerTick uses cron matching, not regex
+      // SchedulerTick 使用 cron 匹配，不走正则
       return '';
     default:
       return JSON.stringify(data);
@@ -109,9 +109,8 @@ export function getMatchValue(event: AutomationEvent, data: Record<string, unkno
 }
 
 /**
- * Get the match value for SDK agent events.
- * Mirrors the Claude SDK's `fieldToMatch` per event — each event type matches
- * against a specific field from the input.
+ * 为 SDK agent 事件获取匹配值。
+ * 与 Claude SDK 的 fieldToMatch 对应：每种事件类型从 input 里取特定字段做匹配。
  */
 export function getMatchValueForSdkInput(event: AgentEvent, input: SdkAutomationInput): string {
   switch (event) {
@@ -128,41 +127,41 @@ export function getMatchValueForSdkInput(event: AgentEvent, input: SdkAutomation
     case 'SubagentStop':
       return input.agent_type ?? '';
     default:
-      // UserPromptSubmit, Stop, SessionEnd — no meaningful match field
+      // UserPromptSubmit、Stop、SessionEnd 没有有意义的匹配字段
       return '';
   }
 }
 
 export interface MatcherContext {
-  /** Precomputed value used for regex matching */
+  /** 用于正则匹配的预计算值 */
   matchValue: string;
-  /** Payload used for condition evaluation */
+  /** 用于条件求值的 payload */
   payload: Record<string, unknown>;
-  /** Fallback timezone source for time conditions */
+  /** 时间条件的候选时区来源 */
   matcherTimezone?: string;
 }
 
 /**
- * Base matcher predicate (enabled flag + regex/cron). Intentionally internal.
+ * matcher 的基础谓词（enabled 开关 + 正则/cron）。
+ * 故意标记为内部函数，不要直接从业务代码调用。
  *
- * Do not call directly from feature code. Use matcherMatchesWithContext()/adapters
- * so condition gating is never bypassed.
+ * 请使用 matcherMatchesWithContext() 或它的适配器，避免绕过 condition 校验。
  */
 function matchesBasePredicate(matcher: AutomationMatcher, event: AutomationEvent, matchValue: string): boolean {
   if (matcher.enabled === false) return false;
   if (event === 'SchedulerTick') {
     return !!matcher.cron && matchesCron(matcher.cron, matcher.timezone);
   }
-  if (!matcher.matcher) return true; // No matcher means match all
+  if (!matcher.matcher) return true; // 没有 matcher 表示匹配所有
   try {
     return new RegExp(matcher.matcher).test(matchValue);
   } catch {
-    return false; // Invalid regex — skip
+    return false; // 正则非法则跳过
   }
 }
 
 /**
- * Canonical matcher evaluation pipeline used by all automation entry points.
+ * 所有自动化入口使用的标准 matcher 求值流程。
  */
 export function matcherMatchesWithContext(
   matcher: AutomationMatcher,
@@ -182,7 +181,7 @@ export function matcherMatchesWithContext(
 }
 
 /**
- * App-event adapter for canonical matcher evaluation.
+ * App 事件适配器：使用标准 matcher 求值。
  */
 export function matcherMatches(matcher: AutomationMatcher, event: AutomationEvent, data: Record<string, unknown>): boolean {
   return matcherMatchesWithContext(matcher, event, {
@@ -193,7 +192,7 @@ export function matcherMatches(matcher: AutomationMatcher, event: AutomationEven
 }
 
 /**
- * SDK agent-event adapter for canonical matcher evaluation.
+ * SDK agent 事件适配器：使用标准 matcher 求值。
  */
 export function matcherMatchesSdk(matcher: AutomationMatcher, event: AgentEvent, input: SdkAutomationInput): boolean {
   return matcherMatchesWithContext(matcher, event, {
@@ -204,13 +203,12 @@ export function matcherMatchesSdk(matcher: AutomationMatcher, event: AgentEvent,
 }
 
 // ============================================================================
-// Environment Variable Utilities
+// 环境变量工具
 // ============================================================================
 
 /**
- * Get process.env as a clean Record<string, string> with undefined values filtered out.
- * Avoids the unsafe `process.env as Record<string, string>` cast that turns undefined
- * values into the string "undefined".
+ * 获取 process.env 的干净版本，过滤掉 undefined 值。
+ * 避免不安全的 `process.env as Record<string, string>` 把 undefined 变成字符串 "undefined"。
  */
 export function cleanEnv(): Record<string, string> {
   return Object.fromEntries(
@@ -218,12 +216,12 @@ export function cleanEnv(): Record<string, string> {
   );
 }
 
-/** Keys skipped when iterating payload fields for env vars */
+/** 生成环境变量时要跳过的 payload 公共字段 */
 const PAYLOAD_SKIP_KEYS = new Set(['sessionId', 'sessionName', 'workspaceId', 'timestamp']);
 
 /**
- * Build the base CRAFT_* environment variables shared by both prompt and webhook actions.
- * Contains event info, session metadata, scheduler time, and payload fields (unsanitized).
+ * 构建 prompt 和 webhook 动作共享的基础 CRAFT_* 环境变量。
+ * 包含事件信息、会话元数据、调度器时间以及 payload 字段（未做 shell 转义）。
  */
 function buildBaseEventEnv(event: AutomationEvent, payload: BaseEventPayload): Record<string, string> {
   const env: Record<string, string> = {
@@ -235,7 +233,7 @@ function buildBaseEventEnv(event: AutomationEvent, payload: BaseEventPayload): R
   if (payload.sessionName) env.CRAFT_SESSION_NAME = payload.sessionName;
   if (payload.workspaceId) env.CRAFT_WORKSPACE_ID = payload.workspaceId;
 
-  // Session metadata as JSON
+  // 会话元数据 JSON
   const sessionMetadata: Record<string, string> = {};
   if (payload.sessionId) sessionMetadata.id = payload.sessionId;
   if (payload.sessionName) sessionMetadata.name = payload.sessionName;
@@ -243,14 +241,14 @@ function buildBaseEventEnv(event: AutomationEvent, payload: BaseEventPayload): R
     env.CRAFT_SESSION_METADATA = JSON.stringify(sessionMetadata);
   }
 
-  // Local time for scheduler events
+  // 调度器事件的本地时间
   if (event === 'SchedulerTick') {
     const now = new Date();
     env.CRAFT_LOCAL_TIME = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
     env.CRAFT_LOCAL_DATE = now.toISOString().split('T')[0]!;
   }
 
-  // Payload fields as CRAFT_ vars (raw — callers apply sanitization if needed)
+  // 把 payload 字段导出为 CRAFT_* 变量（原始值，调用方按需转义）
   for (const [key, value] of Object.entries(payload)) {
     if (PAYLOAD_SKIP_KEYS.has(key)) continue;
     const envKey = `CRAFT_${toSnakeCase(key).toUpperCase()}`;
@@ -261,17 +259,17 @@ function buildBaseEventEnv(event: AutomationEvent, payload: BaseEventPayload): R
 }
 
 /**
- * Build environment variables from an event payload for prompt/command actions.
- * Includes full process.env and sanitizes user-controlled values for shell safety.
+ * 从事件 payload 构建 prompt/命令动作用的环境变量。
+ * 包含完整 process.env，并对用户可控值做 shell 安全转义。
  */
 export function buildEnvFromPayload(event: AutomationEvent, payload: BaseEventPayload): Record<string, string> {
   const base = buildBaseEventEnv(event, payload);
   const env: Record<string, string> = { ...cleanEnv(), ...base };
 
-  // Sanitize session name for shell context
+  // 对 shell 上下文中的会话名做转义
   if (payload.sessionName) env.CRAFT_SESSION_NAME = sanitizeForShell(payload.sessionName);
 
-  // Sanitize payload field values for shell context
+  // 对 payload 字段值做 shell 转义
   for (const [key, value] of Object.entries(payload)) {
     if (PAYLOAD_SKIP_KEYS.has(key)) continue;
     const envKey = `CRAFT_${toSnakeCase(key).toUpperCase()}`;
@@ -282,26 +280,26 @@ export function buildEnvFromPayload(event: AutomationEvent, payload: BaseEventPa
 }
 
 /**
- * Build environment variables for webhook actions.
+ * 构建 webhook 动作用的环境变量。
  *
- * Unlike buildEnvFromPayload (used by prompt actions), this:
- * - Does NOT spread process.env (no secret leakage)
- * - Does NOT apply shell sanitization (irrelevant for HTTP context)
- * - Only injects CRAFT_WH_* user-defined vars from process.env (webhook secrets)
- * - Includes CRAFT_* system vars derived from the event payload
+ * 与 buildEnvFromPayload（用于 prompt 动作）不同，这里：
+ * - 不展开整个 process.env（防止密钥泄露）
+ * - 不做 shell 转义（HTTP 场景不需要）
+ * - 只注入 process.env 中以 CRAFT_WH_ 开头的用户定义变量（webhook 密钥）
+ * - 包含从事件 payload 派生的 CRAFT_* 系统变量
  *
- * Users set webhook secrets in their shell profile:
+ * 用户在 shell profile 里设置 webhook 密钥：
  *   export CRAFT_WH_SLACK_URL="https://hooks.slack.com/services/T.../B.../xxx"
  *   export CRAFT_WH_DISCORD_TOKEN="abc123"
  *
- * Then reference them in automations.json:
+ * 然后在 automations.json 中引用：
  *   "url": "${CRAFT_WH_SLACK_URL}"
  *   "headers": { "Authorization": "Bearer ${CRAFT_WH_DISCORD_TOKEN}" }
  */
 export function buildWebhookEnv(event: AutomationEvent, payload: BaseEventPayload): Record<string, string> {
   const env = buildBaseEventEnv(event, payload);
 
-  // User-defined webhook secrets: only CRAFT_WH_* from process.env
+  // 用户定义的 webhook 密钥：process.env 中仅 CRAFT_WH_* 开头
   for (const [key, value] of Object.entries(process.env)) {
     if (key.startsWith('CRAFT_WH_') && value !== undefined) {
       env[key] = value;

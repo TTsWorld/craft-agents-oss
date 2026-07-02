@@ -1,16 +1,16 @@
 /**
  * MenuComponents Context
  *
- * Provides menu primitives (MenuItem, Separator, Sub, SubTrigger, SubContent)
- * that work with both DropdownMenu and ContextMenu.
+ * 提供同时适用于 DropdownMenu 和 ContextMenu 的菜单原语
+ * （MenuItem、Separator、Sub、SubTrigger、SubContent）。
  *
- * This allows menu content components (SessionMenu, SourceMenu, SkillMenu) to
- * render identically in both dropdown and context menu scenarios without duplication.
+ * 这样 SessionMenu、SourceMenu、SkillMenu 等菜单内容组件可以在下拉菜单和右键菜单两种场景下
+ * 复用同一份代码，避免重复实现。
  *
- * Usage:
- * - Wrap dropdown menu content with <DropdownMenuProvider>
- * - Wrap context menu content with <ContextMenuProvider>
- * - Use useMenuComponents() in menu content to get the right primitives
+ * 用法：
+ * - 下拉菜单内容用 <DropdownMenuProvider> 包裹
+ * - 右键菜单内容用 <ContextMenuProvider> 包裹
+ * - 在菜单内容里调用 useMenuComponents() 获取对应原语
  */
 
 import * as React from 'react'
@@ -30,8 +30,8 @@ import {
 } from './styled-context-menu'
 
 /**
- * Menu component types that can be provided via context.
- * These are the styled variants that match our design system.
+ * 可通过 context 提供的菜单组件类型。
+ * 这些都是带样式的变体，匹配项目设计系统。
  */
 export interface MenuComponents {
   MenuItem: typeof StyledDropdownMenuItem | typeof StyledContextMenuItem
@@ -41,7 +41,7 @@ export interface MenuComponents {
   SubContent: typeof StyledDropdownMenuSubContent | typeof StyledContextMenuSubContent
 }
 
-// Context with dropdown components as default (for backwards compatibility)
+// 默认用下拉菜单组件兜底，保证向后兼容
 const MenuComponentsContext = React.createContext<MenuComponents>({
   MenuItem: StyledDropdownMenuItem,
   Separator: StyledDropdownMenuSeparator,
@@ -51,14 +51,14 @@ const MenuComponentsContext = React.createContext<MenuComponents>({
 })
 
 /**
- * Hook to get menu components from context.
- * Returns styled dropdown components by default if no provider is present.
+ * 从 context 获取当前菜单组件集合。
+ * 如果没有 Provider，默认返回下拉菜单组件。
  */
 export function useMenuComponents(): MenuComponents {
   return React.useContext(MenuComponentsContext)
 }
 
-// Dropdown menu components (default)
+// 下拉菜单组件集合
 const dropdownComponents: MenuComponents = {
   MenuItem: StyledDropdownMenuItem,
   Separator: StyledDropdownMenuSeparator,
@@ -67,7 +67,7 @@ const dropdownComponents: MenuComponents = {
   SubContent: StyledDropdownMenuSubContent,
 }
 
-// Context menu components
+// 右键菜单组件集合
 const contextMenuComponents: MenuComponents = {
   MenuItem: StyledContextMenuItem,
   Separator: StyledContextMenuSeparator,
@@ -77,8 +77,8 @@ const contextMenuComponents: MenuComponents = {
 }
 
 /**
- * Provider for dropdown menu context.
- * Wrap dropdown menu content with this to use dropdown primitives.
+ * 下拉菜单 Provider。
+ * 用 DropdownMenuProvider 包裹下拉菜单内容，内部会拿到下拉菜单原语。
  */
 export function DropdownMenuProvider({ children }: { children: React.ReactNode }) {
   return (
@@ -89,8 +89,8 @@ export function DropdownMenuProvider({ children }: { children: React.ReactNode }
 }
 
 /**
- * Provider for context menu.
- * Wrap context menu content with this to use context menu primitives.
+ * 右键菜单 Provider。
+ * 用 ContextMenuProvider 包裹右键菜单内容，内部会拿到右键菜单原语。
  */
 export function ContextMenuProvider({ children }: { children: React.ReactNode }) {
   return (

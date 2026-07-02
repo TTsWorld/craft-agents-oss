@@ -1,3 +1,9 @@
+/**
+ * use-working-directory-state - 工作目录选择器的状态管理 hook。
+ *
+ * 同时支撑桌面端 popover（FreeFormInput.WorkingDirectoryBadge）和紧凑端抽屉，
+ * 保证两套 UI 的行为不会分叉。
+ */
 import * as React from 'react'
 
 import { useDirectoryPicker } from '@/hooks/useDirectoryPicker'
@@ -9,24 +15,24 @@ import {
   removeRecentWorkingDir,
 } from './working-directory-history'
 
-/** Threshold above which the surface should render a filter input. */
+/** 超过此阈值时显示过滤输入框 */
 export const WORKING_DIR_FILTER_THRESHOLD = 5
 
+/** UseWorkingDirectoryStateInput：hook 输入 */
 export interface UseWorkingDirectoryStateInput {
   workingDirectory: string | undefined
   onWorkingDirectoryChange: (path: string) => void
   sessionFolderPath: string | undefined
   workspaceId: string | undefined
-  /** Whether the consumer's surface (popover / drawer) is currently open.
-   *  The hook uses this to refresh history + reset the filter on every open. */
+  /** 消费方弹层/抽屉是否打开；hook 据此刷新历史记录并重置过滤词 */
   isOpen: boolean
-  /** Called when the hook wants the consumer's surface to close
-   *  (after select-recent, reset, or choose-folder). */
+  /** hook 想让消费方关闭时调用（选择最近项、重置、选择文件夹后） */
   onClose: () => void
 }
 
 type ServerBrowserBridge = ReturnType<typeof useDirectoryPicker>
 
+/** UseWorkingDirectoryStateResult：hook 输出 */
 export interface UseWorkingDirectoryStateResult {
   recentDirs: string[]
   homeDir: string
@@ -34,18 +40,15 @@ export interface UseWorkingDirectoryStateResult {
   filter: string
   setFilter: (next: string) => void
 
-  /** recentDirs minus current dir, alphabetically sorted by basename. */
+  /** 排除当前目录后按 basename 字母排序的最近目录 */
   sortedRecent: string[]
-  /** Whether a non-session-root folder is currently selected. */
+  /** 当前是否选中了非会话根目录的文件夹 */
   hasFolder: boolean
-  /** Display name for the trigger badge — basename of the selected folder,
-   *  or `undefined` when nothing is selected. Consumers localise their own
-   *  fallback so the hook stays i18n-free. */
+  /** 触发徽章上显示的文件夹名；未选择时为 undefined（消费方自己处理本地化回退） */
   folderName: string | undefined
-  /** Whether the Reset action should be offered. */
+  /** 是否显示“重置”操作 */
   showReset: boolean
-  /** Whether the surface should show a search/filter input
-   *  (true when more than {@link WORKING_DIR_FILTER_THRESHOLD} sortedRecent entries). */
+  /** 是否显示搜索/过滤输入框（sortedRecent 超过阈值时为 true） */
   showFilter: boolean
 
   handleSelectRecent: (path: string) => void
@@ -60,14 +63,11 @@ export interface UseWorkingDirectoryStateResult {
 }
 
 /**
- * Shared state machine for the working-directory selector. Powers both the
- * desktop popover (FreeFormInput.WorkingDirectoryBadge) and the compact
- * drawer (CompactWorkingDirectorySelector) so they cannot drift.
+ * useWorkingDirectoryState - 工作目录选择器的共享状态机。
  *
- * The hook owns: recent-dirs list, home dir, git branch fetch, filter input
- * state, and all mutation handlers. The hook does **not** own: surface open
- * state, autofocus behaviour, or path-display formatting — those stay in
- * the consumer because they differ intentionally between surfaces.
+ * 同时支撑桌面端 popover 和紧凑端抽屉，避免两套 UI 行为不一致。
+ * hook 负责：最近目录列表、home 目录、git 分支获取、过滤输入状态、所有修改回调。
+ * hook 不负责：弹层打开状态、自动聚焦、路径显示格式——这些有意留在消费方，因为不同表面需求不同。
  */
 export function useWorkingDirectoryState(
   input: UseWorkingDirectoryStateInput,
@@ -86,6 +86,7 @@ export function useWorkingDirectoryState(
   const [gitBranch, setGitBranch] = React.useState<string | null>(null)
   const [filter, setFilter] = React.useState('')
 
+  // workspaceId 变化时刷新最近目录和 home 目录
   React.useEffect(() => {
     setRecentDirs(getRecentWorkingDirs(workspaceId))
     window.electronAPI?.getHomeDir?.().then((dir: string) => {
@@ -93,6 +94,7 @@ export function useWorkingDirectoryState(
     })
   }, [workspaceId])
 
+  // 当前工作目录变化时获取 git 分支
   React.useEffect(() => {
     if (workingDirectory) {
       window.electronAPI?.getGitBranch?.(workingDirectory).then((branch: string | null) => {
@@ -103,6 +105,7 @@ export function useWorkingDirectoryState(
     }
   }, [workingDirectory])
 
+  // 弹层打开时清空过滤并刷新最近目录
   React.useEffect(() => {
     if (isOpen) {
       setFilter('')
@@ -182,11 +185,11 @@ export function useWorkingDirectoryState(
   }
 }
 
-// — Pure helpers (exported for testing) —
+// —— 纯函数辅助（导出方便测试） ——
 
 /**
- * Filter out the current directory and sort alphabetically by basename.
- * Pure derivation; the surfaces use this to render their recent-folder lists.
+ * 过滤掉当前目录并按 basename 字母排序。
+ * 纯派生函数；UI 层用它渲染最近文件夹列表。
  */
 export function deriveSortedRecent(
   recentDirs: readonly string[],
@@ -202,17 +205,17 @@ export function deriveSortedRecent(
     })
 }
 
+/** SelectionFlags：选择状态标志 */
 export interface SelectionFlags {
   hasFolder: boolean
-  /** Basename of the selected folder, or undefined when nothing is selected. */
+  /** 选中文件夹的 basename；未选择时为 undefined */
   folderName: string | undefined
   showReset: boolean
 }
 
 /**
- * Derive the selection flags used to label and configure the trigger badge.
- * "No folder selected" means either no working directory at all, or the
- * working directory equals the session root.
+ * 派生触发徽章需要的选择状态标志。
+ * “未选择文件夹”意味着要么没有 workingDirectory，要么 workingDirectory 等于会话根目录。
  */
 export function deriveSelectionFlags(
   workingDirectory: string | undefined,

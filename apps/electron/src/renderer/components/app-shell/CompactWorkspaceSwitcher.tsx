@@ -1,3 +1,9 @@
+/**
+ * CompactWorkspaceSwitcher - 紧凑/触摸模式下的底部抽屉式工作区选择器。
+ *
+ * 触发器外观和 WorkspaceSwitcher 的 topbar 模式保持一致（头像 pill + 箭头），
+ * 但打开的是 Drawer 而不是 Radix DropdownMenu，更适合触摸和窄视口。
+ */
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 import { useState, useCallback, useRef } from "react"
@@ -33,11 +39,7 @@ interface CompactWorkspaceSwitcherProps {
 }
 
 /**
- * CompactWorkspaceSwitcher — bottom-sheet workspace picker for compact/touch mode.
- *
- * Mirrors the topbar trigger from `WorkspaceSwitcher` (avatar pill with chevron)
- * but opens a Drawer instead of a Radix DropdownMenu so the picker is
- * touch-friendly and avoids the awkward popover anchoring on narrow viewports.
+ * CompactWorkspaceSwitcher - 紧凑/触摸模式下的底部工作区选择器。
  */
 export function CompactWorkspaceSwitcher({
   workspaces,
@@ -57,7 +59,7 @@ export function CompactWorkspaceSwitcher({
   const connectionState = useTransportConnectionState()
   const isRemote = connectionState?.mode === 'remote'
 
-  // Health check results for non-active remote workspaces (checked on drawer open)
+  // 非活动远程工作区的健康检查结果（抽屉打开时检测）
   const [remoteHealthMap, setRemoteHealthMap] = useState<Map<string, 'ok' | 'error' | 'checking'>>(new Map())
   const healthCheckAbort = useRef<AbortController | null>(null)
 
@@ -75,6 +77,7 @@ export function CompactWorkspaceSwitcher({
       return next
     })
 
+    // 并行检测远程工作区连通性
     for (const ws of remoteWorkspaces) {
       window.electronAPI.testRemoteConnection(ws.remoteServer!.url, ws.remoteServer!.token)
         .then(result => {

@@ -1,3 +1,8 @@
+/**
+ * AppMenu — React 组件
+ * 
+ * 所属目录：components
+ */
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
 import { DesktopAppMenu } from './app-menu/DesktopAppMenu'
 import { MobileAppMenu } from './app-menu/MobileAppMenu'

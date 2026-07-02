@@ -1,3 +1,9 @@
+/**
+ * Popover —— 弹出层组件
+ *
+ * 基于 Radix UI Popover 封装，提供触发器、内容区、锚点等原语。
+ * 内容默认通过 Portal 渲染到 body，避免被父级 overflow 裁剪。
+ */
 import * as React from "react"
 import * as PopoverPrimitive from "@radix-ui/react-popover"
 

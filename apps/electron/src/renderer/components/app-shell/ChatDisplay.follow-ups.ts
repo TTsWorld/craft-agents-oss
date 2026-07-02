@@ -1,23 +1,20 @@
 /**
- * Pure helpers for follow-up annotations.
+ * ChatDisplay.follow-ups - 跟进批注（follow-up annotations）的纯工具函数。
  *
- * Kept separate from `ChatDisplay.tsx` so they can be unit-tested without
- * pulling in React or the rest of the renderer. `ChatDisplay.tsx`
- * re-imports these — do not duplicate the logic there.
+ * 单独抽离的原因：方便单元测试，不需要引入 React 或整个渲染层。
+ * ChatDisplay.tsx 会重新导入这些函数，不要在那里重复实现。
  *
- * Two distinct transforms live here:
- *   - `normalizeFollowUpText` (re-exported from `@craft-agent/ui`) — the
- *     content-preserving whitespace collapse used for the agent-facing
- *     message. NO length cap.
- *   - `truncateForChipTooltip` — UI helper that shortens + ellipsizes for
- *     the hover tooltip on the chip's index badge. Caller MUST supply the
- *     cap — there is no sensible default, and a default was the root
- *     cause of a past bug (OSS #580) where the agent-facing path
- *     accidentally reused it.
+ * 这里有两套不同的处理：
+ *   - normalizeFollowUpText（从 @craft-agent/ui 重导出）：保留内容、只折叠空白，
+ *     用于发给 agent 的消息，不限制长度。
+ *   - truncateForChipTooltip：UI 辅助函数，给芯片序号徽章的 hover tooltip 做截断省略。
+ *     调用方必须显式传入上限；不要设置默认值——曾经因此出过 bug（OSS #580），
+ *     agent 消息路径误用了带默认值的截断函数。
  */
 
 import { normalizeFollowUpText } from '@craft-agent/ui/annotations/follow-up-state'
 
+/** PendingFollowUpAnnotation：待发送的 follow-up 批注数据 */
 export type PendingFollowUpAnnotation = {
   messageId: string
   annotationId: string
@@ -29,9 +26,8 @@ export type PendingFollowUpAnnotation = {
 }
 
 /**
- * Whitespace-normalize + truncate for the hover tooltip shown on the
- * chip's index badge. Do NOT use for agent-facing messages — use
- * `normalizeFollowUpText` directly so the agent sees the full quote.
+ * truncateForChipTooltip - 折叠空白并对芯片 tooltip 文本做截断省略。
+ * 不要用于发给 agent 的消息；那种场景直接用 normalizeFollowUpText，保证 agent 看到完整引用。
  */
 export function truncateForChipTooltip(text: string, maxLength: number): string {
   const normalized = normalizeFollowUpText(text)
@@ -40,10 +36,9 @@ export function truncateForChipTooltip(text: string, maxLength: number): string 
 }
 
 /**
- * Format pending follow-up annotations as a markdown section appended to
- * the user's message before it is sent to the agent. Quotes pass through
- * in full — only whitespace is normalized so the round-trip parser
- * (`normalizeFollowUpsMarkdown`) can re-parse them on message edit.
+ * formatFollowUpSection - 把待发送的 follow-up 批注格式化为 markdown 区块，
+ * 追加到用户消息里再发给 agent。引用原文完整保留，只规范化空白，
+ * 这样消息编辑时的往返解析器（normalizeFollowUpsMarkdown）能正确还原。
  */
 export function formatFollowUpSection(
   followUps: PendingFollowUpAnnotation[],
@@ -66,15 +61,13 @@ export function formatFollowUpSection(
 }
 
 /**
- * Re-parse a message that already contains a `**Follow-ups**` section and
- * rebuild it in canonical form. Used when the user edits a sent message —
- * we want to normalize whitespace / re-number / repair spacing without
- * losing the quote/note pairs.
+ * normalizeFollowUpsMarkdown - 重新解析已包含 **Follow-ups** 区块的消息，
+ * 并以规范形式重建。用户编辑已发送消息时使用，用于：
+ * 规范化空白、重新编号、修复间距，同时不丢失 quote/note 对。
  *
- * The regex uses lazy `[\s\S]*?` for quotes, so arbitrarily long quotes
- * are handled correctly. Whitespace in quotes/notes is collapsed, matching
- * what `normalizeFollowUpText` produces — so a round-trip is a no-op for
- * quotes that passed through `formatFollowUpSection`.
+ * 正则使用懒惰匹配 [\s\S]*?，因此任意长的引用都能正确处理。
+ * quote 和 note 里的空白会被折叠，和 normalizeFollowUpText 输出一致，
+ * 所以 formatFollowUpSection 生成的内容再经过本函数处理应为 no-op。
  */
 export function normalizeFollowUpsMarkdown(message: string): string {
   const normalizedInput = message.replace(/\r\n/g, '\n')
@@ -86,7 +79,7 @@ export function normalizeFollowUpsMarkdown(message: string): string {
   const hasTrailingSeparator = /(?:^|\n)\s*---\s*$/.test(beforeHeading)
   const sectionText = normalizedInput.slice(headingIndex)
 
-  // Remove heading and optional leading separator so we can parse items robustly.
+  // 去掉标题和可选的前导分隔符，方便解析每一项
   const body = sectionText
     .replace(/^\s*(?:---\s*)?(?:\*\*Follow-ups\*\*|Follow-up annotations:)\s*/i, '')
 

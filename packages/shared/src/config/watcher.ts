@@ -1,18 +1,18 @@
 /**
  * Config File Watcher
  *
- * Watches configuration files for changes and triggers callbacks.
- * Uses recursive directory watching for simplicity and reliability.
+ * 监听配置文件变更并触发回调。
+ * 使用递归目录监听，简单可靠。
  *
- * Watched paths:
- * - ~/.craft-agent/config.json - Main app configuration
- * - ~/.craft-agent/preferences.json - User preferences
- * - ~/.craft-agent/theme.json - App-level theme overrides
- * - ~/.craft-agent/themes/*.json - Preset theme files (app-level)
- * - ~/.craft-agent/workspaces/{slug}/ - Workspace directory (recursive)
+ * 监听路径：
+ * - ~/.craft-agent/config.json - 主应用配置
+ * - ~/.craft-agent/preferences.json - 用户偏好
+ * - ~/.craft-agent/theme.json - 应用级主题覆盖
+ * - ~/.craft-agent/themes/*.json - 应用级预设主题文件
+ * - ~/.craft-agent/workspaces/{slug}/ - workspace 目录（递归）
  *   - sources/{slug}/config.json, guide.md, permissions.json
  *   - skills/{slug}/SKILL.md, icon.*
- *   - sessions/{id}/session.jsonl (header metadata only)
+ *   - sessions/{id}/session.jsonl（仅 header 元数据）
  *   - permissions.json
  */
 
@@ -56,17 +56,17 @@ import { loadAppTheme, loadPresetThemes, loadPresetTheme, getAppThemesDir } from
 import type { ThemeOverrides, PresetTheme } from './theme.ts';
 
 // ============================================================
-// Active Watcher Registry (duplicate detection)
+// Active Watcher Registry（重复检测）
 // ============================================================
 
 /**
- * Tracks active ConfigWatcher instances by workspace directory.
- * Used to detect duplicate recursive watchers on the same directory tree,
- * which can wedge Bun's event loop on Linux.
+ * 按 workspace 目录跟踪活跃的 ConfigWatcher 实例。
+ * 用于检测同一目录树上的重复递归监听，
+ * 这在 Linux 上可能会卡住 Bun 的事件循环。
  */
 const activeWatchers = new Map<string, string>(); // workspaceDir → creator workspaceId
 
-/** Exported for testing only */
+/** 仅用于测试 */
 export function _getActiveWatchers(): ReadonlyMap<string, string> {
   return activeWatchers;
 }
@@ -78,11 +78,11 @@ export function _getActiveWatchers(): ReadonlyMap<string, string> {
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 const PREFERENCES_FILE = join(CONFIG_DIR, 'preferences.json');
 
-// Debounce delay in milliseconds
+// 防抖延迟（毫秒）
 const DEBOUNCE_MS = 100;
 
-// Longer debounce for session metadata on Windows where fs.watch() fires
-// aggressively for atomic writes (unlink + rename = 2+ events)
+// Windows 上 fs.watch() 对原子写入触发频繁（unlink + rename = 2+ 事件），
+// session 元数据用更长的防抖。
 const SESSION_META_DEBOUNCE_MS = platform() === 'win32' ? 300 : DEBOUNCE_MS;
 
 // ============================================================
@@ -90,7 +90,7 @@ const SESSION_META_DEBOUNCE_MS = platform() === 'win32' ? 300 : DEBOUNCE_MS;
 // ============================================================
 
 /**
- * User preferences structure (mirrors UserPreferencesSchema)
+ * 用户偏好结构（与 UserPreferencesSchema 对应）
  */
 export interface UserPreferences {
   name?: string;
@@ -101,74 +101,74 @@ export interface UserPreferences {
     country?: string;
   };
   notes?: string;
-  /** Internal: mirrors Appearance → Language. Maintained by the main-process i18n IPC handler. */
+  /** 内部：与 Appearance → Language 同步。由主进程 i18n IPC handler 维护。 */
   uiLanguage?: string;
   updatedAt?: number;
 }
 
 /**
- * Callbacks for config changes
+ * 配置变更回调集合（类似 Go 的接口/回调表）。
  */
 export interface ConfigWatcherCallbacks {
-  /** Called when config.json changes */
+  /** config.json 变更时调用 */
   onConfigChange?: (config: StoredConfig) => void;
-  /** Called when preferences.json changes */
+  /** preferences.json 变更时调用 */
   onPreferencesChange?: (prefs: UserPreferences) => void;
-  /** Called when LLM connections array changes (add/remove/update connections) */
+  /** LLM connections 数组变更时调用（增删改连接） */
   onLlmConnectionsChange?: (connections: import('./storage.ts').LlmConnection[]) => void;
 
-  // Source callbacks
-  /** Called when a specific source config changes (null if deleted) */
+  // Source 回调
+  /** 某个 source config 变更时调用（删除则为 null） */
   onSourceChange?: (slug: string, source: LoadedSource | null) => void;
-  /** Called when a source's guide.md changes */
+  /** source 的 guide.md 变更时调用 */
   onSourceGuideChange?: (slug: string, guide: SourceGuide) => void;
-  /** Called when the sources list changes (add/remove folders) */
+  /** sources 列表变更时调用（增删文件夹） */
   onSourcesListChange?: (sources: LoadedSource[]) => void;
 
-  // Skill callbacks
-  /** Called when a specific skill changes (null if deleted) */
+  // Skill 回调
+  /** 某个 skill 变更时调用（删除则为 null） */
   onSkillChange?: (slug: string, skill: LoadedSkill | null) => void;
-  /** Called when the skills list changes (add/remove folders) */
+  /** skills 列表变更时调用（增删文件夹） */
   onSkillsListChange?: (skills: LoadedSkill[]) => void;
 
-  // Permissions callbacks
-  /** Called when app-level default permissions change (~/.craft-agent/permissions/default.json) */
+  // Permissions 回调
+  /** 应用级默认权限变更时调用（~/.craft-agent/permissions/default.json） */
   onDefaultPermissionsChange?: () => void;
-  /** Called when workspace permissions.json changes */
+  /** workspace permissions.json 变更时调用 */
   onWorkspacePermissionsChange?: (workspaceId: string) => void;
-  /** Called when a source's permissions.json changes */
+  /** source permissions.json 变更时调用 */
   onSourcePermissionsChange?: (sourceSlug: string) => void;
 
-  // Status callbacks
-  /** Called when statuses config.json changes */
+  // Status 回调
+  /** statuses config.json 变更时调用 */
   onStatusConfigChange?: (workspaceId: string) => void;
-  /** Called when a status icon file changes */
+  /** status 图标文件变更时调用 */
   onStatusIconChange?: (workspaceId: string, iconFilename: string) => void;
 
-  // Label callbacks
-  /** Called when labels config.json changes */
+  // Label 回调
+  /** labels config.json 变更时调用 */
   onLabelConfigChange?: (workspaceId: string) => void;
 
-  // Automations callbacks
-  /** Called when automations.json changes */
+  // Automations 回调
+  /** automations.json 变更时调用 */
   onAutomationsConfigChange?: (workspaceId: string) => void;
 
-  // Session callbacks
-  /** Called when a session's JSONL header is modified externally (labels, name, flags, etc.) */
+  // Session 回调
+  /** session JSONL header 被外部修改时调用（标签、名称、flags 等） */
   onSessionMetadataChange?: (sessionId: string, header: SessionHeader) => void;
 
-  // Theme callbacks (app-level only)
-  /** Called when app-level theme.json changes */
+  // Theme 回调（仅应用级）
+  /** 应用级 theme.json 变更时调用 */
   onAppThemeChange?: (theme: ThemeOverrides | null) => void;
-  /** Called when a preset theme file changes (null if deleted) */
+  /** 某个预设主题文件变更时调用（删除则为 null） */
   onPresetThemeChange?: (themeId: string, theme: PresetTheme | null) => void;
-  /** Called when the preset themes list changes (add/remove files) */
+  /** 预设主题列表变更时调用（增删文件） */
   onPresetThemesListChange?: (themes: PresetTheme[]) => void;
 
-  // Error callbacks
-  /** Called when a validation error occurs */
+  // Error 回调
+  /** 验证错误时调用 */
   onValidationError?: (file: string, result: ValidationResult) => void;
-  /** Called when an error occurs reading/parsing a file */
+  /** 读/解析文件出错时调用 */
   onError?: (file: string, error: Error) => void;
 }
 
@@ -177,7 +177,7 @@ export interface ConfigWatcherCallbacks {
 // ============================================================
 
 /**
- * Load preferences from file
+ * 从文件加载偏好设置。
  */
 export function loadPreferences(): UserPreferences | null {
   if (!existsSync(PREFERENCES_FILE)) {
@@ -197,8 +197,8 @@ export function loadPreferences(): UserPreferences | null {
 // ============================================================
 
 /**
- * Watches config files and triggers callbacks on changes.
- * Uses recursive directory watching for workspace files.
+ * 监听配置文件变更并触发回调。
+ * 对 workspace 文件使用递归目录监听。
  */
 export class ConfigWatcher {
   private workspaceId: string;
@@ -207,27 +207,27 @@ export class ConfigWatcher {
   private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
   private isRunning = false;
 
-  // Track known items for detecting adds/removes
+  // 用于检测新增/删除的已知项
   private knownSources: Set<string> = new Set();
   private knownSkills: Set<string> = new Set();
   private knownThemes: Set<string> = new Set();
 
-  // Track LLM connections for change detection (JSON string for deep comparison)
+  // 用 JSON 字符串跟踪 LLM connections 变化（深比较）
   private lastLlmConnectionsHash: string = '';
 
-  // Computed paths
+  // 计算出的路径
   private workspaceDir: string;
   private sourcesDir: string;
   private skillsDir: string;
 
   constructor(workspaceIdOrPath: string, callbacks: ConfigWatcherCallbacks) {
     this.callbacks = callbacks;
-    // Support both workspace ID and workspace root path
-    // Paths contain '/' or '\\' (Windows) while IDs don't
+    // 同时支持 workspace ID 和 workspace 根路径。
+    // 路径包含 '/' 或 '\\'（Windows），ID 不包含。
     const isPath = workspaceIdOrPath.includes('/') || workspaceIdOrPath.includes('\\');
     if (isPath) {
       this.workspaceDir = expandPath(workspaceIdOrPath);
-      // Extract workspace ID from path (last segment) - handle both separators
+      // 从路径中提取 workspace ID（最后一段）
       this.workspaceId = workspaceIdOrPath.split(/[/\\]/).pop() || workspaceIdOrPath;
     } else {
       this.workspaceId = workspaceIdOrPath;
@@ -238,14 +238,14 @@ export class ConfigWatcher {
   }
 
   /**
-   * Get the workspace slug this watcher is scoped to
+   * 获取该 watcher 绑定的 workspace slug。
    */
   getWorkspaceSlug(): string {
     return this.workspaceId;
   }
 
   /**
-   * Start watching config files
+   * 开始监听配置文件。
    */
   start(): void {
     if (this.isRunning) {
@@ -256,7 +256,7 @@ export class ConfigWatcher {
 
     this.isRunning = true;
 
-    // Detect duplicate recursive watchers on the same directory tree
+    // 检测同一目录树上的重复递归监听
     const existingOwner = activeWatchers.get(this.workspaceDir);
     if (existingOwner) {
       debug(`[ConfigWatcher] WARNING: duplicate watcher for ${this.workspaceDir} (already owned by: ${existingOwner}, new: ${this.workspaceId})`);
@@ -265,29 +265,29 @@ export class ConfigWatcher {
 
     debug('[ConfigWatcher] Starting for workspace:', this.workspaceId);
 
-    // Ensure workspace directory exists
+    // 确保 workspace 目录存在
     if (!existsSync(this.workspaceDir)) {
       mkdirSync(this.workspaceDir, { recursive: true });
     }
     span.mark('ensureDir');
 
-    // Watch global config files
+    // 监听全局配置文件
     this.watchGlobalConfigs();
     span.mark('watchGlobalConfigs');
 
-    // Watch workspace directory recursively
+    // 递归监听 workspace 目录
     this.watchWorkspaceDir();
     span.mark('watchWorkspaceDir');
 
-    // Watch app-level themes directory
+    // 监听应用级主题目录
     this.watchAppThemesDir();
     span.mark('watchAppThemesDir');
 
-    // Watch app-level permissions directory
+    // 监听应用级权限目录
     this.watchAppPermissionsDir();
     span.mark('watchAppPermissionsDir');
 
-    // Initial scan to populate known sources, skills, and themes
+    // 初始扫描，填充 known sources、skills、themes
     this.scanSources();
     span.mark('scanSources');
 
@@ -297,7 +297,7 @@ export class ConfigWatcher {
     this.scanAppThemes();
     span.mark('scanAppThemes');
 
-    // Initialize LLM connections hash for change detection
+    // 初始化 LLM connections hash，用于后续变化检测
     this.initLlmConnectionsHash();
     span.mark('initLlmConnectionsHash');
 
@@ -306,7 +306,7 @@ export class ConfigWatcher {
   }
 
   /**
-   * Initialize LLM connections hash for change detection
+   * 初始化 LLM connections hash，用于变化检测。
    */
   private initLlmConnectionsHash(): void {
     const config = loadStoredConfig();
@@ -317,12 +317,12 @@ export class ConfigWatcher {
   }
 
   /**
-   * Manually notify the watcher of a file change.
-   * Workaround: Bun's fs.watch({ recursive: true }) on Linux doesn't track
-   * files in directories created after the watcher started.
-   * See: https://github.com/oven-sh/bun/issues/15939
-   * See: https://github.com/oven-sh/bun/issues/15085
-   * When these are fixed, this method and its call sites can be removed.
+   * 手动通知 watcher 文件发生变化。
+   *  workaround：Bun 的 fs.watch({ recursive: true }) 在 Linux 上不会追踪
+   * watcher 启动后创建的目录中的文件。
+   * 参见：https://github.com/oven-sh/bun/issues/15939
+   * 参见：https://github.com/oven-sh/bun/issues/15085
+   * 这些问题修复后，可以移除此方法及其调用点。
    */
   notifyFileChange(relativePath: string): void {
     if (!this.isRunning) return;
@@ -330,7 +330,7 @@ export class ConfigWatcher {
   }
 
   /**
-   * Stop watching all files
+   * 停止监听所有文件。
    */
   stop(): void {
     if (!this.isRunning) {
@@ -340,13 +340,13 @@ export class ConfigWatcher {
     this.isRunning = false;
     activeWatchers.delete(this.workspaceDir);
 
-    // Clear all debounce timers
+    // 清除所有防抖定时器
     for (const timer of this.debounceTimers.values()) {
       clearTimeout(timer);
     }
     this.debounceTimers.clear();
 
-    // Close all watchers
+    // 关闭所有 watcher
     for (const watcher of this.watchers) {
       watcher.close();
     }
@@ -360,16 +360,16 @@ export class ConfigWatcher {
   }
 
   /**
-   * Watch global config files (config.json, preferences.json)
+   * 监听全局配置文件（config.json、preferences.json）。
    */
   private watchGlobalConfigs(): void {
-    // Ensure config directory exists
+    // 确保 config 目录存在
     if (!existsSync(CONFIG_DIR)) {
       mkdirSync(CONFIG_DIR, { recursive: true });
     }
 
     try {
-      // Watch the config directory for changes to config.json, preferences.json, and theme.json
+      // 监听 config 目录，捕获 config.json、preferences.json、theme.json 的变化
       const watcher = watch(CONFIG_DIR, (eventType, filename) => {
         if (!filename) return;
 
@@ -390,7 +390,7 @@ export class ConfigWatcher {
   }
 
   /**
-   * Watch workspace directory recursively
+   * 递归监听 workspace 目录。
    */
   private watchWorkspaceDir(): void {
     debug('[ConfigWatcher] Setting up workspace watcher for:', this.workspaceDir);
@@ -398,7 +398,7 @@ export class ConfigWatcher {
       const watcher = watch(this.workspaceDir, { recursive: true }, (eventType, filename) => {
         if (!filename) return;
 
-        // Normalize path separators
+        // 统一路径分隔符
         const normalizedPath = filename.replace(/\\/g, '/');
         this.handleWorkspaceFileChange(normalizedPath, eventType);
       });
@@ -411,36 +411,36 @@ export class ConfigWatcher {
   }
 
   /**
-   * Handle a file change within the workspace directory
+   * 处理 workspace 目录内的文件变化。
    */
   private handleWorkspaceFileChange(relativePath: string, eventType: string): void {
     const parts = relativePath.split('/');
 
-    // Workspace-level permissions.json
+    // workspace 级 permissions.json
     if (relativePath === 'permissions.json') {
       this.debounce('workspace-permissions', () => this.handleWorkspacePermissionsChange());
       return;
     }
 
-    // Workspace-level automations config file
+    // workspace 级 automations 配置文件
     if (relativePath === AUTOMATIONS_CONFIG_FILE) {
       debug('[ConfigWatcher] automations config change detected:', relativePath);
       this.debounce('automations-config', () => this.handleAutomationsConfigChange());
       return;
     }
 
-    // Sources changes: sources/{slug}/...
+    // Sources 变更：sources/{slug}/...
     if (parts[0] === 'sources' && parts.length >= 2) {
-      const slug = parts[1]!;  // Safe: checked parts.length >= 2
+      const slug = parts[1]!;  // 已确认 parts.length >= 2
       const file = parts[2];
 
-      // Directory-level changes (new/removed source folders)
+      // 目录级变更（新增/删除 source 文件夹）
       if (parts.length === 2) {
         this.debounce('sources-dir', () => this.handleSourcesDirChange());
         return;
       }
 
-      // File-level changes
+      // 文件级变更
       if (file === 'config.json') {
         this.debounce(`source-config:${slug}`, () => this.handleSourceConfigChange(slug));
       } else if (file === 'guide.md') {
@@ -451,52 +451,52 @@ export class ConfigWatcher {
       return;
     }
 
-    // Skills changes: skills/{slug}/...
+    // Skills 变更：skills/{slug}/...
     if (parts[0] === 'skills' && parts.length >= 2) {
-      const slug = parts[1]!;  // Safe: checked parts.length >= 2
+      const slug = parts[1]!;  // 已确认 parts.length >= 2
       const file = parts[2];
 
-      // Directory-level changes (new/removed skill folders)
+      // 目录级变更（新增/删除 skill 文件夹）
       if (parts.length === 2) {
         this.debounce('skills-dir', () => this.handleSkillsDirChange());
         return;
       }
 
-      // File-level changes
+      // 文件级变更
       if (file === 'SKILL.md') {
         this.debounce(`skill:${slug}`, () => this.handleSkillChange(slug));
       } else if (file && /^icon\.(svg|png|jpg|jpeg)$/i.test(file)) {
-        // Icon file changes also trigger a skill change (to update iconPath)
+        // 图标文件变化也触发 skill 变更（更新 iconPath）
         this.debounce(`skill-icon:${slug}`, () => this.handleSkillChange(slug));
       }
       return;
     }
 
-    // Session metadata changes: sessions/{id}/session.jsonl
-    // Detects external modifications (other instances, scripts, manual edits).
-    // Only reads line 1 (header) — lightweight even during active streaming.
+    // Session 元数据变更：sessions/{id}/session.jsonl
+    // 检测外部修改（其他实例、脚本、手动编辑）。
+    // 只读第 1 行（header）—— 即使正在流式输出也很轻量。
     if (parts[0] === 'sessions' && parts.length >= 3) {
       const sessionId = parts[1]!;
       const file = parts[2];
 
-      // Only watch actual session files, ignore .tmp (atomic write intermediates)
+      // 只监听真正的 session 文件，忽略 .tmp（原子写入中间文件）
       if (file === 'session.jsonl') {
         this.debounce(`session-meta:${sessionId}`, () => this.handleSessionMetadataChange(sessionId), SESSION_META_DEBOUNCE_MS);
       }
       return;
     }
 
-    // Statuses changes: statuses/...
+    // Statuses 变更：statuses/...
     if (parts[0] === 'statuses' && parts.length >= 2) {
       const file = parts[1];
 
-      // config.json change
+      // config.json 变更
       if (file === 'config.json') {
         this.debounce('statuses-config', () => this.handleStatusConfigChange());
         return;
       }
 
-      // Icon file changes: statuses/icons/*.svg, *.png, etc.
+      // 图标文件变更：statuses/icons/*.svg, *.png 等
       if (file === 'icons' && parts.length >= 3) {
         const iconFilename = parts[2];
         if (iconFilename) {
@@ -508,11 +508,11 @@ export class ConfigWatcher {
       }
     }
 
-    // Labels changes: labels/...
+    // Labels 变更：labels/...
     if (parts[0] === 'labels' && parts.length >= 2) {
       const file = parts[1];
 
-      // config.json change
+      // config.json 变更
       if (file === 'config.json') {
         this.debounce('labels-config', () => this.handleLabelConfigChange());
         return;
@@ -522,7 +522,7 @@ export class ConfigWatcher {
   }
 
   /**
-   * Debounce a handler by key
+   * 按 key 防抖执行 handler。
    */
   private debounce(key: string, handler: () => void, delayMs: number = DEBOUNCE_MS): void {
     const existing = this.debounceTimers.get(key);
@@ -543,7 +543,7 @@ export class ConfigWatcher {
   // ============================================================
 
   /**
-   * Scan sources directory to populate known sources
+   * 扫描 sources 目录，填充 known sources。
    */
   private scanSources(): void {
     if (!existsSync(this.sourcesDir)) {
@@ -568,13 +568,13 @@ export class ConfigWatcher {
   }
 
   /**
-   * Handle sources directory change (add/remove folders)
+   * 处理 sources 目录变更（增删文件夹）。
    */
   private handleSourcesDirChange(): void {
     debug('[ConfigWatcher] Sources directory changed');
 
     if (!existsSync(this.sourcesDir)) {
-      // Directory was deleted
+      // 目录被删除
       const removed = Array.from(this.knownSources);
       this.knownSources.clear();
 
@@ -597,7 +597,7 @@ export class ConfigWatcher {
         }
       }
 
-      // Find added folders
+      // 新增文件夹
       for (const folder of currentFolders) {
         if (!this.knownSources.has(folder)) {
           debug('[ConfigWatcher] New source folder:', folder);
@@ -610,7 +610,7 @@ export class ConfigWatcher {
         }
       }
 
-      // Find removed folders
+      // 删除文件夹
       for (const folder of this.knownSources) {
         if (!currentFolders.has(folder)) {
           debug('[ConfigWatcher] Removed source folder:', folder);
@@ -619,7 +619,7 @@ export class ConfigWatcher {
         }
       }
 
-      // Notify list change
+      // 通知列表变化
       const allSources = loadWorkspaceSources(this.workspaceDir);
       this.callbacks.onSourcesListChange?.(allSources);
     } catch (error) {
@@ -629,8 +629,8 @@ export class ConfigWatcher {
   }
 
   /**
-   * Handle source config.json change
-   * Downloads icon if URL specified and no local icon exists
+   * 处理 source config.json 变更。
+   * 如果配置指定了 URL 图标且本地没有，则下载图标。
    */
   private handleSourceConfigChange(slug: string): void {
     debug('[ConfigWatcher] Source config changed:', slug);
@@ -644,14 +644,14 @@ export class ConfigWatcher {
 
     const source = loadSource(this.workspaceDir, slug);
 
-    // Check if icon needs to be downloaded (URL in config, no local file)
+    // 如果需要下载图标（配置里有 URL 但本地没有）
     if (source && sourceNeedsIconDownload(this.workspaceDir, slug, source.config)) {
       debug('[ConfigWatcher] Downloading source icon:', slug);
       downloadSourceIcon(this.workspaceDir, slug, source.config.icon!)
         .then((iconPath) => {
           if (iconPath) {
             debug('[ConfigWatcher] Source icon downloaded:', slug, iconPath);
-            // Re-emit source change with updated icon path
+            // 下载完成后重新触发 source 变更，带上更新后的 icon path
             const updatedSource = loadSource(this.workspaceDir, slug);
             this.callbacks.onSourceChange?.(slug, updatedSource);
           }
@@ -665,7 +665,7 @@ export class ConfigWatcher {
   }
 
   /**
-   * Handle source guide.md change
+   * 处理 source guide.md 变更。
    */
   private handleSourceGuideChange(slug: string): void {
     debug('[ConfigWatcher] Source guide changed:', slug);
@@ -675,7 +675,7 @@ export class ConfigWatcher {
       this.callbacks.onSourceGuideChange?.(slug, guide);
     }
 
-    // Also emit full source change
+    // 同时触发完整 source 变更
     const source = loadSource(this.workspaceDir, slug);
     if (source) {
       this.callbacks.onSourceChange?.(slug, source);
@@ -683,15 +683,15 @@ export class ConfigWatcher {
   }
 
   /**
-   * Handle source permissions.json change
+   * 处理 source permissions.json 变更。
    */
   private handleSourcePermissionsChange(slug: string): void {
     debug('[ConfigWatcher] Source permissions.json changed:', slug);
 
-    // Invalidate cache
+    // 使缓存失效
     permissionsConfigCache.invalidateSource(this.workspaceDir, slug);
 
-    // Notify callback
+    // 通知回调
     this.callbacks.onSourcePermissionsChange?.(slug);
   }
 
@@ -700,7 +700,7 @@ export class ConfigWatcher {
   // ============================================================
 
   /**
-   * Scan skills directory to populate known skills
+   * 扫描 skills 目录，填充 known skills。
    */
   private scanSkills(): void {
     if (!existsSync(this.skillsDir)) {
@@ -725,13 +725,13 @@ export class ConfigWatcher {
   }
 
   /**
-   * Handle skills directory change (add/remove folders)
+   * 处理 skills 目录变更（增删文件夹）。
    */
   private handleSkillsDirChange(): void {
     debug('[ConfigWatcher] Skills directory changed');
 
     if (!existsSync(this.skillsDir)) {
-      // Directory was deleted
+      // 目录被删除
       const removed = Array.from(this.knownSkills);
       this.knownSkills.clear();
 
@@ -754,7 +754,7 @@ export class ConfigWatcher {
         }
       }
 
-      // Find added folders
+      // 新增文件夹
       for (const folder of currentFolders) {
         if (!this.knownSkills.has(folder)) {
           debug('[ConfigWatcher] New skill folder:', folder);
@@ -767,7 +767,7 @@ export class ConfigWatcher {
         }
       }
 
-      // Find removed folders
+      // 删除文件夹
       for (const folder of this.knownSkills) {
         if (!currentFolders.has(folder)) {
           debug('[ConfigWatcher] Removed skill folder:', folder);
@@ -776,7 +776,7 @@ export class ConfigWatcher {
         }
       }
 
-      // Invalidate cache before reloading so we get fresh results
+      // 重新加载前使缓存失效，确保拿到最新结果
       invalidateSkillsCache();
       const allSkills = loadAllSkills(this.workspaceDir);
       this.callbacks.onSkillsListChange?.(allSkills);
@@ -787,9 +787,9 @@ export class ConfigWatcher {
   }
 
   /**
-   * Handle skill SKILL.md or icon change.
-   * If the skill has an icon URL in metadata but no local icon file,
-   * downloads the icon and emits another change event after completion.
+   * 处理 skill SKILL.md 或图标变更。
+   * 如果 skill 元数据有图标 URL 但本地没有图标文件，
+   * 则下载图标并在完成后再次触发变更事件。
    */
   private handleSkillChange(slug: string): void {
     debug('[ConfigWatcher] Skill changed:', slug);
@@ -797,16 +797,16 @@ export class ConfigWatcher {
     const skill = loadSkill(this.workspaceDir, slug);
     this.callbacks.onSkillChange?.(slug, skill);
 
-    // Check if we need to download an icon from URL
-    // This happens when SKILL.md has icon: "https://..." but no local icon.* file exists
+    // 检查是否需要从 URL 下载图标
+    // 这种情况发生在 SKILL.md 里有 icon: "https://..." 但本地没有 icon.* 文件时
     if (skill && skillNeedsIconDownload(skill)) {
       debug('[ConfigWatcher] Skill needs icon download:', slug, skill.metadata.icon);
 
-      // Download asynchronously - don't block the watcher
+      // 异步下载，不阻塞 watcher
       downloadSkillIcon(skill.path, skill.metadata.icon!)
         .then((iconPath) => {
           if (iconPath) {
-            // Reload the skill with the new icon and emit another change
+            // 下载完成后重新加载 skill 并再次触发变更
             const updatedSkill = loadSkill(this.workspaceDir, slug);
             debug('[ConfigWatcher] Icon downloaded, emitting updated skill:', slug);
             this.callbacks.onSkillChange?.(slug, updatedSkill);
@@ -823,20 +823,20 @@ export class ConfigWatcher {
   // ============================================================
 
   /**
-   * Handle workspace permissions.json change
+   * 处理 workspace permissions.json 变更。
    */
   private handleWorkspacePermissionsChange(): void {
     debug('[ConfigWatcher] Workspace permissions.json changed:', this.workspaceId);
 
-    // Invalidate cache
+    // 使缓存失效
     permissionsConfigCache.invalidateWorkspace(this.workspaceDir);
 
-    // Notify callback
+    // 通知回调
     this.callbacks.onWorkspacePermissionsChange?.(this.workspaceId);
   }
 
   /**
-   * Handle config.json change
+   * 处理 config.json 变更。
    */
   private handleConfigChange(): void {
     debug('[ConfigWatcher] config.json changed');
@@ -852,8 +852,8 @@ export class ConfigWatcher {
     if (config) {
       this.callbacks.onConfigChange?.(config);
 
-      // Check for LLM connections changes
-      // Use JSON hash comparison for deep equality check
+      // 检测 LLM connections 变化
+      // 用 JSON hash 做深比较
       const connections = config.llmConnections || [];
       const currentHash = JSON.stringify(connections);
       if (currentHash !== this.lastLlmConnectionsHash) {
@@ -867,7 +867,7 @@ export class ConfigWatcher {
   }
 
   /**
-   * Handle preferences.json change
+   * 处理 preferences.json 变更。
    */
   private handlePreferencesChange(): void {
     debug('[ConfigWatcher] preferences.json changed');
@@ -890,13 +890,13 @@ export class ConfigWatcher {
   // ============================================================
 
   /**
-   * Handle statuses config.json change
-   * Downloads icons for any status with URL icon and no local file
+   * 处理 statuses config.json 变更。
+   * 为任何 URL 图标且无本地文件的 status 下载图标。
    */
   private handleStatusConfigChange(): void {
     debug('[ConfigWatcher] Statuses config.json changed:', this.workspaceId);
 
-    // Load config and check for icons that need downloading
+    // 加载配置并检查需要下载图标的 status
     const config = loadStatusConfig(this.workspaceDir);
     for (const status of config.statuses) {
       if (statusNeedsIconDownload(this.workspaceDir, status)) {
@@ -905,7 +905,7 @@ export class ConfigWatcher {
           .then((iconPath) => {
             if (iconPath) {
               debug('[ConfigWatcher] Status icon downloaded:', status.id, iconPath);
-              // Re-emit config change to update UI with new icon
+              // 下载完成后重新触发 config 变更，更新 UI 图标
               this.callbacks.onStatusConfigChange?.(this.workspaceId);
             }
           })
@@ -919,7 +919,7 @@ export class ConfigWatcher {
   }
 
   /**
-   * Handle status icon file change
+   * 处理 status 图标文件变更。
    */
   private handleStatusIconChange(iconFilename: string): void {
     debug('[ConfigWatcher] Status icon changed:', this.workspaceId, iconFilename);
@@ -931,7 +931,7 @@ export class ConfigWatcher {
   // ============================================================
 
   /**
-   * Handle labels config.json change.
+   * 处理 labels config.json 变更。
    */
   private handleLabelConfigChange(): void {
     debug('[ConfigWatcher] Labels config.json changed:', this.workspaceId);
@@ -939,7 +939,7 @@ export class ConfigWatcher {
   }
 
   /**
-   * Handle automations config change.
+   * 处理 automations config 变更。
    */
   private handleAutomationsConfigChange(): void {
     debug('[ConfigWatcher] automations config changed:', this.workspaceId);
@@ -951,9 +951,9 @@ export class ConfigWatcher {
   // ============================================================
 
   /**
-   * Handle session.jsonl change — reads only line 1 (header) and emits if valid.
-   * This enables detection of external metadata changes (labels, name, flags)
-   * made by other instances, scripts, or manual edits.
+   * 处理 session.jsonl 变更 —— 只读第 1 行（header），有效时触发。
+   * 这样可以检测外部元数据变更（标签、名称、flags），
+   * 无论变更是来自其他实例、脚本还是手动编辑。
    */
   private handleSessionMetadataChange(sessionId: string): void {
     const sessionFile = join(this.workspaceDir, 'sessions', sessionId, 'session.jsonl');
@@ -969,11 +969,11 @@ export class ConfigWatcher {
   }
 
   // ============================================================
-  // Theme Handlers (App-Level)
+  // Theme Handlers（App-Level）
   // ============================================================
 
   /**
-   * Handle app-level theme.json change
+   * 处理应用级 theme.json 变更。
    */
   private handleAppThemeChange(): void {
     debug('[ConfigWatcher] App theme.json changed');
@@ -982,12 +982,12 @@ export class ConfigWatcher {
   }
 
   /**
-   * Watch app-level themes directory (~/.craft-agent/themes/)
+   * 监听应用级主题目录（~/.craft-agent/themes/）。
    */
   private watchAppThemesDir(): void {
     const themesDir = getAppThemesDir();
 
-    // Create themes directory if it doesn't exist
+    // 创建主题目录（如果不存在）
     if (!existsSync(themesDir)) {
       mkdirSync(themesDir, { recursive: true });
     }
@@ -996,7 +996,7 @@ export class ConfigWatcher {
       const watcher = watch(themesDir, (eventType, filename) => {
         if (!filename) return;
 
-        // Only handle .json files
+        // 只处理 .json 文件
         if (filename.endsWith('.json')) {
           const themeId = filename.replace('.json', '');
           this.debounce(`preset-theme:${themeId}`, () => this.handlePresetThemeChange(themeId));
@@ -1011,13 +1011,13 @@ export class ConfigWatcher {
   }
 
   /**
-   * Watch app-level permissions directory (~/.craft-agent/permissions/)
-   * Watches for changes to default.json which contains the default read-only patterns
+   * 监听应用级权限目录（~/.craft-agent/permissions/）。
+   * 监听 default.json 的变化，它包含默认只读模式。
    */
   private watchAppPermissionsDir(): void {
     const permissionsDir = getAppPermissionsDir();
 
-    // Create permissions directory if it doesn't exist
+    // 创建权限目录（如果不存在）
     if (!existsSync(permissionsDir)) {
       mkdirSync(permissionsDir, { recursive: true });
     }
@@ -1026,7 +1026,7 @@ export class ConfigWatcher {
       const watcher = watch(permissionsDir, (eventType, filename) => {
         if (!filename) return;
 
-        // Only watch default.json - this is where the default patterns live
+        // 只监听 default.json —— 默认模式所在文件
         if (filename === 'default.json') {
           this.debounce('default-permissions', () => this.handleDefaultPermissionsChange());
         }
@@ -1040,20 +1040,20 @@ export class ConfigWatcher {
   }
 
   /**
-   * Handle default.json permissions change (app-level)
+   * 处理应用级 default.json 权限变更。
    */
   private handleDefaultPermissionsChange(): void {
     debug('[ConfigWatcher] Default permissions changed');
 
-    // Invalidate the cache so next getMergedConfig() reloads from file
+    // 使缓存失效，下次 getMergedConfig() 会从文件重新加载
     permissionsConfigCache.invalidateDefaults();
 
-    // Notify callback
+    // 通知回调
     this.callbacks.onDefaultPermissionsChange?.();
   }
 
   /**
-   * Scan app-level themes directory to populate known themes
+   * 扫描应用级主题目录，填充 known themes。
    */
   private scanAppThemes(): void {
     const themesDir = getAppThemesDir();
@@ -1077,7 +1077,7 @@ export class ConfigWatcher {
   }
 
   /**
-   * Handle preset theme file change (app-level)
+   * 处理应用级预设主题文件变更。
    */
   private handlePresetThemeChange(themeId: string): void {
     debug('[ConfigWatcher] Preset theme changed:', themeId);
@@ -1086,19 +1086,19 @@ export class ConfigWatcher {
     const themePath = join(themesDir, `${themeId}.json`);
 
     if (!existsSync(themePath)) {
-      // Theme was deleted
+      // 主题被删除
       if (this.knownThemes.has(themeId)) {
         this.knownThemes.delete(themeId);
         this.callbacks.onPresetThemeChange?.(themeId, null);
 
-        // Also notify list change
+        // 同时通知列表变化
         const allThemes = loadPresetThemes();
         this.callbacks.onPresetThemesListChange?.(allThemes);
       }
       return;
     }
 
-    // Theme was added or modified
+    // 主题被新增或修改
     if (!this.knownThemes.has(themeId)) {
       this.knownThemes.add(themeId);
     }
@@ -1106,7 +1106,7 @@ export class ConfigWatcher {
     const theme = loadPresetTheme(themeId);
     this.callbacks.onPresetThemeChange?.(themeId, theme);
 
-    // Also notify list change in case name changed (affects sorting)
+    // 名称变化会影响排序，因此也通知列表变化
     const allThemes = loadPresetThemes();
     this.callbacks.onPresetThemesListChange?.(allThemes);
   }
@@ -1117,8 +1117,8 @@ export class ConfigWatcher {
 // ============================================================
 
 /**
- * Create and start a config watcher for a specific workspace.
- * Returns the watcher instance for later cleanup.
+ * 为指定 workspace 创建并启动配置监听器。
+ * 返回 watcher 实例供后续清理。
  */
 export function createConfigWatcher(
   workspaceId: string,

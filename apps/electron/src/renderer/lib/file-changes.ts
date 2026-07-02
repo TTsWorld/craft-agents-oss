@@ -12,6 +12,10 @@ function getEditChangeId(activityId: string, editIndex: number, editCount: numbe
   return editCount <= 1 ? activityId : `${activityId}:${editIndex}`
 }
 
+/**
+ * 从活动（activity）列表中提取文件变更记录。
+ * 支持多种工具调用格式：Codex 批量变更、Pi SDK 编辑格式、Claude/legacy 字段。
+ */
 export function collectFileChangesFromActivities(activities: ActivityItem[]): FileChange[] {
   const changes: FileChange[] = []
 
@@ -20,7 +24,7 @@ export function collectFileChangesFromActivities(activities: ActivityItem[]): Fi
     if (!input) continue
 
     if (activity.toolName === 'Edit') {
-      // Codex format: { changes: Array<{ path, kind, diff }> }
+      // Codex 格式：{ changes: Array<{ path, kind, diff }> }
       if (Array.isArray(input.changes)) {
         for (const codexChange of input.changes as Array<{ path?: string; diff?: string }>) {
           changes.push({
@@ -36,7 +40,7 @@ export function collectFileChangesFromActivities(activities: ActivityItem[]): Fi
         continue
       }
 
-      // Pi SDK >= 0.63.2 edit format: { path, edits: [{ oldText, newText }] }
+      // Pi SDK >= 0.63.2 编辑格式：{ path, edits: [{ oldText, newText }] }
       if (Array.isArray(input.edits) && input.edits.length > 0) {
         const filePath = getFilePath(input)
         for (const [index, edit] of input.edits.entries()) {
@@ -53,7 +57,7 @@ export function collectFileChangesFromActivities(activities: ActivityItem[]): Fi
         continue
       }
 
-      // Claude fields take precedence; legacy Pi fields are additive fallbacks.
+      // Claude 字段优先；Pi legacy 字段作为兜底。
       changes.push({
         id: activity.id,
         filePath: getFilePath(input),
@@ -80,6 +84,9 @@ export function collectFileChangesFromActivities(activities: ActivityItem[]): Fi
   return changes
 }
 
+/**
+ * 给定一个 activityId，找出文件变更列表中对应的第一条变更 id。
+ */
 export function getFirstFileChangeIdForActivity(activityId: string, changes: FileChange[]): string | undefined {
   const exact = changes.find((change) => change.id === activityId)
   if (exact) return exact.id

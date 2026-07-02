@@ -1,8 +1,8 @@
 /**
- * Credential Manager
+ * 凭证管理器（Credential Manager）
  *
- * Main interface for credential storage. Uses encrypted file storage
- * for cross-platform compatibility without OS keychain prompts.
+ * 凭证存储的主入口。使用加密文件存储，保证跨平台兼容，
+ * 且不需要操作系统 keychain 弹窗。
  */
 
 import type { CredentialBackend } from './backends/types.ts';
@@ -11,6 +11,10 @@ import type { LlmAuthType, LlmProviderType } from '../config/llm-connections.ts'
 import { SecureStorageBackend } from './backends/secure-storage.ts';
 import { debug } from '../utils/debug.ts';
 
+/**
+ * CredentialManager 是凭证操作的统一入口。
+ * 它管理多个 CredentialBackend，按优先级选择可用后端。
+ */
 export class CredentialManager {
   private backends: CredentialBackend[] = [];
   private writeBackend: CredentialBackend | null = null;
@@ -18,28 +22,28 @@ export class CredentialManager {
   private initPromise: Promise<void> | null = null;
 
   /**
-   * Explicitly initialize the credential manager.
-   * This is optional - methods auto-initialize via ensureInitialized().
-   * Use this for eager initialization at app startup if desired.
+   * 显式初始化凭证管理器。
+   * 这是可选的——所有公共方法都会通过 ensureInitialized() 自动初始化。
+   * 如果希望在应用启动时就完成初始化，可以主动调用这个方法。
    */
   async initialize(): Promise<void> {
     await this.ensureInitialized();
   }
 
   /**
-   * Internal: ensure initialization has completed.
-   * Called automatically by all public methods.
+   * 内部方法：确保已完成初始化。
+   * 所有公共方法都会自动调用它。
    */
   private async ensureInitialized(): Promise<void> {
     if (this.initialized) {
       return;
     }
-    // Prevent race condition with concurrent initialization
+    // 防止并发初始化导致竞态条件
     if (this.initPromise) {
       return this.initPromise;
     }
 
-    // Clear promise on failure so initialization can be retried
+    // 初始化失败时清空 initPromise，允许重试
     this.initPromise = this._doInitialize().catch((err) => {
       this.initPromise = null;
       throw err;
@@ -52,9 +56,9 @@ export class CredentialManager {
       return;
     }
 
-    // SecureStorageBackend is always available and is currently the only
-    // credential backend. This sync path exists for sync callers such as
-    // saveSourceConfig(), where fire-and-forget cleanup can race immediate reloads.
+    // SecureStorageBackend 永远可用，并且目前是唯一后端。
+    // 这个同步路径供 saveSourceConfig() 等同步调用方使用，
+    // 避免 fire-and-forget 的清理和立即重新加载之间产生竞态。
     const backend = new SecureStorageBackend();
     this.backends = [backend];
     this.writeBackend = backend;
@@ -70,7 +74,7 @@ export class CredentialManager {
     ];
     const availableBackends: CredentialBackend[] = [];
 
-    // Check which backends are available
+    // 检查哪些后端可用
     for (const backend of potentialBackends) {
       if (await backend.isAvailable()) {
         availableBackends.push(backend);
@@ -78,16 +82,15 @@ export class CredentialManager {
       }
     }
 
-    // A synchronous caller may have initialized the singleton while the async
-    // availability checks above were in flight. In that case, keep the sync state
-    // instead of appending duplicate backends.
+    // 上面的异步可用性检查期间，同步调用方可能已经完成单例初始化。
+    // 这种情况下保持同步状态，避免追加重复后端。
     if (this.initialized) return;
 
-    // Sort by priority (highest first)
+    // 按优先级从高到低排序
     availableBackends.sort((a, b) => b.priority - a.priority);
     this.backends = availableBackends;
 
-    // Use the first available backend for writing
+    // 用第一个可用后端作为写入后端
     this.writeBackend = this.backends[0] || null;
 
     if (this.writeBackend) {
@@ -99,14 +102,14 @@ export class CredentialManager {
     this.initialized = true;
   }
 
-  /** Get the name of the active write backend */
+  /** 获取当前用于写入的后端名称 */
   getActiveBackendName(): string | null {
     return this.writeBackend?.name || null;
   }
 
   /**
-   * Get a credential by ID, trying all backends.
-   * Automatically initializes if needed.
+   * 根据 ID 获取凭证，会依次尝试所有后端。
+   * 需要时自动初始化。
    */
   async get(id: CredentialId): Promise<StoredCredential | null> {
     await this.ensureInitialized();
@@ -127,8 +130,8 @@ export class CredentialManager {
   }
 
   /**
-   * Set a credential using the write backend.
-   * Automatically initializes if needed.
+   * 使用写入后端设置凭证。
+   * 需要时自动初始化。
    */
   async set(id: CredentialId, credential: StoredCredential): Promise<void> {
     await this.ensureInitialized();
@@ -142,8 +145,8 @@ export class CredentialManager {
   }
 
   /**
-   * Delete a credential from all backends.
-   * Automatically initializes if needed.
+   * 从所有后端删除凭证。
+   * 需要时自动初始化。
    */
   async delete(id: CredentialId): Promise<boolean> {
     await this.ensureInitialized();
@@ -187,8 +190,8 @@ export class CredentialManager {
   }
 
   /**
-   * List credentials matching a filter.
-   * Automatically initializes if needed.
+   * 列出符合过滤条件的凭证。
+   * 需要时自动初始化。
    */
   async list(filter?: Partial<CredentialId>): Promise<CredentialId[]> {
     await this.ensureInitialized();
@@ -215,37 +218,37 @@ export class CredentialManager {
   }
 
   // ============================================================
-  // Convenience Methods
+  // 便捷方法
   // ============================================================
 
-  /** Get Anthropic API key */
+  /** 获取 Anthropic API key */
   async getApiKey(): Promise<string | null> {
     const cred = await this.get({ type: 'anthropic_api_key' });
     return cred?.value || null;
   }
 
-  /** Set Anthropic API key */
+  /** 设置 Anthropic API key */
   async setApiKey(key: string): Promise<void> {
     await this.set({ type: 'anthropic_api_key' }, { value: key });
   }
 
-  /** Get Claude OAuth token */
+  /** 获取 Claude OAuth token */
   async getClaudeOAuth(): Promise<string | null> {
     const cred = await this.get({ type: 'claude_oauth' });
     return cred?.value || null;
   }
 
-  /** Set Claude OAuth token */
+  /** 设置 Claude OAuth token */
   async setClaudeOAuth(token: string): Promise<void> {
     await this.set({ type: 'claude_oauth' }, { value: token });
   }
 
-  /** Get Claude OAuth credentials (with refresh token, expiry, and source) */
+  /** 获取 Claude OAuth 完整凭证（含 refresh token、过期时间和来源） */
   async getClaudeOAuthCredentials(): Promise<{
     accessToken: string;
     refreshToken?: string;
     expiresAt?: number;
-    /** Where the token came from: 'native' (our OAuth), 'cli' (Claude CLI import), or undefined (unknown) */
+    /** token 来源：'native'（我们自己的 OAuth）、'cli'（Claude CLI 导入），或 undefined（未知） */
     source?: 'native' | 'cli';
   } | null> {
     const cred = await this.get({ type: 'claude_oauth' });
@@ -259,12 +262,12 @@ export class CredentialManager {
     };
   }
 
-  /** Set Claude OAuth credentials (with refresh token, expiry, and source) */
+  /** 设置 Claude OAuth 完整凭证（含 refresh token、过期时间和来源） */
   async setClaudeOAuthCredentials(credentials: {
     accessToken: string;
     refreshToken?: string;
     expiresAt?: number;
-    /** Where the token came from: 'native' (our OAuth), 'cli' (Claude CLI import) */
+    /** token 来源：'native'（我们自己的 OAuth）、'cli'（Claude CLI 导入） */
     source?: 'native' | 'cli';
   }): Promise<void> {
     await this.set({ type: 'claude_oauth' }, {
@@ -275,7 +278,7 @@ export class CredentialManager {
     });
   }
 
-  /** Get workspace MCP OAuth credentials */
+  /** 获取 Workspace MCP OAuth 凭证 */
   async getWorkspaceOAuth(workspaceId: string): Promise<{
     accessToken: string;
     tokenType?: string;
@@ -290,7 +293,7 @@ export class CredentialManager {
     };
   }
 
-  /** Set workspace MCP OAuth credentials */
+  /** 设置 Workspace MCP OAuth 凭证 */
   async setWorkspaceOAuth(workspaceId: string, credentials: {
     accessToken: string;
     tokenType?: string;
@@ -306,7 +309,7 @@ export class CredentialManager {
     );
   }
 
-  /** Delete all credentials for a workspace (source credentials) */
+  /** 删除某个 workspace 下的所有 source 凭证 */
   async deleteWorkspaceCredentials(workspaceId: string): Promise<void> {
     const allCreds = await this.list({ workspaceId });
     for (const cred of allCreds) {
@@ -314,16 +317,16 @@ export class CredentialManager {
     }
   }
 
-  // Note: OpenAI API key methods removed - Codex uses native ChatGPT OAuth flow
+  // 注意：OpenAI API key 相关方法已移除——Codex 使用原生 ChatGPT OAuth 流程
 
   // ============================================================
-  // LLM Connection Credentials
+  // LLM 连接凭证
   // ============================================================
 
   /**
-   * Get API key for an LLM connection.
-   * @param connectionSlug - The connection slug
-   * @returns API key or null if not found
+   * 获取 LLM 连接的 API key。
+   * @param connectionSlug - 连接标识（slug）
+   * @returns API key，找不到则返回 null
    */
   async getLlmApiKey(connectionSlug: string): Promise<string | null> {
     const cred = await this.get({ type: 'llm_api_key', connectionSlug });
@@ -331,33 +334,33 @@ export class CredentialManager {
   }
 
   /**
-   * Set API key for an LLM connection.
-   * @param connectionSlug - The connection slug
-   * @param apiKey - The API key to store
+   * 设置 LLM 连接的 API key。
+   * @param connectionSlug - 连接标识（slug）
+   * @param apiKey - 要存储的 API key
    */
   async setLlmApiKey(connectionSlug: string, apiKey: string): Promise<void> {
     await this.set({ type: 'llm_api_key', connectionSlug }, { value: apiKey });
   }
 
   /**
-   * Delete API key for an LLM connection.
-   * @param connectionSlug - The connection slug
-   * @returns true if deleted, false if not found
+   * 删除 LLM 连接的 API key。
+   * @param connectionSlug - 连接标识（slug）
+   * @returns 删除成功返回 true，找不到返回 false
    */
   async deleteLlmApiKey(connectionSlug: string): Promise<boolean> {
     return this.delete({ type: 'llm_api_key', connectionSlug });
   }
 
   /**
-   * Get OAuth token for an LLM connection.
-   * @param connectionSlug - The connection slug
-   * @returns OAuth credentials or null if not found
+   * 获取 LLM 连接的 OAuth token。
+   * @param connectionSlug - 连接标识（slug）
+   * @returns OAuth 凭证，找不到返回 null
    */
   async getLlmOAuth(connectionSlug: string): Promise<{
     accessToken: string;
     refreshToken?: string;
     expiresAt?: number;
-    /** OIDC id_token (used by OpenAI/Codex) */
+    /** OIDC id_token（OpenAI/Codex 使用） */
     idToken?: string;
   } | null> {
     const cred = await this.get({ type: 'llm_oauth', connectionSlug });
@@ -371,15 +374,15 @@ export class CredentialManager {
   }
 
   /**
-   * Set OAuth token for an LLM connection.
-   * @param connectionSlug - The connection slug
-   * @param credentials - OAuth credentials to store
+   * 设置 LLM 连接的 OAuth token。
+   * @param connectionSlug - 连接标识（slug）
+   * @param credentials - 要存储的 OAuth 凭证
    */
   async setLlmOAuth(connectionSlug: string, credentials: {
     accessToken: string;
     refreshToken?: string;
     expiresAt?: number;
-    /** OIDC id_token (used by OpenAI/Codex) */
+    /** OIDC id_token（OpenAI/Codex 使用） */
     idToken?: string;
   }): Promise<void> {
     await this.set({ type: 'llm_oauth', connectionSlug }, {
@@ -391,8 +394,8 @@ export class CredentialManager {
   }
 
   /**
-   * Delete all credentials for an LLM connection.
-   * @param connectionSlug - The connection slug
+   * 删除某个 LLM 连接的所有凭证。
+   * @param connectionSlug - 连接标识（slug）
    */
   async deleteLlmCredentials(connectionSlug: string): Promise<void> {
     await this.delete({ type: 'llm_api_key', connectionSlug });
@@ -402,13 +405,13 @@ export class CredentialManager {
   }
 
   // ============================================================
-  // IAM Credentials (AWS Bedrock)
+  // IAM 凭证（AWS Bedrock）
   // ============================================================
 
   /**
-   * Get IAM credentials for an LLM connection.
-   * @param connectionSlug - The connection slug
-   * @returns IAM credentials or null if not found
+   * 获取 LLM 连接的 IAM 凭证。
+   * @param connectionSlug - 连接标识（slug）
+   * @returns IAM 凭证，找不到返回 null
    */
   async getLlmIamCredentials(connectionSlug: string): Promise<{
     accessKeyId: string;
@@ -420,16 +423,16 @@ export class CredentialManager {
     if (!cred || !cred.awsAccessKeyId) return null;
     return {
       accessKeyId: cred.awsAccessKeyId,
-      secretAccessKey: cred.value, // Secret key stored in value field
+      secretAccessKey: cred.value, // secret key 存在 value 字段
       region: cred.awsRegion,
       sessionToken: cred.awsSessionToken,
     };
   }
 
   /**
-   * Set IAM credentials for an LLM connection.
-   * @param connectionSlug - The connection slug
-   * @param credentials - IAM credentials to store
+   * 设置 LLM 连接的 IAM 凭证。
+   * @param connectionSlug - 连接标识（slug）
+   * @param credentials - 要存储的 IAM 凭证
    */
   async setLlmIamCredentials(connectionSlug: string, credentials: {
     accessKeyId: string;
@@ -438,7 +441,7 @@ export class CredentialManager {
     sessionToken?: string;
   }): Promise<void> {
     await this.set({ type: 'llm_iam', connectionSlug }, {
-      value: credentials.secretAccessKey, // Primary secret in value field
+      value: credentials.secretAccessKey, // 主 secret 存 value
       awsAccessKeyId: credentials.accessKeyId,
       awsRegion: credentials.region,
       awsSessionToken: credentials.sessionToken,
@@ -446,13 +449,13 @@ export class CredentialManager {
   }
 
   // ============================================================
-  // Service Account Credentials (GCP Vertex)
+  // 服务账号凭证（GCP Vertex）
   // ============================================================
 
   /**
-   * Get service account credentials for an LLM connection.
-   * @param connectionSlug - The connection slug
-   * @returns Service account JSON and metadata or null if not found
+   * 获取 LLM 连接的服务账号凭证。
+   * @param connectionSlug - 连接标识（slug）
+   * @returns 服务账号 JSON 和元数据，找不到返回 null
    */
   async getLlmServiceAccount(connectionSlug: string): Promise<{
     serviceAccountJson: string;
@@ -463,7 +466,7 @@ export class CredentialManager {
     const cred = await this.get({ type: 'llm_service_account', connectionSlug });
     if (!cred) return null;
     return {
-      serviceAccountJson: cred.value, // Full JSON stored in value field
+      serviceAccountJson: cred.value, // 完整 JSON 存在 value 字段
       projectId: cred.gcpProjectId,
       region: cred.gcpRegion,
       email: cred.serviceAccountEmail,
@@ -471,9 +474,9 @@ export class CredentialManager {
   }
 
   /**
-   * Set service account credentials for an LLM connection.
-   * @param connectionSlug - The connection slug
-   * @param credentials - Service account credentials to store
+   * 设置 LLM 连接的服务账号凭证。
+   * @param connectionSlug - 连接标识（slug）
+   * @param credentials - 要存储的服务账号凭证
    */
   async setLlmServiceAccount(connectionSlug: string, credentials: {
     serviceAccountJson: string;
@@ -482,7 +485,7 @@ export class CredentialManager {
     email?: string;
   }): Promise<void> {
     await this.set({ type: 'llm_service_account', connectionSlug }, {
-      value: credentials.serviceAccountJson, // Full JSON in value field
+      value: credentials.serviceAccountJson, // 完整 JSON 存 value
       gcpProjectId: credentials.projectId,
       gcpRegion: credentials.region,
       serviceAccountEmail: credentials.email,
@@ -490,17 +493,17 @@ export class CredentialManager {
   }
 
   // ============================================================
-  // Unified Credential Checking
+  // 统一凭证检查
   // ============================================================
 
   /**
-   * Check if an LLM connection has valid credentials.
-   * Uses the new LlmAuthType system - routes by auth mechanism.
+   * 检查 LLM 连接是否拥有有效凭证。
+   * 使用新的 LlmAuthType 体系——按认证机制路由。
    *
-   * @param connectionSlug - The connection slug
-   * @param authType - The auth type to check
-   * @param providerType - Optional provider type for OAuth routing
-   * @returns true if credentials exist and are valid
+   * @param connectionSlug - 连接标识（slug）
+   * @param authType - 要检查的认证类型
+   * @param providerType - 可选的提供商类型，用于 OAuth 路由
+   * @returns 凭证存在且有效时返回 true
    */
   async hasLlmCredentials(
     connectionSlug: string,
@@ -508,39 +511,39 @@ export class CredentialManager {
     providerType?: LlmProviderType
   ): Promise<boolean> {
     switch (authType) {
-      // No credentials needed
+      // 不需要凭证
       case 'none':
       case 'environment':
         return true;
 
-      // API key variants - all use the same storage
+      // API key 类认证都走同一存储
       case 'api_key':
       case 'api_key_with_endpoint':
       case 'bearer_token':
         return this.hasLlmApiKeyCredential(connectionSlug);
 
-      // OAuth - browser flow
+      // OAuth ——浏览器授权流程
       case 'oauth':
         return this.hasLlmOAuthCredential(connectionSlug, providerType);
 
-      // AWS IAM credentials
+      // AWS IAM 凭证
       case 'iam_credentials':
         return this.hasLlmIamCredential(connectionSlug);
 
-      // GCP service account
+      // GCP 服务账号
       case 'service_account_file':
         return this.hasLlmServiceAccountCredential(connectionSlug);
 
       default:
-        // Exhaustive check - TypeScript will error if we miss a case
+        // 穷尽检查——如果漏了某个 case，TypeScript 会报错
         const _exhaustive: never = authType;
         return false;
     }
   }
 
   /**
-   * Check if connection has valid API key credential.
-   * @internal
+   * 检查连接是否有有效的 API key 凭证。
+   * @internal 内部方法
    */
   private async hasLlmApiKeyCredential(connectionSlug: string): Promise<boolean> {
     const apiKey = await this.getLlmApiKey(connectionSlug);
@@ -548,8 +551,8 @@ export class CredentialManager {
   }
 
   /**
-   * Check if connection has valid OAuth credential.
-   * @internal
+   * 检查连接是否有有效的 OAuth 凭证。
+   * @internal 内部方法
    */
   private async hasLlmOAuthCredential(
     connectionSlug: string,
@@ -558,16 +561,16 @@ export class CredentialManager {
     const oauth = await this.getLlmOAuth(connectionSlug);
     if (!oauth) return false;
 
-    // Check if expired
+    // 检查是否过期
     if (oauth.expiresAt && this.isExpired({ value: oauth.accessToken, expiresAt: oauth.expiresAt })) {
-      return !!oauth.refreshToken; // Can refresh
+      return !!oauth.refreshToken; // 有 refresh token 就可以刷新
     }
     return true;
   }
 
   /**
-   * Check if connection has valid IAM credential.
-   * @internal
+   * 检查连接是否有有效的 IAM 凭证。
+   * @internal 内部方法
    */
   private async hasLlmIamCredential(connectionSlug: string): Promise<boolean> {
     const cred = await this.getLlmIamCredentials(connectionSlug);
@@ -575,8 +578,8 @@ export class CredentialManager {
   }
 
   /**
-   * Check if connection has valid service account credential.
-   * @internal
+   * 检查连接是否有有效的服务账号凭证。
+   * @internal 内部方法
    */
   private async hasLlmServiceAccountCredential(connectionSlug: string): Promise<boolean> {
     const cred = await this.getLlmServiceAccount(connectionSlug);
@@ -584,47 +587,46 @@ export class CredentialManager {
   }
 
   /**
-   * Check if a credential is expired (with 5-minute buffer).
+   * 判断凭证是否已过期（预留 5 分钟缓冲）。
    *
-   * If expiresAt is not set:
-   * - OAuth tokens (have refreshToken): treated as expired to force refresh attempt
-   * - API keys (no refreshToken): treated as never expiring
+   * 如果未设置 expiresAt：
+   * - OAuth token（有 refreshToken）：视为已过期，强制尝试刷新
+   * - API key（没有 refreshToken）：视为永不过期
    *
-   * This prevents OAuth tokens from being treated as valid forever when
-   * the provider doesn't return expires_in in the token response.
+   * 这样可以防止某些提供商没返回 expires_in 时，OAuth token 被当成永久有效。
    */
   isExpired(credential: StoredCredential): boolean {
     if (credential.expiresAt) {
-      // Consider expired if within 5 minutes of expiry
+      // 离过期还有 5 分钟内就认为已过期
       return Date.now() > credential.expiresAt - 5 * 60 * 1000;
     }
 
-    // No expiresAt set - behavior depends on credential type
+    // 没有 expiresAt 时，根据凭证类型决定行为
     if (credential.refreshToken) {
-      // OAuth token without expiry - treat as expired to force refresh
-      // This is safer than assuming it's valid forever
+      // OAuth token 没有过期时间——当作已过期，强制刷新
+      // 这比假设它永久有效更安全
       debug('[CredentialManager] OAuth token missing expiresAt - treating as expired');
       return true;
     }
 
-    // API key without expiry - these typically don't expire
+    // 没有过期时间的 API key——通常不会过期
     return false;
   }
 
   // ============================================================
-  // Health Check
+  // 健康检查
   // ============================================================
 
   /**
-   * Check the health of the credential store.
+   * 检查凭证仓库的健康状态。
    *
-   * This validates:
-   * 1. The credential file can be read and decrypted (if it exists)
-   * 2. The default LLM connection has valid credentials
+   * 会验证：
+   * 1. 凭证文件能否读取并解密（如果存在）
+   * 2. 默认 LLM 连接是否有有效凭证
    *
-   * Use this on app startup to detect issues before users hit cryptic errors.
+   * 应用启动时调用它，可以提前发现问题，而不是等用户遇到晦涩错误。
    *
-   * @returns Health status with any issues found
+   * @returns 健康状态及发现的问题
    */
   async checkHealth(): Promise<CredentialHealthStatus> {
     const issues: CredentialHealthIssue[] = [];
@@ -632,15 +634,15 @@ export class CredentialManager {
     try {
       await this.ensureInitialized();
 
-      // 1. Try to list credentials - this triggers decryption
-      // If file is corrupted or can't be decrypted, this will throw
+      // 1. 尝试列出凭证——这会触发解密
+      // 如果文件损坏或无法解密，会抛错
       await this.list({});
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       const lowerMsg = errorMsg.toLowerCase();
 
-      // Detect decryption failures (usually means machine migration)
+      // 判断是否为解密失败（通常是换机器迁移）
       if (lowerMsg.includes('decrypt') || lowerMsg.includes('cipher') || lowerMsg.includes('authentication tag')) {
         issues.push({
           type: 'decryption_failed',
@@ -654,7 +656,7 @@ export class CredentialManager {
           error: errorMsg,
         });
       } else {
-        // Unknown error - treat as corruption
+        // 未知错误，按文件损坏处理
         issues.push({
           type: 'file_corrupted',
           message: 'Failed to read credentials. Please re-authenticate.',
@@ -665,8 +667,8 @@ export class CredentialManager {
       return { healthy: false, issues };
     }
 
-    // 2. Check if default connection has credentials
-    // Import lazily to avoid circular dependency
+    // 2. 检查默认连接是否有凭证
+    // 延迟导入，避免循环依赖
     try {
       const { getDefaultLlmConnection, getLlmConnection } = await import('../config/storage.ts');
       const defaultSlug = getDefaultLlmConnection();
@@ -688,7 +690,7 @@ export class CredentialManager {
         }
       }
     } catch (configError) {
-      // Config not yet initialized - skip this check
+      // 配置尚未初始化，跳过这项检查
       debug('[CredentialManager] Skipping default connection check - config not available');
     }
 
@@ -699,9 +701,10 @@ export class CredentialManager {
   }
 }
 
-// Singleton instance
+// 单例实例
 let manager: CredentialManager | null = null;
 
+/** 获取 CredentialManager 单例，类似 Golang 中一个包级变量加同步初始化 */
 export function getCredentialManager(): CredentialManager {
   if (!manager) {
     manager = new CredentialManager();

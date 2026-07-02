@@ -1,13 +1,12 @@
 /**
- * "Pending requests" — recent senders the gateway rejected. Renders nothing
- * when the list is empty.
+ * “待审批请求”列表：展示最近被网关拒绝的发送者。
  *
- * The Allow button label depends on the entry's `reason`:
- *  - `'not-owner'` → "Allow" (promotes to workspace owner)
- *  - `'not-on-binding-allowlist'` → "Allow for this chat" (appends to that
- *    binding's allow-list only — does NOT grant workspace ownership)
- *
- * "Ignore" drops the row from the pending list without granting access.
+ * 空列表时直接返回 null，不渲染任何东西。
+ * “允许”按钮的文案取决于拒绝原因：
+ *  - 'not-owner'：提升为工作空间 owner（全局可访问）
+ *  - 'not-on-binding-allowlist'：仅加入当前 chat binding 的 allow-list，
+ *    不会授予工作空间级权限
+ * “忽略”则仅把该行从 pending 列表移除，不授予任何权限。
  */
 
 import * as React from 'react'
@@ -29,8 +28,8 @@ export function PendingSendersList({ pending, onAllow, onIgnore }: Props) {
     <div className="divide-y divide-border/50">
       {pending.map((sender) => (
         <PendingRow
-          // Composite key — same userId can appear multiple times across
-          // different reasons / bindings, so userId alone isn't unique.
+          // 复合 key：同一个 userId 可能因不同原因或不同 binding 出现多次，
+          // 所以不能只用 userId 作为 React 的 key。
           key={`${sender.platform}:${sender.userId}:${sender.reason ?? 'not-owner'}:${sender.bindingId ?? ''}`}
           sender={sender}
           onAllow={() => onAllow(sender)}

@@ -1,14 +1,17 @@
 /**
  * MessagingDialogHost
  *
- * Global host that owns the messaging pairing/connect dialogs so they survive
- * the close of the triggering context menu or dropdown.
+ * 全局宿主组件，负责管理消息配对/连接对话框的状态。
  *
- * Auto-dismiss: when the pairing dialog is showing a code and the user
- * completes `/pair <code>` in their bot, the gateway emits
- * `messaging:bindingChanged`. We watch that signal, fetch the latest
- * bindings, and close the dialog (with a success toast) if the dialog's
- * sessionId now has an active binding for the matching platform.
+ * 为什么需要它：
+ *  - 菜单（右键/context menu/dropdown）触发配对后，菜单本身会关闭；
+ *    如果对话框由菜单组件持有，菜单卸载时对话框也会消失。
+ *  - 把对话框状态提升到全局 atom，并由这个宿主组件渲染，可以让对话框
+ *    在触发菜单关闭后继续存在。
+ *
+ * 自动关闭：当用户在其 bot 中发送 `/pair <code>` 完成绑定后，网关会发出
+ * `messaging:bindingChanged` 事件；我们监听该信号，拉取最新 binding 列表，
+ * 如果当前对话框的 sessionId 在该平台上已有活跃绑定，就关闭对话框并 toast 成功。
  */
 
 import * as React from 'react'
@@ -25,9 +28,9 @@ export function MessagingDialogHost() {
 
   const close = () => setState({ kind: 'closed' })
 
-  // Subscribe to binding-changed pushes only while the user is waiting on
-  // a pairing code. The check needs the *latest* state values, so we capture
-  // them via a ref to keep the subscription effect stable.
+  // 仅在用户等待配对码时订阅 binding 变化事件。
+  // 事件回调需要读取最新 state，但 effect 依赖数组又不能包含 state，
+  // 否则每次 state 变化都会重新订阅。用 ref 保存最新 state 以保持稳定订阅。
   const stateRef = React.useRef(state)
   stateRef.current = state
 
@@ -50,12 +53,13 @@ export function MessagingDialogHost() {
           setState({ kind: 'closed' })
         }
       } catch {
-        // If we can't verify, leave the dialog open — user can still close it.
+        // 如果无法验证，保持对话框打开，用户仍可手动关闭
       }
     })
     return off
   }, [isWaitingForPair, setState, t])
 
+  // 打开配对码对话框，并异步向主进程申请生成配对码
   const openPairing = async (sessionId: string, platform: 'telegram' | 'whatsapp') => {
     setState({
       kind: 'pairing',
@@ -86,6 +90,8 @@ export function MessagingDialogHost() {
     }
   }
 
+  // WhatsApp 连接成功后：如果之前记录了“连接完成后要跳转到的 sessionId”，
+  // 则继续为该 session 生成配对码；否则直接关闭对话框。
   const handleWhatsAppConnected = () => {
     if (state.kind === 'wa_connect' && state.continueToPairingSessionId) {
       void openPairing(state.continueToPairingSessionId, 'whatsapp')

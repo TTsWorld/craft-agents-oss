@@ -1,3 +1,8 @@
+/**
+ * AdminApprovalRequest - 结构化输入：管理员权限提升审批。
+ *
+ * 以友好、易懂的方式向非技术用户展示需要管理员权限的操作，并允许记住选择。
+ */
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { ShieldAlert, Check, X } from 'lucide-react'
@@ -6,6 +11,7 @@ import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 
+/** AdminApprovalRequestData：类型定义 */
 export interface AdminApprovalRequestData {
   appName: string
   reason: string
@@ -19,14 +25,14 @@ interface AdminApprovalRequestProps {
   request: AdminApprovalRequestData
   onApprove: (options: { rememberForMinutes?: number }) => void
   onCancel: () => void
-  /** When true, removes container styling (shadow, rounded) - used when wrapped by InputContainer */
+  /** 为 true 时移除容器样式（阴影、圆角），用于被 InputContainer 包裹时 */
   unstyled?: boolean
 }
 
 /**
- * AdminApprovalRequest - Friendly admin-elevation approval card for non-technical users.
+ * AdminApprovalRequest - 面向非技术用户的友好型管理员权限提升审批卡片。
  *
- * Goal: make privileged escalation understandable and safe.
+ * 目标：让特权升级操作易于理解且安全。
  */
 export function AdminApprovalRequest({
   request,
@@ -40,6 +46,7 @@ export function AdminApprovalRequest({
   const rememberForMinutes = request.rememberForMinutes ?? 10
 
   const handleApprove = () => {
+    // 如果勾选了记住，则传 rememberForMinutes；否则不传
     onApprove({ rememberForMinutes: rememberChoice ? rememberForMinutes : undefined })
   }
 

@@ -1,8 +1,8 @@
 /**
  * AppearanceSettingsPage
  *
- * Visual customization settings: theme mode, color theme, font,
- * workspace-specific theme overrides, and CLI tool icon mappings.
+ * 外观设置页：主题模式、配色主题、字体、workspace 级主题覆盖，
+ * 以及 CLI 工具图标映射。
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
@@ -51,12 +51,12 @@ export const meta: DetailsPageMeta = {
 }
 
 // ============================================
-// Tool Icons Table
+// 工具图标表格
 // ============================================
 
 /**
- * Column definitions for the tool icon mappings table.
- * Shows a preview icon, tool name, and the CLI commands that trigger it.
+ * 工具图标映射表格的列定义。
+ * 展示图标预览、工具名称和触发该图标的 CLI 命令。
  */
 const getToolIconColumns = (t: (key: string) => string): ColumnDef<ToolIconMapping>[] => [
   {
@@ -102,7 +102,7 @@ const getToolIconColumns = (t: (key: string) => string): ColumnDef<ToolIconMappi
 ]
 
 // ============================================
-// Main Component
+// 主组件
 // ============================================
 
 export default function AppearanceSettingsPage() {
@@ -123,22 +123,22 @@ export default function AppearanceSettingsPage() {
   } = useTheme()
   const { workspaces, sessionStatuses } = useAppShellContext()
 
-  // Fetch workspace icons as data URLs (file:// URLs don't work in renderer)
+  // 把 workspace 图标读取为 data URL（renderer 中 file:// URL 不工作）
   const workspaceIconMap = useWorkspaceIcons(workspaces)
 
-  // Preset themes for the color theme dropdown
+  // 预设主题列表，用于配色主题下拉框
   const [presetThemes, setPresetThemes] = useState<PresetTheme[]>([])
 
-  // Per-workspace theme overrides (workspaceId -> themeId or undefined)
+  // 每个 workspace 的主题覆盖（workspaceId -> themeId 或 undefined）
   const [workspaceThemes, setWorkspaceThemes] = useState<Record<string, string | undefined>>({})
 
-  // Tool icon mappings loaded from main process
+  // 从主进程加载的工具图标映射
   const [toolIcons, setToolIcons] = useState<ToolIconMapping[]>([])
 
-  // Resolved path to tool-icons.json (needed for EditPopover and "Edit File" action)
+  // tool-icons.json 的解析路径（EditPopover 和“编辑文件”入口需要）
   const [toolIconsJsonPath, setToolIconsJsonPath] = useState<string | null>(null)
 
-  // Connection icon visibility toggle
+  // 连接图标显示开关
   const [showConnectionIcons, setShowConnectionIcons] = useState(() =>
     storage.get(storage.KEYS.showConnectionIcons, true)
   )
@@ -147,13 +147,13 @@ export default function AppearanceSettingsPage() {
     storage.set(storage.KEYS.showConnectionIcons, checked)
   }, [])
 
-  // Project color treatment in the SessionList
+  // SessionList 中的项目颜色处理方式
   const projectColorTreatment = useProjectColorTreatment()
   const handleProjectColorTreatmentChange = useCallback((value: string) => {
     setProjectColorTreatment(value as ProjectColorTreatment)
   }, [])
 
-  // Per-workspace avatar color overrides (persisted in localStorage)
+  // 各 workspace 的头像颜色覆盖（持久化到 localStorage）
   const [workspaceAvatarColors, setWorkspaceAvatarColors] = useAtom(workspaceAvatarColorsAtom)
   const setWorkspaceAvatarColor = useCallback((workspaceId: string, hex: string) => {
     setWorkspaceAvatarColors(prev => ({ ...prev, [workspaceId]: hex }))
@@ -166,7 +166,7 @@ export default function AppearanceSettingsPage() {
     })
   }, [setWorkspaceAvatarColors])
 
-  // Kanban board appearance (persisted in localStorage via atomWithStorage).
+  // 看板外观（通过 atomWithStorage 持久化到 localStorage）。
   const [kanbanColumnColors, setKanbanColumnColors] = useAtom(kanbanColumnColorsAtom)
   const setKanbanColumnColor = useCallback((column: KanbanColumnId, hex: string) => {
     setKanbanColumnColors(prev => ({ ...prev, [column]: hex }))
@@ -180,8 +180,7 @@ export default function AppearanceSettingsPage() {
   }, [setKanbanColumnColors])
   const [kanbanLivePulse, setKanbanLivePulse] = useAtom(kanbanLivePulseAtom)
 
-  // Per-column status applied when a task is dragged into that column. Empty
-  // selection ('') removes the mapping → status left unchanged on move.
+  // 任务拖入某一列时应用的按列状态。选空（''）会移除映射 → 移动时状态保持不变。
   const [kanbanColumnStatus, setKanbanColumnStatus] = useAtom(kanbanColumnStatusAtom)
   const setColumnStatus = useCallback((column: KanbanColumnId, statusId: string) => {
     setKanbanColumnStatus(prev => {
@@ -199,7 +198,7 @@ export default function AppearanceSettingsPage() {
     [sessionStatuses, t]
   )
 
-  // Rich tool descriptions toggle (persisted in config.json, read by SDK subprocess)
+  // 富工具描述开关（持久化到 config.json，供 SDK 子进程读取）
   const [richToolDescriptions, setRichToolDescriptions] = useState(true)
   useEffect(() => {
     window.electronAPI?.getRichToolDescriptions?.().then(setRichToolDescriptions)
@@ -209,11 +208,11 @@ export default function AppearanceSettingsPage() {
     await window.electronAPI?.setRichToolDescriptions?.(checked)
   }, [])
 
-  // "Background session finished" chip toggle (renderer-only appearance pref,
-  // persisted in localStorage via atomWithStorage — read by App.tsx + ChatPage).
+  // “后台会话完成”徽标开关（仅 renderer 端外观偏好，通过 atomWithStorage
+  // 持久化到 localStorage — 由 App.tsx 和 ChatPage 读取）。
   const [showBackgroundFinishedChip, setShowBackgroundFinishedChip] = useAtom(showBackgroundFinishedChipAtom)
 
-  // Load preset themes on mount
+  // 挂载时加载预设主题
   useEffect(() => {
     const loadThemes = async () => {
       if (!window.electronAPI) {
@@ -231,7 +230,7 @@ export default function AppearanceSettingsPage() {
     loadThemes()
   }, [])
 
-  // Load workspace themes on mount
+  // 挂载时加载各 workspace 的主题覆盖
   useEffect(() => {
     const loadWorkspaceThemes = async () => {
       if (!window.electronAPI?.getAllWorkspaceThemes) return
@@ -245,7 +244,7 @@ export default function AppearanceSettingsPage() {
     loadWorkspaceThemes()
   }, [])
 
-  // Load tool icon mappings and resolve the config file path on mount
+  // 挂载时加载工具图标映射并解析配置文件路径
   useEffect(() => {
     const load = async () => {
       if (!window.electronAPI) return
@@ -263,22 +262,22 @@ export default function AppearanceSettingsPage() {
     load()
   }, [])
 
-  // Handler for workspace theme change
-  // Uses ThemeContext for the active workspace (immediate visual update) and IPC for other workspaces
+  // workspace 主题变更处理
+  // 当前 workspace 通过 ThemeContext 立即生效，其他 workspace 通过 IPC 持久化
   const handleWorkspaceThemeChange = useCallback(
     async (workspaceId: string, value: string) => {
-      // 'default' means inherit from app default (null in storage)
+      // 'default' 表示继承应用默认（存储中用 null 表示）
       const themeId = value === 'default' ? null : value
 
-      // If changing the current workspace, use context for immediate update
+      // 切换当前 workspace 时通过 context 立即更新视觉
       if (workspaceId === activeWorkspaceId) {
         setWorkspaceColorTheme(themeId)
       } else {
-        // For other workspaces, just persist via IPC
+        // 其他 workspace 仅通过 IPC 持久化
         await window.electronAPI?.setWorkspaceColorTheme?.(workspaceId, themeId)
       }
 
-      // Update local state for UI
+      // 更新本地 UI 状态
       setWorkspaceThemes(prev => ({
         ...prev,
         [workspaceId]: themeId ?? undefined
@@ -287,7 +286,7 @@ export default function AppearanceSettingsPage() {
     [activeWorkspaceId, setWorkspaceColorTheme]
   )
 
-  // Theme options for dropdowns
+  // 下拉框用的主题选项
   const themeOptions = useMemo(() => [
     { value: 'default', label: t("settings.appearance.useDefault") },
     ...presetThemes
@@ -298,7 +297,7 @@ export default function AppearanceSettingsPage() {
       })),
   ], [presetThemes, t])
 
-  // Get current app default theme label for display (null when using 'default' to avoid redundant "Use Default (Default)")
+  // 当前应用默认主题名称，用于展示（使用 'default' 时返回 null，避免“使用默认（默认）”这种冗余文案）
   const appDefaultLabel = useMemo(() => {
     if (colorTheme === 'default') return null
     const preset = presetThemes.find(t => t.id === colorTheme)
@@ -316,7 +315,7 @@ export default function AppearanceSettingsPage() {
           <div className="px-5 py-7 max-w-3xl mx-auto">
             <div className="space-y-8">
 
-              {/* Default Theme */}
+              {/* 默认主题 */}
               <SettingsSection title={t("settings.appearance.defaultTheme")}>
                 <SettingsCard>
                   <SettingsRow label={t("settings.appearance.mode")}>
@@ -372,7 +371,7 @@ export default function AppearanceSettingsPage() {
                 )}
               </SettingsSection>
 
-              {/* Workspace Themes */}
+              {/* Workspace 主题 */}
               {workspaces.length > 0 && (
                 <SettingsSection
                   title={t("settings.appearance.workspaceThemes")}
@@ -433,7 +432,7 @@ export default function AppearanceSettingsPage() {
                 </SettingsSection>
               )}
 
-              {/* Interface */}
+              {/* 界面 */}
               <SettingsSection title={t("settings.appearance.interface")}>
                 <SettingsCard>
                   <SettingsToggle
@@ -519,7 +518,7 @@ export default function AppearanceSettingsPage() {
                 </SettingsCard>
               </SettingsSection>
 
-              {/* Tool Icons — shows the command → icon mapping used in turn cards */}
+              {/* 工具图标：展示 turn cards 中使用的命令 → 图标映射 */}
               <SettingsSection
                 title={t("settings.appearance.toolIcons")}
                 description={t("settings.appearance.toolIconsDesc")}

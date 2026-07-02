@@ -1,72 +1,72 @@
 /**
- * Centralized localStorage utility for the Electron renderer.
- * Provides type-safe access with consistent key prefixing.
+ * Electron 渲染进程的 localStorage 集中封装。
+ * 提供类型安全的读写接口，并为所有 key 统一加前缀，避免冲突。
  */
 
 const PREFIX = 'craft-'
 
 /**
- * All localStorage keys used in the app.
- * Centralized here to avoid magic strings and key collisions.
+ * 应用中所有 localStorage 键的集中定义。
+ * 集中管理可以避免魔法字符串与键名冲突。
  */
 export const KEYS = {
-  // Chat sidebar
+  // 聊天侧边栏
   sidebarVisible: 'sidebar-visible',
   sidebarWidth: 'sidebar-width',
   sessionListWidth: 'session-list-width',
   sidebarMode: 'sidebar-mode',
   listFilter: 'list-filter',
   labelFilter: 'label-filter',
-  viewFilters: 'view-filters', // Per-view filter map: { [viewKey]: { statuses, labels } }
+  viewFilters: 'view-filters', // 每个视图的过滤条件：{ [viewKey]: { statuses, labels } }
   expandedFolders: 'expanded-folders',
   collapsedSidebarItems: 'collapsed-sidebar-items',
-  chatGroupingMode: 'chat-grouping-mode', // How to group chats: 'date' | 'status'
-  collapsedSessionGroups: 'collapsed-session-groups', // Collapsed group keys in session list
+  chatGroupingMode: 'chat-grouping-mode', // 会话分组方式：'date' | 'status'
+  collapsedSessionGroups: 'collapsed-session-groups', // 会话列表中折叠的分组键
 
-  // Focus mode
+  // 专注模式
   focusModeEnabled: 'focus-mode-enabled',
 
-  // Session files panel state
-  sessionFilesExpandedFolders: 'session-files-expanded', // Expanded folders in session files tree (keyed by sessionId)
+  // 会话文件面板状态
+  sessionFilesExpandedFolders: 'session-files-expanded', // 会话文件树中展开的文件夹（按 sessionId 区分）
 
-  // Theme
+  // 主题
   theme: 'theme',
 
-  // Panel layouts (dynamic key suffix)
-  panelLayout: 'panel-layout', // Used as: panelLayout:${key}
+  // 面板布局（动态后缀）
+  panelLayout: 'panel-layout', // 实际使用形式：panelLayout:${key}
 
-  // Tabs (workspace-scoped)
-  tabs: 'tabs', // Used as: tabs-${workspaceId}
+  // 标签页（按工作区区分）
+  tabs: 'tabs', // 实际使用形式：tabs-${workspaceId}
 
-  // Working directory
+  // 工作目录
   recentWorkingDirs: 'recent-working-dirs',
 
-  // TurnCard expansion state (persisted across session switches)
+  // TurnCard 展开状态（跨会话切换保持）
   turnCardExpansion: 'turncard-expansion',
 
-  // Last selected session (workspace-scoped via suffix)
+  // 最后选中的会话（按工作区后缀区分）
   lastSelectedSessionId: 'last-selected-session-id',
 
-  // Settings navigation
+  // 设置页导航
   lastSettingsSubpage: 'last-settings-subpage',
 
-  // Appearance
+  // 外观
   showConnectionIcons: 'show-connection-icons',
   projectColorTreatment: 'project-color-treatment', // 'stripe' | 'stripe-tint'
 
   // What's New
   whatsNewLastSeenVersion: 'whats-new-last-seen-version',
 
-  // Workspace navigation state (workspace-scoped via suffix = workspaceSlug)
-  // Stores the full URL search string so switching back restores panels/focus/sidebar
+  // 工作区导航状态（按 workspaceSlug 后缀区分）
+  // 保存完整 URL 查询字符串，切换回来时恢复面板/焦点/侧边栏状态
   workspaceUrl: 'workspace-url',
 } as const
 
 export type StorageKey = typeof KEYS[keyof typeof KEYS]
 
 /**
- * Build the full prefixed key.
- * Supports dynamic suffixes like 'panel-layout:chat' or 'tabs-workspace123'
+ * 组装带前缀的完整键。
+ * 支持动态后缀，例如 'panel-layout:chat' 或 'tabs-workspace123'。
  */
 function buildKey(key: string, suffix?: string): string {
   const base = `${PREFIX}${key}`
@@ -74,8 +74,8 @@ function buildKey(key: string, suffix?: string): string {
 }
 
 /**
- * Get a value from localStorage with JSON parsing.
- * Returns fallback if key doesn't exist or parsing fails.
+ * 从 localStorage 读取值并做 JSON 解析。
+ * 键不存在或解析失败时返回 fallback。
  */
 export function get<T>(key: StorageKey, fallback: T, suffix?: string): T {
   try {
@@ -88,40 +88,39 @@ export function get<T>(key: StorageKey, fallback: T, suffix?: string): T {
 }
 
 /**
- * Set a value in localStorage with JSON stringification.
+ * 把值 JSON 序列化后写入 localStorage。
  */
 export function set<T>(key: StorageKey, value: T, suffix?: string): void {
   try {
     localStorage.setItem(buildKey(key, suffix), JSON.stringify(value))
   } catch (error) {
-    console.warn(`[localStorage] Failed to set ${key}:`, error)
+    console.warn(`[localStorage] 设置 ${key} 失败：`, error)
   }
 }
 
 /**
- * Remove a key from localStorage.
+ * 从 localStorage 删除指定键。
  */
 export function remove(key: StorageKey, suffix?: string): void {
   localStorage.removeItem(buildKey(key, suffix))
 }
 
 /**
- * Get raw string value (for non-JSON data like atomWithStorage compatibility).
+ * 读取原始字符串值（用于 atomWithStorage 等需要原始字符串的兼容场景）。
  */
 export function getRaw(key: StorageKey, suffix?: string): string | null {
   return localStorage.getItem(buildKey(key, suffix))
 }
 
 /**
- * Set raw string value (for non-JSON data like atomWithStorage compatibility).
+ * 写入原始字符串值（用于 atomWithStorage 等需要原始字符串的兼容场景）。
  */
 export function setRaw(key: StorageKey, value: string, suffix?: string): void {
   localStorage.setItem(buildKey(key, suffix), value)
 }
 
 /**
- * Build a full key string for use with atomWithStorage or other APIs
- * that need the raw key string.
+ * 获取完整的带前缀键名字符串，供 atomWithStorage 等需要原始键字符串的 API 使用。
  */
 export function getKeyString(key: StorageKey, suffix?: string): string {
   return buildKey(key, suffix)

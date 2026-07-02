@@ -1,3 +1,7 @@
+/**
+ * 命令面板组件集合（Command / Command Palette）。
+ * 基于 cmdk 封装，用于实现快速搜索、快捷键选择等命令菜单。
+ */
 import * as React from 'react'
 import { Command as CommandPrimitive } from 'cmdk'
 import { Search } from 'lucide-react'
@@ -5,6 +9,7 @@ import { Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 
+/** 命令面板根容器。 */
 function Command({
   className,
   ...props
@@ -21,6 +26,7 @@ function Command({
   )
 }
 
+/** 命令面板弹窗。 */
 function CommandDialog({
   children,
   ...props
@@ -36,6 +42,7 @@ function CommandDialog({
   )
 }
 
+/** 命令面板搜索输入框。 */
 function CommandInput({
   className,
   ...props
@@ -55,6 +62,7 @@ function CommandInput({
   )
 }
 
+/** 命令面板结果列表。 */
 function CommandList({
   className,
   ...props
@@ -68,6 +76,7 @@ function CommandList({
   )
 }
 
+/** 无匹配结果时的提示。 */
 function CommandEmpty({
   className,
   ...props
@@ -81,6 +90,7 @@ function CommandEmpty({
   )
 }
 
+/** 命令面板分组。 */
 function CommandGroup({
   className,
   ...props
@@ -97,6 +107,7 @@ function CommandGroup({
   )
 }
 
+/** 命令面板分隔线。 */
 function CommandSeparator({
   className,
   ...props
@@ -110,6 +121,7 @@ function CommandSeparator({
   )
 }
 
+/** 命令面板可选项。 */
 function CommandItem({
   className,
   ...props
@@ -126,6 +138,7 @@ function CommandItem({
   )
 }
 
+/** 命令面板右侧快捷键提示。 */
 function CommandShortcut({
   className,
   ...props

@@ -1,6 +1,12 @@
+/**
+ * SetupAuthBanner — React 组件
+ * 
+ * 所属目录：app-shell
+ */
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 
+/** BannerState：状态类型别名 */
 export type BannerState =
   | 'hidden'
   | 'mcp_auth'
@@ -11,18 +17,18 @@ interface SetupAuthBannerProps {
   state: BannerState
   reason?: string
   onAction: () => void
-  /** Variant: 'banner' for chat list, 'inputAreaCover' matches chat input styling */
+  /** 显示变体：'banner' 用于会话列表顶部，'inputAreaCover' 用于输入区覆盖样式 */
   variant?: 'banner' | 'inputAreaCover'
 }
 
 /**
- * SetupAuthBanner - Shows when sources need authentication
+ * SetupAuthBanner - 当某些来源需要授权/认证时显示的提示横幅
  *
- * States:
- * - 'hidden': No banner shown
- * - 'mcp_auth': MCP sources need authentication
- * - 'api_auth': API sources need credentials
- * - 'error': Something went wrong (allows retry)
+ * 状态说明：
+ * - 'hidden'：不显示
+ * - 'mcp_auth'：MCP 来源需要授权
+ * - 'api_auth'：API 来源需要凭据
+ * - 'error'：出错了，允许重试
  */
 export function SetupAuthBanner({
   state,
@@ -33,7 +39,7 @@ export function SetupAuthBanner({
   const { t } = useTranslation()
   if (state === 'hidden') return null
 
-  // Get title based on state
+  // 根据状态返回标题文案
   const getTitle = () => {
     switch (state) {
       case 'mcp_auth':
@@ -47,7 +53,7 @@ export function SetupAuthBanner({
     }
   }
 
-  // Get default description based on state
+  // 根据状态返回描述文案；如果调用方传了 reason 则优先使用 reason
   const getDescription = () => {
     if (reason) return reason
     switch (state) {
@@ -62,7 +68,7 @@ export function SetupAuthBanner({
     }
   }
 
-  // Get button text based on state
+  // 根据状态返回按钮文案
   const getButtonText = () => {
     switch (state) {
       case 'mcp_auth':
@@ -76,7 +82,7 @@ export function SetupAuthBanner({
     }
   }
 
-  // inputAreaCover variant - matches chat input styling
+  // inputAreaCover 变体：使用聊天输入框风格的卡片样式
   if (variant === 'inputAreaCover') {
     return (
       <div className="rounded-xl border bg-background overflow-hidden">
@@ -99,7 +105,7 @@ export function SetupAuthBanner({
     )
   }
 
-  // banner variant (default) - single line for session list (48px, full width, snapped to top)
+  // banner 变体（默认）：会话列表顶部单行横幅，高 48px，通宽贴顶
   return (
     <div className="h-12 shrink-0 pl-4 pr-2 flex items-center justify-between gap-3 border-b border-foreground/10 bg-background select-none">
       <h3 className="text-sm font-medium text-foreground font-sans flex items-center gap-2 min-w-0">

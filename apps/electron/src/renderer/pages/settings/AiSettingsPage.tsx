@@ -1,12 +1,12 @@
 /**
  * AiSettingsPage
  *
- * Unified AI settings page that consolidates all LLM-related configuration:
- * - Default connection, model, and thinking level
- * - Per-workspace overrides
- * - Connection management (add/edit/delete)
+ * AI 设置统一入口，汇总所有 LLM 相关配置：
+ * - 默认连接、模型、思考级别
+ * - 按 workspace 覆盖
+ * - 连接管理（增删改）
  *
- * Follows the Appearance settings pattern: app-level defaults + workspace overrides.
+ * 遵循 Appearance 设置的设计模式：应用级默认值 + workspace 级覆盖。
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
@@ -57,9 +57,8 @@ import { getModelsForProviderType, resolveMidStreamBehavior, type CustomEndpoint
 import { toast } from 'sonner'
 
 /**
- * Compact token count: 1234 → "1.2K", 1234567 → "1.2M". Used by the RTK
- * efficiency meter. Locale-agnostic — the suffix is universal across the
- * 7 supported locales.
+ * 紧凑展示 token 数量：1234 → "1.2K"，1234567 → "1.2M"。
+ * 用于 RTK 效率仪表。后缀在所有支持的 locale 中通用。
  */
 function formatTokenCount(n: number): string {
   if (n < 1000) return String(n)
@@ -68,8 +67,8 @@ function formatTokenCount(n: number): string {
 }
 
 /**
- * Derive model dropdown options from a connection's models array,
- * falling back to registry models for the connection's provider type.
+ * 从连接的 models 数组派生下拉框选项，
+ * 没有显式模型时回退到该 provider type 的注册表模型。
  */
 function getModelOptionsForConnection(
   connection: LlmConnectionWithStatus | undefined,
@@ -104,10 +103,10 @@ export const meta: DetailsPageMeta = {
 }
 
 // ============================================
-// Credential Health Warning Banner
+// 凭据健康警告横幅
 // ============================================
 
-/** Get user-friendly message for credential health issue */
+/** 把凭据健康问题转换成用户可读的文案 */
 function getHealthIssueMessage(issue: CredentialHealthIssue, t: (key: string) => string): string {
   switch (issue.type) {
     case 'file_corrupted':
@@ -156,7 +155,7 @@ function CredentialHealthBanner({ issues, onReauthenticate }: CredentialHealthBa
 }
 
 // ============================================
-// Pi Auth Provider Display Names
+// Pi 认证提供商显示名称
 // ============================================
 
 const PI_AUTH_PROVIDER_LABELS: Record<string, string> = {
@@ -179,7 +178,7 @@ const PI_AUTH_PROVIDER_LABELS: Record<string, string> = {
 }
 
 // ============================================
-// Connection Row Component
+// 连接行组件
 // ============================================
 
 type ValidationState = 'idle' | 'validating' | 'success' | 'error'
@@ -196,7 +195,7 @@ interface ConnectionRowProps {
   onSetMidStreamBehavior: (behavior: MidStreamBehavior) => void
   validationState: ValidationState
   validationError?: string
-  /** True when another OAuth connection resolves to the same Anthropic account (issue #838) */
+  /** 当另一个 OAuth 连接解析到同一个 Anthropic 账户时为 true（issue #838） */
   isDuplicateAccount?: boolean
 }
 
@@ -205,9 +204,8 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
   const [menuOpen, setMenuOpen] = useState(false)
   const [piBaseUrl, setPiBaseUrl] = useState<string | undefined>(undefined)
 
-  // Opening dialog/overlay flows directly from a dropdown item can race with
-  // menu teardown and leave a transient interaction lock behind on some systems.
-  // Force menu close first, then trigger action on next frame.
+  // 直接从下拉项打开弹窗/遮罩可能与菜单销毁产生竞态，在某些系统上会留下短暂的交互锁。
+  // 先强制关闭菜单，再在下一帧触发动作。
   const runAfterMenuClose = useCallback((action: () => void) => {
     setMenuOpen(false)
     requestAnimationFrame(() => {
@@ -215,7 +213,7 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
     })
   }, [])
 
-  // Load Pi provider base URL via IPC (Pi SDK can't run in renderer)
+  // 通过 IPC 获取 Pi 提供商基础 URL（Pi SDK 不能在 renderer 中运行）
   useEffect(() => {
     const provider = connection.providerType || connection.type
     if (provider === 'pi' && connection.piAuthProvider && !connection.baseUrl) {
@@ -223,23 +221,23 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
     }
   }, [connection.providerType, connection.type, connection.piAuthProvider, connection.baseUrl])
 
-  // Build description with provider, default indicator, auth status, and validation state
+  // 构建描述：包含提供商、默认标识、认证状态、校验状态
   const getDescription = () => {
-    // Show validation state if not idle
+    // 非 idle 时优先展示校验状态
     if (validationState === 'validating') return t("settings.ai.validating")
     if (validationState === 'success') return t("settings.ai.connectionValid")
     if (validationState === 'error') return validationError || t("settings.ai.validationFailed")
 
     const parts: string[] = []
 
-    // Provider type (fall back to legacy 'type' field if providerType missing)
-    // OAuth = subscription (Pro/Plus/Max), API key = API
+    // 提供商类型（若 providerType 缺失则回退到旧的 type 字段）
+    // OAuth = 订阅（Pro/Plus/Max），API key = API
     const provider = connection.providerType || connection.type
     const isSubscription = connection.authType === 'oauth'
     switch (provider) {
       case 'anthropic': parts.push(isSubscription ? 'Anthropic Subscription' : 'Anthropic API'); break
       case 'pi': {
-        // Show upstream provider name for API key connections (e.g. "Google AI Studio")
+        // API key 连接展示上游提供商名称（如 "Google AI Studio"）
         const piLabel = !isSubscription && connection.piAuthProvider
           ? PI_AUTH_PROVIDER_LABELS[connection.piAuthProvider]
           : null
@@ -254,10 +252,10 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
       default: parts.push(provider || 'Unknown')
     }
 
-    // Base URL for API key connections (show custom endpoint or default for provider)
+    // API key 连接展示基础 URL（自定义端点或提供商默认）
     if (connection.authType !== 'oauth') {
       let endpoint = connection.baseUrl
-      // Use default endpoints for standard providers if no custom baseUrl
+      // 没有自定义 baseUrl 时使用标准提供商默认端点
       if (!endpoint) {
         if (provider === 'anthropic') endpoint = 'https://api.anthropic.com'
         else if (provider === 'pi' && connection.piAuthProvider) {
@@ -265,7 +263,7 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
         }
       }
       if (endpoint) {
-        // Extract hostname from URL for cleaner display
+        // 提取主机名显示更简洁
         try {
           const url = new URL(endpoint)
           parts.push(url.host)
@@ -275,15 +273,14 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
       }
     }
 
-    // Auth status
+    // 认证状态
     if (!connection.isAuthenticated) parts.push(t("settings.ai.notAuthenticated"))
 
     return parts.join(' · ')
   }
 
-  // Resolved Anthropic identity (issue #838): render `email · org` independently of
-  // validation state. It cannot live in getDescription() — that short-circuits for
-  // validating/success/error and would hide the identity during those states.
+  // Anthropic 身份解析（issue #838）：独立于校验状态展示 `email · org`。
+  // 不能放在 getDescription() 里，因为该校验状态会短路，导致在校验中/成功/失败时隐藏身份。
   const oauthIdentityLine = connection.authType === 'oauth' && connection.oauthAccountEmail
     ? [connection.oauthAccountEmail, connection.oauthOrganizationName].filter(Boolean).join(' · ')
     : null
@@ -416,10 +413,10 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
   const [settings, setSettings] = useState<WorkspaceSettings | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  // Fetch workspace icon as data URL (file:// URLs don't work in renderer)
+  // 把 workspace 图标读取为 data URL（renderer 中 file:// URL 不工作）
   const iconUrl = useWorkspaceIcon(workspace)
 
-  // Load workspace settings
+  // 加载 workspace 设置
   useEffect(() => {
     const loadSettings = async () => {
       if (!window.electronAPI) return
@@ -436,25 +433,25 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
     loadSettings()
   }, [workspace.id])
 
-  // Save workspace setting helper (optimistic update with rollback)
+  // 保存 workspace 设置（乐观更新 + 失败回滚）
   const updateSetting = useCallback(async <K extends keyof WorkspaceSettings>(key: K, value: WorkspaceSettings[K]) => {
     if (!window.electronAPI) return
 
     const previousValue = settings?.[key]
 
-    // Optimistic UI update for immediate feedback
+    // 乐观更新 UI，立即反馈
     setSettings(prev => prev ? { ...prev, [key]: value } : prev)
 
     try {
       await window.electronAPI.updateWorkspaceSetting(workspace.id, key, value)
       onSettingsChange()
     } catch (error) {
-      // Roll back only the changed key
+      // 仅回滚被修改的 key
       setSettings(prev => prev ? { ...prev, [key]: previousValue } : prev)
 
       const message = error instanceof Error ? error.message : 'Unknown error'
       const settingLabel = WORKSPACE_SETTING_LABELS[key] ?? String(key)
-      console.error(`Failed to save ${String(key)}:`, error)
+      console.error(`保存 ${String(key)} 失败:`, error)
       toast.error(t("toast.failedToSaveSetting", { setting: settingLabel }), {
         description: message,
       })
@@ -462,39 +459,39 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
   }, [workspace.id, onSettingsChange, settings])
 
   const handleConnectionChange = useCallback((slug: string) => {
-    // 'global' means use app default (clear workspace override)
+    // 'global' 表示使用应用默认（清除 workspace 覆盖）
     updateSetting('defaultLlmConnection', slug === 'global' ? undefined : slug)
   }, [updateSetting])
 
   const handleModelChange = useCallback((model: string) => {
-    // 'global' means use app default (clear workspace override)
+    // 'global' 表示使用应用默认（清除 workspace 覆盖）
     updateSetting('model', model === 'global' ? undefined : model)
   }, [updateSetting])
 
   const handleThinkingChange = useCallback((level: string) => {
-    // 'global' means use app default (clear workspace override)
+    // 'global' 表示使用应用默认（清除 workspace 覆盖）
     updateSetting('thinkingLevel', level === 'global' ? undefined : level as ThinkingLevel)
   }, [updateSetting])
 
-  // Determine if workspace has any overrides
+  // 判断 workspace 是否有任何覆盖设置
   const hasOverrides = settings && (
     settings.defaultLlmConnection ||
     settings.model ||
     settings.thinkingLevel
   )
 
-  // Get display values
+  // 当前展示值
   const currentConnection = settings?.defaultLlmConnection || 'global'
   const currentModel = settings?.model || 'global'
   const currentThinking = settings?.thinkingLevel || 'global'
 
-  // Derive workspace's effective connection (override or default)
+  // 派生 workspace 实际生效的连接（覆盖或默认）
   const workspaceEffectiveConnection = useMemo(() => {
     const connSlug = settings?.defaultLlmConnection
     return connSlug ? llmConnections.find(c => c.slug === connSlug) : llmConnections.find(c => c.isDefault)
   }, [settings?.defaultLlmConnection, llmConnections])
 
-  // Get summary text for collapsed state
+  // 折叠状态的摘要文字
   const getSummary = () => {
     if (!hasOverrides) return t("settings.ai.usingDefaults")
     const parts: string[] = []
@@ -609,10 +606,10 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
 }
 
 // ============================================
-// Helpers
+// 辅助函数
 // ============================================
 
-/** Map a connection's provider type to the corresponding API key setup method. */
+/** 把连接的 provider type 映射到对应的 API key 设置方式 */
 function getApiKeyMethodForConnection(conn: LlmConnectionWithStatus): ApiSetupMethod {
   const provider = conn.providerType || conn.type
   if (provider === 'pi' || provider === 'pi_compat') return 'pi_api_key'
@@ -620,14 +617,14 @@ function getApiKeyMethodForConnection(conn: LlmConnectionWithStatus): ApiSetupMe
 }
 
 // ============================================
-// Main Component
+// 主组件
 // ============================================
 
 export default function AiSettingsPage() {
   const { t } = useTranslation()
   const { llmConnections, refreshLlmConnections, activeWorkspaceId } = useAppShellContext()
 
-  // API Setup overlay state
+  // API 设置全屏遮罩状态
   const [showApiSetup, setShowApiSetup] = useState(false)
   const [editingConnectionSlug, setEditingConnectionSlug] = useState<string | null>(null)
   const [isDirectEdit, setIsDirectEdit] = useState(false)
@@ -641,10 +638,10 @@ export default function AiSettingsPage() {
   } | undefined>(undefined)
   const setFullscreenOverlayOpen = useSetAtom(fullscreenOverlayOpenAtom)
 
-  // Workspaces for override cards
+  // 用于覆盖卡的 workspace 列表
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
 
-  // Default settings state (app-level)
+  // 应用级默认设置状态
   const [defaultThinking, setDefaultThinking] = useState<ThinkingLevel>(DEFAULT_THINKING_LEVEL)
   const [extendedPromptCache, setExtendedPromptCache] = useState(false)
   const [enable1MContext, setEnable1MContext] = useState(false)
@@ -653,21 +650,21 @@ export default function AiSettingsPage() {
   const [rtkRechecking, setRtkRechecking] = useState(false)
   const [rtkGain, setRtkGain] = useState<{ totalCommands: number; totalInput: number; totalOutput: number; totalSaved: number; avgSavingsPct: number; totalTimeMs: number; avgTimeMs: number } | null>(null)
 
-  // Validation state per connection
+  // 每个连接的校验状态
   const [validationStates, setValidationStates] = useState<Record<string, {
     state: ValidationState
     error?: string
   }>>({})
 
-  // Credential health state (for startup warning banner)
+  // 凭据健康状态（用于启动时警告横幅）
   const [credentialHealthIssues, setCredentialHealthIssues] = useState<CredentialHealthIssue[]>([])
 
-  // Rename dialog state
+  // 重命名弹窗状态
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
   const [renamingConnection, setRenamingConnection] = useState<{ slug: string; name: string } | null>(null)
   const [renameValue, setRenameValue] = useState('')
 
-  // Load workspaces, default settings, and credential health
+  // 加载 workspaces、默认设置和凭据健康
   useEffect(() => {
     const load = async () => {
       if (!window.electronAPI) return
@@ -690,19 +687,19 @@ export default function AiSettingsPage() {
         const status = await window.electronAPI.getRtkStatus()
         setRtkStatus(status)
 
-        // Check credential health for potential issues (corruption, machine migration)
+        // 检查凭据健康：发现损坏、机器迁移等潜在问题
         const health = await window.electronAPI.getCredentialHealth()
         if (!health.healthy) {
           setCredentialHealthIssues(health.issues)
         }
       } catch (error) {
-        console.error('Failed to load settings:', error)
+        console.error('加载设置失败:', error)
       }
     }
     load()
   }, [activeWorkspaceId])
 
-  // Helpers to open/close the fullscreen API setup overlay
+  // 打开/关闭全屏 API 设置遮罩
   const openApiSetup = useCallback((connectionSlug?: string) => {
     setEditingConnectionSlug(connectionSlug || null)
     setShowApiSetup(true)
@@ -715,13 +712,13 @@ export default function AiSettingsPage() {
     setEditingConnectionSlug(null)
   }, [setFullscreenOverlayOpen])
 
-  // Derive existing slugs for unique slug generation
+  // 现有 slug 集合，用于生成唯一 slug
   const existingSlugs = useMemo(
     () => new Set(llmConnections.map(c => c.slug)),
     [llmConnections],
   )
 
-  // OnboardingWizard hook for editing API connection
+  // 编辑 API 连接时用的 OnboardingWizard hook
   const apiSetupOnboarding = useOnboarding({
     initialStep: 'provider-select',
     onConfigSaved: refreshLlmConnections,
@@ -742,13 +739,13 @@ export default function AiSettingsPage() {
     closeApiSetup()
     refreshLlmConnections?.()
     apiSetupOnboarding.reset()
-    // Clear any credential health issues after successful re-authentication
+    // 重新认证成功后清除凭据健康问题
     setCredentialHealthIssues([])
     setIsDirectEdit(false)
     setEditInitialValues(undefined)
   }, [closeApiSetup, refreshLlmConnections, apiSetupOnboarding])
 
-  // Handler for closing the modal via X button or Escape - resets state and cancels OAuth
+  // 通过 X 按钮或 Escape 关闭弹窗：重置状态并取消 OAuth
   const handleCloseApiSetup = useCallback(() => {
     closeApiSetup()
     apiSetupOnboarding.reset()
@@ -756,9 +753,9 @@ export default function AiSettingsPage() {
     setEditInitialValues(undefined)
   }, [closeApiSetup, apiSetupOnboarding])
 
-  // Handler for re-authenticate button in credential health banner
+  // 凭据健康横幅中的重新认证按钮
   const handleReauthenticate = useCallback(() => {
-    // Open API setup for the default connection (or first connection if available)
+    // 为默认连接打开 API 设置，没有默认连接则使用第一个可用连接
     const defaultConn = llmConnections.find(c => c.isDefault) || llmConnections[0]
     if (defaultConn) {
       openApiSetup(defaultConn.slug)
@@ -767,11 +764,11 @@ export default function AiSettingsPage() {
     }
   }, [llmConnections, openApiSetup])
 
-  // Connection action handlers
+  // 连接操作回调
   const handleRenameClick = useCallback((connection: LlmConnectionWithStatus) => {
     setRenamingConnection({ slug: connection.slug, name: connection.name })
     setRenameValue(connection.name)
-    // Defer dialog open to next frame to let dropdown fully unmount first
+    // 延迟到下一帧打开弹窗，等下拉菜单完全卸载
     requestAnimationFrame(() => {
       setRenameDialogOpen(true)
     })
@@ -785,18 +782,18 @@ export default function AiSettingsPage() {
       return
     }
     try {
-      // Get the full connection, update name, and save
+      // 获取完整连接，更新名称后保存
       const connection = await window.electronAPI.getLlmConnection(renamingConnection.slug)
       if (connection) {
         const result = await window.electronAPI.saveLlmConnection({ ...connection, name: trimmedName })
         if (result.success) {
           refreshLlmConnections?.()
         } else {
-          console.error('Failed to rename connection:', result.error)
+          console.error('重命名连接失败:', result.error)
         }
       }
     } catch (error) {
-      console.error('Failed to rename connection:', error)
+      console.error('重命名连接失败:', error)
     }
     setRenameDialogOpen(false)
     setRenamingConnection(null)
@@ -816,20 +813,20 @@ export default function AiSettingsPage() {
   }, [apiSetupOnboarding, openApiSetup])
 
   const handleEditConnection = useCallback(async (connection: LlmConnectionWithStatus) => {
-    // Fetch stored API key (best-effort — if IPC not available yet, skip pre-fill)
+    // 尽力获取已存储的 API key；如果 IPC 暂不可用则跳过预填充
     let apiKey: string | undefined
     try {
       apiKey = (await window.electronAPI.getLlmConnectionApiKey(connection.slug)) ?? undefined
     } catch {
-      // IPC method may not exist if app wasn't restarted after code change
+      // IPC 方法可能在代码改动后、应用未重启时不存在
     }
 
-    // Build model string from connection's models array
+    // 从连接的 models 数组构建模型字符串
     const modelStr = connection.models
       ?.map((m: string | ModelDefinition) => typeof m === 'string' ? m : m.id)
       .join(', ') || connection.defaultModel || ''
 
-    // Set initial values before opening overlay so ApiKeyInput mounts with them
+    // 打开遮罩前设置初始值，使 ApiKeyInput 挂载时带有数据
     const modelIds = connection.models
       ?.map((m: string | ModelDefinition) => typeof m === 'string' ? m : m.id)
       .filter(Boolean)
@@ -845,7 +842,7 @@ export default function AiSettingsPage() {
       customApi: connection.customEndpoint?.api,
     })
 
-    // Open overlay and jump directly to credentials step (no reset — jumpToCredentials sets state)
+    // 打开遮罩并直接跳转到凭据步骤（无需 reset，jumpToCredentials 会设置状态）
     openApiSetup(connection.slug)
     setIsDirectEdit(true)
     const method = getApiKeyMethodForConnection(connection)
@@ -859,17 +856,17 @@ export default function AiSettingsPage() {
       if (result.success) {
         refreshLlmConnections?.()
       } else {
-        console.error('Failed to delete connection:', result.error)
+        console.error('删除连接失败:', result.error)
       }
     } catch (error) {
-      console.error('Failed to delete connection:', error)
+      console.error('删除连接失败:', error)
     }
   }, [refreshLlmConnections])
 
   const handleValidateConnection = useCallback(async (slug: string) => {
     if (!window.electronAPI) return
 
-    // Set validating state
+    // 设置校验中状态
     setValidationStates(prev => ({ ...prev, [slug]: { state: 'validating' } }))
 
     try {
@@ -877,7 +874,7 @@ export default function AiSettingsPage() {
 
       if (result.success) {
         setValidationStates(prev => ({ ...prev, [slug]: { state: 'success' } }))
-        // Auto-clear success state after 3 seconds
+        // 3 秒后自动清除成功状态
         setTimeout(() => {
           setValidationStates(prev => ({ ...prev, [slug]: { state: 'idle' } }))
         }, 3000)
@@ -886,7 +883,7 @@ export default function AiSettingsPage() {
           ...prev,
           [slug]: { state: 'error', error: result.error }
         }))
-        // Auto-clear error state after 5 seconds
+        // 5 秒后自动清除错误状态
         setTimeout(() => {
           setValidationStates(prev => ({ ...prev, [slug]: { state: 'idle' } }))
         }, 5000)
@@ -909,15 +906,15 @@ export default function AiSettingsPage() {
       if (result.success) {
         refreshLlmConnections?.()
       } else {
-        console.error('Failed to set default connection:', result.error)
+        console.error('设置默认连接失败:', result.error)
       }
     } catch (error) {
-      console.error('Failed to set default connection:', error)
+      console.error('设置默认连接失败:', error)
     }
   }, [refreshLlmConnections])
 
-  // Update a connection's mid-stream send behavior (steer vs queue).
-  // Uses the same saveLlmConnection RPC as other connection edits.
+  // 更新连接的 mid-stream 发送行为（steer 立即处理 vs queue 排队）。
+  // 与其他连接编辑共用 saveLlmConnection RPC。
   const handleSetMidStreamBehavior = useCallback(async (
     connection: LlmConnectionWithStatus,
     behavior: MidStreamBehavior,
@@ -931,22 +928,22 @@ export default function AiSettingsPage() {
       if (result.success) {
         refreshLlmConnections?.()
       } else {
-        console.error('Failed to update mid-stream behavior:', result.error)
+        console.error('更新 mid-stream 行为失败:', result.error)
         toast.error(t('settings.ai.midStream.updateFailed'))
       }
     } catch (error) {
-      console.error('Failed to update mid-stream behavior:', error)
+      console.error('更新 mid-stream 行为失败:', error)
       toast.error(t('settings.ai.midStream.updateFailed'))
     }
   }, [refreshLlmConnections, t])
 
-  // Get the default connection for display
+  // 用于展示的默认连接
   const defaultConnection = useMemo(() => {
     return llmConnections.find(c => c.isDefault)
   }, [llmConnections])
 
-  // Anthropic account UUIDs that resolve from 2+ connections (issue #838).
-  // Surfaces a warning when several Claude connections share one account/quota.
+  // 从 2 个以上连接解析出的 Anthropic 账户 UUID（issue #838）。
+  // 当多个 Claude 连接共享同一账户/配额时展示警告。
   const duplicateAccountUuids = useMemo(() => {
     const counts = new Map<string, number>()
     for (const conn of llmConnections) {
@@ -958,12 +955,12 @@ export default function AiSettingsPage() {
 
   const defaultModel = defaultConnection?.defaultModel ?? ''
 
-  // App-level default handlers
+  // 应用级默认设置处理
   const handleDefaultModelChange = useCallback(async (model: string) => {
     if (!window.electronAPI || !defaultConnection) return
-    // Update defaultModel on the connection, then save the full connection
+    // 更新连接的 defaultModel 并保存完整连接
     const updated = { ...defaultConnection, defaultModel: model }
-    // Remove status fields that aren't part of LlmConnection
+    // 移除不属于 LlmConnection 的状态字段
     const { isAuthenticated: _a, authError: _b, isDefault: _c, ...connectionData } = updated
     await window.electronAPI.saveLlmConnection(connectionData as import('../../../shared/types').LlmConnection)
     await refreshLlmConnections()
@@ -978,11 +975,11 @@ export default function AiSettingsPage() {
     try {
       const result = await window.electronAPI.setDefaultThinkingLevel(level)
       if (!result.success) {
-        console.error('Failed to set default thinking level:', result.error)
+        console.error('设置默认思考级别失败:', result.error)
         setDefaultThinking(previous)
       }
     } catch (error) {
-      console.error('Failed to set default thinking level:', error)
+      console.error('设置默认思考级别失败:', error)
       setDefaultThinking(previous)
     }
   }, [defaultThinking])
@@ -1021,7 +1018,7 @@ export default function AiSettingsPage() {
     setRtkGain(gain ?? null)
   }, [])
 
-  // Refresh gain stats whenever rtk transitions to installed-and-enabled
+  // RTK 变为已安装且启用时刷新节省统计
   useEffect(() => {
     if (rtkStatus?.installed && rtkEnabled) {
       refreshRtkGain()
@@ -1030,9 +1027,9 @@ export default function AiSettingsPage() {
     }
   }, [rtkStatus?.installed, rtkEnabled, refreshRtkGain])
 
-  // Refresh callback for workspace cards
+  // workspace 覆盖卡片的刷新回调
   const handleWorkspaceSettingsChange = useCallback(() => {
-    // Refresh context so changes propagate immediately
+    // 刷新 context，使改动立即传播
     refreshLlmConnections?.()
   }, [refreshLlmConnections])
 
@@ -1042,14 +1039,14 @@ export default function AiSettingsPage() {
       <div className="flex-1 min-h-0 mask-fade-y">
         <ScrollArea className="h-full">
           <div className="px-5 py-7 max-w-3xl mx-auto">
-            {/* Credential Health Warning Banner */}
+            {/* 凭据健康警告横幅 */}
             <CredentialHealthBanner
               issues={credentialHealthIssues}
               onReauthenticate={handleReauthenticate}
             />
 
             <div className="space-y-8">
-              {/* Default Settings - only show if connections exist */}
+              {/* 默认设置 - 有连接时才展示 */}
               {llmConnections.length > 0 && (
               <SettingsSection title={t("settings.ai.defaultSection")} description={t("settings.ai.defaultSectionDesc")}>
                 <SettingsCard>
@@ -1091,7 +1088,7 @@ export default function AiSettingsPage() {
               </SettingsSection>
               )}
 
-              {/* Workspace Overrides - only show if connections exist */}
+              {/* Workspace 覆盖 - 有连接时才展示 */}
               {workspaces.length > 0 && llmConnections.length > 0 && (
                 <SettingsSection title={t("settings.ai.workspaceOverrides")} description={t("settings.ai.workspaceOverridesDesc")}>
                   <div className="space-y-2">
@@ -1107,7 +1104,7 @@ export default function AiSettingsPage() {
                 </SettingsSection>
               )}
 
-              {/* Connections Management */}
+              {/* 连接管理 */}
               <SettingsSection title={t("settings.ai.connections")} description={t("settings.ai.connectionsDesc")}>
                 <SettingsCard>
                   {llmConnections.length === 0 ? (
@@ -1150,7 +1147,7 @@ export default function AiSettingsPage() {
                 </div>
               </SettingsSection>
 
-              {/* Performance */}
+              {/* 性能 */}
               <SettingsSection title={t("settings.ai.performance")} description={t("settings.ai.performanceDesc")}>
                 <SettingsCard>
                   <SettingsToggle
@@ -1226,7 +1223,7 @@ export default function AiSettingsPage() {
                 </SettingsCard>
               </SettingsSection>
 
-              {/* API Setup Fullscreen Overlay */}
+              {/* API 设置全屏遮罩 */}
               <FullscreenOverlayBase
                 isOpen={showApiSetup}
                 onClose={handleCloseApiSetup}
@@ -1263,7 +1260,7 @@ export default function AiSettingsPage() {
                 </div>
               </FullscreenOverlayBase>
 
-              {/* Rename Connection Dialog */}
+              {/* 重命名连接弹窗 */}
               <RenameDialog
                 open={renameDialogOpen}
                 onOpenChange={setRenameDialogOpen}

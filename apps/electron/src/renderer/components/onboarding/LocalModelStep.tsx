@@ -1,8 +1,8 @@
 /**
- * LocalModelStep — Onboarding step for local model configuration (Ollama).
+ * LocalModelStep - 本地模型（Ollama）配置引导步骤
  *
- * Shows endpoint URL and model fields only — no API key input.
- * Pre-filled with Ollama defaults (localhost:11434, qwen3-coder).
+ * 只收集 endpoint URL 和模型名称，不需要 API key。
+ * 默认值：localhost:11434、qwen3-coder。
  */
 
 import { useState } from "react"
@@ -12,12 +12,14 @@ import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { StepFormLayout, BackButton, ContinueButton } from "./primitives"
 
+// 提交时向外传递的数据结构
 export interface LocalModelSubmitData {
   baseUrl: string
   model: string
   models: string[]
 }
 
+// 本地模型步骤的 props 接口
 interface LocalModelStepProps {
   onSubmit: (data: LocalModelSubmitData) => void
   onBack: () => void
@@ -25,6 +27,7 @@ interface LocalModelStepProps {
   errorMessage?: string
 }
 
+// 把逗号分隔的模型字符串解析成数组，并过滤空项
 function parseModelList(value: string): string[] {
   return value
     .split(',')
@@ -85,7 +88,7 @@ export function LocalModelStep({
       }
     >
       <form id="local-model-form" onSubmit={handleSubmit} className="space-y-6">
-        {/* Endpoint URL */}
+        {/* Endpoint URL 输入 */}
         <div className="space-y-2">
           <Label htmlFor="local-base-url">{t("onboarding.localModel.endpoint")}</Label>
           <div className={cn(
@@ -108,7 +111,7 @@ export function LocalModelStep({
           </p>
         </div>
 
-        {/* Model */}
+        {/* 模型输入 */}
         <div className="space-y-2">
           <Label htmlFor="local-model">
             {t("onboarding.localModel.model")}{' '}
@@ -140,7 +143,7 @@ export function LocalModelStep({
           </p>
         </div>
 
-        {/* Error message */}
+        {/* 错误提示 */}
         {status === 'error' && errorMessage && (
           <p className="text-sm text-destructive">{errorMessage}</p>
         )}

@@ -1,11 +1,12 @@
 /**
- * Web API adapter — browser-compatible ElectronAPI implementation.
+ * Web API 适配器：在浏览器里实现 ElectronAPI 接口。
  *
- * Reuses the same WsRpcClient + buildClientApi() + CHANNEL_MAP from the Electron app.
- * Overrides LOCAL_ONLY methods (window management, native dialogs, etc.) with web equivalents.
+ * 复用 Electron 应用里的 WsRpcClient、buildClientApi() 和 CHANNEL_MAP。
+ * 对那些只适用于桌面端的 LOCAL_ONLY 方法（窗口管理、原生对话框等），
+ * 用浏览器可用的等价实现覆盖。
  *
- * Auth: the browser's session cookie (set by /api/auth) is automatically sent
- * on the WebSocket upgrade request — no bearer token needed.
+ * 鉴权：浏览器里的 session cookie（由 /api/auth 设置）会在 WebSocket 升级请求时自动携带，
+ * 不需要手动传 bearer token。
  */
 
 import i18n from 'i18next'
@@ -17,11 +18,12 @@ import { CHANNEL_MAP } from '../../../electron/src/transport/channel-map'
 import type { ElectronAPI, TransportConnectionState } from '../../../electron/src/shared/types'
 
 // ---------------------------------------------------------------------------
-// Web file picker (replaces native Electron dialog)
+// Web 文件选择器（替代 Electron 原生 dialog）
 // ---------------------------------------------------------------------------
 
 function webFilePicker(): Promise<string[]> {
   return new Promise((resolve) => {
+    // 动态创建一个隐藏的 <input type="file">，再触发点击
     const input = document.createElement('input')
     input.type = 'file'
     input.multiple = true
@@ -31,19 +33,20 @@ function webFilePicker(): Promise<string[]> {
         resolve([])
         return
       }
-      // Return file names — actual file reading is handled elsewhere
+      // 只返回文件名，实际读取逻辑在其他地方处理
       resolve(Array.from(files).map(f => f.name))
     }
-    // If user cancels the dialog
+    // 用户取消对话框时也返回空数组
     input.oncancel = () => resolve([])
     input.click()
   })
 }
 
 // ---------------------------------------------------------------------------
-// System theme detection
+// 系统主题检测
 // ---------------------------------------------------------------------------
 
+// matchMedia 监听系统 prefers-color-scheme 偏好
 const darkMediaQuery = typeof window !== 'undefined'
   ? window.matchMedia('(prefers-color-scheme: dark)')
   : null
@@ -53,39 +56,42 @@ function getSystemTheme(): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Create web API
+// 创建 Web API
 // ---------------------------------------------------------------------------
 
+// WebApiOptions 是创建适配器时传入的选项接口（类似 Go 的 struct）
 export interface WebApiOptions {
-  /** WebSocket server URL (ws:// or wss://) */
+  /** WebSocket 服务器地址（ws:// 或 wss://） */
   serverUrl: string
-  /** Workspace ID to connect as. */
+  /** 要连接的 workspace ID */
   workspaceId?: string
 }
 
+// 创建浏览器版 ElectronAPI，返回 { api, client }
 export function createWebApi(options: WebApiOptions): {
   api: ElectronAPI
   client: WsRpcClient
 } {
   const { serverUrl, workspaceId } = options
 
+  // WsRpcClient 是共享的 WebSocket RPC 客户端，web 模式表示走远程服务器
   const client = new WsRpcClient(serverUrl, {
     workspaceId,
     autoReconnect: true,
     mode: 'remote',
-    // No token — auth is via session cookie sent on WebSocket upgrade
+    // 不传 token：鉴权靠 session cookie
   })
 
-  // Build the API proxy from the same channel map the Electron app uses
+  // 用 Electron 相同的 channel map 构建基础 API 代理
   const baseApi = buildClientApi(
     client,
     CHANNEL_MAP,
     (ch) => client.isChannelAvailable(ch),
   )
 
-  // Override LOCAL_ONLY methods with web-compatible implementations
+  // 覆盖 LOCAL_ONLY 方法为浏览器兼容实现
   const webOverrides: Partial<ElectronAPI> = {
-    // Shell operations — use browser APIs
+    // 系统外壳操作：用浏览器 API 实现
     openUrl: (url: string) => {
       const result = openExternalUrl(url)
       if (!result.opened) {
@@ -99,20 +105,20 @@ export function createWebApi(options: WebApiOptions): {
       }
       return Promise.resolve()
     },
-    openFile: () => Promise.resolve(), // no-op in browser
-    showInFolder: () => Promise.resolve(), // no-op in browser
+    openFile: () => Promise.resolve(), // 浏览器里无意义，空操作
+    showInFolder: () => Promise.resolve(), // 浏览器里无意义，空操作
 
-    // File dialogs
+    // 文件对话框
     openFileDialog: webFilePicker,
-    openFolderDialog: () => Promise.resolve(null), // not possible in browser
+    openFolderDialog: () => Promise.resolve(null), // 浏览器无法选择文件夹
 
-    // System info
+    // 系统信息
     getVersions: () => ({ node: 'n/a', chrome: navigator.userAgent, electron: 'web' }),
     getRuntimeEnvironment: () => 'web',
     getSystemWarnings: () => Promise.resolve({ vcredistMissing: false }),
     isDebugMode: () => Promise.resolve(import.meta.env.DEV),
 
-    // Theme
+    // 主题
     getSystemTheme: () => Promise.resolve(getSystemTheme()),
     onSystemThemeChange: (cb: (isDark: boolean) => void) => {
       if (!darkMediaQuery) return () => {}
@@ -121,7 +127,7 @@ export function createWebApi(options: WebApiOptions): {
       return () => darkMediaQuery.removeEventListener('change', handler)
     },
 
-    // Window management — no-ops or browser equivalents
+    // 窗口管理：浏览器里多为空操作或用等价 API
     setTrafficLightsVisible: () => Promise.resolve(),
     closeWindow: () => Promise.resolve(),
     confirmCloseWindow: () => Promise.resolve(),
@@ -139,21 +145,21 @@ export function createWebApi(options: WebApiOptions): {
       }
     },
 
-    // Workspace operations — web UI works with a single connection
+    // Workspace 操作：web UI 只有一个连接
     getWindowWorkspace: () => Promise.resolve(workspaceId ?? null),
     getWindowMode: () => Promise.resolve('main'),
-    // switchWorkspace must call the server so it registers the client's
-    // workspaceId — otherwise push events (session updates) won't arrive.
+    // switchWorkspace 必须通知服务器，让服务器把 client.workspaceId 注册进去，
+    // 否则推送事件（如 session 更新）不会下发到这个连接。
     switchWorkspace: async (wsId: string) => {
       await client.invoke('window:switchWorkspace', wsId)
     },
     openWorkspace: async () => {},
     openSessionInNewWindow: async (_wsId: string, sessionId: string) => {
-      // Open in new tab
+      // 浏览器里用新标签页打开
       window.open(`${window.location.origin}/?session=${sessionId}`, '_blank')
     },
 
-    // Auto-update — not applicable to web (but expose server version for About page)
+    // 自动更新：web 端不适用，但仍暴露服务器版本给关于页
     checkForUpdates: () => Promise.resolve({ available: false, currentVersion: client.getServerVersion() ?? '' } as any),
     getUpdateInfo: () => Promise.resolve({ available: false, currentVersion: client.getServerVersion() ?? '' } as any),
     installUpdate: () => Promise.resolve(),
@@ -161,11 +167,11 @@ export function createWebApi(options: WebApiOptions): {
     getDismissedUpdateVersion: () => Promise.resolve(null),
     onUpdateAvailable: () => () => {},
     onUpdateDownloadProgress: () => () => {},
-    // Release notes — serve from server via RPC (same content as Electron)
+    // 发行说明：通过 RPC 从服务器拉取，和 Electron 端内容一致
     getReleaseNotes: () => client.invoke('releaseNotes:get') as Promise<string>,
     getLatestReleaseVersion: () => client.invoke('releaseNotes:getLatestVersion') as Promise<string | undefined>,
 
-    // Menu events — register as keyboard shortcuts
+    // 菜单事件：web 端没有原生菜单，返回空取消函数
     onMenuNewChat: () => () => {},
     onMenuOpenSettings: () => () => {},
     onMenuKeyboardShortcuts: () => () => {},
@@ -173,7 +179,7 @@ export function createWebApi(options: WebApiOptions): {
     onMenuToggleSidebar: () => () => {},
     onDeepLinkNavigate: () => () => {},
 
-    // Menu actions — no-ops (web has no native menu)
+    // 菜单动作：web 没有原生菜单
     menuQuit: () => Promise.resolve(),
     menuNewWindow: () => { window.open(window.location.href, '_blank'); return Promise.resolve() },
     menuMinimize: () => Promise.resolve(),
@@ -189,13 +195,13 @@ export function createWebApi(options: WebApiOptions): {
     menuPaste: () => { document.execCommand('paste'); return Promise.resolve() },
     menuSelectAll: () => { document.execCommand('selectAll'); return Promise.resolve() },
 
-    // Badge — use document title
+    // 角标：web 端通过 document.title 实现（实际更新由渲染层处理）
     refreshBadge: () => Promise.resolve(),
     setDockIconWithBadge: () => Promise.resolve(),
     onBadgeDraw: () => () => {},
     onBadgeDrawWindows: () => () => {},
 
-    // Notifications — Web Notifications API
+    // 通知：使用 Web Notifications API
     showNotification: async (title: string, body: string) => {
       if ('Notification' in window && Notification.permission === 'granted') {
         new Notification(title, { body })
@@ -203,24 +209,24 @@ export function createWebApi(options: WebApiOptions): {
     },
     onNotificationNavigate: () => () => {},
 
-    // Git bash (Windows-only) — not applicable
+    // Git Bash（仅 Windows）：web 端不适用
     checkGitBash: () => Promise.resolve({ available: true } as any),
     browseForGitBash: () => Promise.resolve(null),
     setGitBashPath: () => Promise.resolve({ success: true }),
 
-    // Skills — open in browser not possible
+    // Skills：浏览器无法打开本地编辑器/文件夹
     openSkillInEditor: () => Promise.resolve(),
     openSkillInFinder: () => Promise.resolve(),
 
-    // Confirmation dialogs — use browser confirm()
+    // 确认对话框：用浏览器原生 confirm()
     showLogoutConfirmation: () => Promise.resolve(window.confirm(i18n.t('dialog.logoutConfirmation'))),
     showDeleteSessionConfirmation: (name: string) => Promise.resolve(window.confirm(i18n.t('dialog.deleteSessionConfirmation', { name }))),
 
-    // Power settings — not applicable
+    // 电源设置：web 端不适用
     getKeepAwakeWhileRunning: () => Promise.resolve(false),
     setKeepAwakeWhileRunning: () => Promise.resolve(),
 
-    // Transport state
+    // 传输层状态
     getTransportConnectionState: () => Promise.resolve(client.getConnectionState() as TransportConnectionState),
     onTransportConnectionStateChanged: (cb: (state: TransportConnectionState) => void) => {
       return client.onConnectionStateChanged(cb as any)
@@ -228,32 +234,28 @@ export function createWebApi(options: WebApiOptions): {
     reconnectTransport: () => { client.reconnectNow(); return Promise.resolve() },
     isChannelAvailable: (ch: string) => client.isChannelAvailable(ch),
 
-    // Relaunch — reload page
+    // 重启应用：web 端直接刷新页面
     relaunchApp: () => { window.location.reload(); return Promise.resolve() },
-    removeWorkspace: () => Promise.resolve(false), // not supported in web UI
+    removeWorkspace: () => Promise.resolve(false), // web UI 不支持
     invokeOnServer: () => Promise.reject(new Error('Cross-server RPC not available in web UI')),
   }
 
-  // OAuth overrides — web-compatible browser opening
-  // The Electron preload uses shell.openExternal() which isn't available in browsers.
+  // OAuth 覆盖：浏览器里用 window.open 打开授权页
+  // Electron preload 里用 shell.openExternal()，浏览器里没有这个 API。
   const oauthOverrides: Partial<ElectronAPI> = {
-    // Generic source OAuth — server prepares the flow, we open the auth URL in a new tab.
-    // The OAuth provider redirects through the relay to our server's /api/oauth/callback,
-    // which completes the token exchange and pushes status via WebSocket.
+    // 通用 OAuth：服务器准备授权流程，我们在新标签页打开 auth URL。
+    // 授权完成后，OAuth 提供商会通过 relay 重定向回服务器的 /api/oauth/callback，
+    // 服务器完成 token 交换并通过 WebSocket 推送状态。
     performOAuth: async (args: {
       sourceSlug: string
       sessionId?: string
       authRequestId?: string
     }) => {
-      // iOS Safari (and any strict mobile pop-up blocker) requires
-      // `window.open()` to be called *synchronously* inside the click event
-      // — any preceding `await` loses the user-gesture and the call is
-      // silently blocked. We pre-open a blank tab here as the first thing
-      // in this async function (which still runs on the click tick, before
-      // the first await) and rewrite its `location.href` once the auth URL
-      // arrives. Same-window fallback covers users who blocked popups
-      // entirely. NOTE: dropped `noopener` because the spec returns null
-      // for `noopener` opens in some browsers, defeating the pre-open.
+      // iOS Safari 等严格弹窗拦截要求 window.open() 必须在点击事件的同步调用栈里执行，
+      // 前面一旦 await 就会丢失用户手势，导致弹窗被静默拦截。
+      // 所以我们先预打开一个空白页，等拿到 auth URL 后再改写它的 location.href。
+      // 如果 popup 完全无法打开（popup === null），则退化为同窗口跳转。
+      // 注意：这里没传 noopener，因为某些浏览器对 noopener 打开的窗口返回 null，会让我们拿不到预打开对象。
       const popup = window.open('about:blank', '_blank')
 
       try {
@@ -266,25 +268,21 @@ export function createWebApi(options: WebApiOptions): {
         })
 
         if (popup && !popup.closed) {
-          // Happy path — pre-opened popup is still open, redirect it.
+          // 正常路径：预打开的 popup 还在，把它重定向到授权页
           popup.location.href = result.authUrl
         } else if (popup === null) {
-          // Popup blocked entirely (popup === null) — fall back to a
-          // same-window redirect. The OAuth callback lands back on the
-          // WebUI; cookie-based session means the user picks up where
-          // they left off after auth.
+          // popup 被完全拦截，改为同窗口跳转；cookie 鉴权让用户授权后仍能保持会话
           window.location.href = result.authUrl
         } else {
-          // Popup was opened but the user closed it while we waited for
-          // the RPC. Abort rather than redirecting their main tab.
+          // popup 被用户提前关闭，避免把主窗口也带偏
           return {
             success: false,
             error: 'Sign-in window was closed before authentication started.',
           }
         }
 
-        // The server completes the flow when the callback arrives and pushes
-        // auth status via WebSocket — the AuthRequestCard updates automatically.
+        // 服务器收到 callback 后完成流程，并通过 WebSocket 推送 auth 状态，
+        // AuthRequestCard 等组件会自动更新。
         return { success: true }
       } catch (err) {
         if (popup && !popup.closed) popup.close()
@@ -295,8 +293,8 @@ export function createWebApi(options: WebApiOptions): {
       }
     },
 
-    // Claude OAuth — server returns authUrl, we open it in a new tab.
-    // Same iOS-safe pre-open pattern as `performOAuth` above.
+    // Claude OAuth：服务器返回 authUrl，我们在新标签页打开。
+    // 与 performOAuth 使用同样的 iOS 安全预打开模式。
     startClaudeOAuth: async () => {
       const popup = window.open('about:blank', '_blank')
       try {
@@ -308,7 +306,7 @@ export function createWebApi(options: WebApiOptions): {
             window.location.href = result.authUrl
           }
         } else if (popup && !popup.closed) {
-          // No auth URL — close the placeholder we opened on the click.
+          // 没有 auth URL，关闭点击时预打开的空白页
           popup.close()
         }
         return result
@@ -321,7 +319,7 @@ export function createWebApi(options: WebApiOptions): {
       }
     },
 
-    // ChatGPT OAuth — requires localhost callback server, not possible in browser
+    // ChatGPT OAuth：需要本地回调服务器，浏览器环境无法实现
     startChatGptOAuth: async () => {
       return {
         success: false,
@@ -330,6 +328,7 @@ export function createWebApi(options: WebApiOptions): {
     },
   }
 
+  // 合并基础 API、web 覆盖、OAuth 覆盖为一个完整的 ElectronAPI 对象
   const api = { ...baseApi, ...webOverrides, ...oauthOverrides } as ElectronAPI
 
   return { api, client }

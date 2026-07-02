@@ -1,77 +1,76 @@
 /**
  * View Validation
  *
- * Validates view expressions at config time (before they're used).
- * Catches syntax errors and provides helpful error messages with available fields.
+ * 在视图配置使用前对其表达式做校验（配置时校验）。
+ * 捕获语法错误，并在出错时给出可用字段的提示。
  */
 
 import { compileExpression, useDotAccessOperatorAndOptionalChaining } from 'filtrex';
 import { VIEW_FUNCTIONS } from './functions.ts';
 
 /**
- * Available fields for view expressions.
- * Used for documentation and error hints when expressions reference unknown fields.
+ * 视图表达式里可用的字段列表。
+ * 用于文档展示，以及在表达式引用了未知字段时给出错误提示。
  */
 export const AVAILABLE_FIELDS: Array<{ name: string; type: string; description: string }> = [
-  // Strings
-  { name: 'name', type: 'string', description: 'Session name' },
-  { name: 'preview', type: 'string', description: 'Preview text of first user message' },
-  { name: 'sessionStatus', type: 'string', description: 'Status ID (e.g. "todo", "in-progress", "done")' },
-  { name: 'todoState', type: 'string', description: '(Deprecated — use sessionStatus) Status ID alias for backward compatibility' },
-  { name: 'permissionMode', type: 'string', description: 'Permission mode (canonical: "explore"|"ask"|"execute"; internal: "safe"|"ask"|"allow-all")' },
-  { name: 'model', type: 'string', description: 'Model override string' },
-  { name: 'lastMessageRole', type: 'string', description: 'Last message role ("user", "assistant", "plan", "tool", "error")' },
+  // 字符串字段
+  { name: 'name', type: 'string', description: 'Session 名称' },
+  { name: 'preview', type: 'string', description: '第一条用户消息的预览文本' },
+  { name: 'sessionStatus', type: 'string', description: '状态 ID（例如 "todo"、"in-progress"、"done"）' },
+  { name: 'todoState', type: 'string', description: '（已废弃 —— 请用 sessionStatus）为向后兼容保留的状态别名' },
+  { name: 'permissionMode', type: 'string', description: '权限模式（canonical: "explore"|"ask"|"execute"；内部: "safe"|"ask"|"allow-all"）' },
+  { name: 'model', type: 'string', description: '模型覆盖字符串' },
+  { name: 'lastMessageRole', type: 'string', description: '最后一条消息的角色（"user"、"assistant"、"plan"、"tool"、"error"）' },
 
-  // Numbers
-  { name: 'lastUsedAt', type: 'number', description: 'Timestamp (ms) of last activity' },
-  { name: 'createdAt', type: 'number', description: 'Timestamp (ms) of session creation' },
-  { name: 'messageCount', type: 'number', description: 'Total number of messages in the session' },
-  { name: 'labelCount', type: 'number', description: 'Number of labels on the session' },
-  { name: 'tokenUsage.inputTokens', type: 'number', description: 'Input tokens consumed' },
-  { name: 'tokenUsage.outputTokens', type: 'number', description: 'Output tokens consumed' },
-  { name: 'tokenUsage.totalTokens', type: 'number', description: 'Total tokens' },
-  { name: 'tokenUsage.costUsd', type: 'number', description: 'Cost in USD' },
-  { name: 'tokenUsage.contextTokens', type: 'number', description: 'Context tokens used' },
+  // 数字字段
+  { name: 'lastUsedAt', type: 'number', description: '最后活跃时间戳（毫秒）' },
+  { name: 'createdAt', type: 'number', description: 'Session 创建时间戳（毫秒）' },
+  { name: 'messageCount', type: 'number', description: 'Session 里的消息总数' },
+  { name: 'labelCount', type: 'number', description: 'Session 上的标签数量' },
+  { name: 'tokenUsage.inputTokens', type: 'number', description: '输入 token 消耗数' },
+  { name: 'tokenUsage.outputTokens', type: 'number', description: '输出 token 消耗数' },
+  { name: 'tokenUsage.totalTokens', type: 'number', description: '总 token 数' },
+  { name: 'tokenUsage.costUsd', type: 'number', description: '预估花费（美元）' },
+  { name: 'tokenUsage.contextTokens', type: 'number', description: '上下文 token 使用量' },
 
-  // Booleans
-  { name: 'isFlagged', type: 'boolean', description: 'Whether session is starred' },
-  { name: 'hasUnread', type: 'boolean', description: 'Whether session has unread messages' },
-  { name: 'isProcessing', type: 'boolean', description: 'Whether agent is currently running' },
-  { name: 'hasPendingPlan', type: 'boolean', description: 'Whether there\'s a pending plan to accept' },
+  // 布尔字段
+  { name: 'isFlagged', type: 'boolean', description: '是否标星' },
+  { name: 'hasUnread', type: 'boolean', description: '是否有未读消息' },
+  { name: 'isProcessing', type: 'boolean', description: 'Agent 是否正在运行' },
+  { name: 'hasPendingPlan', type: 'boolean', description: '是否有待接受的 plan' },
 
-  // Arrays
-  { name: 'labels', type: 'array', description: 'Labels array (for contains() checks)' },
+  // 数组字段
+  { name: 'labels', type: 'array', description: '标签 ID 数组（用于 contains() 判断）' },
 ];
 
 /**
- * Available custom functions for view expressions.
+ * 视图表达式里可用的自定义函数列表。
  */
 export const AVAILABLE_FUNCTIONS: Array<{ name: string; signature: string; description: string; example: string }> = [
-  { name: 'daysSince', signature: 'daysSince(timestamp)', description: 'Days elapsed since timestamp', example: 'daysSince(lastUsedAt) > 7' },
-  { name: 'hoursSince', signature: 'hoursSince(timestamp)', description: 'Hours elapsed since timestamp', example: 'hoursSince(lastUsedAt) > 24' },
-  { name: 'contains', signature: 'contains(arr, value)', description: 'Array/string contains value', example: 'contains(labels, "bug")' },
-  { name: 'length', signature: 'length(arr)', description: 'Array or string length', example: 'length(labels) > 3' },
-  { name: 'startsWith', signature: 'startsWith(str, prefix)', description: 'String starts with prefix', example: 'startsWith(name, "feat")' },
-  { name: 'lower', signature: 'lower(str)', description: 'Lowercase string', example: 'lower(model) == "opus"' },
+  { name: 'daysSince', signature: 'daysSince(timestamp)', description: '距今多少天', example: 'daysSince(lastUsedAt) > 7' },
+  { name: 'hoursSince', signature: 'hoursSince(timestamp)', description: '距今多少小时', example: 'hoursSince(lastUsedAt) > 24' },
+  { name: 'contains', signature: 'contains(arr, value)', description: '数组/字符串是否包含某个值', example: 'contains(labels, "bug")' },
+  { name: 'length', signature: 'length(arr)', description: '数组或字符串长度', example: 'length(labels) > 3' },
+  { name: 'startsWith', signature: 'startsWith(str, prefix)', description: '字符串是否以某前缀开头', example: 'startsWith(name, "feat")' },
+  { name: 'lower', signature: 'lower(str)', description: '字符串转小写', example: 'lower(model) == "opus"' },
 ];
 
 /**
- * Result of expression validation.
+ * 表达式校验结果。
  */
 export interface ValidationResult {
-  /** Whether the expression is valid */
+  /** 表达式是否合法 */
   valid: boolean;
-  /** Error message if invalid (Filtrex parse error) */
+  /** 不合法时的错误信息（Filtrex 解析错误） */
   error?: string;
 }
 
 /**
- * Validate a view expression by attempting compilation.
- * Returns validation result with error details if the expression is invalid.
+ * 通过尝试编译来校验视图表达式。
+ * 如果表达式无效，返回带错误详情的校验结果。
  *
- * This is a pure syntax check — it doesn't evaluate the expression.
- * Runtime errors (e.g. accessing undefined nested props) are handled
- * gracefully by the evaluator via optional chaining.
+ * 这是纯语法检查，不会真正执行表达式。
+ * 运行时错误（例如访问 undefined 的嵌套属性）会被求值器通过可选链优雅处理。
  */
 export function validateViewExpression(expression: string): ValidationResult {
   if (!expression || typeof expression !== 'string') {
@@ -87,12 +86,13 @@ export function validateViewExpression(expression: string): ValidationResult {
     compileExpression(trimmed, {
       customProp: useDotAccessOperatorAndOptionalChaining,
       extraFunctions: VIEW_FUNCTIONS,
-      // Must match evaluator.ts — Filtrex treats `true`/`false` as property lookups
-      // without explicit constants, so validation would accept invalid semantics.
+      // 必须和 evaluator.ts 保持一致 —— 如果不显式声明 true/false 常量，
+      // Filtrex 会把表达式里的 true/false 当成属性查找，导致校验时接受了非法语义。
       constants: { true: true, false: false },
     });
     return { valid: true };
   } catch (error) {
+    // `error instanceof Error` 是 JS 运行时类型判断，用于安全地取错误消息
     const message = error instanceof Error ? error.message : String(error);
     return { valid: false, error: `Invalid expression: ${message}` };
   }

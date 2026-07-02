@@ -1,8 +1,8 @@
 /**
- * Message Operation Helpers
+ * 消息操作辅助函数
  *
- * Pure utility functions for finding and updating messages.
- * All lookups are by ID (turnId, toolUseId) - NEVER by position.
+ * 纯工具函数：用于查找和更新消息。
+ * 所有查找都按 ID（turnId、toolUseId）进行，绝不按数组下标。
  */
 
 import type { Message, Session } from '../../shared/types'
@@ -10,15 +10,15 @@ import type { Message, Session } from '../../shared/types'
 let messageIdCounter = 0
 
 /**
- * Generate a unique message ID
+ * 生成唯一消息 ID
  */
 export function generateMessageId(): string {
   return `msg-${Date.now()}-${++messageIdCounter}`
 }
 
 /**
- * Find message index by turnId
- * Returns -1 if not found
+ * 按 turnId 查找消息下标
+ * 找不到时返回 -1
  */
 export function findMessageByTurnId(
   messages: Message[],
@@ -32,8 +32,8 @@ export function findMessageByTurnId(
 }
 
 /**
- * Find streaming assistant message by turnId
- * Falls back to last streaming assistant if no turnId
+ * 按 turnId 查找正在流式输出的 assistant 消息
+ * 如果未提供 turnId，则回退到最近一条流式 assistant 消息
  */
 export function findStreamingMessage(
   messages: Message[],
@@ -45,7 +45,7 @@ export function findStreamingMessage(
     )
     if (index !== -1) return index
   }
-  // Fallback: find last streaming assistant message
+  // 回退：从后往前找最近一条处于流式状态的 assistant 消息
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === 'assistant' && messages[i].isStreaming) {
       return i
@@ -55,7 +55,7 @@ export function findStreamingMessage(
 }
 
 /**
- * Find assistant message by turnId (streaming or not)
+ * 按 turnId 查找 assistant 消息（无论是否流式）
  */
 export function findAssistantMessage(
   messages: Message[],
@@ -67,7 +67,7 @@ export function findAssistantMessage(
     )
     if (index !== -1) return index
   }
-  // Fallback: find last streaming assistant message
+  // 回退：从后往前找最近一条流式 assistant 消息
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === 'assistant' && messages[i].isStreaming) {
       return i
@@ -77,7 +77,7 @@ export function findAssistantMessage(
 }
 
 /**
- * Find tool message by toolUseId
+ * 按 toolUseId 查找工具消息
  */
 export function findToolMessage(
   messages: Message[],
@@ -87,9 +87,9 @@ export function findToolMessage(
 }
 
 /**
- * Update message at index, returning new session
- * Always creates new references (immutable update)
- * @param updateTimestamp - If true, also update lastMessageAt
+ * 更新指定下标的消息，返回新的 Session
+ * 总是创建新引用（不可变更新），不修改原对象
+ * @param updateTimestamp - 为 true 时同时更新 lastMessageAt
  */
 export function updateMessageAt(
   session: Session,
@@ -100,6 +100,7 @@ export function updateMessageAt(
   if (index < 0 || index >= session.messages.length) {
     return session
   }
+  // 展开运算符 ... 创建数组和对象的浅拷贝，避免修改原 Session
   const messages = [...session.messages]
   messages[index] = { ...messages[index], ...updates }
   return {
@@ -110,21 +111,22 @@ export function updateMessageAt(
 }
 
 /**
- * Append message to session, returning new session
- * @param updateTimestamp - If false, don't update lastMessageAt (for intermediate/tool messages)
+ * 在会话末尾追加一条消息，返回新的 Session
+ * @param updateTimestamp - 为 false 时不更新 lastMessageAt（用于中间态/工具消息）
  */
 export function appendMessage(
   session: Session,
   message: Message,
   updateTimestamp = false
 ): Session {
-  // Guard: skip if message with same ID already exists (prevents duplicate events on Windows)
+  // 防护：如果已存在相同 ID 的消息则跳过（避免 Windows 上重复事件导致消息重复）
   if (message.id && session.messages.some(m => m.id === message.id)) {
     return session
   }
 
-  // Determine if this message role should update lastMessageRole (for badge display)
+  // 判断该角色是否应更新 lastMessageRole（用于侧边栏角标显示）
   const badgeRoles = ['user', 'assistant', 'plan', 'tool', 'error'] as const
+  // typeof badgeRoles[number] 表示联合类型 'user' | 'assistant' | ...
   const roleForBadge = badgeRoles.includes(message.role as typeof badgeRoles[number])
     ? message.role as Session['lastMessageRole']
     : undefined
@@ -138,8 +140,8 @@ export function appendMessage(
 }
 
 /**
- * Insert message at index, returning new session
- * @param updateTimestamp - If false, don't update lastMessageAt (for intermediate/tool messages)
+ * 在指定下标插入一条消息，返回新的 Session
+ * @param updateTimestamp - 为 false 时不更新 lastMessageAt（用于中间态/工具消息）
  */
 export function insertMessageAt(
   session: Session,
@@ -157,7 +159,7 @@ export function insertMessageAt(
 }
 
 /**
- * Create an empty session for a given ID
+ * 为指定 ID 创建一个空的 Session 对象
  */
 export function createEmptySession(sessionId: string, workspaceId: string, workspaceName: string = ''): Session {
   return {

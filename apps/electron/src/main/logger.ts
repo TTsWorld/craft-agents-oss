@@ -1,3 +1,10 @@
+/**
+ * logger.ts —— 主进程日志模块。
+ *
+ * 负责配置 electron-log 的日志格式、作用域，并提供两个专用日志：
+ * 1. messagingGatewayLog：固定路径的 messaging-gateway.log，方便跨构建模式排查消息网关问题。
+ * 2. autoUpdateLog：固定路径的 auto-update.log，解决生产环境 electron-log 被关闭后无法诊断更新安装失败的问题。
+ */
 import log from 'electron-log/main'
 import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -9,13 +16,13 @@ import type {
 } from '@craft-agent/messaging-gateway'
 
 /**
- * Resolve debug mode deterministically across runtimes.
+ * 统一判断当前是否处于调试模式。
  *
- * Priority:
- * 1) --debug flag always enables debug mode
- * 2) CRAFT_IS_PACKAGED env (when explicitly set)
- * 3) Electron runtime heuristic (defaultApp => dev, otherwise packaged)
- * 4) Non-Electron runtimes default to debug mode (headless Bun / node --check)
+ * 优先级：
+ * 1) 命令行带 --debug 则强制开启
+ * 2) CRAFT_IS_PACKAGED 环境变量显式设置
+ * 3) Electron 运行时启发式：defaultApp 为开发模式，否则为打包模式
+ * 4) 非 Electron 运行时（headless Bun / node --check）默认开启调试
  */
 function resolveDebugMode(): boolean {
   if (process.argv.includes('--debug')) return true
@@ -35,10 +42,10 @@ function resolveDebugMode(): boolean {
 
 export const isDebugMode = resolveDebugMode()
 
-// Configure transports based on debug mode
+// 根据是否调试模式配置日志传输目标（文件 / 控制台）
 if (isDebugMode) {
-  // JSON format for file (agent-parseable)
-  // Note: format expects (params: FormatParams) => any[], where params.message has the LogMessage fields
+  // 文件用 JSON 格式（便于 agent 解析）
+  // 注意：format 签名为 (params: FormatParams) => any[]，其中 params.message 包含 LogMessage 字段
   log.transports.file.format = ({ message }) => [
     JSON.stringify({
       timestamp: message.date.toISOString(),
@@ -50,8 +57,8 @@ if (isDebugMode) {
 
   log.transports.file.maxSize = 5 * 1024 * 1024 // 5MB
 
-  // Console output in debug mode with readable format
-  // Note: format must return an array - electron-log's transformStyles calls .reduce() on it
+  // 调试模式下控制台输出可读格式
+  // 注意：format 必须返回数组，因为 electron-log 的 transformStyles 会对其调用 .reduce()
   log.transports.console.format = ({ message }) => {
     const scope = message.scope ? `[${message.scope}]` : ''
     const level = message.level.toUpperCase().padEnd(5)
@@ -62,12 +69,12 @@ if (isDebugMode) {
   }
   log.transports.console.level = 'debug'
 } else {
-  // Disable file and console transports in production
+  // 生产环境禁用文件和控制台传输
   log.transports.file.level = false
   log.transports.console.level = false
 }
 
-// Export scoped loggers for different modules
+// 导出带作用域的日志器，便于按模块过滤
 export const mainLog = log.scope('main')
 export const sessionLog = log.scope('session')
 export const handlerLog = log.scope('handler')
@@ -76,10 +83,10 @@ export const agentLog = log.scope('agent')
 export const searchLog = log.scope('search')
 
 /**
- * Dedicated messaging gateway log.
+ * messaging-gateway 专用日志路径。
  *
- * Kept outside the Electron-managed logs folder so messaging issues can be
- * inspected independently at a stable path across debug and production builds.
+ * 不放在 Electron 管理的 logs 目录里，这样无论 debug 还是 production 构建，
+ * 都能在一个稳定路径独立查看消息网关问题。
  */
 export const messagingGatewayLogPath = join(homedir(), '.craft-agent', 'logs', 'messaging-gateway.log')
 const messagingGatewayBackupPath = `${messagingGatewayLogPath}.1`
@@ -202,13 +209,11 @@ export const messagingGatewayLog: MessagingLogger = new StructuredMessagingGatew
 })
 
 /**
- * Dedicated auto-update log.
+ * 自动更新专用日志路径。
  *
- * In packaged builds the Electron file/console transports are disabled (see
- * above), so every `[auto-update]` / `[update-flow]` diagnostic is dropped —
- * leaving update-install failures undiagnosable in the field (see #891). This
- * dedicated, always-on rotating log records the update lifecycle at a stable
- * path regardless of debug mode, mirroring the messaging-gateway log above.
+ * 打包构建里 Electron 的文件/控制台日志会被关闭，导致 `[auto-update]` / `[update-flow]`
+ * 等诊断信息丢失，现场无法排查更新安装失败。这个专用日志始终启用、按大小轮转，
+ * 与上面的 messaging-gateway 日志思路一致。
  */
 export const autoUpdateLogPath = join(homedir(), '.craft-agent', 'logs', 'auto-update.log')
 const autoUpdateBackupPath = `${autoUpdateLogPath}.1`
@@ -246,8 +251,8 @@ function writeAutoUpdateLog(level: 'info' | 'warn' | 'error', message: string, m
     mainLog.warn('[auto-update] failed to write dedicated log entry', normalizeLogValue(error))
   }
 
-  // Mirror to the Electron logger too (a no-op in production where transports
-  // are disabled, but keeps --debug console/file output intact).
+  // 同时镜像到 Electron logger（生产环境 transport 被禁用，这里无实际操作；
+  // 但保留 --debug 时的控制台/文件输出）。
   if (level === 'error') {
     mainLog.error('[auto-update]', message, entry)
   } else if (level === 'warn') {
@@ -257,7 +262,7 @@ function writeAutoUpdateLog(level: 'info' | 'warn' | 'error', message: string, m
   }
 }
 
-/** Always-on structured logger for the auto-update lifecycle (see #891). */
+/** 始终启用的结构化自动更新日志器（参见 #891）。 */
 export const autoUpdateLog = {
   info: (message: string, meta?: unknown) => writeAutoUpdateLog('info', message, meta),
   warn: (message: string, meta?: unknown) => writeAutoUpdateLog('warn', message, meta),
@@ -269,8 +274,8 @@ export function getAutoUpdateLogFilePath(): string {
 }
 
 /**
- * Get the path to the current Electron main log file.
- * Returns undefined if file logging is disabled.
+ * 获取当前 Electron 主日志文件路径。
+ * 如果文件日志被禁用则返回 undefined。
  */
 export function getLogFilePath(): string | undefined {
   if (!isDebugMode) return undefined

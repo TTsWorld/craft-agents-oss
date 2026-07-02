@@ -1,8 +1,8 @@
 /**
  * AutomationAvatar
  *
- * Small icon component that visually categorizes automations by event type.
- * Uses colored backgrounds with matching Lucide icons.
+ * 小图标组件，按事件类型给自动化分类着色。
+ * 使用带背景色的圆角方块 + 对应的 Lucide 图标。
  */
 
 import * as React from 'react'
@@ -22,7 +22,7 @@ import { cn } from '@/lib/utils'
 import { getEventCategory, type AutomationTrigger, type EventCategory } from './types'
 
 // ============================================================================
-// Size Configuration
+// 尺寸配置
 // ============================================================================
 
 type AvatarSize = 'xs' | 'sm' | 'md' | 'lg'
@@ -35,7 +35,7 @@ const sizeConfig: Record<AvatarSize, { container: string; icon: string }> = {
 }
 
 // ============================================================================
-// Event → Icon + Color Mapping
+// 事件分类 → 图标 + 颜色映射
 // ============================================================================
 
 const categoryConfig: Record<EventCategory, { icon: React.ElementType; bg: string; text: string }> = {
@@ -52,13 +52,13 @@ const categoryConfig: Record<EventCategory, { icon: React.ElementType; bg: strin
 }
 
 // ============================================================================
-// Component
+// 组件
 // ============================================================================
 
 export interface AutomationAvatarProps {
   event: AutomationTrigger
   size?: AvatarSize
-  /** Fill parent container (h-full w-full). Overrides size. */
+  /** 是否填满父容器（h-full w-full），设置后会覆盖 size */
   fluid?: boolean
   className?: string
 }

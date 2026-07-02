@@ -1,23 +1,22 @@
 /**
- * Centralized Model Registry
+ * 集中式模型注册表。
  *
- * Single source of truth for all model definitions across the application.
- * All model metadata, capabilities, and costs are defined here.
- *
- * When adding a new model or provider:
- * 1. Add the model(s) to MODEL_REGISTRY
- * 2. The convenience exports (ANTHROPIC_MODELS, OPENAI_MODELS) auto-update
- * 3. Update llm-connections.ts if adding a new built-in connection
+ * 这里是整个应用所有模型定义的唯一事实来源：模型元数据、能力、成本都在这里声明。
+ * 新增模型或提供商时：
+ * 1. 把模型加到 MODEL_REGISTRY；
+ * 2. 便捷导出（ANTHROPIC_MODELS 等）会自动更新；
+ * 3. 如果是新的内置连接，记得同步更新 llm-connections.ts。
  */
-// Bedrock-native → bare Anthropic ID reverse mapping.
-// Duplicated from llm-connections.ts to avoid circular imports (llm-connections imports models).
-// Must stay in sync with BEDROCK_MODEL_MAP in llm-connections.ts.
+
+// Bedrock 原生 ID → 裸 Anthropic ID 的反向映射。
+// 这里复制了一份 llm-connections.ts 里的映射，避免循环依赖（llm-connections 会导入 models）。
+// 必须与 llm-connections.ts 里的 BEDROCK_MODEL_MAP 保持同步。
 const BEDROCK_TO_BARE: Record<string, string> = {
-  // US inference profile IDs (primary)
+  // US inference profile IDs（主要）
   'us.anthropic.claude-opus-4-8': 'claude-opus-4-8',
   'us.anthropic.claude-fable-5': 'claude-fable-5',
   'us.anthropic.claude-opus-4-7': 'claude-opus-4-7',
-  // Compatibility alias for an earlier incorrect 4.7 mapping.
+  // 早期错误的 4.7 映射的兼容别名
   'us.anthropic.claude-opus-4-7-v1': 'claude-opus-4-7',
   'us.anthropic.claude-sonnet-5': 'claude-sonnet-5',
   'us.anthropic.claude-sonnet-4-6': 'claude-sonnet-4-6',
@@ -42,7 +41,7 @@ const BEDROCK_TO_BARE: Record<string, string> = {
   'global.anthropic.claude-sonnet-5': 'claude-sonnet-5',
   'global.anthropic.claude-sonnet-4-6': 'claude-sonnet-4-6',
   'global.anthropic.claude-haiku-4-5-20251001-v1:0': 'claude-haiku-4-5-20251001',
-  // Base IDs (no region prefix)
+  // 无 region 前缀的基础 ID
   'anthropic.claude-opus-4-8': 'claude-opus-4-8',
   'anthropic.claude-fable-5': 'claude-fable-5',
   'anthropic.claude-opus-4-7': 'claude-opus-4-7',
@@ -53,10 +52,13 @@ const BEDROCK_TO_BARE: Record<string, string> = {
   'anthropic.claude-opus-4-5-20251101-v1:0': 'claude-opus-4-5-20251101',
   'anthropic.claude-sonnet-4-5-20250929-v1:0': 'claude-sonnet-4-5-20250929',
 };
+
+/** 把 Bedrock 原生模型 ID 反向映射为裸 Anthropic ID；找不到则原样返回 */
 function bedrockToBareId(modelId: string): string {
   return BEDROCK_TO_BARE[modelId] ?? modelId;
 }
 
+/** 已弃用模型 ID → 当前推荐替换 ID 的映射 */
 const DEPRECATED_MODEL_REPLACEMENTS: Record<string, string> = {
   'claude-opus-4-5-20251101': 'claude-opus-4-8',
   'claude-opus-4-6': 'claude-opus-4-8',
@@ -73,7 +75,7 @@ const DEPRECATED_MODEL_REPLACEMENTS: Record<string, string> = {
   'global.anthropic.claude-opus-4-7-v1': 'global.anthropic.claude-opus-4-7',
 };
 
-/** Normalize deprecated built-in model IDs to the current supported replacement. */
+/** 把已弃用的内置模型 ID 规范化为当前支持的替换 ID */
 export function normalizeDeprecatedModelId(modelId: string): string {
   if (modelId.startsWith('pi/')) {
     const normalized = normalizeDeprecatedModelId(modelId.slice(3));
@@ -83,51 +85,51 @@ export function normalizeDeprecatedModelId(modelId: string): string {
 }
 
 // ============================================
-// TYPES
+// 类型定义
 // ============================================
 
-/**
- * Provider identifier for AI backends.
- */
+/** LLM 提供商标识 */
 export type ModelProvider = 'anthropic' | 'pi';
 
 /**
- * Full model definition with capabilities and costs.
- * Used throughout the application for model selection and display.
+ * 完整模型定义，包含能力与成本信息。
+ * 应用里选模型、展示模型都用这个结构。
  */
 export interface ModelDefinition {
-  /** Model identifier (e.g., 'claude-sonnet-4-6', 'gpt-5.3-codex') */
+  /** 模型 ID，如 'claude-sonnet-4-6' */
   id: string;
-  /** Human-readable name (e.g., 'Sonnet 4.6', 'Codex') */
+  /** 人类可读全称，如 'Sonnet 4.6' */
   name: string;
-  /** Short display name for compact UI (e.g., 'Sonnet', 'Codex') */
+  /** 紧凑展示名，如 'Sonnet' */
   shortName: string;
-  /** Brief description of the model's strengths */
+  /** 模型优势简介 */
   description: string;
-  /** Translation key for the description (for built-in static models only).
-   *  UI should resolve: t(descriptionKey) if set, otherwise fall back to description. */
+  /**
+   * 描述对应的 i18n key（仅内置静态模型使用）。
+   * UI 优先用 t(descriptionKey) 解析，没有 key 时回退到 description。
+   */
   descriptionKey?: string;
-  /** Provider that offers this model */
+  /** 提供该模型的厂商 */
   provider: ModelProvider;
-  /** Maximum context window in tokens */
+  /** 最大上下文窗口（token 数） */
   contextWindow: number;
-  /** Whether this model supports thinking/reasoning effort. Defaults to true when undefined. */
+  /** 是否支持 thinking / reasoning effort；undefined 时默认 true */
   supportsThinking?: boolean;
-  /** Explicit per-model image input capability hint, primarily for custom endpoints. */
+  /** 针对自定义端点的显式图片输入能力提示 */
   supportsImages?: boolean;
 }
 
 // ============================================
-// MODEL REGISTRY (Single Source of Truth)
+// 模型注册表（唯一事实来源）
 // ============================================
 
 /**
- * All available models across all providers.
- * This is the authoritative list - all other model arrays derive from this.
+ * 所有可用模型列表。
+ * 这是权威列表，其他模型数组都从这里派生。
  */
 export const MODEL_REGISTRY: ModelDefinition[] = [
   // ----------------------------------------
-  // Anthropic Claude Models
+  // Anthropic Claude 模型
   // ----------------------------------------
   {
     id: 'claude-opus-4-8',
@@ -185,45 +187,43 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
   },
 
   // ----------------------------------------
-  // Pi Models
-  // No hardcoded entries — models are discovered dynamically:
-  //   - Pi: getModels(provider) from @earendil-works/pi-ai SDK
-  // See ModelRefreshService in apps/electron/src/main/model-fetchers/
+  // Pi 模型
+  // 没有硬编码条目，全部动态发现：
+  //   - Pi: 通过 @earendil-works/pi-ai SDK 的 getModels(provider)
+  // 详见 apps/electron/src/main/model-fetchers/ 下的 ModelRefreshService
   // ----------------------------------------
 ];
 
 // ============================================
-// PROVIDER-FILTERED EXPORTS
+// 按提供商过滤的导出
 // ============================================
 
-/**
- * Get models filtered by provider.
- */
+/** 按 provider 过滤模型列表 */
 export function getModelsByProvider(provider: ModelProvider): ModelDefinition[] {
   return MODEL_REGISTRY.filter(m => m.provider === provider);
 }
 
-/** All Anthropic Claude models */
+/** 所有 Anthropic Claude 模型 */
 export const ANTHROPIC_MODELS = getModelsByProvider('anthropic');
 
 
 /**
- * Legacy compatibility export.
- * Used by existing code that imports MODELS (expects Claude models only).
- * @deprecated Use ANTHROPIC_MODELS or MODEL_REGISTRY instead
+ * 旧版兼容导出。
+ * 现有代码导入 MODELS 时仍期望只拿到 Claude 模型。
+ * @deprecated 优先使用 ANTHROPIC_MODELS 或 MODEL_REGISTRY
  */
 export const MODELS = ANTHROPIC_MODELS;
 
 // ============================================
-// MODEL ID HELPERS (Derived from Registry)
+// 模型 ID 辅助函数（从注册表派生）
 // ============================================
 
-/** Get the first model ID matching a short name, or undefined if not found */
+/** 按 shortName 查找第一个匹配的模型 ID，找不到返回 undefined */
 function findModelIdByShortName(shortName: string): string | undefined {
   return MODEL_REGISTRY.find(m => m.shortName === shortName)?.id;
 }
 
-/** Get the first model ID matching a short name (throws if not found) */
+/** 按 shortName 查找模型 ID，找不到则抛错 */
 export function getModelIdByShortName(shortName: string): string {
   const id = findModelIdByShortName(shortName);
   if (!id) throw new Error(`Model not found: ${shortName}`);
@@ -231,38 +231,37 @@ export function getModelIdByShortName(shortName: string): string {
 }
 
 // ============================================
-// CONNECTION DEFAULTS
-// Used ONLY when writing defaults to LLM connection config (not as runtime fallbacks).
+// 连接默认值
+// 仅用于写入 LLM 连接默认配置，不作为运行时回退。
 // ============================================
 
-/** Default model for Anthropic connections (used when creating/backfilling connections) */
+/** Anthropic 连接的默认模型（创建/回填连接时使用） */
 export const DEFAULT_MODEL = getModelIdByShortName('Opus');
 
 
 // ============================================
-// UTILITY MODELS
+// 工具模型
 // ============================================
 
 /**
- * Get the default summarization model ID (Haiku).
- * Used as fallback when no connection context is available
- * (e.g., url-validator, mcp/validation, summarize.ts without modelOverride).
+ * 获取默认的摘要/轻量模型 ID（Haiku）。
+ * 在没有连接上下文时作为回退使用，例如 url-validator、mcp/validation、
+ * summarize.ts 没有 modelOverride 时。
  *
- * For connection-aware summarization model resolution, use
- * getSummarizationModel(connection) from llm-connections.ts instead.
+ * 如果能拿到连接上下文，应改用 llm-connections.ts 里的 getSummarizationModel(connection)。
  */
 export function getDefaultSummarizationModel(): string {
   return findModelIdByShortName('Haiku') ?? DEFAULT_MODEL;
 }
 
 // ============================================
-// HELPER FUNCTIONS
+// 辅助函数
 // ============================================
 
 /**
- * Get a model by ID from the registry.
- * Also handles Bedrock-native IDs (e.g. "anthropic.claude-opus-4-8")
- * by reverse-mapping to the bare Anthropic ID for lookup.
+ * 从注册表按 ID 获取模型定义。
+ * 同时处理 Bedrock 原生 ID（如 "anthropic.claude-opus-4-8"），
+ * 会先反向映射为裸 Anthropic ID 再查找。
  */
 export function getModelById(modelId: string): ModelDefinition | undefined {
   const normalized = normalizeDeprecatedModelId(modelId);
@@ -271,18 +270,18 @@ export function getModelById(modelId: string): ModelDefinition | undefined {
 }
 
 /**
- * Get display name for a model ID (full name with version).
+ * 获取模型 ID 的展示全称（带版本）。
  */
 export function getModelDisplayName(modelId: string): string {
   const model = getModelById(modelId);
   if (model) return model.name;
-  // Fallback: normalize deprecated/Bedrock-native IDs, then strip prefix and date suffix
-  // e.g., "claude-opus-4-5-20251101" → "Opus 4.8"
+  // 兜底：先规范化弃用/Bedrock ID，再去掉前缀和日期后缀
+  // 例如 "claude-opus-4-5-20251101" → "Opus 4.8"
   const normalized = bedrockToBareId(normalizeDeprecatedModelId(modelId));
   const stripped = normalized
     .replace('claude-', '')
-    .replace(/-\d{8}$/, '');  // Remove date suffix
-  // Split on dashes, capitalize first part, join version parts with dots
+    .replace(/-\d{8}$/, '');  // 移除日期后缀
+  // 按短横线分割，首部分首字母大写，版本号用点连接
   const parts = stripped.split('-');
   const first = parts[0];
   if (!first) return modelId;
@@ -292,16 +291,16 @@ export function getModelDisplayName(modelId: string): string {
 }
 
 /**
- * Get short display name for a model ID (without version number).
+ * 获取模型 ID 的短展示名（不含版本号）。
  */
 export function getModelShortName(modelId: string): string {
   const model = getModelById(modelId);
   if (model) return model.shortName;
-  // For provider-prefixed IDs (e.g. "openai/gpt-5"), show just the model part
+  // 对带 provider 前缀的 ID（如 "openai/gpt-5"）只显示模型部分
   if (modelId.includes('/')) {
     return modelId.split('/').pop() || modelId;
   }
-  // Fallback: normalize deprecated/Bedrock-native IDs, then humanize (same logic as getModelDisplayName)
+  // 兜底：与 getModelDisplayName 类似的人名化逻辑
   const normalized = bedrockToBareId(normalizeDeprecatedModelId(modelId));
   const stripped = normalized.replace('claude-', '').replace(/-\d{8}$/, '');
   const parts = stripped.split('-');
@@ -313,24 +312,24 @@ export function getModelShortName(modelId: string): string {
 }
 
 /**
- * Get known context window size for a model ID.
+ * 获取模型 ID 对应的已知上下文窗口大小。
  */
 export function getModelContextWindow(modelId: string): number | undefined {
   return getModelById(modelId)?.contextWindow;
 }
 
 /**
- * Check if model is an Opus model (for cache TTL decisions).
+ * 判断模型是否属于 Opus 系列（用于 prompt cache TTL 决策）。
  */
 export function isOpusModel(modelId: string): boolean {
   return modelId.includes('opus');
 }
 
 /**
- * Check if a model ID refers to a Claude model.
- * Handles direct Anthropic IDs (e.g. "claude-sonnet-4-6"),
- * provider-prefixed IDs (e.g. "anthropic/claude-sonnet-4" via OpenRouter),
- * and Bedrock-native IDs (e.g. "anthropic.claude-opus-4-8").
+ * 判断模型 ID 是否指向 Claude 模型。
+ * 支持直接 Anthropic ID（如 "claude-sonnet-4-6"）、
+ * provider 前缀 ID（如 OpenRouter 的 "anthropic/claude-sonnet-4"）、
+ * 以及 Bedrock 原生 ID（如 "anthropic.claude-opus-4-8"）。
  */
 export function isClaudeModel(modelId: string): boolean {
   const lower = modelId.toLowerCase();
@@ -338,12 +337,10 @@ export function isClaudeModel(modelId: string): boolean {
 }
 
 /**
- * Mythos-class models (Claude Fable 5 / Mythos 5 / Mythos Preview) where adaptive
- * thinking is ALWAYS ON and `thinking: { type: 'disabled' }` is rejected by the
- * Messages API. Callers must use adaptive thinking + the `effort` parameter to
- * control depth on these models — there is no way to turn thinking off.
- * (The Messages API is unchanged for Opus/Sonnet/Haiku, which still accept `disabled`.)
- * Matches bare, pi/-prefixed, and Bedrock-native id forms.
+ * Mythos 类模型（Claude Fable 5 / Mythos 5 / Mythos Preview）的 adaptive thinking 始终开启，
+ * Messages API 会拒绝 `thinking: { type: 'disabled' }`。
+ * 调用方必须对这类模型使用 adaptive thinking + effort 参数控制深度，无法关闭思考。
+ * 匹配裸 ID、pi/ 前缀、Bedrock 原生等多种形式。
  */
 export function isAdaptiveThinkingAlwaysOnModel(modelId: string): boolean {
   return /claude-(fable|mythos)/i.test(modelId);
@@ -351,7 +348,7 @@ export function isAdaptiveThinkingAlwaysOnModel(modelId: string): boolean {
 
 
 /**
- * Get the provider for a model ID.
+ * 获取模型 ID 对应的提供商。
  */
 export function getModelProvider(modelId: string): ModelProvider | undefined {
   return getModelById(modelId)?.provider;

@@ -1,3 +1,8 @@
+/**
+ * Session 状态渲染配置：把共享层定义的原始状态（StatusConfig）
+ * 转换成 Electron 渲染层可直接使用的 React 元素和颜色。
+ */
+
 import * as React from 'react'
 import type { CSSProperties } from 'react'
 import type { StatusConfig } from '@craft-agent/shared/statuses'
@@ -8,61 +13,73 @@ import { StatusIcon } from '@/components/ui/status-icon'
 import { iconCache } from '@/lib/icon-cache'
 
 // ============================================================================
-// Types
+// 类型定义
 // ============================================================================
 
-// Dynamic status ID (any string now)
+// Session 状态 ID：动态状态，任意字符串均可
 export type SessionStatusId = string
 
+// Session 状态的基础配置结构
 export interface SessionStatusConfig {
   id: string
   label: string
   color?: EntityColor
 }
 
+// 渲染层真正使用的 Session 状态对象。
+// `extends SessionStatusConfig` 表示继承前者字段，类似 Go 的结构体嵌套/组合。
 export interface SessionStatus extends SessionStatusConfig {
   /**
-   * Resolved CSS color string for inline style application.
-   * System colors resolve to var(--name) or color-mix(...).
-   * Custom colors resolve to the appropriate light/dark hex value.
+   * 已解析的 CSS 颜色字符串，用于内联样式。
+   * 系统色会解析成 CSS 变量，例如 var(--name) 或 color-mix(...)，
+   * 能随主题自动切换；自定义颜色则根据 isDark 取对应深浅色值。
    */
   resolvedColor: string
+
+  /** 渲染后的图标节点（React 元素），可直接放进 JSX */
   icon: React.ReactNode
+
   /**
-   * Whether the icon responds to color styling (uses currentColor).
-   * - true: SVGs with currentColor - apply status color
-   * - false: Emojis, images, SVGs with hardcoded colors - render at full opacity
+   * 图标是否能响应 CSS 颜色控制（是否使用 currentColor）。
+   * - true：SVG 图标使用 currentColor，可以应用状态颜色
+   * - false：Emoji、图片、或颜色写死的 SVG，保持原样/不透明渲染
    */
   iconColorable: boolean
+
+  /** 状态分类：'open' 表示进行中/收件箱，'closed' 表示已关闭/归档 */
   category?: 'open' | 'closed'
+
+  /** 是否为固定状态：true 则不能删除/重命名（如 todo、done） */
   isFixed?: boolean
+
+  /** 是否为默认状态：true 表示可修改但不能删除（如 in-progress） */
   isDefault?: boolean
 }
 
 // ============================================================================
-// Status → SessionStatus Conversion
+// StatusConfig → SessionStatus 转换
 // ============================================================================
 
 /**
- * Convert StatusConfig to SessionStatus.
- * Resolves EntityColor to a CSS color string for inline style use.
- * System colors (e.g., "accent") resolve to CSS variable references that
- * auto-adapt to light/dark theme. Custom colors use isDark to pick the right value.
+ * 把后端/共享层的状态配置（StatusConfig）转换成渲染层可用的 SessionStatus。
  *
- * Colorability is determined synchronously:
- * - Emoji icons → not colorable (they have their own colors)
- * - Everything else (SVGs, fallback) → colorable (uses currentColor)
+ * 主要做两件事：
+ * 1. 解析颜色：EntityColor 转成可直接写进 style 的 CSS 颜色字符串。
+ *    系统色（如 "accent"）会转成 CSS 变量引用，随亮/暗主题自动切换；
+ *    自定义颜色根据 isDark 参数选择合适色值。
+ * 2. 判断图标是否可着色：
+ *    - Emoji 图标本身带颜色，不能再染色
+ *    - SVG（使用 currentColor）和兜底图标可以染色
  */
 export function statusConfigToSessionStatus(
   config: StatusConfig,
   workspaceId: string,
   isDark: boolean
 ): SessionStatus {
-  // Emojis have their own colors and don't respond to CSS color inheritance.
-  // SVGs with currentColor and the fallback Circle icon are colorable.
+  // Emoji 自带颜色，不继承 CSS color；SVG 使用 currentColor 或兜底圆点图标可染色
   const iconColorable = !isEmoji(config.icon)
 
-  // Resolve EntityColor → CSS color string for inline style
+  // 把 EntityColor 解析成供内联样式使用的 CSS 颜色字符串
   const entityColor = config.color ?? getDefaultStatusColor(config.id)
   const resolvedColor = resolveEntityColor(entityColor, isDark)
 
@@ -88,7 +105,7 @@ export function statusConfigToSessionStatus(
 }
 
 /**
- * Convert array of StatusConfig to SessionStatus[]
+ * 批量把 StatusConfig[] 转换成 SessionStatus[]
  */
 export function statusConfigsToSessionStatuses(
   configs: StatusConfig[],
@@ -99,11 +116,11 @@ export function statusConfigsToSessionStatuses(
 }
 
 // ============================================================================
-// Helper Functions (updated to work with dynamic states)
+// 工具函数（已适配动态状态）
 // ============================================================================
 
 /**
- * Get the icon for a todo state
+ * 根据状态 ID 获取对应图标；找不到则返回默认圆点
  */
 export function getStateIcon(
   stateId: string,
@@ -114,17 +131,17 @@ export function getStateIcon(
 }
 
 /**
- * Return inline style for a status icon only when the icon is colorable.
+ * 仅当图标可着色时才返回用于内联样式的样式对象。
  *
- * Colorable icons (SVG/currentColor) receive the resolved status color.
- * Non-colorable icons (emoji/images) return undefined so they render at full native color/opacity.
+ * 可着色图标（SVG/currentColor）会带上解析后的状态颜色；
+ * 不可着色图标（emoji/图片）返回 undefined，保持原生颜色和不透明度。
  */
 export function getStatusIconStyle(state?: SessionStatus): CSSProperties | undefined {
   return state?.iconColorable ? { color: state.resolvedColor } : undefined
 }
 
 /**
- * Resolve a status by ID and return icon style only when color should be applied.
+ * 先按 ID 查找状态，再决定是否返回图标染色样式
  */
 export function getStateIconStyle(
   stateId: string,
@@ -134,7 +151,7 @@ export function getStateIconStyle(
 }
 
 /**
- * Get the resolved CSS color for a todo state (ready for inline style)
+ * 获取某个状态已解析好的 CSS 颜色（可直接用于内联样式）
  */
 export function getStateColor(
   stateId: string,
@@ -144,7 +161,7 @@ export function getStateColor(
 }
 
 /**
- * Get the label for a todo state
+ * 获取某个状态的显示文本；找不到就回退显示 ID
  */
 export function getStateLabel(
   stateId: string,
@@ -155,7 +172,7 @@ export function getStateLabel(
 }
 
 /**
- * Get a complete state object by ID
+ * 按 ID 获取完整的状态对象
  */
 export function getState(
   stateId: string,
@@ -165,8 +182,8 @@ export function getState(
 }
 
 /**
- * Clear status icon cache (useful when statuses are updated).
- * Clears status-prefixed entries from the unified icon cache.
+ * 清空状态图标缓存（状态配置更新后很有用）。
+ * 这里只删除统一图标缓存中以 "status:" 为前缀的条目。
  */
 export function clearIconCache(): void {
   for (const key of iconCache.keys()) {

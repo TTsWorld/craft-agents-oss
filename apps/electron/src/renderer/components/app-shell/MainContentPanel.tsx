@@ -1,18 +1,17 @@
 /**
- * MainContentPanel - Right panel component for displaying content
+ * MainContentPanel：右侧内容面板组件。
  *
- * Renders content based on the unified NavigationState:
- * - Chats navigator: ChatPage for selected session, or empty state
- * - Sources navigator: SourceInfoPage for selected source, or empty state
- * - Settings navigator: Settings, Preferences, or Shortcuts page
+ * 根据统一的 NavigationState 渲染不同内容：
+ * - 会话导航：选中会话则渲染 ChatPage，否则显示空状态
+ * - Source 导航：选中 source 则渲染 SourceInfoPage，否则显示空状态
+ * - 设置导航：渲染设置、偏好、快捷键等页面
  *
- * The NavigationState is the single source of truth for what to display.
+ * NavigationState 是决定展示什么的唯一真相来源。
  *
- * In focused mode (single window), wraps content with StoplightProvider
- * so PanelHeader components automatically compensate for macOS traffic lights.
+ * 专注模式（单窗口）下会用 StoplightProvider 包裹内容，
+ * 让 PanelHeader 自动为 macOS 红绿灯预留空间。
  *
- * When multiple sessions are selected (multi-select mode), shows the
- * MultiSelectPanel with batch action buttons instead of a single chat.
+ * 多选模式下会显示 MultiSelectPanel（批量操作面板），而不是单个聊天内容。
  */
 
 import * as React from 'react'
@@ -47,19 +46,21 @@ import type { ExecutionEntry } from '../automations/types'
 import { automationsAtom } from '@/atoms/automations'
 import { SendResourceToWorkspaceDialog, type SendResourceType } from './SendResourceToWorkspaceDialog'
 
+/** MainContentPanelProps：组件 props 类型定义 */
 export interface MainContentPanelProps {
-  /** Whether both sidebar and navigator are hidden (focus mode / CMD+.) */
+  /** 侧边栏和导航面板是否都被隐藏（专注模式 / CMD+.） */
   isSidebarAndNavigatorHidden?: boolean
-  /** Optional className for the container */
+  /** 容器额外的 className */
   className?: string
   /**
-   * Override the navigation state for this panel.
-   * When provided, this panel renders based on the override instead of the global NavigationState.
-   * Used by PanelSlot to render panels in the panel stack.
+   * 覆盖当前面板使用的导航状态。
+   * 传入后，本面板按 override 渲染，而不是全局 NavigationState；
+   * PanelSlot 用此属性渲染面板栈中的各个面板。
    */
   navStateOverride?: import('../../../shared/types').NavigationState | null
 }
 
+/** 主内容面板：根据导航状态分发到不同页面 */
 export function MainContentPanel({
   isSidebarAndNavigatorHidden = false,
   className,
@@ -86,7 +87,7 @@ export function MainContentPanel({
     activeSessionWorkingDirectory,
   } = useAppShellContext()
 
-  // Session multi-select state
+  // 会话多选状态
   const isMultiSelectActive = useIsMultiSelectActive()
   const selectedIds = useSelectedIds()
   const selectionCount = useSelectionCount()
@@ -94,7 +95,7 @@ export function MainContentPanel({
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
   const automations = useAtomValue(automationsAtom)
 
-  // Execution history for the selected automation
+  // 当前选中 automation 的执行历史
   const selectedAutomationId = isAutomationsNavigation(navState) ? navState.details?.automationId : undefined
   const [executions, setExecutions] = useState<ExecutionEntry[]>([])
 
@@ -105,12 +106,12 @@ export function MainContentPanel({
     }
     let stale = false
 
-    // Initial fetch
+    // 初始拉取
     getAutomationHistory(selectedAutomationId).then(entries => {
       if (!stale) setExecutions(entries)
     })
 
-    // Re-fetch on automation changes (live updates when automations fire)
+    // automation 发生变化时重新拉取（触发器执行后可实时更新）
     const cleanup = window.electronAPI.onAutomationsChanged(() => {
       if (!stale) {
         getAutomationHistory(selectedAutomationId).then(entries => {
@@ -122,25 +123,25 @@ export function MainContentPanel({
     return () => { stale = true; cleanup() }
   }, [selectedAutomationId, getAutomationHistory])
 
-  // Source multi-select state
+  // Source 多选状态
   const isSourceMultiSelectActive = sourceSelection.useIsMultiSelectActive()
   const sourceSelectionCount = sourceSelection.useSelectionCount()
   const selectedSourceIds = sourceSelection.useSelectedIds()
   const { clearMultiSelect: clearSourceSelection } = sourceSelection.useSelection()
 
-  // Skill multi-select state
+  // Skill 多选状态
   const isSkillMultiSelectActive = skillSelection.useIsMultiSelectActive()
   const skillSelectionCount = skillSelection.useSelectionCount()
   const selectedSkillIds = skillSelection.useSelectedIds()
   const { clearMultiSelect: clearSkillSelection } = skillSelection.useSelection()
 
-  // Automation multi-select state
+  // Automation 多选状态
   const isAutomationMultiSelectActive = automationSelection.useIsMultiSelectActive()
   const automationSelectionCount = automationSelection.useSelectionCount()
   const selectedAutomationIds = automationSelection.useSelectedIds()
   const { clearMultiSelect: clearAutomationSelection } = automationSelection.useSelection()
 
-  // Send to Workspace dialog state (shared across resource types)
+  // “发送到工作区”弹窗状态（source/skill/automation 共用）
   const [sendDialogOpen, setSendDialogOpen] = useState(false)
   const [sendResourceType, setSendResourceType] = useState<SendResourceType>('source')
   const [sendResourceIds, setSendResourceIds] = useState<string[]>([])
@@ -155,6 +156,7 @@ export function MainContentPanel({
     setSendDialogOpen(true)
   }, [])
 
+  // 根据选中的会话 ID 取出对应的元信息
   const selectedMetas = useMemo(() => {
     const metas: SessionMeta[] = []
     selectedIds.forEach((id) => {
@@ -164,6 +166,7 @@ export function MainContentPanel({
     return metas
   }, [selectedIds, sessionMetaMap])
 
+  // 多选会话的公共状态 ID；全部相同时才返回，否则为 null
   const activeStatusId = useMemo((): SessionStatusId | null => {
     if (selectedMetas.length === 0) return null
     const first = (selectedMetas[0].sessionStatus || 'todo') as SessionStatusId
@@ -171,6 +174,7 @@ export function MainContentPanel({
     return allSame ? first : null
   }, [selectedMetas])
 
+  // 多选会话共同拥有的标签 ID（交集）
   const appliedLabelIds = useMemo(() => {
     if (selectedMetas.length === 0) return new Set<string>()
     const toLabelSet = (meta: SessionMeta) =>
@@ -185,7 +189,7 @@ export function MainContentPanel({
     return intersection
   }, [selectedMetas])
 
-  // Batch operations for multi-select
+  // 多选批量操作
   const handleBatchSetStatus = useCallback((status: SessionStatusId) => {
     selectedIds.forEach(sessionId => {
       onSessionStatusChange(sessionId, status)
@@ -216,8 +220,8 @@ export function MainContentPanel({
     })
   }, [selectedMetas, onSessionLabelsChange])
 
-  // Wrap content with StoplightProvider so PanelHeaders auto-compensate in focused mode.
-  // Also renders the Send to Workspace dialog (portal-based, so it overlays regardless of position).
+  // 用 StoplightProvider 包裹内容，让 PanelHeader 在专注模式下自动补偿红绿灯间距；
+  // 同时把“发送到工作区”弹窗也放这里（它是 portal，会覆盖在最上层）。
   const wrapWithStoplight = (content: React.ReactNode) => (
     <StoplightProvider value={isSidebarAndNavigatorHidden}>
       {content}
@@ -233,10 +237,10 @@ export function MainContentPanel({
     </StoplightProvider>
   )
 
-  // Settings navigator - uses component map from settings-pages.ts.
-  // Bare `settings` route (subpage === null) means navigator-only view in compact mode;
-  // PanelStackContainer hides the content panel entirely. On desktop the panel still
-  // mounts, so fall back to the App page so it isn't empty.
+  // 设置导航：通过 settings-pages.ts 的组件映射拿到对应页面。
+  // 裸 `settings` 路由（subpage === null）在紧凑模式下只显示导航面板；
+  // PanelStackContainer 会隐藏内容面板。桌面端内容面板仍会挂载，
+  // 所以回退到 App 设置页，避免空白。
   if (isSettingsNavigation(navState)) {
     const subpage = navState.subpage ?? 'app'
     const SettingsPageComponent = getSettingsPageComponent(subpage)
@@ -247,7 +251,7 @@ export function MainContentPanel({
     )
   }
 
-  // Sources navigator - show source info, multi-select panel, or empty state
+  // Sources 导航：显示 source 详情、多选批量面板或空状态
   if (isSourcesNavigation(navState)) {
     if (isSourceMultiSelectActive) {
       return wrapWithStoplight(
@@ -271,7 +275,7 @@ export function MainContentPanel({
         </Panel>
       )
     }
-    // No source selected - empty state
+    // 没有选中 source，显示空状态
     return wrapWithStoplight(
       <Panel variant="grow" className={className}>
         <div className="flex items-center justify-center h-full text-muted-foreground">
@@ -281,7 +285,7 @@ export function MainContentPanel({
     )
   }
 
-  // Skills navigator - show skill info, multi-select panel, or empty state
+  // Skills 导航：显示 skill 详情、多选批量面板或空状态
   if (isSkillsNavigation(navState)) {
     if (isSkillMultiSelectActive) {
       return wrapWithStoplight(
@@ -306,7 +310,7 @@ export function MainContentPanel({
         </Panel>
       )
     }
-    // No skill selected - empty state
+    // 没有选中 skill，显示空状态
     return wrapWithStoplight(
       <Panel variant="grow" className={className}>
         <div className="flex items-center justify-center h-full text-muted-foreground">
@@ -316,7 +320,7 @@ export function MainContentPanel({
     )
   }
 
-  // Automations navigator - show automation info, multi-select panel, or empty state
+  // Automations 导航：显示 automation 详情、多选批量面板或空状态
   if (isAutomationsNavigation(navState)) {
     if (isAutomationMultiSelectActive) {
       return wrapWithStoplight(
@@ -358,7 +362,7 @@ export function MainContentPanel({
     )
   }
 
-  // Projects navigator - show project detail page or empty state
+  // Projects 导航：显示项目详情页或空状态
   if (isProjectsNavigation(navState)) {
     const projectDetails = navState.details
     if (projectDetails && projectDetails.type === 'project') {
@@ -377,9 +381,9 @@ export function MainContentPanel({
     )
   }
 
-  // Chats navigator - show chat, multi-select panel, or empty state
+  // 会话导航：显示聊天、多选批量面板或空状态
   if (isSessionsNavigation(navState)) {
-    // Board view: full-width Kanban over all sessions (placement independent of status)
+    // 看板视图：横跨所有会话的全宽看板（与状态放置无关）
     if (navState.viewMode === 'board') {
       return wrapWithStoplight(
         <Panel variant="grow" className={className}>
@@ -388,7 +392,7 @@ export function MainContentPanel({
       )
     }
 
-    // Multi-select mode: show batch actions panel
+    // 多选模式：显示批量操作面板
     if (isMultiSelectActive) {
       return wrapWithStoplight(
         <Panel variant="grow" className={className}>
@@ -414,7 +418,7 @@ export function MainContentPanel({
         </Panel>
       )
     }
-    // No session selected - empty state
+    // 没有选中会话，显示空状态
     return wrapWithStoplight(
       <Panel variant="grow" className={className}>
         <div className="flex items-center justify-center h-full text-muted-foreground">
@@ -424,7 +428,7 @@ export function MainContentPanel({
     )
   }
 
-  // Fallback (should not happen with proper NavigationState)
+  // 兜底（正常 NavigationState 下不应走到这里）
   return wrapWithStoplight(
     <Panel variant="grow" className={className}>
       <div className="flex items-center justify-center h-full text-muted-foreground">

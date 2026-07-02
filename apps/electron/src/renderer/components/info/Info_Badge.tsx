@@ -1,8 +1,8 @@
 /**
  * Info_Badge
  *
- * Colored badge with optional icon for status indicators.
- * Features rounded-lg (8px) corners and tinted shadow based on color.
+ * 带可选图标的状态徽章组件，用于展示「成功 / 警告 / 危险 / 默认 / 静音」等状态。
+ * 使用 rounded-[5px] 圆角，并根据颜色自动应用对应的背景色与阴影。
  */
 
 import * as React from 'react'
@@ -11,14 +11,15 @@ import { cn } from '@/lib/utils'
 export type BadgeColor = 'success' | 'warning' | 'destructive' | 'default' | 'muted'
 
 export interface Info_BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
-  /** Badge color variant */
+  /** 徽章颜色变体 */
   color?: BadgeColor
-  /** Optional icon (renders before text) */
+  /** 可选图标，渲染在文本左侧 */
   icon?: React.ReactNode
-  /** Badge text */
+  /** 徽章文本内容 */
   children: React.ReactNode
 }
 
+/** 每种颜色对应的 Tailwind 样式与 CSS 变量 */
 const colorConfig: Record<
   BadgeColor,
   { bg: string; text: string; shadow: string; shadowColor?: string }

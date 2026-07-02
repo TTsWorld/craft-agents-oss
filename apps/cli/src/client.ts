@@ -1,8 +1,9 @@
 /**
- * CliRpcClient — Minimal WebSocket RPC client for CLI usage.
+ * CliRpcClient —— 面向 CLI 的最小 WebSocket RPC 客户端。
  *
- * Stripped-down version of WsRpcClient: no auto-reconnect, no capabilities,
- * no connection state listeners. Connect, work, exit.
+ * 可以把它理解为 Go 里的一个轻量级 RPC 客户端：只负责“建立连接、发送请求、接收事件、退出”，
+ * 没有自动重连、能力协商等复杂逻辑。底层通过 WebSocket 与服务端通信，
+ * 用信封（MessageEnvelope）包装请求/响应/事件三种消息。
  */
 
 import {
@@ -15,15 +16,17 @@ import {
 } from '@craft-agent/server-core/transport'
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型定义
 // ---------------------------------------------------------------------------
 
+/** 尚未完成的 RPC 请求记录。类似 Go 里一个带超时和回调的 in-flight request map。 */
 interface PendingRequest {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
   timeout: ReturnType<typeof setTimeout>
 }
 
+/** 构造客户端时的可选配置。TS 中 interface 约等于 Go 的 struct（但不带方法）。 */
 export interface CliClientOptions {
   token?: string
   workspaceId?: string
@@ -32,7 +35,7 @@ export interface CliClientOptions {
 }
 
 // ---------------------------------------------------------------------------
-// Client
+// 客户端类
 // ---------------------------------------------------------------------------
 
 export class CliRpcClient {
@@ -49,6 +52,7 @@ export class CliRpcClient {
   private readonly requestTimeout: number
   private readonly connectTimeout: number
 
+  /** 构造函数：保存配置，默认各类超时 10 秒。 */
   constructor(url: string, opts?: CliClientOptions) {
     this.url = url
     this.token = opts?.token
@@ -57,7 +61,7 @@ export class CliRpcClient {
     this.connectTimeout = opts?.connectTimeout ?? 10_000
   }
 
-  /** Connect to the server and complete the handshake. Returns the assigned clientId. */
+  /** 连接服务端并完成握手，返回服务端分配的 clientId。 */
   async connect(): Promise<string> {
     if (this._destroyed) throw new Error('Client destroyed')
 
@@ -93,7 +97,7 @@ export class CliRpcClient {
           clearTimeout(timer)
           this._clientId = envelope.clientId ?? null
           this._connected = true
-          // Switch to normal message handler
+          // 握手成功后切换成普通消息处理器，后续都是 response / event
           this.ws!.onmessage = (e) => {
             this.onMessage(typeof e.data === 'string' ? e.data : String(e.data))
           }
@@ -128,7 +132,7 @@ export class CliRpcClient {
     })
   }
 
-  /** Send an RPC request and await the response. */
+  /** 发送一条 RPC 请求并等待响应，超时会被拒绝。 */
   async invoke(channel: string, ...args: unknown[]): Promise<unknown> {
     if (!this._connected || !this.ws) {
       throw new Error(`Not connected (channel: ${channel})`)
@@ -153,7 +157,7 @@ export class CliRpcClient {
     })
   }
 
-  /** Subscribe to push events on a channel. Returns an unsubscribe function. */
+  /** 订阅某个频道的服务端推送事件，返回一个取消订阅函数。 */
   on(channel: string, callback: (...args: unknown[]) => void): () => void {
     let set = this.listeners.get(channel)
     if (!set) {
@@ -168,7 +172,7 @@ export class CliRpcClient {
     }
   }
 
-  /** Close the connection and reject all pending requests. */
+  /** 关闭连接并拒绝所有未完成的请求。 */
   destroy(): void {
     this._destroyed = true
     for (const [, req] of this.pending) {
@@ -181,18 +185,21 @@ export class CliRpcClient {
     this._connected = false
   }
 
+  /** 当前是否已连接到服务端。 */
   get isConnected(): boolean {
     return this._connected
   }
 
+  /** 服务端握手成功后分配的 clientId。 */
   get clientId(): string | null {
     return this._clientId
   }
 
   // -------------------------------------------------------------------------
-  // Internal message routing
+  // 内部消息路由
   // -------------------------------------------------------------------------
 
+  /** 根据信封类型分发到响应处理或事件回调。 */
   private onMessage(raw: string): void {
     let envelope: MessageEnvelope
     try {
@@ -227,7 +234,7 @@ export class CliRpcClient {
               try {
                 cb(...(envelope.args ?? []))
               } catch {
-                // Listener errors shouldn't break the client
+                // 监听器抛错不应影响客户端整体运行
               }
             }
           }

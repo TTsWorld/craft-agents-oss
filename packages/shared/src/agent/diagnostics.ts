@@ -6,6 +6,18 @@
  * sessions don't run Anthropic-specific credential/endpoint checks.
  */
 
+/**
+ * 文件：错误诊断
+ *
+ * 角色：当 SDK 子进程异常退出或请求失败时，快速定位原因。类似 Go 服务里收到错误后
+ * 并行执行一组健康检查，然后返回结构化的 DiagnosticResult。
+ *
+ * 重点：
+ * - 优先检查 interceptor-common 捕获的真实 API 错误（HTTP 状态码最权威）。
+ * - 对 Anthropic 系 provider 检查端点可达性、API key / OAuth token 有效性。
+ * - 所有检查带 5 秒超时，避免诊断本身阻塞用户。
+ */
+
 import { getLastApiError } from '../interceptor-common.ts';
 import { type AuthType, getDefaultLlmConnection, getLlmConnection } from '../config/storage.ts';
 import { getCredentialManager } from '../credentials/index.ts';

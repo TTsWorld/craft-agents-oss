@@ -6,16 +6,17 @@ import { Spinner } from "@craft-agent/ui"
 import { CraftAgentsSymbol } from "@/components/icons/CraftAgentsSymbol"
 import { StepFormLayout } from "./primitives"
 
+// 重新认证页面的 props 接口
 interface ReauthScreenProps {
   onLogin: () => Promise<void>
   onReset: () => void
 }
 
 /**
- * ReauthScreen - Simple re-login screen for expired sessions
+ * ReauthScreen - 会话过期后的简单重新登录页
  *
- * Shown when the user has existing workspaces/config but the Craft token
- * is missing or expired. Much simpler than full onboarding - just re-authenticate.
+ * 当用户已有 workspace 和配置，但 Craft token 缺失或过期时显示。
+ * 比完整的 onboarding 更简单，只做重新认证。
  */
 export function ReauthScreen({ onLogin, onReset }: ReauthScreenProps) {
   const { t } = useTranslation()
@@ -35,10 +36,10 @@ export function ReauthScreen({ onLogin, onReset }: ReauthScreenProps) {
 
   return (
     <div className="flex min-h-screen flex-col bg-foreground-2">
-      {/* Draggable title bar region for transparent window (macOS) */}
+      {/* macOS 透明窗口可拖拽的标题栏区域 */}
       <div className="titlebar-drag-region fixed top-0 left-0 right-0 h-[50px] z-titlebar" />
 
-      {/* Main content */}
+      {/* 主内容区 */}
       <main className="flex flex-1 items-center justify-center p-8">
         <StepFormLayout
           iconElement={

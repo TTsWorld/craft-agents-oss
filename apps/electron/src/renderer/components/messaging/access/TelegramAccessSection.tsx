@@ -1,15 +1,17 @@
 /**
  * TelegramAccessSection
  *
- * Live (non-playground) wrapper that loads owners / accessMode / pending
- * senders from the messaging registry and renders the workspace-level
- * access controls inside the Telegram tile in `MessagingSettingsPage`.
+ * 真实运行环境（非 playground）下的包装组件，从 messaging registry 加载：
+ *  - 已授权用户列表（owners）
+ *  - 工作空间级访问模式（accessMode）
+ *  - 待审批发送者（pending senders）
+ * 然后在 Settings → Messaging 的 Telegram 卡片内部渲染工作空间级访问控制。
  *
- * Three visible parts:
- *  1. AccessModeBanner — only when `accessMode === 'open'`
- *  2. Collapsible "Allowed users" row (icon + chevron, mirrors PairedSupergroupSection)
- *     — expands to show OwnersListEditor with topic-row-style indent
- *  3. PendingSendersList + heading (rendered only when there are pending senders)
+ * UI 分为三部分：
+ *  1. AccessModeBanner：仅在 `accessMode === 'open'` 或存在 open binding 时显示
+ *  2. 可折叠的“Allowed users”行（图标 + 箭头，参考 PairedSupergroupSection）
+ *     展开后显示 OwnersListEditor，带 topic 行风格的缩进
+ *  3. PendingSendersList + 标题（仅当有 pending 发送者时渲染）
  */
 
 import * as React from 'react'
@@ -33,9 +35,9 @@ const SUB_ROW_ICON_SIZE = 16
 const SUB_ROW_ICON_STROKE = 1.5
 
 /**
- * Two pending entries reference the same row when they share platform,
- * userId, reason, AND bindingId (one binding row vs. another binding row
- * for the same sender stay separate).
+ * 判断两条 pending 记录是否对应同一行。
+ * 必须 platform、userId、reason、bindingId 都相同才算同一行；
+ * 同一个发送者在不同 binding 里的记录要分开展示。
  */
 function sameRow(a: PendingSender, b: PendingSender): boolean {
   return (
@@ -48,9 +50,8 @@ function sameRow(a: PendingSender, b: PendingSender): boolean {
 
 interface Props {
   workspaceId: string
-  /** Workspace-level Telegram access mode. Controlled by the parent so the
-   *  same source of truth drives the banner, the collapsible subtitle, and
-   *  the platform-row dropdown's Lock-down / Unlock affordances. */
+  // 工作空间级 Telegram 访问模式。由父组件控制，确保 banner、折叠副标题、
+  // 平台行下拉菜单里的“锁定/解锁”都读取同一个数据源。
   accessMode: PlatformAccessMode
   onAccessModeChange: (mode: PlatformAccessMode) => void
 }
@@ -61,17 +62,17 @@ export function TelegramAccessSection({ workspaceId, accessMode, onAccessModeCha
   const [owners, setOwners] = React.useState<PlatformOwner[]>([])
   const [pending, setPending] = React.useState<PendingSender[]>([])
 
-  // The banner stays visible whenever the bot is publicly addressable —
-  // either at the workspace level (`accessMode === 'open'`) OR via any
-  // legacy binding still in `'open'` mode. Without the second check, the
-  // operator would see the banner disappear after clicking "Lock down"
-  // even though concrete bindings are still letting strangers in.
+  // banner 在以下两种情况下都要保持显示：
+  // 1) 工作空间级 accessMode === 'open'
+  // 2) 某个旧的 binding 仍然是 'open' 模式
+  // 如果不检查第 2 点，用户点击“锁定”后 banner 会消失，但实际上具体 binding 仍在放行陌生人。
   const hasOpenBinding = React.useMemo(
     () => allBindings.some((b) => b.platform === 'telegram' && b.accessMode === 'open'),
     [allBindings],
   )
   const showBanner = accessMode === 'open' || hasOpenBinding
 
+  // 同时拉取 owner 列表和 pending 列表；任一失败时回退为空数组，避免组件崩溃。
   const loadAll = React.useCallback(async () => {
     const [o, p] = await Promise.all([
       window.electronAPI.getMessagingPlatformOwners('telegram').catch(() => []),
@@ -83,6 +84,7 @@ export function TelegramAccessSection({ workspaceId, accessMode, onAccessModeCha
 
   React.useEffect(() => {
     void loadAll()
+    // 监听 binding 变化和 pending 变化事件，仅当事件对应当前工作空间时刷新数据
     const offBinding = window.electronAPI.onMessagingBindingChanged((wsId) => {
       if (wsId === workspaceId) void loadAll()
     })
@@ -95,6 +97,7 @@ export function TelegramAccessSection({ workspaceId, accessMode, onAccessModeCha
     }
   }, [workspaceId, loadAll])
 
+  // 点击 banner 的“锁定”按钮：把工作空间 Telegram 访问模式设为 owner-only
   const handleLockDown = async () => {
     try {
       await window.electronAPI.setMessagingPlatformAccessMode('telegram', 'owner-only')
@@ -106,6 +109,7 @@ export function TelegramAccessSection({ workspaceId, accessMode, onAccessModeCha
     }
   }
 
+  // 从 owner 列表移除某个用户：先本地过滤，再调用 IPC 持久化
   const handleRemoveOwner = async (userId: string) => {
     const next = owners.filter((o) => o.userId !== userId)
     try {
@@ -116,6 +120,8 @@ export function TelegramAccessSection({ workspaceId, accessMode, onAccessModeCha
     }
   }
 
+  // 允许某个 pending 发送者：根据 reason/bindingId 构造 entryKey，调用 IPC
+  // 然后只移除我们刚刚操作的那一行（同一发送者的其他 reason/binding 组合仍保留）
   const handleAllow = async (sender: PendingSender) => {
     try {
       const entryKey = {
@@ -128,9 +134,6 @@ export function TelegramAccessSection({ workspaceId, accessMode, onAccessModeCha
         entryKey,
       )
       setOwners(result.owners)
-      // Drop only the row we just acted on. Other pending rows for the
-      // same sender (different reason / binding) stay visible until the
-      // operator decides on each.
       setPending((prev) =>
         prev.filter((p) => !sameRow(p, sender)),
       )
@@ -140,6 +143,7 @@ export function TelegramAccessSection({ workspaceId, accessMode, onAccessModeCha
     }
   }
 
+  // 忽略某个 pending 发送者：仅把它从 pending 列表移除，不授予任何权限
   const handleIgnore = async (sender: PendingSender) => {
     try {
       await window.electronAPI.dismissMessagingPendingSender(
@@ -161,9 +165,8 @@ export function TelegramAccessSection({ workspaceId, accessMode, onAccessModeCha
       {showBanner && (
         <AccessModeBanner
           onLockDown={handleLockDown}
-          // When the workspace is already locked but a binding is still
-          // in 'open' mode, swap the copy so the operator knows what to
-          // act on (the binding row, not the workspace toggle).
+          // 如果工作空间已锁定但某个 binding 仍是 open，替换说明文字，
+          // 让管理员知道真正需要操作的是 binding 行，而不是工作空间开关。
           {...(accessMode === 'owner-only' && hasOpenBinding
             ? {
                 description: t(
@@ -202,8 +205,8 @@ export function TelegramAccessSection({ workspaceId, accessMode, onAccessModeCha
 }
 
 // ---------------------------------------------------------------------------
-// Collapsible Allowed users — mirrors the PairedSupergroupSection structure
-// so the two rows feel like siblings inside the Telegram card.
+// 可折叠的“Allowed users”区域
+// 结构与 PairedSupergroupSection 保持一致，让 Telegram 卡片内的两行看起来像兄弟组件。
 // ---------------------------------------------------------------------------
 
 function AllowedUsersCollapsible({
@@ -216,9 +219,8 @@ function AllowedUsersCollapsible({
   onRemove: (userId: string) => void
 }) {
   const { t } = useTranslation()
-  // Default open when there are owners to draw the operator's eye to who's
-  // on the list; closed when empty (the banner / pending list handles the
-  // "do something" prompt instead).
+  // 有 owner 时默认展开，方便管理员一眼看到列表；为空时默认收起，
+  // 由 banner 或 pending 列表承担“需要操作”的提示职责。
   const [isExpanded, setIsExpanded] = React.useState(owners.length > 0)
 
   const subtitle =
@@ -273,8 +275,9 @@ function AllowedUsersCollapsible({
 }
 
 // ---------------------------------------------------------------------------
-// Shared row primitives — kept local to avoid pulling in the page-level ones
-// from MessagingSettingsPage. Matches geometry exactly (22px icon column).
+// 共享的行级基础组件
+// 保持局部化，避免从 MessagingSettingsPage 引入页面级组件；
+// 几何尺寸必须完全一致（22px 图标列）。
 // ---------------------------------------------------------------------------
 
 function SubRowIcon({
@@ -282,6 +285,7 @@ function SubRowIcon({
   size = SUB_ROW_ICON_SIZE,
   strokeWidth = SUB_ROW_ICON_STROKE,
 }: {
+  // typeof MessageSquare 表示“一个 lucide 图标组件类型”
   icon: typeof MessageSquare
   size?: number
   strokeWidth?: number

@@ -1,12 +1,12 @@
 /**
  * PermissionsSettingsPage
  *
- * Displays permissions configuration for Explore mode.
- * Shows both default patterns (from ~/.craft-agent/permissions/default.json)
- * and custom workspace additions (from workspace permissions.json).
+ * Explore 模式（safe 模式）的权限配置页。
+ * 展示两套规则：
+ * 1. 默认规则：来自 ~/.craft-agent/permissions/default.json
+ * 2. 当前 workspace 自定义规则：来自 workspace/permissions.json
  *
- * Default patterns can be edited by the user in ~/.craft-agent/permissions/default.json.
- * Custom patterns can be edited via workspace permissions.json file.
+ * 默认规则可在个人配置目录中编辑；自定义规则通过 workspace 下的 permissions.json 编辑。
  */
 
 import * as React from 'react'
@@ -37,18 +37,18 @@ export const meta: DetailsPageMeta = {
 }
 
 /**
- * Build default permissions data from ~/.craft-agent/permissions/default.json.
- * These are the Explore mode patterns that can be customized by the user.
- * Patterns can include comments which are displayed in the table.
+ * 从 ~/.craft-agent/permissions/default.json 构建默认权限数据。
+ * 这些属于 Explore 模式规则，用户可自行定制。
+ * 规则可以包含注释，会展示在表格中。
  *
- * Note: We only show allowed patterns here. Anything not on this list is implicitly denied.
+ * 注意：这里只展示 allowed 规则；不在列表中的默认被拒绝。
  */
 function buildDefaultPermissionsData(config: PermissionsConfigFile | null): PermissionRow[] {
   if (!config) return []
 
   const rows: PermissionRow[] = []
 
-  // Helper to extract pattern and comment from string or object format
+  // 辅助函数：从字符串或对象格式中提取 pattern 和 comment
   const extractPatternInfo = (item: string | { pattern: string; comment?: string }): { pattern: string; comment: string | null } => {
     if (typeof item === 'string') {
       return { pattern: item, comment: null }
@@ -56,27 +56,27 @@ function buildDefaultPermissionsData(config: PermissionsConfigFile | null): Perm
     return { pattern: item.pattern, comment: item.comment || null }
   }
 
-  // Note: We don't show blockedTools here - anything not on the allowed list is implicitly denied
+  // 注意：默认规则不展示 blockedTools；不在 allowed 列表中的默认被拒绝
 
-  // Allowed bash patterns
+  // 允许的 Bash 命令模式
   config.allowedBashPatterns?.forEach((item) => {
     const { pattern, comment } = extractPatternInfo(item)
     rows.push({ access: 'allowed', type: 'bash', pattern, comment })
   })
 
-  // Allowed MCP patterns
+  // 允许的 MCP 工具模式
   config.allowedMcpPatterns?.forEach((item) => {
     const { pattern, comment } = extractPatternInfo(item)
     rows.push({ access: 'allowed', type: 'mcp', pattern, comment })
   })
 
-  // API endpoints
+  // API 端点
   config.allowedApiEndpoints?.forEach((item) => {
     const pattern = `${item.method} ${item.path}`
     rows.push({ access: 'allowed', type: 'api', pattern, comment: item.comment || null })
   })
 
-  // Write paths
+  // 写路径
   config.allowedWritePaths?.forEach((item) => {
     const { pattern, comment } = extractPatternInfo(item)
     rows.push({ access: 'allowed', type: 'tool', pattern: `Write to: ${pattern}`, comment })
@@ -86,44 +86,44 @@ function buildDefaultPermissionsData(config: PermissionsConfigFile | null): Perm
 }
 
 /**
- * Build custom permissions data from workspace permissions.json.
- * These are user-added patterns that extend the defaults.
+ * 从 workspace permissions.json 构建自定义权限数据。
+ * 这些规则是对默认规则的扩展。
  */
 function buildCustomPermissionsData(config: PermissionsConfigFile, fallbackLabels: { blockedTool: string; bashPattern: string; mcpPattern: string; apiEndpoint: string; writePath: string }): PermissionRow[] {
   const rows: PermissionRow[] = []
 
-  // Additional blocked tools
+  // 额外被屏蔽的工具
   config.blockedTools?.forEach((item) => {
     const pattern = typeof item === 'string' ? item : item.pattern
     const comment = typeof item === 'string' ? fallbackLabels.blockedTool : (item.comment || fallbackLabels.blockedTool)
     rows.push({ access: 'blocked', type: 'tool', pattern, comment })
   })
 
-  // Additional bash patterns
+  // 额外允许的 Bash 模式
   config.allowedBashPatterns?.forEach((item) => {
     const pattern = typeof item === 'string' ? item : item.pattern
     const comment = typeof item === 'string' ? fallbackLabels.bashPattern : (item.comment || fallbackLabels.bashPattern)
     rows.push({ access: 'allowed', type: 'bash', pattern, comment })
   })
 
-  // Additional MCP patterns
+  // 额外允许的 MCP 模式
   config.allowedMcpPatterns?.forEach((item) => {
     const pattern = typeof item === 'string' ? item : item.pattern
     const comment = typeof item === 'string' ? fallbackLabels.mcpPattern : (item.comment || fallbackLabels.mcpPattern)
     rows.push({ access: 'allowed', type: 'mcp', pattern, comment })
   })
 
-  // API endpoints
+  // API 端点
   config.allowedApiEndpoints?.forEach((item) => {
     const pattern = `${item.method} ${item.path}`
     rows.push({ access: 'allowed', type: 'api', pattern, comment: item.comment || fallbackLabels.apiEndpoint })
   })
 
-  // Write paths are shown as allowed paths
+  // 写路径以允许路径形式展示
   config.allowedWritePaths?.forEach((item) => {
     const pattern = typeof item === 'string' ? item : item.pattern
     const comment = typeof item === 'string' ? fallbackLabels.writePath : (item.comment || fallbackLabels.writePath)
-    // Show as a special "tool" type since it's about Write/Edit operations
+    // 作为特殊 "tool" 类型展示，因为涉及写/编辑操作
     rows.push({ access: 'allowed', type: 'tool', pattern: `Write to: ${pattern}`, comment })
   })
 
@@ -135,16 +135,16 @@ export default function PermissionsSettingsPage() {
   const { activeWorkspaceId } = useAppShellContext()
   const activeWorkspace = useActiveWorkspace()
 
-  // Loading and data state
+  // 加载与数据状态
   const [isLoading, setIsLoading] = useState(true)
   const [defaultConfig, setDefaultConfig] = useState<PermissionsConfigFile | null>(null)
   const [defaultPermissionsPath, setDefaultPermissionsPath] = useState<string | null>(null)
   const [customConfig, setCustomConfig] = useState<PermissionsConfigFile | null>(null)
 
-  // Build default permissions data from ~/.craft-agent/permissions/default.json
+  // 从默认配置构建表格数据
   const defaultPermissionsData = useMemo(() => buildDefaultPermissionsData(defaultConfig), [defaultConfig])
 
-  // Fallback labels for custom permissions (translated)
+  // 自定义权限的默认 fallback 文案（已翻译）
   const permissionFallbackLabels = useMemo(() => ({
     blockedTool: t("settings.permissions.customBlockedTool"),
     bashPattern: t("settings.permissions.customBashPattern"),
@@ -153,13 +153,13 @@ export default function PermissionsSettingsPage() {
     writePath: t("settings.permissions.allowedWritePath"),
   }), [t])
 
-  // Build custom permissions data from workspace permissions.json
+  // 从 workspace 配置构建表格数据
   const customPermissionsData = useMemo(() => {
     if (!customConfig) return []
     return buildCustomPermissionsData(customConfig, permissionFallbackLabels)
   }, [customConfig, permissionFallbackLabels])
 
-  // Load both default and workspace permissions configs
+  // 同时加载默认权限和 workspace 权限配置
   useEffect(() => {
     const loadPermissions = async () => {
       if (!window.electronAPI) {
@@ -169,18 +169,18 @@ export default function PermissionsSettingsPage() {
 
       setIsLoading(true)
       try {
-        // Load default permissions (app-level) - returns both config and path
+        // 加载应用级默认权限，返回配置和路径
         const { config: defaults, path: defaultsPath } = await window.electronAPI.getDefaultPermissionsConfig()
         setDefaultConfig(defaults)
         setDefaultPermissionsPath(defaultsPath)
 
-        // Load workspace permissions if we have an active workspace
+        // 如果有当前 workspace，加载其权限配置
         if (activeWorkspaceId) {
           const workspace = await window.electronAPI.getWorkspacePermissionsConfig(activeWorkspaceId)
           setCustomConfig(workspace)
         }
       } catch (error) {
-        console.error('Failed to load permissions:', error)
+        console.error('加载权限失败:', error)
       } finally {
         setIsLoading(false)
       }
@@ -189,12 +189,12 @@ export default function PermissionsSettingsPage() {
     loadPermissions()
   }, [activeWorkspaceId])
 
-  // Listen for default permissions changes (file watcher)
+  // 监听默认权限文件变更
   useEffect(() => {
     if (!window.electronAPI?.onDefaultPermissionsChanged) return
 
     const unsubscribe = window.electronAPI.onDefaultPermissionsChanged(async () => {
-      // Reload default permissions when the file changes
+      // 文件变化时重新加载默认权限
       const { config: defaults } = await window.electronAPI.getDefaultPermissionsConfig()
       setDefaultConfig(defaults)
     })

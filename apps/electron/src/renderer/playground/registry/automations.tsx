@@ -1,8 +1,10 @@
 /**
- * Automations Playground Registry
+ * automations 注册项
  *
- * Registry entries for all automation UI components with comprehensive mock data
- * and playground variants for testing every visual state.
+ * 这个文件把 Automation（自动化）相关的 UI 组件注册到 playground：
+ * 自动化列表、详情页、卡片、Cron 表达式构建器、执行时间线、事件头像等。
+ * 涉及概念：session（会话事件触发）、tool use（工具调用前后触发）、
+ * permission mode（自动化运行时的权限模式）、skill（自动化动作里可以调用 skill）。
  */
 
 import { useState, type ReactNode } from 'react'
@@ -17,8 +19,9 @@ import { AutomationEventTimeline } from '@/components/automations/AutomationEven
 import { getEventDisplayName, type AutomationListItem, type ExecutionEntry, type TestResult, type AutomationTrigger } from '@/components/automations/types'
 
 // ============================================================================
-// Wrappers
+// 包装组件（Wrappers）
 // ============================================================================
+// 下面几个 wrapper 给无状态的业务组件加上 useState，让 playground 可以交互。
 
 function PaddedWrapper({ children }: { children: ReactNode }) {
   return <div className="p-6">{children}</div>
@@ -171,7 +174,7 @@ function AutomationCardPlayground({
 }
 
 // ============================================================================
-// Mock Data
+// 模拟数据（Mock Data）
 // ============================================================================
 
 const now = Date.now()
@@ -355,9 +358,10 @@ const testResultRunning: TestResult = {
 }
 
 // ============================================================================
-// Registry Entries
+// 组件注册表条目（Component Registry Entries）
 // ============================================================================
 
+/** automations 组件注册列表。 */
 export const automationComponents: ComponentEntry[] = [
   // ==========================================================================
   // AutomationsListPanel

@@ -1,3 +1,18 @@
+/**
+ * App
+ *
+ * Electron renderer 进程的主组件，负责整个应用的生命周期与全局状态管理。
+ *
+ * 主要职责：
+ * - 管理应用状态机：loading → onboarding / workspace-picker → ready
+ * - 从 main 进程加载 workspace、session、LLM 连接、主题等数据
+ * - 监听并分发 session 事件到 event-processor，同步 React state 与 Jotai atoms
+ * - 处理后台任务、权限请求、凭证请求、session 刷新、断线重连恢复
+ * - 通过 AppShellContext 向子组件提供统一的上下文与回调
+ *
+ * 对 Go 同学：可以把 App.tsx 理解为前端应用的“主控制器”，
+ * main.tsx 只是入口，App.tsx 才真正协调所有子系统。
+ */
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '@/hooks/useTheme'
@@ -275,6 +290,7 @@ function SessionLoadErrorScreen({
   )
 }
 
+/** App：函数 */
 export default function App() {
   const { t } = useTranslation()
 

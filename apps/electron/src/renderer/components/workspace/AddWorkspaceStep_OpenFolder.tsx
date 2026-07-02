@@ -8,13 +8,19 @@ import { useDirectoryPicker } from "@/hooks/useDirectoryPicker"
 import { ServerDirectoryBrowser } from "@/components/ServerDirectoryBrowser"
 
 interface AddWorkspaceStep_OpenFolderProps {
+  /** 返回上一步 */
   onBack: () => void
+  /** 确认打开/创建，参数为文件夹路径和工作区显示名称 */
   onCreate: (folderPath: string, name: string) => Promise<void>
+  /** 是否正在处理中 */
   isCreating: boolean
 }
 
 /**
- * AddWorkspaceStep_OpenFolder - Open an existing folder as workspace
+ * AddWorkspaceStep_OpenFolder - 选择本地已有文件夹作为工作区打开
+ *
+ * 流程：先通过目录选择器选定文件夹，再用文件夹名作为默认工作区名称，
+ * 最后由上层调用 window.electronAPI.createWorkspace 完成创建。
  */
 export function AddWorkspaceStep_OpenFolder({
   onBack,
@@ -22,12 +28,14 @@ export function AddWorkspaceStep_OpenFolder({
   isCreating
 }: AddWorkspaceStep_OpenFolderProps) {
   const { t } = useTranslation()
+
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [workspaceName, setWorkspaceName] = useState('')
 
+  // 用户选定文件夹后，自动用文件夹名填充工作区名称
   const handleFolderSelected = useCallback((path: string) => {
     setSelectedPath(path)
-    // Extract folder name for workspace name
+    // 从路径末尾截取文件夹名；兼容 Windows（\\）和 Unix（/）分隔符
     const folderName = path.split(/[\\/]/).pop() || path
     setWorkspaceName(folderName)
   }, [])
@@ -49,7 +57,7 @@ export function AddWorkspaceStep_OpenFolder({
 
   return (
     <AddWorkspaceContainer>
-      {/* Back button */}
+      {/* 返回按钮 */}
       <button
         onClick={onBack}
         disabled={isCreating}
@@ -69,7 +77,7 @@ export function AddWorkspaceStep_OpenFolder({
       />
 
       <div className="mt-6 w-full space-y-6">
-        {/* Browse folder row */}
+        {/* 文件夹选择行 */}
         <div
           className={cn(
             "flex items-center justify-between gap-4 p-4 rounded-xl",
@@ -91,7 +99,7 @@ export function AddWorkspaceStep_OpenFolder({
           </AddWorkspaceSecondaryButton>
         </div>
 
-        {/* Workspace name input - shown after folder is selected */}
+        {/* 选定文件夹后显示工作区名称输入 */}
         {selectedPath && (
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">
@@ -106,7 +114,7 @@ export function AddWorkspaceStep_OpenFolder({
           </div>
         )}
 
-        {/* Open button */}
+        {/* 打开按钮 */}
         <AddWorkspacePrimaryButton
           onClick={handleOpen}
           disabled={!canOpen || isCreating}

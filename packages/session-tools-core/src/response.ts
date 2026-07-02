@@ -1,14 +1,14 @@
 /**
- * Session Tools Core - Response Helpers
+ * session-tools-core 的响应辅助函数
  *
- * Helper functions for creating standardized tool responses.
- * Used by both Claude and Codex implementations.
+ * 用于创建标准化 tool 响应的辅助函数。
+ * Claude 和 Codex 的实现都会用到。
  */
 
 import type { ToolResult, TextContent } from './types.ts';
 
 /**
- * Create a successful text response
+ * 创建成功的文本响应
  */
 export function successResponse(text: string): ToolResult {
   return {
@@ -19,24 +19,23 @@ export function successResponse(text: string): ToolResult {
 }
 
 /**
- * Create an error response.
+ * 创建错误响应。
  *
- * IMPORTANT — OpenAI Responses API limitation (discovered 2025-02):
- * The `function_call_output` input item only has `type`, `call_id`, and
- * `output` (a plain string). There is NO `success`, `status`, or `error`
- * field. Our Codex fork's FunctionCallOutputPayload has a `success: bool`
- * field, but its custom Serialize impl (codex-rs/protocol/src/models.rs)
- * drops it entirely — only the content string is serialized to the API.
+ * 重要 —— OpenAI Responses API 的限制（2025-02 发现）：
+ * `function_call_output` 输入项只有 `type`、`call_id` 和 `output`（纯字符串），
+ * 没有 `success`、`status` 或 `error` 字段。我们的 Codex fork 在
+ * FunctionCallOutputPayload 里有 `success: bool` 字段，但它的自定义
+ * Serialize 实现（codex-rs/protocol/src/models.rs）会把它完全丢弃 ——
+ * 只有 content 字符串会被序列化到 API。
  *
- * This means `isError: true` is invisible to the model. To make errors
- * distinguishable from successes, we prefix the output text with "[ERROR]".
- * The model can then parse this prefix to understand the tool call failed.
+ * 这意味着 `isError: true` 对模型不可见。为了让错误能与成功区分开，
+ * 我们在输出文本前加上 "[ERROR]" 前缀。模型看到前缀后就能知道 tool 调用失败了。
  *
- * This covers all session MCP tool errors (source_test, config_validate,
- * skill_validate, SubmitPlan, credential_prompt, oauth triggers, etc.).
+ * 这覆盖了所有 session MCP tool 错误（source_test、config_validate、
+ * skill_validate、SubmitPlan、credential_prompt、oauth 触发器等）。
  *
- * See also: blockWithReason() in packages/shared/src/agent/mode-manager.ts
- * which applies the same prefix for permission-mode blocks.
+ * 另见 packages/shared/src/agent/mode-manager.ts 里的 blockWithReason()，
+ * 它对 permission-mode 阻塞也使用同样的前缀。
  */
 export function errorResponse(message: string): ToolResult {
   return {
@@ -47,14 +46,14 @@ export function errorResponse(message: string): ToolResult {
 }
 
 /**
- * Create a text content block
+ * 创建一个文本内容块
  */
 export function textContent(text: string): TextContent {
   return { type: 'text', text };
 }
 
 /**
- * Create a multi-block response (e.g., for multiple sections)
+ * 创建多段文本响应（例如包含多个章节）
  */
 export function multiBlockResponse(texts: string[], isError?: boolean): ToolResult {
   return {

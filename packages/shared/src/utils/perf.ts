@@ -1,33 +1,33 @@
 /**
- * Performance Instrumentation
+ * 性能埋点工具
  *
- * Lightweight performance tracking for identifying bottlenecks.
- * Logs to stderr with aggregated statistics.
+ * 轻量级性能追踪，用于定位瓶颈。
+ * 将聚合后的统计信息输出到 stderr。
  *
- * IMPORTANT: Disabled by default. Only active when:
- * - CLI: --debug flag is passed (calls enableDebug())
- * - Electron: Running from source (!app.isPackaged)
+ * 重要：默认禁用。仅在以下情况激活：
+ * - CLI：传递 --debug 标志（调用 enableDebug()）
+ * - Electron：从源码运行（!app.isPackaged）
  *
- * Usage:
+ * 用法：
  *   const end = perf.start('session.load')
- *   // ... do work ...
- *   end() // logs duration
+ *   // ... 执行工作 ...
+ *   end() // 记录耗时
  *
- *   // Or with async operations:
+ *   // 或用于异步操作：
  *   const result = await perf.measure('mcp.connect', async () => {
  *     return connectToServer()
  *   })
  *
- *   // Nested spans for detailed breakdown:
+ *   // 嵌套 span，用于更细粒度拆解：
  *   const span = perf.span('agent.init')
  *   span.mark('config.loaded')
  *   span.mark('mcp.connected')
- *   span.end() // logs total + breakdown
+ *   span.end() // 记录总耗时 + 各阶段拆解
  */
 
 import { isDebugEnabled } from './debug.ts';
 
-// Performance metrics storage
+// 性能指标存储
 interface PerfMetric {
   name: string;
   startTime: number;
@@ -41,22 +41,22 @@ interface PerfConfig {
   enabled: boolean;
   logToFile: boolean;
   logFilePath: string;
-  minDurationMs: number; // Only log operations above this threshold
-  onMetric?: (metric: PerfMetric) => void; // Custom handler (e.g., for IPC)
+  minDurationMs: number; // 仅记录超过此阈值的操作
+  onMetric?: (metric: PerfMetric) => void; // 自定义处理器（如用于 IPC）
 }
 
 const config: PerfConfig = {
-  enabled: false, // Disabled by default, use setPerfEnabled(true) or relies on isDebugEnabled()
-  logToFile: false, // File logging disabled, use stderr instead
-  logFilePath: '', // Not used
-  minDurationMs: 0, // Log everything by default
+  enabled: false, // 默认禁用，可通过 setPerfEnabled(true) 开启，或依赖 isDebugEnabled()
+  logToFile: false, // 禁用文件日志，使用 stderr
+  logFilePath: '', // 未使用
+  minDurationMs: 0, // 默认记录所有操作
 };
 
-// Store recent metrics for analysis
+// 保存最近指标用于分析
 const recentMetrics: PerfMetric[] = [];
 const MAX_RECENT_METRICS = 1000;
 
-// Aggregated stats per operation name
+// 每个操作名的聚合统计
 const aggregatedStats = new Map<
   string,
   {
@@ -72,29 +72,29 @@ const aggregatedStats = new Map<
 >();
 
 /**
- * Configure performance tracking
+ * 配置性能追踪
  */
 export function configurePerfTracking(options: Partial<PerfConfig>): void {
   Object.assign(config, options);
 }
 
 /**
- * Enable/disable perf tracking at runtime
+ * 在运行时启用/禁用性能追踪
  */
 export function setPerfEnabled(enabled: boolean): void {
   config.enabled = enabled;
 }
 
 /**
- * Check if perf tracking is enabled.
- * Returns true if explicitly enabled OR if debug mode is active.
+ * 检查性能追踪是否已启用。
+ * 显式启用或 debug 模式激活时都返回 true。
  */
 export function isPerfEnabled(): boolean {
   return config.enabled || isDebugEnabled();
 }
 
 /**
- * Format a metric for logging
+ * 格式化指标以便输出
  */
 function formatMetric(metric: PerfMetric): string {
   const timestamp = new Date().toISOString();
@@ -102,7 +102,7 @@ function formatMetric(metric: PerfMetric): string {
 
   let line = `${timestamp} [PERF] ${metric.name}: ${duration}ms`;
 
-  // Add marks breakdown if any
+  // 如有 checkpoint，追加各阶段耗时
   if (metric.marks.length > 0) {
     const markStr = metric.marks
       .map((m) => `${m.name}:${m.elapsed.toFixed(1)}ms`)
@@ -110,7 +110,7 @@ function formatMetric(metric: PerfMetric): string {
     line += ` (${markStr})`;
   }
 
-  // Add metadata if any
+  // 如有元数据，追加
   if (metric.metadata && Object.keys(metric.metadata).length > 0) {
     line += ` ${JSON.stringify(metric.metadata)}`;
   }
@@ -119,28 +119,28 @@ function formatMetric(metric: PerfMetric): string {
 }
 
 /**
- * Log a completed metric
+ * 记录已完成的指标
  */
 function logMetric(metric: PerfMetric): void {
   if (!isPerfEnabled()) return;
   if (metric.duration !== undefined && metric.duration < config.minDurationMs)
     return;
 
-  // Store in recent metrics
+  // 存入最近指标
   recentMetrics.push(metric);
   if (recentMetrics.length > MAX_RECENT_METRICS) {
     recentMetrics.shift();
   }
 
-  // Update aggregated stats
+  // 更新聚合统计
   updateAggregatedStats(metric);
 
-  // Call custom handler if set
+  // 如有自定义处理器则调用
   if (config.onMetric) {
     config.onMetric(metric);
   }
 
-  // Log to stderr (avoids interfering with stdout)
+  // 输出到 stderr（避免干扰 stdout）
   if (metric.duration !== undefined) {
     const line = formatMetric(metric);
     process.stderr.write(line + '\n');
@@ -148,7 +148,7 @@ function logMetric(metric: PerfMetric): void {
 }
 
 /**
- * Update aggregated statistics for an operation
+ * 更新某个操作的聚合统计
  */
 function updateAggregatedStats(metric: PerfMetric): void {
   if (metric.duration === undefined) return;
@@ -174,21 +174,21 @@ function updateAggregatedStats(metric: PerfMetric): void {
   stats.maxMs = Math.max(stats.maxMs, metric.duration);
   stats.avgMs = stats.totalMs / stats.count;
 
-  // Keep durations for percentile calculation (limited to last 100)
+  // 保留耗时用于分位值计算（最多最近 100 次）
   stats.durations.push(metric.duration);
   if (stats.durations.length > 100) {
     stats.durations.shift();
   }
 
-  // Calculate percentiles
+  // 计算分位值
   const sorted = [...stats.durations].sort((a, b) => a - b);
   stats.p50Ms = sorted[Math.floor(sorted.length * 0.5)] ?? 0;
   stats.p95Ms = sorted[Math.floor(sorted.length * 0.95)] ?? 0;
 }
 
 /**
- * Start a simple timing operation
- * Returns a function to call when the operation completes
+ * 开始简单计时
+ * 返回一个函数，调用后完成操作并记录耗时
  */
 export function start(
   name: string,
@@ -215,7 +215,7 @@ export function start(
 }
 
 /**
- * Measure an async operation
+ * 测量异步操作
  */
 export async function measure<T>(
   name: string,
@@ -231,7 +231,7 @@ export async function measure<T>(
 }
 
 /**
- * Measure a sync operation
+ * 测量同步操作
  */
 export function measureSync<T>(
   name: string,
@@ -247,16 +247,16 @@ export function measureSync<T>(
 }
 
 /**
- * Create a span for measuring operations with intermediate marks
+ * 创建 PerfSpan，用于带中间 checkpoint 的测量。
  */
 export interface PerfSpan {
-  /** Add a checkpoint mark */
+  /** 添加一个 checkpoint */
   mark(name: string): void;
-  /** Add metadata to the span */
+  /** 添加元数据 */
   setMetadata(key: string, value: unknown): void;
-  /** End the span and log results */
+  /** 结束 span 并记录结果 */
   end(): number;
-  /** Get elapsed time without ending */
+  /** 不结束 span，获取已耗时 */
   elapsed(): number;
 }
 
@@ -301,7 +301,7 @@ export function span(name: string, metadata?: Record<string, unknown>): PerfSpan
 }
 
 /**
- * Get aggregated statistics for all operations
+ * 获取所有操作的聚合统计
  */
 export function getStats(): Map<
   string,
@@ -315,7 +315,7 @@ export function getStats(): Map<
     p95Ms: number;
   }
 > {
-  // Return copy without the durations array
+  // 返回副本，去掉 durations 数组
   const result = new Map<
     string,
     {
@@ -345,14 +345,14 @@ export function getStats(): Map<
 }
 
 /**
- * Get recent metrics (for debugging/analysis)
+ * 获取最近指标（用于调试/分析）
  */
 export function getRecentMetrics(): PerfMetric[] {
   return [...recentMetrics];
 }
 
 /**
- * Clear all collected metrics and stats
+ * 清空所有收集的指标和统计
  */
 export function clearMetrics(): void {
   recentMetrics.length = 0;
@@ -360,7 +360,7 @@ export function clearMetrics(): void {
 }
 
 /**
- * Format stats as a summary table (for console output)
+ * 将统计格式化为摘要表格（用于控制台输出）
  */
 export function formatStatsSummary(): string {
   const stats = getStats();
@@ -380,7 +380,7 @@ export function formatStatsSummary(): string {
   );
   lines.push('─'.repeat(80));
 
-  // Sort by total time descending
+  // 按总耗时降序排序
   const sorted = [...stats.entries()].sort(
     (a, b) => b[1].totalMs - a[1].totalMs
   );
@@ -399,7 +399,7 @@ export function formatStatsSummary(): string {
   return lines.join('\n');
 }
 
-// Export a default object for convenient namespaced usage
+// 导出一个默认对象，方便命名空间式使用
 export const perf = {
   start,
   measure,

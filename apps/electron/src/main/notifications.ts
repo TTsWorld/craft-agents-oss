@@ -1,10 +1,10 @@
 /**
- * Notification Service
+ * notifications.ts —— 通知服务。
  *
- * Handles native OS notifications and app badge count.
- * - Shows notifications when new messages arrive (when app is not focused)
- * - Updates dock badge count with total unread messages
- * - Clicking notification navigates to the relevant session
+ * 负责：
+ * - 应用未聚焦时显示原生系统通知
+ * - 更新 Dock / 任务栏角标数量
+ * - 点击通知后聚焦窗口并导航到对应会话
  */
 
 import { Notification, app, BrowserWindow, nativeImage } from 'electron'
@@ -23,20 +23,20 @@ let clientResolver: ClientResolver | null = null
 let baseIconPath: string | null = null
 let baseIconDataUrl: string | null = null
 let currentBadgeCount: number = 0
-let instanceNumber: number | null = null  // Multi-instance dev: instance number for dock badge
+let instanceNumber: number | null = null  // 多实例开发：Dock 角标上显示的实例编号
 
 /**
- * Initialize the notification service with window manager reference
+ * 初始化通知服务，传入 WindowManager 引用
  */
 export function initNotificationService(wm: WindowManager): void {
   windowManager = wm
 }
 
 /**
- * Set the event sink for notification broadcasts (called after server creation).
+ * 设置通知广播用的事件 sink（server 创建后调用）。
  *
- * When a resolver is provided we can route session navigation events to a
- * single client instead of broadcasting to every window in the workspace.
+ * 提供 resolver 时，可以把会话导航事件定向到单个 client，
+ * 而不是广播到整个 workspace 的所有窗口。
  */
 export function setNotificationEventSink(sink: EventSink, resolver?: ClientResolver): void {
   eventSink = sink
@@ -44,12 +44,12 @@ export function setNotificationEventSink(sink: EventSink, resolver?: ClientResol
 }
 
 /**
- * Show a native notification for a new message
+ * 显示一条原生通知（用于新消息到达）。
  *
- * @param title - Notification title (e.g., session name)
- * @param body - Notification body (e.g., message preview)
- * @param workspaceId - Workspace ID for navigation
- * @param sessionId - Session ID for navigation
+ * @param title   - 通知标题（如会话名）
+ * @param body    - 通知正文（如消息预览）
+ * @param workspaceId - 用于点击后导航的工作区 ID
+ * @param sessionId   - 用于点击后导航的会话 ID
  */
 export function showNotification(
   title: string,
@@ -65,10 +65,10 @@ export function showNotification(
   const notification = new Notification({
     title,
     body,
-    // macOS-specific options
+    // macOS 专用选项
     silent: false,
-    // Use the app icon
-    icon: undefined,  // Will use app icon by default on macOS
+    // 使用应用图标
+    icon: undefined,  // macOS 默认会使用应用图标
   })
 
   notification.on('click', () => {
@@ -81,7 +81,7 @@ export function showNotification(
 }
 
 /**
- * Handle notification click - focus window and navigate to session
+ * 处理通知点击：聚焦窗口并导航到对应会话
  */
 function handleNotificationClick(workspaceId: string, sessionId: string): void {
   if (!windowManager) {
@@ -89,24 +89,24 @@ function handleNotificationClick(workspaceId: string, sessionId: string): void {
     return
   }
 
-  // Find or create window for this workspace
+  // 查找或创建该 workspace 的窗口
   let window = windowManager.getWindowByWorkspace(workspaceId)
 
   if (!window) {
-    // Create a new window for this workspace
+    // 为该 workspace 创建新窗口
     windowManager.createWindow({ workspaceId })
     window = windowManager.getWindowByWorkspace(workspaceId)
   }
 
   if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) {
-    // Focus the window
+    // 聚焦窗口
     if (window.isMinimized()) {
       window.restore()
     }
     window.focus()
 
-    // Send navigation event to renderer to open the session.
-    // Prefer a single-client target to avoid cross-window navigation side effects.
+    // 发送导航事件给渲染进程以打开对应 session。
+    // 优先单 client 目标，避免跨窗口导航的副作用。
     if (eventSink) {
       const clientId = clientResolver?.(window.webContents.id)
       if (clientId) {
@@ -125,13 +125,12 @@ function handleNotificationClick(workspaceId: string, sessionId: string): void {
 }
 
 /**
- * Initialize the base icon for badge overlay
- * Call this during app startup
+ * 初始化角标叠加用的基础图标，app 启动时调用
  */
 export function initBadgeIcon(iconPath: string): void {
   try {
     baseIconPath = iconPath
-    // Read and cache the icon as base64 data URL
+    // 读取图标并缓存为 base64 data URL
     const iconBuffer = readFileSync(iconPath)
     baseIconDataUrl = `data:image/png;base64,${iconBuffer.toString('base64')}`
     mainLog.info('Badge icon initialized:', iconPath)
@@ -141,16 +140,16 @@ export function initBadgeIcon(iconPath: string): void {
 }
 
 /**
- * Update the app badge count (cross-platform)
+ * 更新应用角标数量（跨平台）。
  *
- * - macOS: Uses a canvas-based approach to draw the badge directly onto the dock icon.
- * - Windows: Uses taskbar overlay icon for badge display.
- * - Linux: Uses app.setBadgeCount() where supported (Unity, KDE).
+ * - macOS：用 Canvas 在 Dock 图标上绘制角标。
+ * - Windows：用任务栏覆盖图标显示角标。
+ * - Linux：用 app.setBadgeCount()（Unity/KDE 支持）。
  *
- * @param count - Number to show on badge (0 to clear)
+ * @param count - 角标数字，0 表示清除
  */
 export function updateBadgeCount(count: number): void {
-  // Skip if count hasn't changed
+  // 数字没变就跳过
   if (count === currentBadgeCount) {
     return
   }
@@ -167,17 +166,17 @@ export function updateBadgeCount(count: number): void {
 }
 
 /**
- * Update badge count on macOS using dock icon overlay
+ * macOS：用 Dock 图标叠加绘制角标
  */
 function updateBadgeCountMacOS(count: number): void {
   try {
     if (count > 0) {
-      // Draw badge onto icon using the renderer process (Canvas API)
+      // 通过渲染进程（Canvas API）在图标上绘制角标
       if (eventSink && baseIconDataUrl) {
         eventSink(RPC_CHANNELS.badge.DRAW, { to: 'all' }, { count, iconDataUrl: baseIconDataUrl })
       }
     } else {
-      // Reset to original icon (no badge)
+      // 重置为原始图标（无角标）
       if (baseIconPath) {
         const originalIcon = nativeImage.createFromPath(baseIconPath)
         app.dock?.setIcon(originalIcon)
@@ -190,17 +189,17 @@ function updateBadgeCountMacOS(count: number): void {
 }
 
 /**
- * Update badge count on Windows using taskbar overlay icon
+ * Windows：用任务栏覆盖图标显示角标
  */
 function updateBadgeCountWindows(count: number): void {
   try {
     if (count > 0) {
-      // Draw overlay icon using the renderer process (Canvas API)
+      // 通过渲染进程（Canvas API）绘制任务栏覆盖图标
       if (eventSink) {
         eventSink(RPC_CHANNELS.badge.DRAW_WINDOWS, { to: 'all' }, { count })
       }
     } else {
-      // Clear the overlay on all windows
+      // 清除所有窗口的覆盖图标
       const windows = BrowserWindow.getAllWindows()
       for (const window of windows) {
         if (!window.isDestroyed()) {
@@ -215,11 +214,11 @@ function updateBadgeCountWindows(count: number): void {
 }
 
 /**
- * Update badge count on Linux using app.setBadgeCount (Unity/KDE)
+ * Linux：使用 app.setBadgeCount（Unity/KDE）
  */
 function updateBadgeCountLinux(count: number): void {
   try {
-    // Electron's setBadgeCount works on Linux with Unity launcher and KDE
+    // Electron 的 setBadgeCount 在 Linux 上支持 Unity launcher 和 KDE
     app.setBadgeCount(count)
     mainLog.info('Badge count updated (Linux):', count)
   } catch (error) {
@@ -228,8 +227,7 @@ function updateBadgeCountLinux(count: number): void {
 }
 
 /**
- * Set the dock/taskbar icon with a pre-rendered badge image (cross-platform)
- * Called from IPC when renderer has drawn the badge
+ * 用渲染进程绘制好的带角标图标更新 Dock / 任务栏图标（跨平台）
  */
 export function setDockIconWithBadge(dataUrl: string): void {
   try {
@@ -239,7 +237,7 @@ export function setDockIconWithBadge(dataUrl: string): void {
       app.dock?.setIcon(icon)
       mainLog.info('Dock icon updated with badge (macOS)')
     } else if (process.platform === 'win32') {
-      // On Windows, set the taskbar overlay icon
+      // Windows：设置任务栏覆盖图标
       const windows = BrowserWindow.getAllWindows()
       const window = windows[0]
       if (window && !window.isDestroyed()) {
@@ -253,14 +251,14 @@ export function setDockIconWithBadge(dataUrl: string): void {
 }
 
 /**
- * Clear the app dock badge
+ * 清除应用角标
  */
 export function clearBadgeCount(): void {
   updateBadgeCount(0)
 }
 
 /**
- * Check if any window is currently focused
+ * 检查当前是否有窗口处于聚焦状态
  */
 export function isAnyWindowFocused(): boolean {
   const focusedWindow = BrowserWindow.getFocusedWindow()
@@ -268,25 +266,23 @@ export function isAnyWindowFocused(): boolean {
 }
 
 /**
- * Initialize instance badge for multi-instance development.
+ * 多实例开发时初始化实例角标。
  *
- * When running from a numbered folder (e.g., craft-tui-agent-1), this shows
- * a permanent badge on the dock icon to distinguish between instances.
- * Uses macOS dock.setBadge() for text-based badge display.
+ * 当从编号目录运行（如 craft-tui-agent-1）时，在 Dock 图标上显示永久角标以区分实例。
  *
- * @param number - Instance number (1, 2, etc.) or null for default instance
+ * @param number - 实例编号（1、2…），null 表示默认实例
  */
 export function initInstanceBadge(number: number): void {
   if (process.platform !== 'darwin') {
-    // Instance badge only supported on macOS for now
+    // 实例角标目前仅支持 macOS
     return
   }
 
   instanceNumber = number
 
   try {
-    // Use dock.setBadge() for simple text badge
-    // This shows the number in a red badge on the dock icon
+    // 用 dock.setBadge() 设置简单文本角标
+    // 会在 Dock 图标上以红色角标显示数字
     app.dock?.setBadge(String(number))
     mainLog.info(`Instance badge set: ${number}`)
   } catch (error) {

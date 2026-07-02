@@ -6,8 +6,10 @@ import { Input } from "@/components/ui/input"
 import { StepFormLayout, BackButton } from "./primitives"
 import type { GitBashStatus } from "../../../shared/types"
 
+// 把共享类型再导出，方便外部直接使用
 export type { GitBashStatus }
 
+// Git Bash 检测页的 props 接口
 interface GitBashWarningProps {
   status: GitBashStatus
   onBrowse: () => Promise<string | null>
@@ -20,13 +22,12 @@ interface GitBashWarningProps {
 }
 
 /**
- * GitBashWarning - Warning screen when Git Bash is not found on Windows
+ * GitBashWarning - Windows 上未找到 Git Bash 时的提示页
  *
- * Shows:
- * - Warning message explaining why Git Bash is needed
- * - Download link to Git for Windows
- * - Option to manually specify bash.exe path
- * - Option to skip and continue anyway
+ * 提供三种出路：
+ * 1. 下载安装 Git for Windows
+ * 2. 手动指定 bash.exe 路径
+ * 3. 返回上一步
  */
 export function GitBashWarning({
   status,
@@ -57,6 +58,7 @@ export function GitBashWarning({
   }
 
   const handleDownload = () => {
+    // 通过 Electron preload 暴露的 API 在外部浏览器打开链接
     window.electronAPI.openUrl('https://git-scm.com/downloads/win')
   }
 
@@ -66,7 +68,7 @@ export function GitBashWarning({
       description={t("onboarding.gitBash.description")}
     >
       <div className="space-y-4">
-        {/* Primary action: Download Git */}
+        {/* 主要操作：下载 Git */}
         <div className="rounded-lg border border-border bg-foreground-2 p-4">
           <h3 className="text-sm font-medium text-foreground">
             {t("onboarding.gitBash.installTitle")}
@@ -84,7 +86,7 @@ export function GitBashWarning({
           </Button>
         </div>
 
-        {/* Secondary: Already have Git? */}
+        {/* 次要操作：已安装 Git，手动指定路径或重新检测 */}
         <div className="rounded-lg border border-border bg-foreground-2 p-4">
           <h3 className="text-sm font-medium text-foreground">
             {t("onboarding.gitBash.alreadyInstalled")}
@@ -139,7 +141,7 @@ export function GitBashWarning({
           )}
         </div>
 
-        {/* Back button */}
+        {/* 返回按钮 */}
         <div className="flex justify-center pt-2">
           <BackButton onClick={onBack} className="max-w-[200px]" />
         </div>

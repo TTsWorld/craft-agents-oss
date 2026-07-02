@@ -1,8 +1,8 @@
 /**
  * ToolsDataTable
  *
- * Typed Data Table for displaying MCP tools.
- * Features: searchable tools, sortable columns, max-height scroll.
+ * 用于展示 MCP（Model Context Protocol）工具的表格组件。
+ * 支持搜索、排序、最大高度滚动，由 Info_DataTable 提供底层能力。
  */
 
 import * as React from 'react'
@@ -14,25 +14,31 @@ import { Info_DataTable, SortableHeader } from './Info_DataTable'
 import { Info_Badge } from './Info_Badge'
 import { Info_StatusBadge } from './Info_StatusBadge'
 
+/** MCP 工具权限：允许调用 / 需要询问 */
 export type ToolPermission = 'allowed' | 'requires-permission'
 
+/** MCP 工具行数据类型 */
 export interface ToolRow {
+  /** 工具名称 */
   name: string
+  /** 工具描述 */
   description: string
+  /** 工具权限状态 */
   permission: ToolPermission
 }
 
 interface ToolsDataTableProps {
   data: ToolRow[]
-  /** Show loading spinner */
+  /** 是否显示加载中 spinner */
   loading?: boolean
-  /** Show error message */
+  /** 错误提示文本 */
   error?: string
-  /** Max height with scroll (default: 400) */
+  /** 最大高度，超出后纵向滚动（默认 400） */
   maxHeight?: number
   className?: string
 }
 
+/** 构造 TanStack Table 的列定义 */
 function getColumns(t: TFunction): ColumnDef<ToolRow>[] {
   return [
     {

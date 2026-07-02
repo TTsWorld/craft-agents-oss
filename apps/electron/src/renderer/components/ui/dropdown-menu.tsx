@@ -1,11 +1,28 @@
+/**
+ * dropdown-menu — React 组件
+ * 
+ * 所属目录：ui
+ */
+/**
+ * DropdownMenu — 下拉菜单组件
+ *
+ * 基于 Radix UI DropdownMenu 封装，提供触发按钮、菜单项、复选/单选等。
+ * Trigger 支持自动把 hover:* 类名镜像为 data-[state=open]:*，
+ * 让按钮在菜单打开时保持 hover 样式。
+ */
 import * as React from "react"
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu"
 import { CheckIcon, ChevronRightIcon, CircleIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
+// 支持自动镜像的 Tailwind 前缀
 const SUPPORTED_HOVER_PREFIXES = ["bg-", "text-", "border-", "ring-", "opacity-"]
 
+/**
+ * 把 className 中的 hover:* 自动映射为 data-[state=open]:*，
+ * 这样菜单打开时触发按钮能保持 hover 样式。
+ */
 function mirrorHoverToOpenStateClasses(className?: string): string | undefined {
   if (!className) return className
 
@@ -48,11 +65,13 @@ const DropdownMenuTrigger = React.forwardRef<
     autoMirrorHoverToOpen?: boolean
   }
 >(({ className, autoMirrorHoverToOpen = true, asChild, children, ...props }, ref) => {
+  // 根据是否启用镜像，生成最终的 trigger 类名
   const triggerClassName = cn(
     "select-none",
     autoMirrorHoverToOpen ? mirrorHoverToOpenStateClasses(className) : className
   )
 
+  // asChild 模式：把 hover 镜像合并到子元素的 className 上
   if (asChild && autoMirrorHoverToOpen && React.isValidElement(children)) {
     const childClassName = (children.props as { className?: string }).className
     const mergedChildClassName = mirrorHoverToOpenStateClasses(cn("select-none", childClassName, className))

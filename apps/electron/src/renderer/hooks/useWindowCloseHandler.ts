@@ -6,20 +6,20 @@ import { panelStackAtom, closePanelAtom, focusedPanelIdAtom } from '@/atoms/pane
 import type { WindowCloseRequest } from '../../shared/types'
 
 /**
- * Hook to handle window close requests with source-aware behavior.
+ * 处理窗口关闭请求的 hook，根据关闭来源采取不同行为。
  *
- * - `window-button` closes the window directly.
- * - `keyboard-shortcut` (Cmd/Ctrl+W) uses layered dismissal:
- *   1. Close top modal
- *   2. Else close focused panel
- *   3. Else close window
- * - `unknown` follows layered dismissal as a safe fallback.
+ * - `window-button`：直接关闭窗口。
+ * - `keyboard-shortcut`（Cmd/Ctrl+W）：分层关闭：
+ *   1. 关闭最顶层 modal
+ *   2. 否则关闭当前聚焦 panel
+ *   3. 否则关闭窗口
+ * - `unknown`：同样按分层关闭作为安全回退。
  *
- * The main process starts a fallback timeout on each close request.
- * cancelCloseWindow() clears it (window stays open).
- * confirmCloseWindow() clears it and destroys the window.
+ * 主进程每次发起关闭请求都会启动一个兜底超时：
+ * cancelCloseWindow() 取消超时（窗口保持打开）；
+ * confirmCloseWindow() 取消超时并销毁窗口。
  *
- * This hook should be called once at the app root level.
+ * 本 hook 应在应用根组件中调用一次。
  */
 export function useWindowCloseHandler() {
   const { hasOpenLayers, closeTop } = useDismissibleLayerRegistry()
@@ -41,14 +41,14 @@ export function useWindowCloseHandler() {
         return
       }
 
-      // Backward-compatible fallback for legacy modals not yet migrated.
+      // 兼容尚未迁移到 DismissibleLayer 的旧 modal
       if (hasOpenModals()) {
         closeTopModal()
         window.electronAPI.cancelCloseWindow()
         return
       }
 
-      // Close the focused panel (or last if no focus tracked)
+      // 关闭当前聚焦的 panel（如果没有追踪焦点，则关闭最后一个）
       const target = focusedPanelId
         ? panelStack.find(p => p.id === focusedPanelId)
         : panelStack[panelStack.length - 1]
@@ -56,7 +56,7 @@ export function useWindowCloseHandler() {
         closePanel(target.id)
         window.electronAPI.cancelCloseWindow()
       } else {
-        // No panels, no modals — close the window
+        // 没有 panel 也没有 modal，真正关闭窗口
         window.electronAPI.confirmCloseWindow()
       }
     })

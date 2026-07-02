@@ -1,9 +1,8 @@
 /**
- * Source Test Handler
+ * Source Test Handler（Source 综合测试处理器）
  *
- * Validates and tests a source configuration comprehensively.
- * Performs schema validation, completeness checks, icon handling,
- * connection tests, and auth verification.
+ * 对一个 source 做全方位检测：
+ * 配置结构校验、完整性检查、图标处理、连接测试、认证状态校验、元数据更新。
  */
 
 import { basename, join } from 'node:path';
@@ -21,18 +20,19 @@ import {
   getSourcePath,
 } from '../source-helpers.ts';
 
+// source_test 参数
 export interface SourceTestArgs {
   sourceSlug: string;
   /**
-   * Auto-enable the source on success (flip `enabled: true` if needed
-   * and activate it in the running session).
-   * Defaults to `true`. Pass `false` for pure validation behavior.
+   * 测试成功后是否自动启用该 source（把 enabled 设为 true 并在当前会话激活）。
+   * 默认为 true；传 false 只做纯校验。
    */
   autoEnable?: boolean;
 }
 
 /**
- * Test result structure for API/MCP connection tests
+ * API/MCP 连接测试的内部结果结构。
+ * 这里的 success 表示探针认为连接健康，needsAuth 表示需要认证。
  */
 interface ConnectionTestResult {
   success: boolean;
@@ -47,15 +47,17 @@ interface ConnectionTestResult {
 }
 
 /**
- * Handle the source_test tool call.
+ * 处理 source_test tool 调用。
  *
- * Performs:
- * 1. Schema validation - validates config.json structure
- * 2. Icon handling - checks/downloads icon
- * 3. Completeness check - warns about missing guide.md/icon/tagline
- * 4. Connection test - tests if source endpoint is reachable
- * 5. Auth status check - verifies authentication
- * 6. Metadata update - updates lastTestedAt, connectionStatus
+ * 执行步骤：
+ * 1. 校验 source 是否存在；
+ * 2. 结构校验 config.json；
+ * 3. 加载并基础校验 source 配置；
+ * 4. 图标处理（检查本地/下载/自动获取）；
+ * 5. 完整性检查（guide.md、tagline 等）；
+ * 6. 连接测试（API/MCP/Local）；
+ * 7. 认证状态检查；
+ * 8. 自动启用与元数据更新（lastTestedAt、connectionStatus）。
  */
 export async function handleSourceTest(
   ctx: SessionToolContext,
@@ -68,12 +70,12 @@ export async function handleSourceTest(
   let connectionStatus: ConnectionStatus = 'unknown';
   let connectionError: string | undefined;
 
-  // 1. Check source exists
+  // 1. 检查 source 是否存在
   if (!sourceExists(ctx.workspacePath, sourceSlug)) {
     return errorResponse(`Source '${sourceSlug}' not found in workspace.`);
   }
 
-  // 2. Schema validation
+  // 2. 结构校验
   lines.push('## Schema Validation');
   const configPath = getSourceConfigPath(ctx.workspacePath, sourceSlug);
   const schemaResult = validateJsonFileHasFields(configPath, ['slug', 'name', 'type']);
@@ -88,13 +90,13 @@ export async function handleSourceTest(
     }
   }
 
-  // 3. Load config for further checks
+  // 3. 加载 source 配置供后续检查使用
   const source = ctx.loadSourceConfig(sourceSlug);
   if (!source) {
     return errorResponse(`Failed to load source config for '${sourceSlug}'.`);
   }
 
-  // Validate loaded config with basic validator
+  // 用基础校验器检查加载后的配置
   const configValidation = validateSourceConfigBasic(source);
   if (!configValidation.valid) {
     hasErrors = true;
@@ -103,20 +105,20 @@ export async function handleSourceTest(
     }
   }
 
-  // 4. Icon handling
+  // 4. 图标处理
   lines.push('\n## Icon Status');
   const sourcePath = getSourcePath(ctx.workspacePath, sourceSlug);
   const iconResult = await handleIconCheck(ctx, sourcePath, sourceSlug, source);
   lines.push(...iconResult.lines);
   if (iconResult.hasWarning) hasWarnings = true;
 
-  // 5. Completeness check
+  // 5. 完整性检查
   lines.push('\n## Completeness Check');
   const completenessResult = checkCompleteness(ctx, sourcePath, source);
   lines.push(...completenessResult.lines);
   if (completenessResult.hasWarning) hasWarnings = true;
 
-  // 6. Connection test
+  // 6. 连接测试
   lines.push('\n## Connection Test');
   const connectionResult = await testConnection(ctx, source, sourceSlug);
   lines.push(...connectionResult.lines);
@@ -127,24 +129,22 @@ export async function handleSourceTest(
   } else if (connectionResult.success) {
     connectionStatus = 'connected';
   } else {
-    // Soft failure (4xx ≠ 401/403, 5xx, etc): the probe reached the endpoint but
-    // got a status we can't interpret as healthy. Demote validation to warnings
-    // and refuse auto-activation — see #683 for what happens otherwise.
+    // 软失败（如 404/5xx 等）：探针连通了服务端但状态不健康。
+    // 降级为 warning，并拒绝自动激活，避免把坏 source 推入可用工具列表。
     connectionStatus = 'disconnected';
     hasWarnings = true;
   }
 
-  // 7. Auth status
+  // 7. 认证状态
   lines.push('\n## Authentication');
   const authResult = await checkAuthStatus(ctx, source, sourceSlug);
   lines.push(...authResult.lines);
   if (authResult.hasWarning) hasWarnings = true;
 
-  // 8. Auto-enable + metadata update
-  // Defaults to true; pass autoEnable: false to keep pure validation behavior.
-  // Gate on connectionStatus so a probe that returned 5xx/404 cannot push a
-  // broken source into the live tool list. 401/403 still pass: the probe maps
-  // those to connectionStatus=connected, and checkAuthStatus refreshes tokens.
+  // 8. 自动启用 + 元数据更新
+  // 默认启用；autoEnable=false 时只做校验。
+  // 以 connectionStatus === 'connected' 为门槛，防止 5xx/404 的 source 被自动激活。
+  // 401/403 会被探针映射为 connected，后续 checkAuthStatus 会引导刷新 token。
   const autoEnable = args.autoEnable !== false;
   const shouldAutoEnable = autoEnable && !hasErrors && connectionStatus === 'connected';
   const willFlipEnabled = shouldAutoEnable && source.enabled === false;
@@ -155,7 +155,7 @@ export async function handleSourceTest(
       lastTestedAt: Date.now(),
       connectionStatus,
       connectionError,
-      // Fold enabled flip into the same save — one write, not two.
+      // 把 enabled 翻转合并到同一次保存，避免写两次
       ...(willFlipEnabled ? { enabled: true } : {}),
     };
     try {
@@ -165,20 +165,19 @@ export async function handleSourceTest(
         lines.push('✓ Source auto-enabled in config');
       }
     } catch {
-      // Silently ignore save errors
+      // 静默忽略保存错误
     }
   }
 
-  // Try to activate the source in the running session (backend may not support this).
+  // 尝试在当前运行会话中激活 source（后端可能不支持）
   if (shouldAutoEnable) {
     if (ctx.activateSourceInSession) {
       try {
         const result = await ctx.activateSourceInSession(sourceSlug);
         if (result.ok) {
-          // Activation succeeded — the backend will abort this turn after the
-          // tool result lands, and the renderer auto-resends the original user
-          // message with a "[{slug} activated]" suffix. From the model's POV,
-          // the "next step" is a new turn where the tools are live.
+          // 激活成功后，后端会在 tool result 落地后中断当前 turn，
+          // 渲染器自动重发原始用户消息并带上 "[{slug} activated]" 后缀。
+          // 对模型来说，下一 turn 就是工具可用的新会话。
           lines.push('✓ Source activated — the current turn will auto-restart with tools available');
         } else {
           lines.push(`⚠ Config updated, but session activation failed: ${result.reason ?? 'unknown error'}. Restart session to load tools.`);
@@ -190,16 +189,15 @@ export async function handleSourceTest(
         hasWarnings = true;
       }
     } else if (willFlipEnabled) {
-      // Only nag about restart if we actually flipped the flag.
+      // 只有真正修改了 enabled 标志时才提示重启
       lines.push('ℹ Config updated. Restart session to load tools (mid-session activation not available in this backend).');
     }
   } else if (autoEnable && !hasErrors && connectionStatus !== 'connected') {
-    // The user asked to auto-enable but the connection probe didn't pass.
-    // Tell them why activation is being skipped so they can act on it.
+    // 用户希望自动启用但连接探针未通过，说明原因以便排查
     lines.push(`ℹ Skipping activation because connection test did not succeed (status: ${connectionStatus}). Re-run source_test once the endpoint is reachable.`);
   }
 
-  // Summary
+  // 汇总结果
   lines.push('\n---');
   if (hasErrors) {
     lines.push('**Result: ✗ Validation failed with errors**');
@@ -216,7 +214,7 @@ export async function handleSourceTest(
 }
 
 // ============================================================
-// Icon Handling
+// 图标处理
 // ============================================================
 
 async function handleIconCheck(
@@ -228,7 +226,7 @@ async function handleIconCheck(
   const lines: string[] = [];
   let hasWarning = false;
 
-  // Check for local icon files
+  // 1. 检查本地图标文件
   const iconPngPath = join(sourcePath, 'icon.png');
   const iconSvgPath = join(sourcePath, 'icon.svg');
   const iconJpgPath = join(sourcePath, 'icon.jpg');
@@ -244,7 +242,7 @@ async function handleIconCheck(
     return { lines, hasWarning };
   }
 
-  // Check if icon is a URL that can be downloaded
+  // 2. 检查 icon 字段是否是可下载 URL
   if (source.icon && ctx.isIconUrl && ctx.isIconUrl(source.icon)) {
     if (ctx.downloadSourceIcon) {
       lines.push(`ℹ Icon URL detected: ${source.icon}`);
@@ -263,13 +261,13 @@ async function handleIconCheck(
     }
   }
 
-  // Check if icon is an emoji
+  // 3. 检查 icon 字段是否是 emoji
   if (source.icon && isEmoji(source.icon)) {
     lines.push(`✓ Emoji icon configured: ${source.icon}`);
     return { lines, hasWarning };
   }
 
-  // Try to auto-fetch icon from service
+  // 4. 尝试根据 service URL 自动获取高清 logo
   if (!source.icon && ctx.deriveServiceUrl && ctx.getHighQualityLogoUrl && ctx.downloadIcon) {
     const serviceUrl = ctx.deriveServiceUrl(source);
     if (serviceUrl) {
@@ -285,12 +283,12 @@ async function handleIconCheck(
           }
         }
       } catch {
-        // Silently continue if auto-fetch fails
+        // 自动获取失败时静默继续
       }
     }
   }
 
-  // No icon found
+  // 5. 完全找不到图标
   hasWarning = true;
   lines.push('⚠ No icon configured');
   lines.push('  Options:');
@@ -304,16 +302,15 @@ async function handleIconCheck(
 }
 
 /**
- * Simple emoji detection
+ * 简易 emoji 检测（启发式）。
  */
 function isEmoji(str: string): boolean {
-  // Check if string is a single emoji (basic heuristic)
   const emojiRegex = /^[\p{Emoji}]$/u;
   return emojiRegex.test(str) || (str.length >= 2 && str.length <= 8 && /[\u{1F300}-\u{1FAD6}]/u.test(str));
 }
 
 // ============================================================
-// Completeness Check
+// 完整性检查
 // ============================================================
 
 function checkCompleteness(
@@ -324,7 +321,7 @@ function checkCompleteness(
   const lines: string[] = [];
   let hasWarning = false;
 
-  // Check guide.md
+  // 检查 guide.md（给 agent 看的用法说明）
   const guidePath = getSourceGuidePath(ctx.workspacePath, source.slug);
   if (!ctx.fs.exists(guidePath)) {
     hasWarning = true;
@@ -345,9 +342,9 @@ function checkCompleteness(
     }
   }
 
-  // Check tagline field
+  // 检查 tagline 字段
   if (!source.tagline) {
-    // Check if they used 'description' instead (common mistake)
+    // 常见错误：把 tagline 写成了 description
     if ((source as unknown as Record<string, unknown>)['description']) {
       hasWarning = true;
       lines.push('⚠ Found "description" field instead of "tagline"');
@@ -364,7 +361,7 @@ function checkCompleteness(
     }
   }
 
-  // Check name
+  // 检查 name 字段
   if (source.name) {
     lines.push(`✓ Name: "${source.name}"`);
   }
@@ -379,7 +376,7 @@ function formatBytes(bytes: number): string {
 }
 
 // ============================================================
-// Connection Test
+// 连接测试
 // ============================================================
 
 async function testConnection(
@@ -392,6 +389,7 @@ async function testConnection(
   let hasError = false;
   let error: string | undefined;
 
+  // 按 source 类型分发到不同测试函数
   if (source.type === 'api') {
     const result = await testApiConnection(ctx, source, sourceSlug);
     lines.push(...result.lines);
@@ -435,7 +433,7 @@ async function testApiConnection(
     return { lines, success, hasError, error };
   }
 
-  // If ctx has advanced testApiSource, use it
+  // 如果上下文提供了高级 testApiSource，优先使用它
   if (ctx.testApiSource) {
     try {
       const result = await ctx.testApiSource(source);
@@ -455,31 +453,31 @@ async function testApiConnection(
       }
       return { lines, success, hasError, error };
     } catch (e) {
-      // Fall through to built-in test
+      // 异常时降级到内置测试
     }
   }
 
-  // Build test URL
+  // 构造测试 URL：优先用 testEndpoint.path，否则直接用 baseUrl
   const testUrl = source.api.testEndpoint
     ? `${source.api.baseUrl}${source.api.testEndpoint.path}`
     : source.api.baseUrl;
 
-  // Try authenticated request if credentials available
+  // 如果有凭证，先尝试带认证请求
   if (source.isAuthenticated && ctx.credentialManager && source.api.authType !== 'none') {
     const authResult = await testApiConnectionWithAuth(ctx, source, sourceSlug, testUrl);
     if (authResult.attempted) {
       return authResult;
     }
-    // If auth test wasn't attempted (no token), fall through to basic test
+    // 若拿不到 token，降级到无认证测试
   }
 
-  // Basic connection test (no auth)
+  // 无认证基础连接测试
   return testApiConnectionBasic(source, testUrl);
 }
 
 /**
- * Test API connection WITH authentication credentials.
- * Returns attempted=false if credentials couldn't be retrieved.
+ * 带认证的 API 连接测试。
+ * 如果拿不到凭证，返回 attempted=false，让上层降级到无认证测试。
  */
 async function testApiConnectionWithAuth(
   ctx: SessionToolContext,
@@ -489,7 +487,7 @@ async function testApiConnectionWithAuth(
 ): Promise<{ lines: string[]; success: boolean; hasError: boolean; error?: string; attempted: boolean }> {
   const lines: string[] = [];
 
-  // Build LoadedSource for credential manager
+  // 构造 credential manager 需要的 LoadedSource 对象
   const workspaceId = basename(ctx.workspacePath) || '';
   const loadedSource = {
     config: source,
@@ -498,33 +496,32 @@ async function testApiConnectionWithAuth(
     workspaceId,
   };
 
-  // Get token from credential manager
+  // 从 credential manager 取 token
   let token: string | null = null;
   try {
     token = await ctx.credentialManager!.getToken(loadedSource);
   } catch {
-    // Couldn't get token, will fall through to basic test
+    // 拿不到 token，后续降级到无认证测试
   }
 
   if (!token) {
     return { lines: [], success: false, hasError: false, attempted: false };
   }
 
-  // Build auth headers based on authType
+  // 根据 authType 构造认证头或 URL 参数
   const headers: Record<string, string> = {};
   let urlWithAuth = testUrl;
 
   switch (source.api!.authType) {
     case 'bearer':
     case 'oauth':
-      // Generic OAuth tokens are sent as Bearer tokens
+      // 通用 OAuth token 以 Bearer 方式发送
       headers['Authorization'] = `Bearer ${token}`;
       break;
     case 'basic': {
-      // Vault value for source_basic is JSON `{"username","password"}` (written by
-      // source_credential_prompt / WebUI). Parse and base64-encode to match what
-      // api-tools.ts buildHeaders does at runtime. Fall through if the token is
-      // already a non-JSON string (legacy / hand-edited vault entries).
+      // source_basic 在凭据库里的值是 JSON `{"username","password"}`（由 source_credential_prompt / WebUI 写入）。
+      // 这里解析并 base64 编码，以和运行时 api-tools.ts 的 buildHeaders 保持一致。
+      // 如果是非 JSON 字符串（旧版或手动编辑），则直接透传。
       try {
         const parsed = JSON.parse(token);
         if (parsed && typeof parsed === 'object' && parsed.username && parsed.password) {
@@ -533,17 +530,17 @@ async function testApiConnectionWithAuth(
           break;
         }
       } catch {
-        // Not JSON — pass through
+        // 不是 JSON，直接透传
       }
       headers['Authorization'] = `Basic ${token}`;
       break;
     }
     case 'header':
-      // Custom header name
+      // 自定义 header 名
       if (source.api!.headerName) {
         headers[source.api!.headerName] = token;
       } else if (source.api!.headerNames && source.api!.headerNames.length > 0) {
-        // Multi-header auth: token is JSON with header values
+        // 多 header 认证：token 是 JSON，key 为 header 名
         const headerNames = source.api!.headerNames;
         try {
           const headerValues = JSON.parse(token) as Record<string, string>;
@@ -553,7 +550,7 @@ async function testApiConnectionWithAuth(
             }
           }
         } catch {
-          // Token is not valid JSON - this is a configuration error for multi-header auth
+          // token 不是合法 JSON，对多 header 认证来说是配置错误
           const firstHeader = headerNames[0] || 'Header';
           return {
             lines: [`✗ Multi-header auth requires JSON token with header values`],
@@ -564,19 +561,19 @@ async function testApiConnectionWithAuth(
           };
         }
       } else {
-        // Fallback to X-API-Key if no header name specified
+        // 未指定 header 名时回退到 X-API-Key
         headers['X-API-Key'] = token;
       }
       break;
     case 'query':
-      // Add token as query parameter
+      // 把 token 作为 URL 查询参数
       const paramName = source.api!.queryParam || 'api_key';
       const separator = testUrl.includes('?') ? '&' : '?';
       urlWithAuth = `${testUrl}${separator}${paramName}=${encodeURIComponent(token)}`;
       break;
   }
 
-  // Make authenticated request
+  // 发起带认证的请求
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
@@ -585,8 +582,7 @@ async function testApiConnectionWithAuth(
     const body = source.api!.testEndpoint?.body;
     const extraHeaders = source.api!.testEndpoint?.headers;
 
-    // Merge any per-endpoint headers; auth headers win on conflict so a stale
-    // testEndpoint header can't shadow the live token.
+    // 合并 testEndpoint 里配置的 header；认证 header 优先级更高，防止旧配置覆盖 live token
     if (extraHeaders) {
       for (const [k, v] of Object.entries(extraHeaders)) {
         if (!(k in headers)) headers[k] = v;
@@ -596,7 +592,7 @@ async function testApiConnectionWithAuth(
     const init: RequestInit = { method, headers, signal: controller.signal };
     if (body !== undefined && method !== 'GET') {
       init.body = typeof body === 'string' ? body : JSON.stringify(body);
-      // Default to JSON only if no Content-Type was provided by testEndpoint.headers.
+      // 只有 testEndpoint.headers 没提供 Content-Type 时才默认 application/json
       const hasContentType = Object.keys(headers).some((k) => k.toLowerCase() === 'content-type');
       if (!hasContentType) headers['Content-Type'] = 'application/json';
     }
@@ -634,8 +630,8 @@ async function testApiConnectionWithAuth(
 }
 
 /**
- * Basic API connection test WITHOUT authentication.
- * Used when no credentials are available.
+ * 无认证的 API 基础连接测试。
+ * 在没有凭证或拿不到 token 时使用。
  */
 async function testApiConnectionBasic(
   source: SourceConfig,
@@ -650,12 +646,11 @@ async function testApiConnectionBasic(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-    // If a testEndpoint.method was configured, honor it directly. The HEAD→GET
-    // probe can't validate POST-only endpoints (it 405s, falls back to GET, and
-    // typically gets another 405 the basic probe silently treats as soft pass).
-    // We deliberately don't carry testEndpoint.body in the basic probe — this
-    // path runs without credentials, so anything sensitive in the body would
-    // leak; better to let the authed probe carry the body once auth is set up.
+    // 如果配置了 testEndpoint.method，直接按配置方法请求。
+    // 默认的 HEAD→GET 探针无法验证仅支持 POST 的端点（会 405，降级 GET 后又 405，
+    // 基础探针会把它当成软失败）。
+    // 另外，无认证探针不携带 testEndpoint.body，因为没凭证时 body 里的敏感内容可能泄露；
+    // 等认证配置好后再由带认证探针携带 body。
     const configuredMethod = source.api?.testEndpoint?.method;
     let response: Response | null;
     if (configuredMethod) {
@@ -664,13 +659,13 @@ async function testApiConnectionBasic(
         signal: controller.signal,
       }).catch(() => null);
     } else {
-      // Try HEAD first
+      // 先尝试 HEAD，开销最小
       response = await fetch(testUrl, {
         method: 'HEAD',
         signal: controller.signal,
       }).catch(() => null);
 
-      // If HEAD returns 405, try GET
+      // HEAD 返回 405 时降级 GET
       if (response && response.status === 405) {
         response = await fetch(testUrl, {
           method: 'GET',
@@ -686,7 +681,7 @@ async function testApiConnectionBasic(
         success = true;
         lines.push(`✓ API endpoint reachable (${testUrl})`);
       } else if (response.status === 401 || response.status === 403) {
-        // Auth required - endpoint is reachable but needs credentials
+        // 需要认证：服务端可达，只是缺凭证
         success = true;
         lines.push(`⚠ API returned ${response.status} (authentication required)`);
         if (!source.isAuthenticated) {
@@ -733,7 +728,7 @@ async function testMcpConnection(
   let error: string | undefined;
 
   if (source.mcp?.transport === 'stdio') {
-    // Stdio MCP - use validateStdioMcpConnection if available
+    // Stdio MCP：如果上下文支持 validateStdioMcpConnection，就做完整测试
     if (ctx.validateStdioMcpConnection && source.mcp.command) {
       lines.push(`ℹ Testing stdio MCP: ${source.mcp.command}`);
       try {
@@ -770,13 +765,13 @@ async function testMcpConnection(
         lines.push(`✗ Failed to test MCP server: ${error}`);
       }
     } else if (source.mcp?.command) {
-      // Basic check - just report config
+      // 只做配置展示，无法真正测试
       lines.push(`ℹ Stdio MCP source: ${source.mcp.command}`);
       if (source.mcp.args?.length) {
         lines.push(`  Args: ${source.mcp.args.join(' ')}`);
       }
       lines.push('  Connection test not available in this context — call the source\'s MCP tools directly to verify');
-      success = true; // Config looks ok
+      success = true; // 配置看起来没问题
     } else {
       hasError = true;
       error = 'No command configured';
@@ -787,7 +782,7 @@ async function testMcpConnection(
     if (ctx.validateMcpConnection) {
       lines.push(`ℹ Testing MCP server: ${source.mcp.url}`);
       try {
-        // Merge static headers with credential-store headers (if headerNames configured)
+        // 合并静态 header 和凭据库 header（如果配置了 headerNames）
         let headers = source.mcp.headers ? { ...source.mcp.headers } : undefined;
         let accessToken: string | undefined;
         if (ctx.credentialManager) {
@@ -800,7 +795,7 @@ async function testMcpConnection(
           };
 
           if (source.mcp.headerNames?.length) {
-            // Multi-header credential — credential value is JSON keyed by header name.
+            // 多 header 认证：凭据值是按 header 名 key 的 JSON
             try {
               const rawCred = await ctx.credentialManager.getToken(loadedSource);
               if (rawCred) {
@@ -808,20 +803,18 @@ async function testMcpConnection(
                 headers = { ...headers, ...parsed };
               }
             } catch {
-              // Not JSON or no credential — continue without credential headers
+              // 不是 JSON 或没有凭据：继续不带凭据 header
             }
           } else if (source.mcp.authType === 'oauth' || source.mcp.authType === 'bearer') {
-            // OAuth / bearer single-token path — mirror the runtime so the probe
-            // sends an Authorization header. Cached token first, refresh fallback
-            // only on miss (matches checkAuthStatus and TokenRefreshManager).
+            // OAuth / bearer 单 token 路径：和运行时保持一致，探针会发 Authorization header。
+            // 先用缓存 token，拿不到再刷新（与 checkAuthStatus 和 TokenRefreshManager 一致）。
             try {
               accessToken =
                 (await ctx.credentialManager.getToken(loadedSource)) ??
                 (await ctx.credentialManager.refresh(loadedSource)) ??
                 undefined;
             } catch {
-              // Token resolution failed — fall through; the probe will surface
-              // the resulting `needsAuth` / 401 the same way it always has.
+              // token 解析失败：继续往下，探针会按 needsAuth / 401 原样返回
             }
           }
         }
@@ -846,7 +839,7 @@ async function testMcpConnection(
           if (source.mcp.authType === 'oauth') {
             lines.push('  Use source_oauth_trigger to authenticate');
           }
-          success = true; // Server is reachable, just needs auth
+          success = true; // 服务端可达，只是需要认证
         } else {
           hasError = true;
           error = result.error || 'MCP connection failed';
@@ -858,10 +851,10 @@ async function testMcpConnection(
         lines.push(`✗ Failed to connect to MCP server: ${error}`);
       }
     } else {
-      // Basic URL check
+      // 基础 URL 检查
       lines.push(`ℹ MCP source URL: ${source.mcp.url}`);
       lines.push('  Connection test not available in this context — call the source\'s MCP tools directly to verify');
-      success = true; // Config looks ok
+      success = true; // 配置看起来没问题
     }
   } else {
     hasError = true;
@@ -904,7 +897,7 @@ function testLocalConnection(
 }
 
 // ============================================================
-// Auth Status Check
+// 认证状态检查
 // ============================================================
 
 async function checkAuthStatus(
@@ -916,9 +909,8 @@ async function checkAuthStatus(
   let hasWarning = false;
 
   if (source.isAuthenticated) {
-    // In Codex context (no validateMcpConnection), MCP source credentials are delivered
-    // via config.toml headers, not the credential cache. Skip token verification to avoid
-    // false "token missing" warnings from the file-based cache.
+    // Codex 环境下 MCP source 的凭据通过 config.toml header 下发，不走凭据缓存。
+    // 跳过 token 校验，避免文件缓存报 "token missing" 的假阳性 warning。
     if (source.type === 'mcp' && !ctx.validateMcpConnection) {
       lines.push('✓ Source is authenticated');
     } else if (ctx.credentialManager) {
@@ -935,10 +927,9 @@ async function checkAuthStatus(
         if (token) {
           lines.push('✓ Source is authenticated (token valid)');
         } else {
-          // Token missing or expired — attempt refresh before reporting failure.
-          // OAuth tokens are short-lived (typically 1h) and frequently expired in the
-          // credential store between uses. The normal connection pipeline refreshes
-          // them proactively, so source_test should too.
+          // token 缺失或过期：先尝试刷新再报错。
+          // OAuth token 通常只有 1 小时有效期，凭据库里经常过期；
+          // 正常连接管道会主动刷新，source_test 也应如此。
           const refreshed = await ctx.credentialManager.refresh(loadedSource);
           if (refreshed) {
             lines.push('✓ Source is authenticated (token refreshed)');
@@ -955,7 +946,7 @@ async function checkAuthStatus(
       lines.push('✓ Source is authenticated');
     }
   } else {
-    // Determine required auth type
+    // 根据 source 类型推断需要的认证方式并给出提示
     if (source.type === 'mcp' && source.mcp?.authType === 'oauth') {
       hasWarning = true;
       lines.push('⚠ Source not authenticated');

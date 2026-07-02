@@ -1,9 +1,9 @@
 /**
- * Messaging session tools — list bindings and unbind channels.
+ * Messaging session tools（消息通道绑定管理工具）
  *
- * NOTE: Binding is done via pairing codes (chat-side or UI-side),
- * not via arbitrary channelId from the agent. This prevents the agent
- * from binding sessions to channels it shouldn't have access to.
+ * 提供 list_messaging_channels 和 unbind_messaging_channel。
+ * 注意：绑定（bind）不是通过 agent 传入任意 channelId 完成的，
+ * 而是靠 pairing code 在聊天侧或 UI 侧完成，避免 agent 把会话绑定到不该访问的频道。
  */
 
 import type { SessionToolContext } from '../context.ts';
@@ -11,7 +11,7 @@ import type { ToolResult } from '../types.ts';
 import { successResponse, errorResponse } from '../response.ts';
 
 // ---------------------------------------------------------------------------
-// list_messaging_channels
+// list_messaging_channels：列出当前会话已绑定的消息通道
 // ---------------------------------------------------------------------------
 
 export interface ListMessagingChannelsArgs {
@@ -36,9 +36,8 @@ export async function handleListMessagingChannels(
 
     const lines = bindings.map((b) => {
       const baseLabel = b.channelName || b.channelId;
-      // Topic-bound bindings (Telegram supergroup forums) read as
-      // "Group › Topic" so the model can disambiguate two topics in the
-      // same supergroup. DMs and pre-topics bindings render unchanged.
+      // Telegram 超级群的话题（thread）显示为 "Group › Topic"，方便区分同一群组下的不同话题；
+      // 普通私信或未开启话题的绑定保持原样。
       const channelLabel = b.threadId !== undefined
         ? `${baseLabel} › Topic #${b.threadId}`
         : baseLabel;
@@ -55,7 +54,7 @@ export async function handleListMessagingChannels(
 }
 
 // ---------------------------------------------------------------------------
-// unbind_messaging_channel
+// unbind_messaging_channel：解绑当前会话的消息通道
 // ---------------------------------------------------------------------------
 
 export interface UnbindMessagingChannelArgs {

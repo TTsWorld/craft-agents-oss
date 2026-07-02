@@ -1,13 +1,13 @@
 /**
  * Automation UI Types
  *
- * UI-specific types for the automations components.
+ * 自动化组件专用的 UI 类型。
  *
- * ARCHITECTURE NOTE: These types are mirrored from packages/shared/src/automations/types.ts.
- * The renderer runs in a browser context and CANNOT import from @craft-agent/shared,
- * which uses Node.js APIs (crypto, fs, etc.). Additionally, the automations package is not
- * exported as a package entry point. These types must be manually kept in sync.
- * See apps/electron/CLAUDE.md "Common Mistake: Node.js APIs in Renderer".
+ * 架构说明：这些类型是从 packages/shared/src/automations/types.ts 镜像过来的。
+ * renderer 运行在浏览器上下文，无法导入 @craft-agent/shared（它使用了 Node.js API，
+ * 如 crypto、fs 等）。另外 automations 包也没有作为包入口导出。因此这些类型必须
+ * 手动保持同步。
+ * 详见 apps/electron/CLAUDE.md 中的“Common Mistake: Node.js APIs in Renderer”。
  */
 
 import { computeNextRuns } from './utils'
@@ -16,9 +16,10 @@ import type { ThinkingLevel } from '@craft-agent/shared/agent/thinking-levels'
 import { DEFAULT_WEBHOOK_METHOD } from './constants'
 
 // ============================================================================
-// Automation System Types (mirrored from packages/shared/src/automations/types.ts)
+// 自动化系统类型（从 packages/shared/src/automations/types.ts 镜像）
 // ============================================================================
 
+// App 事件：应用层生命周期或状态变化事件
 export type AppEvent =
   | 'LabelAdd'
   | 'LabelRemove'
@@ -29,6 +30,7 @@ export type AppEvent =
   | 'SessionStatusChange'
   | 'SchedulerTick'
 
+// Agent 事件：Agent 运行过程中的各类钩子事件
 export type AgentEvent =
   | 'PreToolUse'
   | 'PostToolUse'
@@ -57,17 +59,19 @@ export const AGENT_EVENTS: AgentEvent[] = [
   'SubagentStart', 'SubagentStop', 'PreCompact', 'PermissionRequest', 'Setup'
 ]
 
+// Prompt 动作：触发后会新建一个 session 并向其发送 prompt
 export interface PromptAction {
   type: 'prompt'
   prompt: string
-  /** LLM connection slug override for the spawned session */
+  /** 覆盖本次触发所创建 session 的 LLM 连接 slug */
   llmConnection?: string
-  /** Model ID override for the spawned session */
+  /** 覆盖本次触发所创建 session 的模型 ID */
   model?: string
-  /** Thinking level override for the spawned session */
+  /** 覆盖本次触发所创建 session 的思考级别 */
   thinkingLevel?: ThinkingLevel
 }
 
+// Webhook 动作：触发后向指定 URL 发起 HTTP 请求
 export interface WebhookAction {
   type: 'webhook'
   url: string
@@ -82,7 +86,7 @@ export interface WebhookAction {
 export type AutomationAction = PromptAction | WebhookAction
 
 // ============================================================================
-// Conditions (mirrored from packages/shared/src/automations/types.ts)
+// 条件类型（从 packages/shared/src/automations/types.ts 镜像）
 // ============================================================================
 
 export interface TimeConditionUI {
@@ -110,7 +114,7 @@ export interface LogicalConditionUI {
 
 export type AutomationConditionUI = TimeConditionUI | StateConditionUI | LogicalConditionUI
 
-/** Human-friendly field names for state conditions */
+/** 状态条件字段的人类可读名称 */
 const FIELD_LABELS: Record<string, string> = {
   permissionMode: 'permission mode',
   sessionStatus: 'session status',
@@ -119,12 +123,12 @@ const FIELD_LABELS: Record<string, string> = {
   sessionName: 'session name',
 }
 
-/** Get a readable field name, falling back to the raw field */
+/** 获取可读字段名，找不到时返回原始字段 */
 function fieldLabel(field: string): string {
   return FIELD_LABELS[field] ?? field
 }
 
-/** Produce a short human-readable label for a single leaf condition */
+/** 为单个叶子条件生成简短的人类可读说明 */
 function describeLeaf(c: AutomationConditionUI): string {
   switch (c.condition) {
     case 'time': {
@@ -165,18 +169,18 @@ function describeLeaf(c: AutomationConditionUI): string {
 }
 
 /**
- * Flatten a condition tree into displayable rows.
- * Logical conditions are expanded so their children appear as joined text.
- * Returns an array of { label, description } for rendering in Info_Table.
+ * 把条件树扁平化为适合表格展示的行。
+ * 逻辑条件会被展开，子条件以文本形式连接。
+ * 返回 { label, description } 数组，供 Info_Table 渲染。
  */
 export function flattenConditions(conditions: AutomationConditionUI[]): { label: string; description: string }[] {
   const rows: { label: string; description: string }[] = []
   for (const c of conditions) {
     if (c.condition === 'and' || c.condition === 'or' || c.condition === 'not') {
-      // Flatten: join inner descriptions with the operator
+      // 扁平化：用逻辑运算符连接内部描述
       const sep = c.condition === 'not' ? ' and not ' : ` ${c.condition} `
       const inner = c.conditions.map(describeLeaf).join(sep)
-      // Use the label of the first child type, or 'Condition' as fallback
+      // 取第一个子条件的类型作为 label，没有则回退为 'Condition'
       const firstChild = c.conditions[0]
       const label = firstChild
         ? firstChild.condition === 'time' ? 'Time'
@@ -193,48 +197,47 @@ export function flattenConditions(conditions: AutomationConditionUI[]): { label:
 }
 
 // ============================================================================
-// List Item (flattened from automations.json for display)
+// 列表项（由 automations.json 展平而来，用于展示）
 // ============================================================================
 
 export interface AutomationListItem {
-  /** Stable 6-char hex ID from automations.json, with fallback to event+index for legacy configs */
+  /** 稳定的 6 位十六进制 ID，来自 automations.json；老配置回退为 event+index */
   id: string
-  /** The event this automation listens to */
+  /** 该自动化监听的事件 */
   event: AutomationTrigger
-  /** Index of this matcher within its event array in automations.json (for write-back) */
+  /** 该 matcher 在 automations.json 对应事件数组中的索引，用于写回 */
   matcherIndex: number
-  /** Display name (user-set or auto-derived) */
+  /** 显示名称（用户设置或自动生成） */
   name: string
-  /** Human-readable summary */
+  /** 人类可读的摘要 */
   summary: string
-  /** Whether this automation is enabled */
+  /** 是否启用 */
   enabled: boolean
-  /** Regex matcher (if any) */
+  /** 正则匹配器（如果有） */
   matcher?: string
-  /** Cron expression (SchedulerTick only) */
+  /** Cron 表达式（仅 SchedulerTick） */
   cron?: string
-  /** IANA timezone for cron */
+  /** Cron 的 IANA 时区 */
   timezone?: string
-  /** Permission mode */
+  /** 权限模式 */
   permissionMode?: PermissionMode
-  /** Labels for prompt sessions */
+  /** Prompt session 的标签 */
   labels?: string[]
-  /** Conditions that must pass before actions run */
+  /** 动作执行前必须满足的条件 */
   conditions?: AutomationConditionUI[]
-  /** The actions this automation performs */
+  /** 该自动化执行的动作列表 */
   actions: AutomationAction[]
   /**
-   * Optional Telegram forum-topic name. When set, sessions spawned by this
-   * matcher are bound to a topic of this name in the workspace's paired
-   * supergroup (created on first use).
+   * 可选的 Telegram 论坛主题名。设置后，该 matcher 创建的 session
+   * 会绑定到工作区配对超级群中的同名主题（首次使用时创建）。
    */
   telegramTopic?: string
-  /** Timestamp of last execution (ms since epoch) */
+  /** 上次执行时间戳（毫秒，自 epoch） */
   lastExecutedAt?: number
 }
 
 // ============================================================================
-// Filter
+// 筛选
 // ============================================================================
 
 export type AutomationFilterKind = 'all' | 'app' | 'agent' | 'scheduled'
@@ -243,7 +246,7 @@ export interface AutomationListFilter {
   kind: AutomationFilterKind
 }
 
-/** Maps task type (from route) to AutomationFilterKind for the list panel */
+/** 把路由中的任务类型映射为列表面板使用的 AutomationFilterKind */
 export const AUTOMATION_TYPE_TO_FILTER_KIND: Record<string, AutomationFilterKind> = {
   scheduled: 'scheduled',
   event: 'app',
@@ -251,7 +254,7 @@ export const AUTOMATION_TYPE_TO_FILTER_KIND: Record<string, AutomationFilterKind
 }
 
 // ============================================================================
-// Execution History
+// 执行历史
 // ============================================================================
 
 export type ExecutionStatus = 'success' | 'error' | 'blocked'
@@ -271,22 +274,22 @@ export interface ExecutionEntry {
   automationId: string
   event: AutomationTrigger
   status: ExecutionStatus
-  /** Duration in milliseconds */
+  /** 执行耗时，单位毫秒 */
   duration: number
-  /** Timestamp in ms since epoch */
+  /** 时间戳，单位毫秒，自 epoch */
   timestamp: number
-  /** Error message (if status === 'error') */
+  /** 错误信息（当 status === 'error' 时） */
   error?: string
-  /** Truncated action summary */
+  /** 截断后的动作摘要 */
   actionSummary?: string
-  /** Session ID created by this execution (for deep linking) */
+  /** 本次执行创建的 session ID，用于深链跳转 */
   sessionId?: string
-  /** Structured webhook execution details (expandable in timeline) */
+  /** 结构化的 webhook 执行详情（在时间线中可展开） */
   webhookDetails?: WebhookDetails
 }
 
 // ============================================================================
-// Test Panel
+// 测试面板
 // ============================================================================
 
 export type TestState = 'idle' | 'running' | 'success' | 'error'
@@ -298,12 +301,12 @@ export interface TestResult {
 }
 
 // ============================================================================
-// Human-Friendly Display Names
+// 人类友好的显示名称
 // ============================================================================
 
-/** Maps internal event names to user-friendly labels */
+/** 内部事件名到用户可读标签的映射 */
 export const EVENT_DISPLAY_NAMES: Record<AutomationTrigger, string> = {
-  // App events
+  // App 事件
   LabelAdd:             'Label Added',
   LabelRemove:          'Label Removed',
   LabelConfigChange:    'Label Settings Changed',
@@ -313,7 +316,7 @@ export const EVENT_DISPLAY_NAMES: Record<AutomationTrigger, string> = {
   SessionStatusChange:  'Status Changed',
   SchedulerTick:        'Scheduled',
 
-  // Agent events
+  // Agent 事件
   PreToolUse:           'Before Tool Runs',
   PostToolUse:          'After Tool Runs',
   PostToolUseFailure:   'When Tool Fails',
@@ -333,7 +336,7 @@ export function getEventDisplayName(event: AutomationTrigger): string {
   return EVENT_DISPLAY_NAMES[event] ?? event
 }
 
-/** Maps permission mode values to user-friendly labels */
+/** 权限模式值到用户可读标签的映射 */
 export const PERMISSION_DISPLAY_NAMES: Record<PermissionMode, string> = {
   'safe':      'Explore',
   'ask':       'Ask',
@@ -346,7 +349,7 @@ export function getPermissionDisplayName(mode?: PermissionMode): string {
 }
 
 // ============================================================================
-// Event Categorization (for AutomationAvatar colors)
+// 事件分类（用于 AutomationAvatar 着色）
 // ============================================================================
 
 export type EventCategory =
@@ -362,10 +365,10 @@ export type EventCategory =
   | 'other'
 
 // ============================================================================
-// automations.json Parser
+// automations.json 解析器
 // ============================================================================
 
-/** Raw automations.json file structure */
+/** automations.json 文件的原始结构 */
 interface AutomationsConfigFile {
   version: number
   automations?: Record<string, AutomationsConfigMatcher[]>
@@ -388,7 +391,7 @@ interface AutomationsConfigMatcher {
   actions?: RawAction[]
 }
 
-/** Derive a human-readable name from task actions and event */
+/** 根据动作和事件生成人类可读的名称 */
 function deriveAutomationName(event: string, matcher: AutomationsConfigMatcher): string {
   if (matcher.name) return matcher.name
   const allActions = matcher.actions ?? []
@@ -400,7 +403,7 @@ function deriveAutomationName(event: string, matcher: AutomationsConfigMatcher):
     return label.length > 40 ? label.slice(0, 40) + '...' : label
   }
 
-  // Extract @skill mentions or use first ~40 chars
+  // 提取 @skill 引用，或取前约 40 个字符
   const mentionMatch = firstAction.prompt.match(/@(\S+)/)
   if (mentionMatch) return `${mentionMatch[1]} prompt`
   return firstAction.prompt.length > 40
@@ -408,7 +411,7 @@ function deriveAutomationName(event: string, matcher: AutomationsConfigMatcher):
     : firstAction.prompt
 }
 
-/** Derive a summary line from the matcher/cron/event */
+/** 根据 matcher/cron/event 生成摘要行 */
 function deriveAutomationSummary(event: string, matcher: AutomationsConfigMatcher): string {
   if (matcher.cron) {
     const runs = computeNextRuns(matcher.cron, 1)
@@ -434,8 +437,8 @@ function deriveAutomationSummary(event: string, matcher: AutomationsConfigMatche
 }
 
 /**
- * Parse an automations.json file into a flat list of AutomationListItem[].
- * Each matcher entry under each event becomes one item.
+ * 把 automations.json 解析为扁平的 AutomationListItem[]。
+ * 每个事件下的每个 matcher 条目都会变成列表中的一项。
  */
 export function parseAutomationsConfig(json: unknown): AutomationListItem[] {
   if (!json || typeof json !== 'object') return []

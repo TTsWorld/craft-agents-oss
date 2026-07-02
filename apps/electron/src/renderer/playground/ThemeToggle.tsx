@@ -2,14 +2,17 @@ import { Moon, Sun, Monitor } from 'lucide-react'
 import { useTheme } from '@/context/ThemeContext'
 import { cn } from '@/lib/utils'
 
+/** 主题模式：亮色 / 暗色 / 跟随系统 */
 type ThemeMode = 'light' | 'dark' | 'system'
 
+/** 可选主题模式配置 */
 const modes: { mode: ThemeMode; icon: typeof Sun; label: string }[] = [
   { mode: 'light', icon: Sun, label: 'Light' },
   { mode: 'dark', icon: Moon, label: 'Dark' },
   { mode: 'system', icon: Monitor, label: 'System' },
 ]
 
+/** 顶部主题切换按钮组（Light / Dark / System） */
 export function ThemeToggle() {
   const { mode, setMode } = useTheme()
 

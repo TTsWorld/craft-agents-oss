@@ -1,15 +1,14 @@
 /**
- * Empty shims for Node.js built-in modules.
+ * Node.js 内置模块的浏览器空垫片。
  *
- * The shared code (@craft-agent/shared) imports Node.js modules for
- * file system operations, but these codepaths are only reached on the server.
- * In the browser, the web API adapter intercepts all calls before they
- * reach server-side code.
+ * @craft-agent/shared 里有些代码静态 import 了 Node.js 模块（如 fs、path），
+ * 但这些代码路径只在服务端执行。在浏览器里，web API 适配器会先拦截所有调用，
+ * 不会真正走到这些 Node 代码里。
  *
- * These shims satisfy the bundler's static analysis without adding runtime bulk.
+ * 这些垫片只是为了满足打包器（bundler）的静态分析，同时不增加运行时体积。
  */
 
-// fs
+// fs：提供同名函数，大多是空实现或抛错
 export const readFileSync = () => { throw new Error('readFileSync not available in browser') }
 export const writeFileSync = () => { throw new Error('writeFileSync not available in browser') }
 export const existsSync = () => false
@@ -32,7 +31,7 @@ export const promises = {
   unlink: async () => {},
 }
 
-// path
+// path：极简实现，用 '/' 做分隔符
 export const join = (...parts: string[]) => parts.filter(Boolean).join('/')
 export const resolve = (...parts: string[]) => parts.filter(Boolean).join('/')
 export const basename = (p: string) => p.split('/').pop() ?? ''
@@ -52,14 +51,14 @@ export const execSync = () => { throw new Error('execSync not available in brows
 export const exec = () => { throw new Error('exec not available in browser') }
 export const spawn = () => { throw new Error('spawn not available in browser') }
 
-// os
+// os：返回一些占位值，避免上层代码读取时崩溃
 export const homedir = () => '/home/user'
 export const tmpdir = () => '/tmp'
 export const platform = () => 'linux'
 export const hostname = () => 'browser'
 export const cpus = () => [{}]
 
-// crypto (basic) — delegate to Web Crypto where possible
+// crypto：基础实现，随机相关功能委托给 Web Crypto
 export const randomBytes = (n: number) => {
   const buf = new Uint8Array(n)
   globalThis.crypto.getRandomValues(buf)
@@ -81,7 +80,7 @@ export const timingSafeEqual = (a: Uint8Array, b: Uint8Array) => {
   return result === 0
 }
 
-// https / http — server code imported but never executed in browser
+// https / http：只在服务端代码里被 import，浏览器端不会执行
 export const createServer = () => { throw new Error('createServer not available in browser') }
 export const request = () => { throw new Error('request not available in browser') }
 export const get = () => { throw new Error('get not available in browser') }
@@ -92,7 +91,7 @@ export const inspect = (obj: any) => String(obj)
 export const deprecate = (fn: any) => fn
 export const inherits = () => {}
 
-// buffer
+// buffer：用 Uint8Array 模拟 Buffer 的部分接口
 export const Buffer = {
   from: (data: any) => new Uint8Array(typeof data === 'string' ? new TextEncoder().encode(data) : data),
   isBuffer: () => false,
@@ -115,7 +114,7 @@ export const kill = () => {}
 export const exit = () => {}
 export const on = () => {}
 
-// Events — WebSocketServer imports EventEmitter
+// Events：WebSocketServer 会 import EventEmitter，这里提供一个最小实现
 export class EventEmitter {
   private _events: Record<string, Function[]> = {}
   on(event: string, fn: Function) { (this._events[event] ??= []).push(fn); return this }

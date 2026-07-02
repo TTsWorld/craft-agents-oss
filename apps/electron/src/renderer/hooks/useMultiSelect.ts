@@ -1,25 +1,24 @@
 /**
- * Multi-select state management for session list.
+ * 会话列表的多选状态管理。
  *
- * This module provides pure functions for managing multi-selection state,
- * enabling shift+click range selection, cmd/ctrl+click toggle, and keyboard
- * navigation with selection extension.
+ * 本模块提供一组纯函数用于管理多选状态，支持：
+ * - Shift+点击 区间选择
+ * - Cmd/Ctrl+点击 切换选择
+ * - 键盘导航并扩展选择
  */
 
 export type MultiSelectState = {
-  /** Currently active/focused session ID */
+  /** 当前激活/聚焦的会话 ID */
   selected: string | null
-  /** Set of all selected session IDs */
+  /** 所有已选会话 ID 集合 */
   selectedIds: Set<string>
-  /** Anchor ID for shift+click range selection */
+  /** Shift+点击区间选择的锚点 ID */
   anchorId: string | null
-  /** Anchor index for range selection (index in flat list) */
+  /** 区间选择的锚点索引（在扁平列表中的位置） */
   anchorIndex: number
 }
 
-/**
- * Create initial empty multi-select state
- */
+/** 创建空的多选状态 */
 export function createInitialState(): MultiSelectState {
   return {
     selected: null,
@@ -30,8 +29,8 @@ export function createInitialState(): MultiSelectState {
 }
 
 /**
- * Single select - clears all selection and selects only the given item.
- * Sets this item as the anchor for future shift+click operations.
+ * 单选：清空所有选择，只选中指定项。
+ * 把该项设为后续 Shift+点击的锚点。
  */
 export function singleSelect(id: string, index: number): MultiSelectState {
   return {
@@ -43,18 +42,18 @@ export function singleSelect(id: string, index: number): MultiSelectState {
 }
 
 /**
- * Toggle select - adds or removes an item from the selection (cmd/ctrl+click).
- * Updates the anchor to the toggled item.
- * Prevents deselecting the last item (minimum 1 must remain selected).
+ * 切换选择：添加或移除某项（Cmd/Ctrl+点击）。
+ * 把被切换项设为新的锚点。
+ * 禁止取消最后一个选中项（至少保留一项选中）。
  */
 export function toggleSelect(state: MultiSelectState, id: string, index: number): MultiSelectState {
   const newSelectedIds = new Set(state.selectedIds)
 
   if (newSelectedIds.has(id)) {
-    // Don't allow deselecting if it's the last item
+    // 只剩最后一项时不允许取消选择
     if (newSelectedIds.size > 1) {
       newSelectedIds.delete(id)
-      // If we removed the active selection, pick another one
+      // 若取消的是当前激活项，则把激活项换为集合中剩下的某一项
       const newSelected = state.selected === id
         ? [...newSelectedIds][0]
         : state.selected
@@ -65,10 +64,10 @@ export function toggleSelect(state: MultiSelectState, id: string, index: number)
         anchorIndex: index,
       }
     }
-    // Can't remove last item - return unchanged
+    // 不能移除最后一项，状态不变
     return state
   } else {
-    // Add to selection
+    // 添加到选择
     newSelectedIds.add(id)
     return {
       selected: id,
@@ -80,8 +79,8 @@ export function toggleSelect(state: MultiSelectState, id: string, index: number)
 }
 
 /**
- * Range select - selects all items between the anchor and the target index (shift+click).
- * The anchor remains unchanged, but the active selection moves to the target.
+ * 区间选择：选中锚点与目标索引之间的所有项（Shift+点击）。
+ * 锚点保持不变，激活项移动到目标位置。
  */
 export function rangeSelect(
   state: MultiSelectState,
@@ -92,29 +91,29 @@ export function rangeSelect(
     return state
   }
 
-  // Clamp target index to valid range
+  // 把目标索引限制在有效范围内
   const clampedToIndex = Math.max(0, Math.min(toIndex, items.length - 1))
 
-  // Find anchor position using key-based lookup (handles reordering and stale indices)
+  // 用基于键的查找定位锚点（可应对列表重排或索引过期）
   let anchorIndex: number
   if (state.anchorIndex >= 0 && state.anchorIndex < items.length &&
       items[state.anchorIndex] === state.anchorId) {
-    // Fast path: cached index is still valid
+    // 快路径：缓存索引仍有效
     anchorIndex = state.anchorIndex
   } else if (state.anchorId) {
-    // Look up anchor by ID (handles reordering)
+    // 按 ID 查找锚点（应对重排）
     const foundIndex = items.indexOf(state.anchorId)
     anchorIndex = foundIndex >= 0 ? foundIndex : clampedToIndex
   } else {
-    // No anchor set - use target as anchor (first shift+click/arrow)
+    // 没有锚点，把目标位置作为锚点（首次 Shift+点击/方向键）
     anchorIndex = clampedToIndex
   }
 
-  // Determine range direction
+  // 确定区间方向
   const startIndex = Math.min(anchorIndex, clampedToIndex)
   const endIndex = Math.max(anchorIndex, clampedToIndex)
 
-  // Select all items in range
+  // 选中区间内的所有项
   const newSelectedIds = new Set<string>()
   for (let i = startIndex; i <= endIndex; i++) {
     newSelectedIds.add(items[i])
@@ -129,23 +128,21 @@ export function rangeSelect(
 }
 
 /**
- * Extend selection - extends the current selection by one item (shift+arrow).
- * Unlike rangeSelect, this preserves existing selections outside the range
- * and just adds/adjusts the contiguous selection from anchor.
+ * 扩展选择：从锚点开始扩展一项（Shift+方向键）。
+ * 与 rangeSelect 行为相同，只是保留区间外的已有选择。
  */
 export function extendSelection(
   state: MultiSelectState,
   toIndex: number,
   items: string[]
 ): MultiSelectState {
-  // For shift+arrow, we want the same behavior as rangeSelect
-  // but keeping the anchor fixed
+  // Shift+方向键与 rangeSelect 行为一致，但锚点固定
   return rangeSelect(state, toIndex, items)
 }
 
 /**
- * Select all - selects all provided items.
- * Sets the first item as the anchor.
+ * 全选：选中所有提供的项。
+ * 把第一项设为锚点。
  */
 export function selectAll(items: string[]): MultiSelectState {
   if (items.length === 0) {
@@ -161,15 +158,14 @@ export function selectAll(items: string[]): MultiSelectState {
 }
 
 /**
- * Clear multi-select - reduces selection to only the currently active item.
- * If no active item, clears everything.
+ * 清除多选：只保留当前激活项。
+ * 如果没有激活项，则全部清空。
  */
 export function clearMultiSelect(state: MultiSelectState): MultiSelectState {
   if (!state.selected) {
     return createInitialState()
   }
 
-  // Find the index of the selected item if we need it
   return {
     selected: state.selected,
     selectedIds: new Set([state.selected]),
@@ -179,8 +175,8 @@ export function clearMultiSelect(state: MultiSelectState): MultiSelectState {
 }
 
 /**
- * Remove items from selection - removes the given IDs from the selection.
- * Used when items are deleted.
+ * 从选择中移除指定 ID。
+ * 在会话被删除时使用。
  */
 export function removeFromSelection(
   state: MultiSelectState,
@@ -191,12 +187,12 @@ export function removeFromSelection(
     [...state.selectedIds].filter(id => !removeSet.has(id))
   )
 
-  // If selected item was removed, pick first remaining or null
+  // 若当前激活项被移除，则选择剩余第一项或 null
   const newSelected = removeSet.has(state.selected ?? '')
     ? [...newSelectedIds][0] ?? null
     : state.selected
 
-  // If anchor was removed, reset it
+  // 若锚点被移除，则重置为当前激活项
   const newAnchorId = removeSet.has(state.anchorId ?? '')
     ? newSelected
     : state.anchorId
@@ -205,27 +201,21 @@ export function removeFromSelection(
     selected: newSelected,
     selectedIds: newSelectedIds,
     anchorId: newAnchorId,
-    anchorIndex: state.anchorIndex, // Index may be stale but will be updated on next interaction
+    anchorIndex: state.anchorIndex, // 索引可能过期，下次交互时会更新
   }
 }
 
-/**
- * Check if multi-select mode is active (more than one item selected)
- */
+/** 检查是否处于多选模式（选中项超过一个） */
 export function isMultiSelectActive(state: MultiSelectState): boolean {
   return state.selectedIds.size > 1
 }
 
-/**
- * Get the count of selected items
- */
+/** 获取已选中项数量 */
 export function getSelectionCount(state: MultiSelectState): number {
   return state.selectedIds.size
 }
 
-/**
- * Check if a specific item is in the selection
- */
+/** 检查指定项是否被选中 */
 export function isItemSelected(state: MultiSelectState, id: string): boolean {
   return state.selectedIds.has(id)
 }

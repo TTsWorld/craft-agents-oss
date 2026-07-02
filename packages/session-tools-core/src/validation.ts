@@ -1,8 +1,8 @@
 /**
- * Session Tools Core - Validation Utilities
+ * session-tools-core 的校验工具
  *
- * Shared validation logic for session-scoped tools.
- * Provides portable validation that works in both Claude and Codex contexts.
+ * 供 session 级 tool 使用的共享校验逻辑。
+ * 在 Claude 和 Codex 两种上下文中都能运行的可移植校验。
  */
 
 import { z } from 'zod';
@@ -10,24 +10,24 @@ import matter from 'gray-matter';
 import { existsSync, readFileSync } from 'node:fs';
 import type { ValidationResult, ValidationIssue } from './types.ts';
 
-/** Strip UTF-8 BOM that breaks JSON.parse */
+/** 去除会干扰 JSON.parse 的 UTF-8 BOM */
 function stripBom(text: string): string {
   return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
 }
 
 // ============================================================
-// Validation Result Helpers
+// 校验结果辅助函数
 // ============================================================
 
 /**
- * Create an empty valid result
+ * 创建一个表示“通过”的空结果
  */
 export function validResult(): ValidationResult {
   return { valid: true, errors: [], warnings: [] };
 }
 
 /**
- * Create an invalid result with a single error
+ * 创建一个包含单条错误的结果
  */
 export function invalidResult(path: string, message: string, suggestion?: string): ValidationResult {
   return {
@@ -38,7 +38,7 @@ export function invalidResult(path: string, message: string, suggestion?: string
 }
 
 /**
- * Merge multiple validation results into one
+ * 把多个校验结果合并成一个
  */
 export function mergeResults(...results: ValidationResult[]): ValidationResult {
   const errors: ValidationIssue[] = [];
@@ -57,12 +57,12 @@ export function mergeResults(...results: ValidationResult[]): ValidationResult {
 }
 
 // ============================================================
-// Validation Result Formatting
+// 校验结果格式化
 // ============================================================
 
 /**
- * Format validation result as human-readable text for tool responses.
- * This is the simplified version used by session tools.
+ * 把校验结果格式化成适合 tool 响应的人类可读文本。
+ * 这是 session tool 使用的简化版本。
  */
 export function formatValidationResult(result: ValidationResult): string {
   const lines: string[] = [];
@@ -94,11 +94,11 @@ export function formatValidationResult(result: ValidationResult): string {
 }
 
 // ============================================================
-// JSON Validation
+// JSON 校验
 // ============================================================
 
 /**
- * Validate JSON file existence and parse it
+ * 校验 JSON 文件是否存在并解析它
  */
 export function readJsonFile(filePath: string): { success: true; data: unknown } | { success: false; error: string } {
   if (!existsSync(filePath)) {
@@ -116,7 +116,7 @@ export function readJsonFile(filePath: string): { success: true; data: unknown }
 }
 
 /**
- * Validate a JSON file has required fields
+ * 校验 JSON 文件是否包含指定必填字段
  */
 export function validateJsonFileHasFields(
   filePath: string,
@@ -148,7 +148,7 @@ export function validateJsonFileHasFields(
 }
 
 /**
- * Convert Zod error to ValidationIssues
+ * 把 Zod 错误转换成 ValidationIssue 数组
  */
 export function zodErrorToIssues(error: z.ZodError, filePath: string): ValidationIssue[] {
   return error.issues.map((issue) => ({
@@ -158,16 +158,16 @@ export function zodErrorToIssues(error: z.ZodError, filePath: string): Validatio
 }
 
 // ============================================================
-// Slug Validation
+// Slug 校验
 // ============================================================
 
 /**
- * Regex for valid slugs: lowercase alphanumeric with hyphens
+ * 合法 slug 的正则：小写字母、数字和连字符
  */
 export const SLUG_REGEX = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
 
 /**
- * Validate a slug format
+ * 校验 slug 格式
  */
 export function validateSlug(slug: string): ValidationResult {
   if (!SLUG_REGEX.test(slug)) {
@@ -188,11 +188,11 @@ export function validateSlug(slug: string): ValidationResult {
 }
 
 // ============================================================
-// Skill Validation
+// Skill 校验
 // ============================================================
 
 /**
- * Zod schema for skill metadata (SKILL.md frontmatter)
+ * skill 元数据的 Zod schema（SKILL.md 的 frontmatter）
  */
 export const SkillMetadataSchema = z.object({
   name: z.string().min(1, "Add a 'name' field with a human-readable title"),
@@ -204,21 +204,21 @@ export const SkillMetadataSchema = z.object({
 }).passthrough();
 
 /**
- * Validate skill SKILL.md content (without filesystem access).
- * Used by both Claude and Codex implementations.
+ * 校验 SKILL.md 内容（无需访问文件系统）。
+ * Claude 和 Codex 的实现都会使用。
  *
- * @param markdownContent - The full SKILL.md file content
- * @param slug - The skill slug (folder name), used for slug format validation
+ * @param markdownContent - 完整的 SKILL.md 文件内容
+ * @param slug - skill 的 slug（文件夹名），用于校验 slug 格式
  */
 export function validateSkillContent(markdownContent: string, slug: string): ValidationResult {
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
 
-  // 1. Validate slug format
+  // 1. 校验 slug 格式
   const slugResult = validateSlug(slug);
   errors.push(...slugResult.errors);
 
-  // 2. Parse frontmatter
+  // 2. 解析 frontmatter
   let frontmatter: unknown;
   let body: string;
   try {
@@ -233,13 +233,13 @@ export function validateSkillContent(markdownContent: string, slug: string): Val
     );
   }
 
-  // 3. Validate frontmatter schema
+  // 3. 校验 frontmatter schema
   const metaResult = SkillMetadataSchema.safeParse(frontmatter);
   if (!metaResult.success) {
     errors.push(...zodErrorToIssues(metaResult.error, 'SKILL.md'));
   }
 
-  // 4. Check content is not empty
+  // 4. 检查正文是否为空
   if (!body || body.trim().length === 0) {
     errors.push({
       path: 'content',
@@ -256,11 +256,11 @@ export function validateSkillContent(markdownContent: string, slug: string): Val
 }
 
 // ============================================================
-// Mermaid Validation (Basic Syntax Check)
+// Mermaid 校验（基础语法检查）
 // ============================================================
 
 /**
- * Valid mermaid diagram types
+ * 合法的 Mermaid 图表类型
  */
 export const MERMAID_DIAGRAM_TYPES = [
   'graph', 'flowchart', 'sequenceDiagram', 'classDiagram',
@@ -268,7 +268,7 @@ export const MERMAID_DIAGRAM_TYPES = [
   'timeline', 'gitGraph', 'C4Context', 'sankey', 'xychart', 'xychart-beta',
 ] as const;
 
-/** Remove Mermaid YAML frontmatter (`--- ... ---`) from the start of a diagram. */
+/** 移除图表开头的 Mermaid YAML frontmatter（`--- ... ---`）。 */
 export function stripMermaidFrontmatter(code: string): string {
   const withoutBom = code.replace(/^\uFEFF/, '');
   const leadingWhitespaceMatch = withoutBom.match(/^\s*/);
@@ -285,11 +285,10 @@ export function stripMermaidFrontmatter(code: string): string {
 }
 
 /**
- * Normalize Mermaid before validation/rendering through native tooling.
+ * 在使用原生工具校验/渲染前，对 Mermaid 源码做规范化。
  *
- * Frontmatter is metadata, not diagram syntax. Leading Mermaid comments/directives
- * are also skipped so diagram-type detection matches the renderer pipeline for
- * charts such as `xychart-beta`.
+ * Frontmatter 是元数据，不是图表语法。开头的 Mermaid 注释/指令也跳过，
+ * 这样图表类型检测才能与渲染管线一致，例如 `xychart-beta`。
  */
 export function normalizeMermaidSource(code: string): string {
   const lines = stripMermaidFrontmatter(code).split(/\r?\n/);
@@ -309,14 +308,14 @@ function getFirstMermaidDiagramLine(code: string): string {
 }
 
 /**
- * Basic mermaid syntax validation (no rendering).
- * Checks for common syntax errors without requiring a browser.
+ * 基础 Mermaid 语法校验（不渲染）。
+ * 只检查常见语法错误，不需要浏览器。
  */
 export function validateMermaidSyntax(code: string): ValidationResult {
   const normalizedCode = normalizeMermaidSource(code);
   const firstLine = getFirstMermaidDiagramLine(code);
 
-  // Check diagram type declaration
+  // 检查图表类型声明
   const hasValidType = MERMAID_DIAGRAM_TYPES.some(type =>
     firstLine.startsWith(type) || firstLine.startsWith(`${type}-v2`)
   );
@@ -329,7 +328,7 @@ export function validateMermaidSyntax(code: string): ValidationResult {
     );
   }
 
-  // Check for unbalanced brackets
+  // 检查括号是否成对
   const brackets = { '[': 0, '{': 0, '(': 0 };
   for (const char of normalizedCode) {
     if (char === '[') brackets['[']++;
@@ -357,22 +356,22 @@ export function validateMermaidSyntax(code: string): ValidationResult {
 }
 
 // ============================================================
-// Source Config Validation (Basic)
+// Source 配置校验（基础版）
 // ============================================================
 
 /**
- * Required fields for source config.json
+ * source config.json 的必填字段
  */
 export const SOURCE_CONFIG_REQUIRED_FIELDS = ['slug', 'name', 'type'];
 
 /**
- * Valid source types
+ * 合法的 source 类型
  */
 export const SOURCE_TYPES = ['mcp', 'api', 'local'] as const;
 
 /**
- * Basic source config validation (schema-level).
- * For full validation with Zod schemas, use the validators from packages/shared.
+ * 基础的 source 配置校验（schema 级别）。
+ * 如需完整的 Zod schema 校验，请使用 packages/shared 里的校验器。
  */
 export function validateSourceConfigBasic(config: unknown): ValidationResult {
   if (typeof config !== 'object' || config === null) {
@@ -382,7 +381,7 @@ export function validateSourceConfigBasic(config: unknown): ValidationResult {
   const errors: ValidationIssue[] = [];
   const data = config as Record<string, unknown>;
 
-  // Check required fields
+  // 检查必填字段
   for (const field of SOURCE_CONFIG_REQUIRED_FIELDS) {
     if (!(field in data)) {
       errors.push({
@@ -392,7 +391,7 @@ export function validateSourceConfigBasic(config: unknown): ValidationResult {
     }
   }
 
-  // Validate type if present
+  // 如果存在 type，校验其合法性
   if ('type' in data && !SOURCE_TYPES.includes(data.type as typeof SOURCE_TYPES[number])) {
     errors.push({
       path: 'type',
@@ -400,7 +399,7 @@ export function validateSourceConfigBasic(config: unknown): ValidationResult {
     });
   }
 
-  // Validate slug format if present
+  // 如果存在 slug，校验其格式
   if ('slug' in data && typeof data.slug === 'string') {
     const slugResult = validateSlug(data.slug);
     errors.push(...slugResult.errors);

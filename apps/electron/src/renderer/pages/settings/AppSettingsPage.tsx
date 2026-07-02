@@ -1,15 +1,15 @@
 /**
  * AppSettingsPage
  *
- * Global app-level settings that apply across all workspaces.
+ * 应用级全局设置：对所有 workspace 生效。
  *
- * Settings:
- * - Notifications
- * - Network (proxy)
- * - About (version, updates)
+ * 设置项：
+ * - 通知
+ * - 网络（代理）
+ * - 关于（版本、更新）
  *
- * Note: AI settings (connections, model, thinking) have been moved to AiSettingsPage.
- * Note: Appearance settings (theme, font) have been moved to AppearanceSettingsPage.
+ * 注意：AI 相关设置（连接、模型、思考级别）已移到 AiSettingsPage。
+ * 注意：外观设置（主题、字体）已移到 AppearanceSettingsPage。
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
@@ -39,7 +39,7 @@ export const meta: DetailsPageMeta = {
 }
 
 // ============================================
-// Proxy form helpers
+// 代理表单辅助函数
 // ============================================
 
 interface ProxyFormState {
@@ -89,28 +89,28 @@ function validateProxyUrl(url: string): string | undefined {
 }
 
 // ============================================
-// Main Component
+// 主组件
 // ============================================
 
 export default function AppSettingsPage() {
   const { t } = useTranslation()
 
-  // Notifications state
+  // 通知开关状态
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
 
-  // Power state
+  // 保持唤醒状态
   const [keepAwakeEnabled, setKeepAwakeEnabled] = useState(false)
 
-  // Tools state
+  // 内置浏览器工具开关
   const [browserToolEnabled, setBrowserToolEnabled] = useState(true)
 
-  // Proxy state
+  // 代理表单状态
   const [proxyForm, setProxyForm] = useState<ProxyFormState>(EMPTY_PROXY_FORM)
   const [savedProxyForm, setSavedProxyForm] = useState<ProxyFormState>(EMPTY_PROXY_FORM)
   const [proxyError, setProxyError] = useState<string | undefined>()
   const [isSavingProxy, setIsSavingProxy] = useState(false)
 
-  // Auto-update state (Check Now / Update Ready only shown in Electron, not WebUI)
+  // 自动更新状态（仅 Electron 显示“检查更新/更新就绪”，WebUI 不显示）
   const isElectron = window.electronAPI.getRuntimeEnvironment() === 'electron'
   const updateChecker = useUpdateChecker()
   const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false)
@@ -124,7 +124,7 @@ export default function AppSettingsPage() {
     }
   }, [updateChecker])
 
-  // Load settings on mount
+  // 挂载时加载设置
   const loadSettings = useCallback(async () => {
     if (!window.electronAPI) return
     try {
@@ -141,7 +141,7 @@ export default function AppSettingsPage() {
       setProxyForm(form)
       setSavedProxyForm(form)
     } catch (error) {
-      console.error('Failed to load settings:', error)
+      console.error('加载设置失败:', error)
     }
   }, [])
 
@@ -164,13 +164,13 @@ export default function AppSettingsPage() {
     await window.electronAPI.setBrowserToolEnabled(enabled)
   }, [])
 
-  // Proxy handlers
+  // 代理相关处理
   const isProxyDirty = useMemo(() => {
     return JSON.stringify(proxyForm) !== JSON.stringify(savedProxyForm)
   }, [proxyForm, savedProxyForm])
 
   const handleSaveProxy = useCallback(async () => {
-    // Validate URLs
+    // 校验 URL
     const httpErr = validateProxyUrl(proxyForm.httpProxy)
     const httpsErr = validateProxyUrl(proxyForm.httpsProxy)
     if (httpErr || httpsErr) {
@@ -182,7 +182,7 @@ export default function AppSettingsPage() {
     try {
       const settings = toNetworkProxySettings(proxyForm)
       await window.electronAPI.setNetworkProxySettings(settings)
-      // Re-read persisted state to confirm
+      // 重新读取持久化状态以确认保存成功
       const persisted = await window.electronAPI.getNetworkProxySettings()
       const form = toProxyFormState(persisted)
       setProxyForm(form)
@@ -206,7 +206,7 @@ export default function AppSettingsPage() {
         <ScrollArea className="h-full">
           <div className="px-5 py-7 max-w-3xl mx-auto">
             <div className="space-y-8">
-              {/* Notifications */}
+              {/* 通知 */}
               <SettingsSection title={t("settings.notifications.title")}>
                 <SettingsCard>
                   <SettingsToggle
@@ -218,7 +218,7 @@ export default function AppSettingsPage() {
                 </SettingsCard>
               </SettingsSection>
 
-              {/* Power */}
+              {/* 电源 */}
               <SettingsSection title={t("settings.power.title")}>
                 <SettingsCard>
                   <SettingsToggle
@@ -230,7 +230,7 @@ export default function AppSettingsPage() {
                 </SettingsCard>
               </SettingsSection>
 
-              {/* Tools */}
+              {/* 工具 */}
               <SettingsSection title={t("settings.tools.title")}>
                 <SettingsCard>
                   <SettingsToggle
@@ -242,7 +242,7 @@ export default function AppSettingsPage() {
                 </SettingsCard>
               </SettingsSection>
 
-              {/* Network */}
+              {/* 网络 */}
               <SettingsSection title={t("settings.network.title")}>
                 <SettingsCard>
                   <SettingsToggle
@@ -308,7 +308,7 @@ export default function AppSettingsPage() {
                 </SettingsCard>
               </SettingsSection>
 
-              {/* About */}
+              {/* 关于 */}
               <SettingsSection title={t("settings.about.title")}>
                 <SettingsCard>
                   <SettingsRow label={t("settings.about.version")}>

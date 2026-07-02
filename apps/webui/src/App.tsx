@@ -1,11 +1,12 @@
 /**
- * Web UI App — thin wrapper that:
- * 1. Fetches WS config from the server
- * 2. Creates the web API adapter + sets window.electronAPI
- * 3. Delegates to the Electron renderer's App component
+ * Web UI 的顶层 App 组件。
  *
- * Mobile responsiveness is handled by container queries and isAutoCompact
- * in the shared renderer components — no webui-specific layout hacks needed.
+ * 主要职责：
+ * 1. 从服务器获取 WebSocket 配置；
+ * 2. 创建 web API adapter 并设置 window.electronAPI；
+ * 3. 挂载 Electron renderer 的 App 组件。
+ *
+ * 移动端响应式由共享 renderer 组件里的容器查询处理，这里不需要额外布局。
  */
 
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react'
@@ -13,11 +14,10 @@ import { useTranslation } from 'react-i18next'
 import { createWebApi } from './adapter/web-api'
 import type { WsRpcClient } from '../../electron/src/transport/client'
 
-// Lazy-load the Electron App after window.electronAPI is set up.
-// This prevents any Electron component from accessing window.electronAPI
-// before the web adapter is ready.
+// 懒加载 Electron 的 App 组件，确保 window.electronAPI 已就绪后再渲染
 const ElectronApp = lazy(() => import('@/App'))
 
+// 页面状态：加载中 / 出错 / 就绪
 type Phase = 'loading' | 'error' | 'ready'
 
 function LoadingScreen() {
@@ -61,8 +61,10 @@ function ErrorScreen({ message, onRetry }: { message: string; onRetry: () => voi
 }
 
 export default function App() {
+  // useState<Phase> 是泛型写法，表示状态类型为 Phase
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState('')
+  // useRef 保存可变值，切换/重试时不会触发重新渲染
   const clientRef = useRef<WsRpcClient | null>(null)
   const initRef = useRef(false)
 
@@ -71,26 +73,26 @@ export default function App() {
     setError('')
 
     try {
-      // 1. Fetch WS URL from the server (cookie auth)
+      // 1. 通过 cookie 认证获取 WS URL
       const configRes = await fetch('/api/config', { credentials: 'same-origin' })
       if (!configRes.ok) {
         if (configRes.status === 401) {
-          // Session expired — redirect to login
+          // 会话过期，跳回登录页
           window.location.href = '/login'
           return
         }
         throw new Error(`Failed to fetch config: ${configRes.status}`)
       }
 
+      // as { wsUrl: string } 把未知 JSON 断言为具体类型
       const { wsUrl } = await configRes.json() as { wsUrl: string }
       if (!wsUrl) throw new Error('Server did not return a WebSocket URL')
 
-      // 2. Determine workspace — check URL params first
+      // 2. 决定 workspace：优先从 URL 查询参数读取
       const params = new URLSearchParams(window.location.search)
       let workspaceId = params.get('workspace') ?? undefined
 
-      // If no workspace in URL, fetch the default from the server
-      // so we can include it in the WebSocket handshake
+      // URL 里没有 workspace 时，从服务器取默认值，以便在 WebSocket 握手时带上
       if (!workspaceId) {
         try {
           const wsRes = await fetch('/api/config/workspaces', { credentials: 'same-origin' })
@@ -99,12 +101,12 @@ export default function App() {
             if (defaultWorkspaceId) workspaceId = defaultWorkspaceId
           }
         } catch {
-          // Non-fatal — workspace will be set via switchWorkspace later
+          // 非致命错误，后面还能通过 switchWorkspace 设置 workspace
         }
       }
 
-      // 3. Create web API adapter
-      // Destroy previous client on retry
+      // 3. 创建 web API adapter
+      // 重试时先销毁之前的 client，避免连接泄漏
       if (clientRef.current) {
         clientRef.current.destroy()
       }
@@ -112,10 +114,10 @@ export default function App() {
       const { api, client } = createWebApi({ serverUrl: wsUrl, workspaceId })
       clientRef.current = client
 
-      // 4. Set window.electronAPI — must happen before any Electron component mounts
+      // 4. 把 api 挂到 window.electronAPI 上，必须在任何 Electron 组件挂载前完成
       ;(window as any).electronAPI = api
 
-      // 5. Connect the WebSocket client
+      // 5. 发起 WebSocket 连接
       client.connect()
 
       setPhase('ready')
@@ -133,7 +135,7 @@ export default function App() {
     }
 
     return () => {
-      // Cleanup on unmount
+      // 组件卸载时清理 WebSocket 客户端
       clientRef.current?.destroy()
     }
   }, [])

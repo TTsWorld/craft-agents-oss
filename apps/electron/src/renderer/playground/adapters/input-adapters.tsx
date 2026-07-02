@@ -1,8 +1,7 @@
 /**
- * Playground Adapters for Input Components
+ * Playground 输入组件适配器。
  *
- * Provides mock data generators and wrapper components that allow
- * the main app's input components to work in the playground context.
+ * 提供 mock 数据生成器和包装组件，让主应用的输入组件能在 Playground 上下文中运行。
  */
 
 import type { PermissionRequest } from '../../../shared/types'

@@ -1,3 +1,10 @@
+/**
+ * RichTextInput — 支持 @mention 的富文本输入框
+ *
+ * 这是一个 contentEditable div，不是 textarea。
+ * 它能在文本中识别 @skill、@source、文件/文件夹路径，并渲染成内联徽章（badge），
+ * 同时保持底层文本模型仍是纯字符串，方便传给 Agent 处理。
+ */
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { coerceInputText } from '@/lib/input-text'
@@ -14,10 +21,10 @@ import type { LoadedSkill, LoadedSource } from '../../../shared/types'
 import type { MentionItemType } from './mention-menu'
 
 // ============================================================================
-// Types
+// 类型
 // ============================================================================
 
-/** Line count threshold for auto-converting pasted text to file attachment */
+/** 粘贴文本超过这个行数时，自动转为文件附件 */
 const LONG_TEXT_LINE_THRESHOLD = 100
 
 export interface EscapeCompositionEventLike {
@@ -29,10 +36,9 @@ export interface EscapeCompositionEventLike {
 }
 
 /**
- * Returns true when Escape is pressed while IME composition is active.
+ * 判断是否在 IME 组合过程中按下了 Escape。
  *
- * Uses both local composition state and event-level composing flags for
- * browser/runtime compatibility.
+ * 同时检查本地组合状态和事件层标志，以保证不同浏览器/运行时的兼容性。
  */
 export function isEscapeDuringComposition(
   event: EscapeCompositionEventLike,
@@ -43,66 +49,70 @@ export function isEscapeDuringComposition(
 }
 
 export interface RichTextInputProps extends Omit<React.HTMLAttributes<HTMLDivElement>, 'onChange' | 'onInput' | 'onPaste'> {
-  /** Current text value */
+  /** 当前文本值 */
   value: string
-  /** Called when text changes */
+  /** 文本变化回调 */
   onChange: (value: string) => void
-  /** Placeholder text(s) when empty - can be a single string or array for rotation */
+  /** 占位文本，可以是单字符串或字符串数组（轮播显示） */
   placeholder?: string | string[]
-  /** Available skills for mention parsing */
+  /** 可用于 mention 解析的 Skill 列表 */
   skills?: LoadedSkill[]
-  /** Available sources for mention parsing */
+  /** 可用于 mention 解析的 Source 列表 */
   sources?: LoadedSource[]
-  /** Workspace ID for avatars */
+  /** Workspace ID，用于加载头像 */
   workspaceId?: string
-  /** Whether the input is disabled */
+  /** 是否禁用 */
   disabled?: boolean
-  /** Called when input changes (provides value and cursor position for mention detection) */
+  /** 输入变化回调（提供值和光标位置，用于 mention 检测） */
   onInput?: (value: string, cursorPosition: number) => void
-  /** Called on paste */
+  /** 粘贴事件回调 */
   onPaste?: (e: React.ClipboardEvent) => void
-  /** Called when pasted text exceeds line threshold - should create file attachment */
+  /** 粘贴内容超过行数阈值时触发，调用方应创建文件附件 */
   onLongTextPaste?: (text: string) => void
 }
 
+/**
+ * RichTextInput 通过 forwardRef 暴露的 imperative handle。
+ * 类似 Go 接口：父组件可以直接调用 focus、setValue 等方法。
+ */
 export interface RichTextInputHandle {
   focus: () => void
   blur: () => void
-  /** The text value */
+  /** 当前文本值 */
   value: string
-  /** Selection start position in text model */
+  /** 文本模型中的选区起始位置 */
   selectionStart: number
-  /** Set the text value */
+  /** 设置文本值 */
   setValue: (value: string) => void
-  /** Set selection range */
+  /** 设置选区范围 */
   setSelectionRange: (start: number, end: number) => void
-  /** Get bounding rect for position calculations */
+  /** 获取整个元素包围盒 */
   getBoundingClientRect: () => DOMRect
-  /** Get bounding rect of the current caret/selection position */
+  /** 获取当前光标/选区位置的包围盒 */
   getCaretRect: () => DOMRect | null
-  /** The underlying div element */
+  /** 底层 div 元素 */
   element: HTMLDivElement | null
 }
 
 // ============================================================================
-// InlineMentionBadge - Compact badge for inline display (static HTML version)
+// InlineMentionBadge — 内联 mention 徽章（静态 HTML 版本）
 // ============================================================================
 
-// SVG icons as HTML strings (avoiding react-dom/server which doesn't work in browser)
+// SVG 图标用 HTML 字符串内联，避免在浏览器里使用 react-dom/server
 const SKILL_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>`
 
 const SOURCE_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>`
 
-// File icon (document with folded corner) - matches UserMessageBubble style (12x12, text-muted-foreground)
+// 文件图标（带折角的文档），与 UserMessageBubble 风格一致
 const FILE_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground"><path d="M10.5 2.5C12.1569 2.5 13.5 3.84315 13.5 5.5V6.1C13.5 6.4716 13.5 6.6574 13.5246 6.81287C13.6602 7.66865 14.3313 8.33983 15.1871 8.47538C15.3426 8.5 15.5284 8.5 15.9 8.5H16.5C18.1569 8.5 19.5 9.84315 19.5 11.5M9 16H15M9 12H10M10.9645 2.5H10.6678C8.64635 2.5 7.63561 2.5 6.84835 2.85692C5.96507 3.25736 5.25736 3.96507 4.85692 4.84835C4.5 5.63561 4.5 6.64635 4.5 8.66781V14C4.5 17.2875 4.5 18.9312 5.40796 20.0376C5.57418 20.2401 5.75989 20.4258 5.96243 20.592C7.06878 21.5 8.71252 21.5 12 21.5C15.2875 21.5 16.9312 21.5 18.0376 20.592C18.2401 20.4258 18.4258 20.2401 18.592 20.0376C19.5 18.9312 19.5 17.2875 19.5 14V11.0355C19.5 10.0027 19.5 9.48628 19.4176 8.99414C19.2671 8.09576 18.9141 7.24342 18.3852 6.50177C18.0955 6.09549 17.7303 5.73032 17 5C16.2697 4.26968 15.9045 3.90451 15.4982 3.6148C14.7566 3.08595 13.9042 2.7329 13.0059 2.58243C12.5137 2.5 11.9973 2.5 10.9645 2.5Z"/></svg>`
 
-// Code file icon (document with < > brackets) - matches UserMessageBubble style (12x12, text-muted-foreground)
+// 代码文件图标（文档 + <>），与 UserMessageBubble 风格一致
 const CODE_FILE_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground"><path d="M10.5 2.5C12.1569 2.5 13.5 3.84315 13.5 5.5V6.1C13.5 6.4716 13.5 6.6574 13.5246 6.81287C13.6602 7.66865 14.3313 8.33983 15.1871 8.47538C15.3426 8.5 15.5284 8.5 15.9 8.5H16.5C18.1569 8.5 19.5 9.84315 19.5 11.5M10.5 12.8799C9.70024 13.2985 9.10807 13.8275 8.64232 14.5478C8.51063 14.7515 8.44479 14.8533 8.44489 15.0011C8.44498 15.1488 8.51099 15.2506 8.643 15.4542C9.1095 16.1736 9.70167 16.7028 10.5 17.1225M13.5 12.8799C14.2998 13.2985 14.8919 13.8275 15.3577 14.5478C15.4894 14.7515 15.5552 14.8533 15.5551 15.0011C15.555 15.1488 15.489 15.2506 15.357 15.4542C14.8905 16.1736 14.2983 16.7028 13.5 17.1225M10.9645 2.5H10.6678C8.64635 2.5 7.63561 2.5 6.84835 2.85692C5.96507 3.25736 5.25736 3.96507 4.85692 4.84835C4.5 5.63561 4.5 6.64635 4.5 8.66781V14C4.5 17.2875 4.5 18.9312 5.40796 20.0376C5.57418 20.2401 5.75989 20.4258 5.96243 20.592C7.06878 21.5 8.71252 21.5 12 21.5C15.2875 21.5 16.9312 21.5 18.0376 20.592C18.2401 20.4258 18.4258 20.2401 18.592 20.0376C19.5 18.9312 19.5 17.2875 19.5 14V11.0355C19.5 10.0027 19.5 9.48628 19.4176 8.99414C19.2671 8.09576 18.9141 7.24342 18.3852 6.50177C18.0955 6.09549 17.7303 5.73032 17 5C16.2697 4.26968 15.9045 3.90451 15.4982 3.6148C14.7566 3.08595 13.9042 2.7329 13.0059 2.58243C12.5137 2.5 11.9973 2.5 10.9645 2.5Z"/></svg>`
 
-// Folder icon (open folder) - matches UserMessageBubble style (12x12, text-muted-foreground)
+// 文件夹图标（打开的文件夹），与 UserMessageBubble 风格一致
 const FOLDER_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" class="shrink-0 text-muted-foreground"><path d="M20.5 10C20.5 9.07003 20.5 8.60504 20.3978 8.22354C20.1204 7.18827 19.3117 6.37962 18.2765 6.10222C17.895 6 17.43 6 16.5 6H13.1008C12.4742 6 12.1609 6 11.8739 5.91181C11.6824 5.85298 11.5009 5.76572 11.3353 5.65295C11.0871 5.48389 10.8914 5.23926 10.5 4.75L10.4095 4.63693C10.107 4.25881 9.9558 4.06975 9.7736 3.92674C9.54464 3.74703 9.27921 3.61946 8.99585 3.55294C8.77037 3.5 8.52825 3.5 8.04402 3.5C6.60485 3.5 5.88527 3.5 5.32008 3.74178C4.61056 4.0453 4.0453 4.61056 3.74178 5.32008C3.5 5.88527 3.5 6.60485 3.5 8.04402V10M9.46502 20.5H14.535C16.9102 20.5 18.0978 20.5 18.9301 19.8113C19.7624 19.1226 19.9846 17.9559 20.429 15.6227L20.8217 13.5613C21.1358 11.9121 21.2929 11.0874 20.843 10.5437C20.393 10 19.5536 10 17.8746 10H6.12537C4.44643 10 3.60696 10 3.15704 10.5437C2.70713 11.0874 2.8642 11.9121 3.17835 13.5613L3.57099 15.6227C4.01541 17.9559 4.23763 19.1226 5.06992 19.8113C5.90221 20.5 7.08981 20.5 9.46502 20.5Z"/></svg>`
 
-/** Known code file extensions - used to pick code file icon vs generic file icon */
+/** 已知的代码文件扩展名，用于选择代码文件图标或通用文件图标 */
 const CODE_EXTENSIONS = new Set([
   'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs',
   'py', 'rs', 'go', 'java', 'rb', 'swift', 'kt',
@@ -127,7 +137,7 @@ function renderBadgeHTML(
   workspaceId?: string,
   tooltip?: string
 ): string {
-  // Try to get cached icon first
+  // 优先使用缓存图标
   let iconHtml = ''
   let cachedIconUrl: string | null = null
 
@@ -138,22 +148,22 @@ function renderBadgeHTML(
   }
 
   if (cachedIconUrl) {
-    // Check for emoji marker - render as text, not image
+    // emoji 标记：直接渲染文本，不用 img
     if (cachedIconUrl.startsWith(EMOJI_ICON_PREFIX)) {
       const emoji = cachedIconUrl.slice(EMOJI_ICON_PREFIX.length)
       iconHtml = `<span class="h-[12px] w-[12px] flex items-center justify-center text-[10px] leading-none shrink-0">${emoji}</span>`
     } else {
-      // Use cached icon as img (data URL or external URL)
+      // data URL 或外部 URL 用 img 展示
       iconHtml = `<img src="${cachedIconUrl}" class="h-[12px] w-[12px] rounded-[2px] shrink-0" alt="" />`
     }
   } else {
-    // Fall back to generic SVG icon based on type
+    // 按类型回退到通用 SVG 图标
     if (type === 'skill') {
       iconHtml = `<span class="h-[12px] w-[12px] rounded-[2px] bg-foreground/5 flex items-center justify-center text-foreground/50 shrink-0">${SKILL_ICON_SVG}</span>`
     } else if (type === 'source') {
       iconHtml = `<span class="h-[12px] w-[12px] rounded-[2px] bg-foreground/5 flex items-center justify-center text-foreground/50 shrink-0">${SOURCE_ICON_SVG}</span>`
     } else if (type === 'file') {
-      // Pick code file or generic file icon based on extension (no container, icon carries its own classes)
+      // 根据扩展名选代码文件图标或通用文件图标
       iconHtml = isCodeFile(label) ? CODE_FILE_ICON_SVG : FILE_ICON_SVG
     } else if (type === 'folder') {
       iconHtml = FOLDER_ICON_SVG
@@ -163,50 +173,47 @@ function renderBadgeHTML(
   const escapedLabel = label.replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const titleAttr = tooltip ? ` title="${tooltip.replace(/"/g, '&quot;')}"` : ''
 
-  // Line height is increased when badges are present (see hasMentions in component)
-  // Use transform for upward shift - doesn't affect layout flow (works even at start of line)
+  // 有徽章时行高会增大（见组件中的 hasMentions）
+  // 用 transform 向上微调，不影响布局流（即使在一行开头也有效）
   return `<span contenteditable="false" data-mention="true"${titleAttr} class="mention-badge inline-flex items-center gap-1 h-[22px] px-1.5 mx-1 rounded-[5px] bg-background shadow-minimal text-[12px] text-foreground select-none [&_*]:selection:bg-transparent selection:bg-transparent" style="vertical-align: middle; transform: translateY(-1px)">${iconHtml}<span class="truncate max-w-[200px]">${escapedLabel}</span></span>`
 }
 
 // ============================================================================
-// Helper: Extract plain text from contenteditable
+// 辅助函数：从 contenteditable 提取纯文本
 // ============================================================================
 
 function getTextFromElement(element: HTMLElement): string {
   let text = ''
 
-  // isTopLevel: true for direct children of the contenteditable root
+  // isTopLevel=true 表示是 contenteditable 根元素的直接子节点
   function processNode(node: Node, isTopLevel: boolean = false) {
     if (node.nodeType === Node.TEXT_NODE) {
-      // Filter out zero-width spaces (used for contenteditable cursor fix)
+      // 过滤零宽空格（用于 contenteditable 光标修正）
       text += (node.textContent || '').replace(/\u200B/g, '')
     } else if (node.nodeType === Node.ELEMENT_NODE) {
       const el = node as HTMLElement
 
-      // Skip mention badges - they shouldn't contribute additional text
+      // 跳过 mention 徽章本身，避免重复计入文本
       if (el.getAttribute('data-mention') === 'true') {
-        // Get the mention text from data attribute
+        // 从 data 属性取原始 mention 文本
         const mentionText = el.getAttribute('data-mention-text')
         if (mentionText) {
           text += mentionText
         }
-        return // Don't process children
+        return // 不处理子节点
       }
 
-      // Handle line breaks
+      // 处理换行
       if (el.tagName === 'BR') {
         text += '\n'
       } else if (el.tagName === 'DIV' && text.length > 0 && !text.endsWith('\n')) {
-        // DIVs in contenteditable normally represent line breaks.
-        // HOWEVER: When typing before a badge at position 0, browsers wrap the
-        // typed character in a <div>, creating: <div>typed</div><span badge>
-        // This is NOT a user-intended line break - it's browser behavior.
-        // We detect this by checking if a top-level DIV is immediately followed
-        // by a mention badge sibling. If so, skip adding the newline.
+        // contenteditable 里的 DIV 通常代表换行。
+        // 但浏览器在徽章前输入字符时可能把字符包在 <div> 里：
+        // <div>typed</div><span badge>
+        // 这不是用户想要的换行，需要检测并跳过。
         if (isTopLevel) {
-          // Check if this DIV is followed by a mention badge at top level.
-          // Skip over ZWS-only text nodes - browser may preserve them between
-          // the DIV wrapper and the badge span.
+          // 检查该 DIV 后面是否紧跟顶层 mention 徽章，
+          // 跳过中间可能存在的只含零宽空格的文本节点。
           let nextSibling: Node | null = el.nextSibling
           while (
             nextSibling?.nodeType === Node.TEXT_NODE &&
@@ -219,21 +226,21 @@ function getTextFromElement(element: HTMLElement): string {
           if (!isBrowserWrapper) {
             text += '\n'
           }
-          // If it IS followed by a badge, don't add newline - just process children
+          // 如果确实紧跟徽章，则不额外加换行，只处理子节点
         } else {
-          // Nested DIVs are always treated as line breaks
+          // 嵌套 DIV 始终视为换行
           text += '\n'
         }
       }
 
-      // Process children (no longer top-level)
+      // 递归处理子节点（不再视为顶层）
       Array.from(el.childNodes).forEach(child => {
         processNode(child, false)
       })
     }
   }
 
-  // Process direct children as top-level nodes
+  // 根节点直接子节点按顶层处理
   Array.from(element.childNodes).forEach(child => {
     processNode(child, true)
   })
@@ -242,7 +249,7 @@ function getTextFromElement(element: HTMLElement): string {
 }
 
 // ============================================================================
-// Helper: Get cursor position in text model
+// 辅助函数：获取文本模型中的光标位置
 // ============================================================================
 
 function getCursorPosition(element: HTMLElement, fallback: number = 0): number {
@@ -251,12 +258,12 @@ function getCursorPosition(element: HTMLElement, fallback: number = 0): number {
 
   const range = selection.getRangeAt(0)
 
-  // Create a range from start of element to cursor
+  // 创建从元素开头到光标的 range
   const preRange = document.createRange()
   preRange.selectNodeContents(element)
   preRange.setEnd(range.startContainer, range.startOffset)
 
-  // Get text length before cursor, excluding badge content
+  // 计算光标前的文本长度，排除 badge 内容
   const fragment = preRange.cloneContents()
   const div = document.createElement('div')
   div.appendChild(fragment)
@@ -264,7 +271,7 @@ function getCursorPosition(element: HTMLElement, fallback: number = 0): number {
 }
 
 // ============================================================================
-// Helper: Set cursor position in contenteditable
+// 辅助函数：在 contenteditable 中设置光标位置
 // ============================================================================
 
 function setCursorPosition(element: HTMLElement, targetPosition: number): void {
@@ -276,12 +283,12 @@ function setCursorPosition(element: HTMLElement, targetPosition: number): void {
   function findPosition(node: Node): { node: Node; offset: number } | null {
     if (node.nodeType === Node.TEXT_NODE) {
       const rawText = node.textContent || ''
-      // Filter out zero-width spaces to match text model (ZWS is a DOM-only artifact)
+      // 过滤零宽空格以匹配文本模型（ZWS 只是 DOM 产物）
       const textWithoutZWS = rawText.replace(/\u200B/g, '')
       const modelLength = textWithoutZWS.length
 
       if (currentPos + modelLength >= targetPosition) {
-        // Calculate actual DOM offset accounting for zero-width spaces
+        // 考虑零宽空格后计算实际 DOM offset
         const modelOffset = targetPosition - currentPos
         let domOffset = 0
         let modelCount = 0
@@ -291,7 +298,7 @@ function setCursorPosition(element: HTMLElement, targetPosition: number): void {
           }
           domOffset++
         }
-        // Skip any trailing ZWS at the target position
+        // 跳过目标位置后面的零宽空格
         while (domOffset < rawText.length && rawText[domOffset] === '\u200B') {
           domOffset++
         }
@@ -301,19 +308,19 @@ function setCursorPosition(element: HTMLElement, targetPosition: number): void {
     } else if (node.nodeType === Node.ELEMENT_NODE) {
       const el = node as HTMLElement
 
-      // Skip mention badge internals - treat as atomic
+      // mention 徽章整体视为原子节点，不进入内部
       if (el.getAttribute('data-mention') === 'true') {
         const mentionText = el.getAttribute('data-mention-text') || ''
         const mentionLength = mentionText.length
         if (currentPos + mentionLength >= targetPosition) {
-          // Position cursor after the badge
+          // 光标放在徽章后面
           return { node: el.parentNode!, offset: Array.from(el.parentNode!.childNodes).indexOf(el) + 1 }
         }
         currentPos += mentionLength
         return null
       }
 
-      // Handle BR
+      // 处理 BR 换行
       if (el.tagName === 'BR') {
         currentPos += 1
         if (currentPos >= targetPosition) {
@@ -339,7 +346,7 @@ function setCursorPosition(element: HTMLElement, targetPosition: number): void {
     selection.removeAllRanges()
     selection.addRange(range)
   } else {
-    // Position at end
+    //  fallback：定位到末尾
     const range = document.createRange()
     range.selectNodeContents(element)
     range.collapse(false)
@@ -349,7 +356,7 @@ function setCursorPosition(element: HTMLElement, targetPosition: number): void {
 }
 
 // ============================================================================
-// Convert text with mentions to HTML
+// 把带 mention 的文本转换为 HTML
 // ============================================================================
 
 function textToHTML(
@@ -364,7 +371,7 @@ function textToHTML(
   const sourceSlugs = sources.map(s => s.config.slug)
   const matches = findMentionMatches(text, skillSlugs, sourceSlugs)
 
-  // Escape HTML in text
+  // HTML 转义
   const escapeHTML = (str: string) => str
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -378,18 +385,18 @@ function textToHTML(
   let html = ''
   let lastIndex = 0
 
-  // If first match starts at position 0, prepend zero-width space for contenteditable cursor fix
+  // 如果第一个 mention 在位置 0，前面补一个零宽空格，解决 contenteditable 开头光标问题
   if (matches[0].startIndex === 0) {
     html += '\u200B'
   }
 
   for (const match of matches) {
-    // Add escaped text before this mention
+    // 加入 mention 之前的转义文本
     if (match.startIndex > lastIndex) {
       html += escapeHTML(text.slice(lastIndex, match.startIndex))
     }
 
-    // Determine label and data for badge
+    // 确定徽章显示文本和关联数据
     let label = match.id
     let skill: LoadedSkill | undefined
     let source: LoadedSource | undefined
@@ -402,30 +409,29 @@ function textToHTML(
       source = sources.find(s => s.config.slug === match.id)
       label = source?.config.name || match.id
     } else if (match.type === 'file') {
-      // Show filename as badge label, full path as tooltip
+      // 文件名做徽章标签，完整路径做 tooltip
       label = match.id.split('/').pop() || match.id
       tooltip = match.id
     } else if (match.type === 'folder') {
-      // Show folder name as badge label, full path as tooltip
+      // 文件夹名做徽章标签，完整路径做 tooltip
       label = match.id.split('/').pop() || match.id
       tooltip = match.id
     }
 
-    // Render badge with data-mention-text storing the original text
+    // 渲染徽章，并用 data-mention-text 保存原始文本，方便提取时还原
     const badgeHtml = renderBadgeHTML(match.type, label, skill, source, workspaceId, tooltip)
-    // Add data-mention-text attribute to store original text for extraction
     const withMentionText = badgeHtml.replace(
       'data-mention="true"',
       `data-mention="true" data-mention-text="${match.fullMatch.replace(/"/g, '&quot;')}"`
     )
     html += withMentionText
-    // Zero-width space after badge ensures cursor can be placed after the last badge
+    // 徽章后面加零宽空格，确保最后一个徽章后也能放光标
     html += '\u200B'
 
     lastIndex = match.startIndex + match.fullMatch.length
   }
 
-  // Add remaining text after last mention
+  // 加入最后一个 mention 之后的剩余文本
   if (lastIndex < text.length) {
     html += escapeHTML(text.slice(lastIndex))
   }
@@ -434,7 +440,7 @@ function textToHTML(
 }
 
 // ============================================================================
-// Check if mentions have changed (for determining if we need to re-render HTML)
+// 判断 mention 是否发生变化（决定是否要重新渲染 HTML）
 // ============================================================================
 
 function getMentionSignature(text: string, skillSlugs: string[], sourceSlugs: string[]): string {
@@ -443,17 +449,16 @@ function getMentionSignature(text: string, skillSlugs: string[], sourceSlugs: st
 }
 
 // ============================================================================
-// RotatingPlaceholder Component
-// Animated placeholder that cycles through an array of strings with fade transitions.
-// Stays visible even when input is focused (until user types).
+// RotatingPlaceholder — 轮播占位提示
+// 用淡入淡出切换一组提示文本，输入框聚焦时仍然显示，直到用户输入。
 // ============================================================================
 
 interface RotatingPlaceholderProps {
-  /** Array of placeholder strings to rotate through */
+  /** 轮播的占位文本数组 */
   placeholders: string[]
-  /** Interval in ms between rotations (default: 5000) */
+  /** 每次切换间隔，单位毫秒（默认 5000） */
   intervalMs?: number
-  /** Additional className for styling */
+  /** 额外 className */
   className?: string
 }
 
@@ -466,14 +471,14 @@ function RotatingPlaceholder({
   const [opacity, setOpacity] = React.useState(1)
 
   React.useEffect(() => {
-    // Don't rotate if only one placeholder
+    // 只有一个占位文本时不轮播
     if (placeholders.length <= 1) return
 
     const interval = setInterval(() => {
-      // Fade out
+      // 淡出
       setOpacity(0)
 
-      // After fade out (300ms), swap text and fade back in
+      // 300ms 淡出后切换文本并淡入
       setTimeout(() => {
         setCurrentIndex((prev) => (prev + 1) % placeholders.length)
         setOpacity(1)
@@ -494,9 +499,10 @@ function RotatingPlaceholder({
 }
 
 // ============================================================================
-// RichTextInput Component
+// RichTextInput 组件
 // ============================================================================
 
+/** 支持 mention 的富文本输入框 */
 export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInputProps>(
   function RichTextInput(
     {
@@ -527,28 +533,27 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
     const cursorPositionRef = React.useRef(0)
     const lastMentionSignatureRef = React.useRef('')
     const isInternalUpdate = React.useRef(false)
-    // Pending cursor position to restore after external value update (e.g., after @mention selection)
+    // 外部更新 value 后需要恢复的光标位置（例如选择了 @mention 之后）
     const pendingCursorRef = React.useRef<number | null>(null)
 
     const skillSlugs = React.useMemo(() => skills.map(s => s.slug), [skills])
     const sourceSlugs = React.useMemo(() => sources.map(s => s.config.slug), [sources])
 
-    // Preload icons for sources and skills
+    // 预加载 source 和 skill 的图标
     React.useEffect(() => {
       if (!workspaceId) return
 
-      // Preload source icons
       for (const source of sources) {
         loadSourceIcon({ config: source.config, workspaceId })
       }
 
-      // Preload skill icons (handles emoji, URL, file, and auto-discovery)
+      // 预加载 skill 图标，支持 emoji、URL、本地文件和自动发现
       for (const skill of skills) {
         loadSkillIcon(skill, workspaceId)
       }
     }, [sources, skills, workspaceId])
 
-    // Expose imperative handle
+    // 通过 imperative handle 暴露方法给父组件
     React.useImperativeHandle(forwardedRef, () => ({
       focus: () => divRef.current?.focus(),
       blur: () => divRef.current?.blur(),
@@ -558,7 +563,7 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
         lastValueRef.current = newValue
       },
       setSelectionRange: (start: number, _end: number) => {
-        // Store pending cursor for when external value sync runs
+        // 先暂存光标位置，等外部 value 同步进来后再恢复
         pendingCursorRef.current = start
         cursorPositionRef.current = start
         if (divRef.current) {
@@ -571,15 +576,14 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
         if (!selection || selection.rangeCount === 0) return null
         const range = selection.getRangeAt(0)
         const rect = range.getBoundingClientRect()
-        // If rect has zero dimensions (collapsed selection at line start), use a fallback
+        // 如果 rect 是零尺寸（行首折叠选区），用临时 span 测量
         if (rect.width === 0 && rect.height === 0 && rect.x === 0 && rect.y === 0) {
-          // Insert a temporary span to measure position
           const span = document.createElement('span')
-          span.textContent = '\u200B' // Zero-width space
+          span.textContent = '\u200B'
           range.insertNode(span)
           const spanRect = span.getBoundingClientRect()
           span.remove()
-          // Restore selection
+          // 恢复选区
           selection.removeAllRanges()
           selection.addRange(range)
           return spanRect
@@ -589,7 +593,7 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
       get element() { return divRef.current },
     }), [])
 
-    // Handle input events
+    // 处理输入事件
     const handleInput = React.useCallback(() => {
       if (isComposing.current) return
       if (!divRef.current) return
@@ -600,15 +604,13 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
       lastValueRef.current = newText
       cursorPositionRef.current = cursorPos
 
-      // Check if mentions changed - if so, we need to re-render HTML
+      // mention 变化时重新渲染 HTML 徽章
       const newSignature = getMentionSignature(newText, skillSlugs, sourceSlugs)
       if (newSignature !== lastMentionSignatureRef.current) {
         lastMentionSignatureRef.current = newSignature
-        // Re-render with badges
         isInternalUpdate.current = true
         const html = textToHTML(newText, skills, sources, workspaceId)
-        divRef.current.innerHTML = html || '<br>' // Empty contenteditable needs a BR
-        // Restore cursor
+        divRef.current.innerHTML = html || '<br>' // 空 contenteditable 需要保留一个 BR
         setCursorPosition(divRef.current, cursorPos)
         isInternalUpdate.current = false
       }
@@ -617,7 +619,7 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
       onInput?.(newText, cursorPos)
     }, [onChange, onInput, skills, sources, skillSlugs, sourceSlugs, workspaceId])
 
-    // Handle composition (IME)
+    // 处理 IME 组合输入
     const handleCompositionStart = React.useCallback(() => {
       isComposing.current = true
     }, [])
@@ -636,9 +638,9 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
       onKeyDown?.(e)
     }, [onKeyDown])
 
-    // Handle paste - delegate files to parent, manually insert plain text
+    // 粘贴处理：文件交给父组件，纯文本手动插入
     const handlePasteInternal = React.useCallback((e: React.ClipboardEvent) => {
-      // Check if we have files - let parent handle that
+      // 如果有文件，交给父组件处理
       const hasFiles = e.clipboardData?.files && e.clipboardData.files.length > 0
       if (hasFiles && onPaste) {
         e.preventDefault()
@@ -646,66 +648,63 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
         return
       }
 
-      // Prevent default to avoid HTML paste, then insert plain text manually
+      // 阻止默认粘贴，避免贴入 HTML，然后手动插入纯文本
       e.preventDefault()
 
       const text = e.clipboardData?.getData('text/plain')
       if (!text) return
 
-      // Check if text is too long - convert to file attachment instead
+      // 文本过长时转为文件附件
       const lineCount = text.split('\n').length
       if (lineCount > LONG_TEXT_LINE_THRESHOLD && onLongTextPaste) {
         onLongTextPaste(text)
         return
       }
 
-      // Use execCommand to insert text - this integrates with the browser's
-      // native undo stack so CMD+Z works after paste. Manual DOM manipulation
-      // (range.insertNode) bypasses the undo history.
+      // 用 execCommand 插入文本，能纳入浏览器原生撤销栈，Cmd+Z 有效。
+      // 手动 range.insertNode 会绕过撤销历史。
       document.execCommand('insertText', false, text)
     }, [onPaste, onLongTextPaste])
 
-    // Handle focus
+    // 聚焦处理
     const handleFocus = React.useCallback((e: React.FocusEvent<HTMLDivElement>) => {
       setIsFocused(true)
-      // Tell browser to use <br> instead of <div> for line breaks.
-      // This prevents div-wrapping when typing before non-editable spans (badges).
+      // 让浏览器用 <br> 而不是 <div> 作为换行符，
+      // 避免在不可编辑徽章前输入时被浏览器包一层 div。
       document.execCommand('defaultParagraphSeparator', false, 'br')
       onFocus?.(e)
     }, [onFocus])
 
-    // Handle blur
+    // 失焦处理
     const handleBlur = React.useCallback((e: React.FocusEvent<HTMLDivElement>) => {
       setIsFocused(false)
       onBlur?.(e)
     }, [onBlur])
 
-    // Sync value from props (when parent updates value externally)
+    // 从 props 同步 value（父组件外部更新时）
     React.useEffect(() => {
       if (!divRef.current) return
       if (isInternalUpdate.current) return
       if (lastValueRef.current === safeValue) return
 
-      // External value change - update content
       lastValueRef.current = safeValue
       lastMentionSignatureRef.current = getMentionSignature(safeValue, skillSlugs, sourceSlugs)
 
       const html = textToHTML(safeValue, skills, sources, workspaceId)
       divRef.current.innerHTML = html || '<br>'
 
-      // Restore cursor position after innerHTML update.
-      // Only restore if:
-      // 1. We have a pending position from setSelectionRange (explicit programmatic positioning), OR
-      // 2. The element is actually focused (user is actively editing)
-      // This prevents stealing focus during session changes when search is active.
+      // 更新 innerHTML 后恢复光标位置。只在以下情况恢复：
+      // 1. setSelectionRange 显式指定了 pending 位置；
+      // 2. 输入框当前聚焦（用户正在编辑）。
+      // 这样切换 Session 时不会抢走搜索框焦点。
       if (pendingCursorRef.current !== null || document.activeElement === divRef.current) {
         const cursorPos = pendingCursorRef.current ?? cursorPositionRef.current ?? safeValue.length
         setCursorPosition(divRef.current, cursorPos)
-        pendingCursorRef.current = null // Clear after use
+        pendingCursorRef.current = null
       }
     }, [safeValue, skills, sources, skillSlugs, sourceSlugs, workspaceId])
 
-    // Initialize content on mount
+    // 挂载时初始化内容
     React.useEffect(() => {
       if (!divRef.current) return
       lastMentionSignatureRef.current = getMentionSignature(safeValue, skillSlugs, sourceSlugs)
@@ -714,12 +713,11 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
       lastValueRef.current = safeValue
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Handle selection changes to highlight badges when selected
+    // 选区变化时高亮被选中的 mention 徽章
     React.useEffect(() => {
-      // Get selection color from CSS variable (accent with transparency)
+      // 从 CSS 变量取强调色并加透明度
       const getSelectionColor = () => {
         const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()
-        // Return accent color with 40% opacity
         return accent ? `oklch(${accent.replace('oklch(', '').replace(')', '')} / 0.4)` : 'rgba(99, 102, 241, 0.4)'
       }
 
@@ -731,11 +729,11 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
 
         const range = selection.getRangeAt(0)
 
-        // Get all mention badges
+        // 获取所有 mention 徽章
         const badges = divRef.current.querySelectorAll('.mention-badge') as NodeListOf<HTMLElement>
 
         badges.forEach((badge) => {
-          // Check if badge is within selection range
+          // 判断徽章是否在选区范围内
           const badgeRange = document.createRange()
           badgeRange.selectNode(badge)
 
@@ -757,16 +755,16 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
       return () => document.removeEventListener('selectionchange', handleSelectionChange)
     }, [])
 
-    // Show placeholder when input is empty (regardless of focus state)
+    // 输入为空时显示占位提示（无论是否聚焦）
     const showPlaceholder = !safeValue
 
-    // Normalize placeholder to array for RotatingPlaceholder
+    // 把占位文本统一成数组传给 RotatingPlaceholder
     const placeholderArray = React.useMemo(() => {
       if (!placeholder) return [t("chatInput.placeholder.typeMessage")]
       return Array.isArray(placeholder) ? placeholder : [placeholder]
     }, [placeholder])
 
-    // Check if value contains any mentions (badges) to adjust line height
+    // 是否包含 mention（用于调整行高）
     const hasMentions = React.useMemo(() => {
       const mentions = parseMentions(safeValue, skillSlugs, sourceSlugs)
       return mentions.skills.length > 0 || mentions.sources.length > 0 || mentions.files.length > 0 || mentions.folders.length > 0
@@ -783,11 +781,11 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
             'outline-none text-sm whitespace-pre-wrap break-words',
             'min-h-[1.5em]',
             disabled && 'opacity-50 cursor-not-allowed',
-            // Make text transparent when showing placeholder (so caret is still visible)
+            // 显示占位文本时把文字设为透明，但保留光标
             showPlaceholder && 'text-transparent caret-foreground',
             className
           )}
-          // Use inline style for line-height to override text-sm's built-in line-height
+          // 用行内样式覆盖 text-sm 的默认行高
           style={{ lineHeight: 1.25 }}
           onInput={handleInput}
           onKeyDown={handleKeyDownInternal}
@@ -802,7 +800,7 @@ export const RichTextInput = React.forwardRef<RichTextInputHandle, RichTextInput
           aria-multiline="true"
           {...restProps}
         />
-        {/* Rotating placeholder overlay - visible when empty, even when focused */}
+        {/* 轮播占位文本覆盖层：为空时显示，聚焦时也显示 */}
         {showPlaceholder && (
           <RotatingPlaceholder
             placeholders={placeholderArray}

@@ -1,58 +1,60 @@
 /**
- * Icon Constants
+ * 图标常量
  *
- * Pure constants and functions for icon handling.
- * NO Node.js dependencies - safe for browser/renderer import.
+ * 纯常量与纯函数，用于图标处理。
+ * 不依赖 Node.js，可被浏览器 / renderer 安全导入。
  *
- * These are extracted from icon.ts so renderer code can import them
- * without pulling in fs/path dependencies.
+ * 这些函数从 icon.ts 中拆分出来，避免 renderer 代码 import 时拖入 fs/path 依赖。
  */
 
 // ============================================================
-// Constants
+// 常量
 // ============================================================
 
 /**
- * Comprehensive emoji detection regex.
- * Matches single emoji, emoji sequences, and multi-codepoint emoji (e.g., 👨‍💻).
+ * 综合 emoji 检测正则。
+ * 可匹配单个 emoji、emoji 序列以及多码位 emoji（例如 👨‍💻）。
  */
 export const EMOJI_REGEX = /^(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F)(?:\u200D(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F))*$/u;
 
 /**
- * Supported icon file extensions in priority order.
+ * 支持的图标文件扩展名，按优先级排序。
  */
 export const ICON_EXTENSIONS = ['.svg', '.png', '.jpg', '.jpeg', '.ico', '.webp', '.gif'];
 
 // ============================================================
-// Pure Functions (no Node.js dependencies)
+// 纯函数（无 Node.js 依赖）
 // ============================================================
 
 /**
- * Check if a string is an emoji (single or multi-codepoint).
- * Examples: "🔧", "👨‍💻", "🎉"
+ * 判断字符串是否为 emoji（单个或多码位）。
+ * 示例："🔧"、"👨‍💻"、"🎉"
+ *
+ * @param str - 待检测字符串
+ * @returns 是 emoji 返回 true，否则 false
  */
 export function isEmoji(str: string | undefined): boolean {
   if (!str || str.length === 0) return false;
-  // Emoji should be short - most are under 20 chars even with modifiers
+  // Emoji 通常很短——即使有修饰符也很少超过 20 个字符
   if (str.length > 20) return false;
   return EMOJI_REGEX.test(str);
 }
 
 /**
- * Check if a string is a valid icon URL (http or https).
+ * 判断字符串是否为合法的图标 URL（http 或 https）。
  */
 export function isIconUrl(str: string): boolean {
   return str.startsWith('http://') || str.startsWith('https://');
 }
 
 /**
- * Check if an icon value is invalid (inline SVG or relative path).
- * These are explicitly not supported to keep configs clean.
+ * 判断图标值是否非法（内联 SVG 或相对路径）。
+ * 为了保持配置干净，这些格式被明确拒绝。
  */
 export function isInvalidIconValue(str: string): boolean {
-  // Inline SVG starts with < (e.g., "<svg...")
+  // 内联 SVG 以 < 开头（如 "<svg..."）
   if (str.startsWith('<')) return true;
-  // Relative paths start with . or /
+  // 相对路径以 . 或 / 开头
   if (str.startsWith('.') || str.startsWith('/')) return true;
   return false;
 }

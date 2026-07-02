@@ -1,13 +1,14 @@
 /**
  * BrowserToolbar
  *
- * Electron-specific wrapper around the shared BrowserControls component.
- * Derives control state from BrowserInstanceInfo.
+ * 围绕共享组件 BrowserControls 的 Electron 端薄包装。
+ * 它从 BrowserInstanceInfo 推导出地址栏、前进/后退、加载/停止等控制状态。
  */
 
 import { BrowserControls } from '@craft-agent/ui'
 import type { BrowserInstanceInfo } from '../../../shared/types'
 
+// BrowserToolbar 的 props：instanceInfo 为 null 时按“无可用浏览器”显示禁用状态。
 interface BrowserToolbarProps {
   instanceInfo: BrowserInstanceInfo | null
   onNavigate: (url: string) => void
@@ -18,6 +19,7 @@ interface BrowserToolbarProps {
   compact?: boolean
 }
 
+// 这是一个“纯展示包装”组件：把实例状态映射成 BrowserControls 需要的 props，不处理副作用。
 export function BrowserToolbar({
   instanceInfo,
   onNavigate,

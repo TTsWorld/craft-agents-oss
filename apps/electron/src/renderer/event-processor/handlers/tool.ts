@@ -1,8 +1,8 @@
 /**
- * Tool Event Handlers
+ * 工具事件处理器
  *
- * Handles tool_start and tool_result events.
- * Pure functions that return new state - no side effects.
+ * 处理 tool_start、tool_result 以及后台任务相关事件。
+ * 都是纯函数，只返回新状态，不产生副作用。
  */
 
 import type { SessionState, ToolStartEvent, ToolResultEvent, TaskBackgroundedEvent, ShellBackgroundedEvent, TaskProgressEvent, TaskCompletedEvent } from '../types'
@@ -16,10 +16,11 @@ import {
 } from '../helpers'
 
 /**
- * Handle tool_start - create or update tool message
+ * 处理 tool_start：创建或更新一条工具消息
  *
- * SDK sends two events per tool: first from stream_event (empty input),
- * second from assistant message (complete input). We handle both.
+ * SDK 对每个工具会发两次事件：
+ * 第一次来自 stream_event（input 为空），第二次来自 assistant message（input 完整）。
+ * 这里两种情况都处理。
  */
 export function handleToolStart(
   state: SessionState,
@@ -27,11 +28,11 @@ export function handleToolStart(
 ): SessionState {
   const { session, streaming } = state
 
-  // Check if tool message already exists (SDK sends two events)
+  // 检查工具消息是否已存在（SDK 会发送两次）
   const existingIndex = findToolMessage(session.messages, event.toolUseId)
 
   if (existingIndex !== -1) {
-    // Update with complete input (second event has full input)
+    // 用完整输入更新（第二次事件才带完整 input）
     const updatedSession = updateMessageAt(session, existingIndex, {
       toolInput: event.toolInput,
       toolIntent: event.toolIntent,
@@ -43,7 +44,7 @@ export function handleToolStart(
     return { session: updatedSession, streaming }
   }
 
-  // Create new tool message
+  // 新建工具消息
   const toolMessage: Message = {
     id: generateMessageId(),
     role: 'tool',
@@ -67,10 +68,10 @@ export function handleToolStart(
 }
 
 /**
- * Handle tool_result - complete tool execution
+ * 处理 tool_result：工具执行完成
  *
- * Updates the tool message with result. If tool not found (out-of-order),
- * creates the tool message with result included.
+ * 更新对应工具消息的结果。如果找不到工具消息（乱序到达），
+ * 就新建一条带结果的工具消息。
  */
 export function handleToolResult(
   state: SessionState,
@@ -80,10 +81,11 @@ export function handleToolResult(
 
   const toolIndex = findToolMessage(session.messages, event.toolUseId)
 
+  // 通过 isError 标志或结果文本前缀推断是否出错
   const inferredError = event.isError === true || /^\s*(\[ERROR\]|Error:|error:)/.test(event.result || '')
 
   if (toolIndex !== -1) {
-    // Detect "persisted output" - SDK marks as error but data was actually saved successfully
+    // 检测“输出已持久化”：SDK 标记为错误，但数据其实已成功保存
     const isPersistedOutput = inferredError && (
       event.result?.includes('Output has been saved to') ||
       event.result?.includes('Full output saved to')
@@ -91,13 +93,13 @@ export function handleToolResult(
 
     const effectiveIsError = isPersistedOutput ? false : inferredError
 
-    // If the tool is already backgrounded, preserve that status — task_completed will set the final status.
-    // tool_result arrives with the agentId but the task is still running in the background.
+    // 如果工具已经后台化，则保留该状态——最终状态由 task_completed 设置。
+    // tool_result 到达时可能只带了 agentId，但任务实际还在后台运行。
     const existingMessage = session.messages[toolIndex]
     const isBackgrounded = existingMessage?.toolStatus === 'backgrounded' || existingMessage?.isBackground
     const newToolStatus = isBackgrounded ? 'backgrounded' : (effectiveIsError ? 'error' : 'completed')
 
-    // Update existing tool message
+    // 更新已有工具消息
     let updatedSession = updateMessageAt(session, toolIndex, {
       toolResult: event.result,
       toolStatus: newToolStatus,
@@ -105,8 +107,8 @@ export function handleToolResult(
       errorCode: isPersistedOutput ? 'response_too_large' : undefined,
     })
 
-    // Safety net: when a parent Task completes, auto-complete any still-pending child tools.
-    // This handles the case where child tool_result events never arrive.
+    // 安全网：当父任务完成时，自动把尚未结束的子工具标记为完成。
+    // 用于处理子工具结果事件丢失的情况。
     const completedTool = updatedSession.messages[toolIndex]
     if (completedTool && (isParentTaskTool(completedTool.toolName || '') || completedTool.toolName === 'TaskOutput')) {
       const hasOrphanedChildren = updatedSession.messages.some(
@@ -132,12 +134,11 @@ export function handleToolResult(
     return { session: updatedSession, streaming }
   }
 
-  // No matching tool_start found — create message from result.
-  // This is normal for background subagent child tools where tool_result arrives
-  // without a prior tool_start. If tool_start arrives later, findToolMessage will
-  // locate this message by toolUseId and update it with input/intent/displayMeta.
+  // 没有匹配的 tool_start：根据结果创建消息。
+  // 这在后台子 Agent 工具里很常见：tool_result 先于 tool_start 到达。
+  // 如果后续 tool_start 到达，findToolMessage 会按 toolUseId 找到这条消息并补充 input/intent/displayMeta。
 
-  // Detect "persisted output" - SDK marks as error but data was actually saved successfully
+  // 检测“输出已持久化”
   const isPersistedOutput = inferredError && (
     event.result?.includes('Output has been saved to') ||
     event.result?.includes('Full output saved to')
@@ -167,11 +168,10 @@ export function handleToolResult(
 }
 
 /**
- * Handle task_backgrounded - mark tool as backgrounded with task ID
+ * 处理 task_backgrounded：把工具标记为后台运行，并记录任务 ID
  *
- * When a Task is executed with run_in_background: true, the SDK returns
- * immediately with an agentId. This event updates the tool message status
- * to 'backgrounded' and stores the taskId for later polling via TaskOutput.
+ * 当 Task 以 run_in_background: true 执行时，SDK 会立即返回 agentId。
+ * 这个事件把工具消息状态更新为 'backgrounded' 并保存 taskId，供后续 TaskOutput 轮询。
  */
 export function handleTaskBackgrounded(
   state: SessionState,
@@ -182,7 +182,7 @@ export function handleTaskBackgrounded(
   const toolIndex = findToolMessage(session.messages, event.toolUseId)
 
   if (toolIndex !== -1) {
-    // Update tool status to backgrounded and add task ID
+    // 更新工具状态为后台化，并记录任务 ID
     const updatedSession = updateMessageAt(session, toolIndex, {
       toolStatus: 'backgrounded',
       taskId: event.taskId,
@@ -191,16 +191,15 @@ export function handleTaskBackgrounded(
     return { session: updatedSession, streaming }
   }
 
-  // Tool not found - shouldn't happen, but return state unchanged
+  // 工具未找到：理论上不应发生，直接原样返回
   return state
 }
 
 /**
- * Handle shell_backgrounded - mark shell as backgrounded with shell ID
+ * 处理 shell_backgrounded：把 shell 工具标记为后台运行，并记录 shell ID
  *
- * When a Bash command is executed with run_in_background: true, the SDK
- * returns immediately with a shell_id. This event updates the tool message
- * status to 'backgrounded' and stores the shellId for later reference.
+ * 当 Bash 命令以 run_in_background: true 执行时，SDK 会立即返回 shell_id。
+ * 这个事件把工具消息状态更新为 'backgrounded' 并保存 shellId。
  */
 export function handleShellBackgrounded(
   state: SessionState,
@@ -211,7 +210,7 @@ export function handleShellBackgrounded(
   const toolIndex = findToolMessage(session.messages, event.toolUseId)
 
   if (toolIndex !== -1) {
-    // Update tool status to backgrounded and add shell ID
+    // 更新工具状态为后台化，并记录 shell ID
     const updatedSession = updateMessageAt(session, toolIndex, {
       toolStatus: 'backgrounded',
       shellId: event.shellId,
@@ -220,16 +219,15 @@ export function handleShellBackgrounded(
     return { session: updatedSession, streaming }
   }
 
-  // Tool not found - shouldn't happen, but return state unchanged
+  // 工具未找到：理论上不应发生，直接原样返回
   return state
 }
 
 /**
- * Handle task_progress - update elapsed time for background task
+ * 处理 task_progress：更新后台任务已运行秒数
  *
- * The SDK emits tool_progress events with elapsed_time_seconds for
- * background tasks. This event updates the elapsedSeconds field on
- * the tool message to display live progress in the UI.
+ * SDK 会为后台任务发送 tool_progress 事件，携带 elapsed_time_seconds。
+ * 这里把 elapsedSeconds 更新到工具消息上，供 UI 展示实时进度。
  */
 export function handleTaskProgress(
   state: SessionState,
@@ -240,23 +238,22 @@ export function handleTaskProgress(
   const toolIndex = findToolMessage(session.messages, event.toolUseId)
 
   if (toolIndex !== -1) {
-    // Update elapsed time for live progress display
+    // 更新已运行时间，用于实时进度展示
     const updatedSession = updateMessageAt(session, toolIndex, {
       elapsedSeconds: event.elapsedSeconds,
     })
     return { session: updatedSession, streaming }
   }
 
-  // Tool not found - shouldn't happen, but return state unchanged
+  // 工具未找到：理论上不应发生，直接原样返回
   return state
 }
 
 /**
- * Handle task_completed - update background task message on completion
+ * 处理 task_completed：后台任务完成时更新工具消息
  *
- * When a background task completes, the SDK sends a task_notification.
- * This handler finds the tool message by taskId and updates its status
- * and result summary.
+ * 当后台任务完成，SDK 会发送 task_notification。
+ * 本处理器按 taskId 找到对应的工具消息并更新状态和结果摘要。
  */
 export function handleTaskCompleted(
   state: SessionState,
@@ -264,7 +261,7 @@ export function handleTaskCompleted(
 ): SessionState {
   const { session, streaming } = state
 
-  // Find the tool message by taskId (set when task_backgrounded was processed)
+  // 按 taskId 查找工具消息（taskId 在处理 task_backgrounded 时已写入）
   const toolIndex = session.messages.findIndex(m => m.taskId === event.taskId)
 
   if (toolIndex !== -1) {
@@ -275,6 +272,6 @@ export function handleTaskCompleted(
     return { session: updatedSession, streaming }
   }
 
-  // Tool not found by taskId - return state unchanged
+  // 按 taskId 找不到工具：直接原样返回
   return state
 }

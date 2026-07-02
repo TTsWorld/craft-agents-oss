@@ -1,34 +1,37 @@
 /**
- * Browser CDP Helpers
+ * browser-cdp.ts —— 浏览器 CDP（Chrome DevTools Protocol）辅助类。
  *
- * Uses Electron's webContents.debugger API (Chrome DevTools Protocol) for:
- * - Accessibility tree snapshots with ref-based element identification
- * - Element interaction (click, fill, select) via CDP commands
+ * 使用 Electron webContents.debugger 附加到 Chromium 调试协议，完成：
+ * - 可访问性树快照，并用 @eN 形式的 ref 标识元素
+ * - 元素交互：点击、填充、选择等
  *
- * This is the same approach used by Playwright/Stagehand — deterministic,
- * no fragile CSS selectors needed.
+ * Playwright / Stagehand 也采用类似思路：不依赖脆弱的 CSS 选择器，
+ * 而是通过可访问性树确定性地定位元素。
  */
 
 import type { WebContents } from 'electron'
 import { mainLog } from './logger'
 
+// 可访问性树节点
 export interface AccessibilityNode {
-  ref: string           // "@e1", "@e2", etc.
-  role: string          // "button", "link", "textbox", etc.
-  name: string          // Accessible name
-  value?: string        // Current value (for inputs)
-  description?: string  // Additional description
+  ref: string           // 元素引用，如 "@e1"、"@e2"
+  role: string          // 可访问性角色，如 "button"、"link"、"textbox"
+  name: string          // 可访问性名称（读屏软件会读到的名字）
+  value?: string        // 当前值（输入框等）
+  description?: string  // 额外描述
   focused?: boolean
   checked?: boolean
   disabled?: boolean
 }
 
+// 可访问性树快照
 export interface AccessibilitySnapshot {
   url: string
   title: string
   nodes: AccessibilityNode[]
 }
 
+// 元素包围盒
 export interface ElementBox {
   x: number
   y: number
@@ -36,6 +39,7 @@ export interface ElementBox {
   height: number
 }
 
+// 元素几何信息：包围盒 + 推荐点击点
 export interface ElementGeometry {
   ref: string
   role?: string
@@ -44,6 +48,7 @@ export interface ElementGeometry {
   clickPoint: { x: number; y: number }
 }
 
+// 视口指标
 export interface ViewportMetrics {
   width: number
   height: number
@@ -52,7 +57,7 @@ export interface ViewportMetrics {
   scrollY: number
 }
 
-// Roles that are typically interactive or contain meaningful content
+// 常见交互角色或包含有意义内容的角色
 const INTERACTIVE_ROLES = new Set([
   'button', 'link', 'textbox', 'searchbox', 'combobox',
   'checkbox', 'radio', 'switch', 'slider', 'spinbutton',
@@ -69,7 +74,9 @@ const CONTENT_ROLES = new Set([
   'status', 'progressbar', 'meter', 'timer',
 ])
 
+// 可访问性快照最多保留 500 个节点，防止页面过大时爆炸
 const MAX_AX_SNAPSHOT_NODES = 500
+// fallback 时排除的无效角色
 const FALLBACK_EXCLUDED_ROLES = new Set(['none', 'generic', 'rootwebarea', 'webarea'])
 
 function normalizeAxText(value: unknown): string {
@@ -88,18 +95,22 @@ function summarizeTopCounts(map: Map<string, number>, maxEntries = 8): string {
     .join(', ')
 }
 
+// 空闲 5 秒后自动 detach debugger
 const CDP_IDLE_DETACH_MS = 5_000
 
+/**
+ * BrowserCDP 类：管理一个 WebContents 的 CDP 调试会话。
+ */
 export class BrowserCDP {
   private webContents: WebContents
   private attached = false
   private detachListenerRegistered = false
   private idleDetachTimer: ReturnType<typeof setTimeout> | null = null
-  // Map from "@eN" refs to backend node IDs for the current snapshot.
+  // @eN ref -> 当前快照的 backend node ID
   private refMap: Map<string, number> = new Map()
-  // Map from "@eN" refs to semantic details captured during snapshot.
+  // @eN ref -> 快照时记录的语义信息（role / name）
   private refDetails: Map<string, { role: string; name: string }> = new Map()
-  // Stable mapping for backend DOM nodes across snapshots.
+  // backend DOM node ID -> @eN ref，跨快照保持稳定映射
   private backendNodeRefMap: Map<number, string> = new Map()
   private nextRefCounter = 0
 
@@ -107,13 +118,14 @@ export class BrowserCDP {
     this.webContents = webContents
   }
 
+  // 确保 debugger 已附加到 webContents；若已附加则忽略
   private async ensureAttached(): Promise<void> {
     if (this.attached) return
     try {
       this.webContents.debugger.attach('1.3')
       this.attached = true
     } catch (err) {
-      // May already be attached
+      // 可能 debugger 已经被其他代码附加
       if (String(err).includes('Already attached')) {
         this.attached = true
       } else {
@@ -129,6 +141,7 @@ export class BrowserCDP {
     }
   }
 
+  // 重置空闲 detach 定时器：每次 CDP 调用完成后刷新，避免长时间不用时一直占用 debugger
   private resetIdleDetachTimer(): void {
     if (this.idleDetachTimer) {
       clearTimeout(this.idleDetachTimer)
@@ -141,6 +154,7 @@ export class BrowserCDP {
     }, CDP_IDLE_DETACH_MS)
   }
 
+  // 主动 detach debugger 并清理定时器
   detach(): void {
     if (this.idleDetachTimer) {
       clearTimeout(this.idleDetachTimer)
@@ -149,21 +163,22 @@ export class BrowserCDP {
     if (this.attached) {
       try {
         this.webContents.debugger.detach()
-      } catch { /* ignore */ }
+      } catch { /* 忽略 */ }
       this.attached = false
     }
   }
 
+  // 发送 CDP 命令；调用完成后刷新空闲 detach 定时器，防止飞行中途 detach
   private async send(method: string, params?: Record<string, unknown>): Promise<any> {
     await this.ensureAttached()
     try {
       return await this.webContents.debugger.sendCommand(method, params)
     } finally {
-      // Keep detach countdown tied to completed calls so we do not detach mid-flight.
       this.resetIdleDetachTimer()
     }
   }
 
+  // 为元素分配 @eN 形式的 ref；若 backend DOM node 已有稳定映射则复用
   private allocateRef(backendDOMNodeId?: number): string {
     if (backendDOMNodeId !== undefined) {
       const existing = this.backendNodeRefMap.get(backendDOMNodeId)
@@ -183,9 +198,10 @@ export class BrowserCDP {
   }
 
   // ---------------------------------------------------------------------------
-  // Accessibility Snapshot
+  // 可访问性快照
   // ---------------------------------------------------------------------------
 
+  // 获取当前页面的可访问性树，并过滤成结构化的 AccessibilityNode 列表
   async getAccessibilitySnapshot(): Promise<AccessibilitySnapshot> {
     const tree = await this.send('Accessibility.getFullAXTree')
     const nodes = Array.isArray(tree?.nodes) ? tree.nodes as any[] : []
@@ -351,9 +367,10 @@ export class BrowserCDP {
   }
 
   // ---------------------------------------------------------------------------
-  // Screenshot Annotation Helpers
+  // 截图标注辅助
   // ---------------------------------------------------------------------------
 
+  // 根据 ref 获取元素的几何信息（包围盒、推荐点击点）
   async getElementGeometry(ref: string): Promise<ElementGeometry> {
     const backendNodeId = this.refMap.get(ref)
     if (!backendNodeId) {
@@ -390,6 +407,7 @@ export class BrowserCDP {
     }
   }
 
+  // 通过 CSS selector 获取第一个可见元素的几何信息
   async getElementGeometryBySelector(selector: string): Promise<ElementGeometry> {
     const result = await this.send('Runtime.evaluate', {
       expression: `(() => {
@@ -450,6 +468,7 @@ export class BrowserCDP {
     }
   }
 
+  // 获取当前页面视口尺寸、DPR、滚动位置
   async getViewportMetrics(): Promise<ViewportMetrics> {
     const result = await this.send('Runtime.evaluate', {
       expression: `(() => ({
@@ -472,6 +491,7 @@ export class BrowserCDP {
     }
   }
 
+  // 在页面临时绘制标注覆盖层：元素边框、标签、点击点、元数据
   async renderTemporaryOverlay(params: {
     geometries: ElementGeometry[]
     includeMetadata?: boolean
@@ -561,6 +581,7 @@ export class BrowserCDP {
     })
   }
 
+  // 清除临时标注覆盖层
   async clearTemporaryOverlay(): Promise<void> {
     await this.send('Runtime.evaluate', {
       expression: `(() => {
@@ -571,12 +592,11 @@ export class BrowserCDP {
   }
 
   // ---------------------------------------------------------------------------
-  // Native Mouse Input (uses webContents.sendInputEvent for trusted events)
+  // 原生鼠标输入（通过 webContents.sendInputEvent 发送可信事件）
   // ---------------------------------------------------------------------------
 
   /**
-   * Generate a series of intermediate points between two coordinates.
-   * Adds slight curve and jitter for realistic mouse movement.
+   * 在两点之间生成一条带轻微弧线和抖动的轨迹，模拟真实鼠标移动。
    */
   private generateTrajectory(
     fromX: number, fromY: number,
@@ -586,14 +606,14 @@ export class BrowserCDP {
     const points: Array<{ x: number; y: number }> = []
     for (let i = 1; i <= steps; i++) {
       const t = i / steps
-      // Slight arc: offset perpendicular to the line
+      // 轻微弧线：沿线段垂直方向偏移
       const arcOffset = Math.sin(t * Math.PI) * Math.min(15, Math.sqrt((toX - fromX) ** 2 + (toY - fromY) ** 2) * 0.05)
       const dx = toX - fromX
       const dy = toY - fromY
       const len = Math.sqrt(dx * dx + dy * dy) || 1
       const perpX = -dy / len
       const perpY = dx / len
-      // Small per-step jitter (±2px)
+      // 每步加入小幅抖动（±2px），模拟真实鼠标
       const jitterX = (Math.random() - 0.5) * 4
       const jitterY = (Math.random() - 0.5) * 4
       points.push({
@@ -601,7 +621,7 @@ export class BrowserCDP {
         y: Math.round(fromY + dy * t + perpY * arcOffset + jitterY),
       })
     }
-    // Ensure last point is exactly the target
+    // 保证最后一个点精确落在目标上
     if (points.length > 0) {
       points[points.length - 1] = { x: Math.round(toX), y: Math.round(toY) }
     }
@@ -615,7 +635,7 @@ export class BrowserCDP {
     this.webContents.sendInputEvent(event as any)
   }
 
-  // Explicit CDP mouse fallback methods kept for resilience.
+  // CDP 鼠标回退方法：原生输入失败时用来兜底
   private async clickAtCDP(x: number, y: number): Promise<void> {
     await this.send('Input.dispatchMouseEvent', {
       type: 'mousePressed',
@@ -633,6 +653,7 @@ export class BrowserCDP {
     })
   }
 
+  // CDP 拖拽回退方法
   private async dragCDP(x1: number, y1: number, x2: number, y2: number): Promise<void> {
     const dx = x2 - x1
     const dy = y2 - y1
@@ -682,12 +703,13 @@ export class BrowserCDP {
   }
 
   // ---------------------------------------------------------------------------
-  // Element Interaction
+  // 元素交互
   // ---------------------------------------------------------------------------
 
+  // 在指定坐标执行类人点击（带轨迹、随机延时）
   async clickAtCoordinates(x: number, y: number): Promise<void> {
     try {
-      // Generate short trajectory to the click target for realism
+      // 生成一段短轨迹移动到点击目标，模拟真人鼠标
       const startX = x + (Math.random() - 0.5) * 60
       const startY = y + (Math.random() - 0.5) * 60
       const trajectory = this.generateTrajectory(startX, startY, x, y, 3 + Math.floor(Math.random() * 3))
@@ -706,6 +728,7 @@ export class BrowserCDP {
     }
   }
 
+  // 从 (x1,y1) 拖拽到 (x2,y2)
   async drag(x1: number, y1: number, x2: number, y2: number): Promise<void> {
     try {
       const dx = x2 - x1
@@ -713,11 +736,11 @@ export class BrowserCDP {
       const distance = Math.sqrt(dx * dx + dy * dy)
       const steps = Math.max(5, Math.min(20, Math.round(distance / 20)))
 
-      // Move to start position
+      // 移动到起点
       this.sendMouseEvent('mouseMove', x1, y1)
       await new Promise(resolve => setTimeout(resolve, 10))
 
-      // Press at start position
+      // 在起点按下
       this.sendMouseEvent('mouseDown', x1, y1, 'left', 1)
       await new Promise(resolve => setTimeout(resolve, 30))
 
@@ -737,7 +760,7 @@ export class BrowserCDP {
           }
         }
       } catch (error) {
-        // Always release even on error
+        // 出错也要释放鼠标，避免按下状态悬空
         this.sendMouseEvent('mouseUp', lastX, lastY, 'left', 1)
         throw error
       }
@@ -750,6 +773,7 @@ export class BrowserCDP {
     }
   }
 
+  // 逐个字符输入文本，模拟真实键盘
   async typeText(text: string): Promise<void> {
     for (const char of text) {
       await this.send('Input.dispatchKeyEvent', { type: 'keyDown', text: char })
@@ -757,6 +781,7 @@ export class BrowserCDP {
     }
   }
 
+  // 设置系统剪贴板文本
   async setClipboard(text: string): Promise<void> {
     await this.send('Runtime.evaluate', {
       expression: `navigator.clipboard.writeText(${JSON.stringify(text)})`,
@@ -765,6 +790,7 @@ export class BrowserCDP {
     })
   }
 
+  // 读取系统剪贴板文本
   async getClipboard(): Promise<string> {
     const result = await this.send('Runtime.evaluate', {
       expression: 'navigator.clipboard.readText()',
@@ -774,6 +800,7 @@ export class BrowserCDP {
     return (result as any).result?.value ?? ''
   }
 
+  // 根据 ref 点击元素：先滚动到视图，再获取几何中心，最后模拟鼠标点击
   async clickElement(ref: string): Promise<ElementGeometry> {
     const backendNodeId = this.refMap.get(ref)
     if (!backendNodeId) {
@@ -781,21 +808,21 @@ export class BrowserCDP {
     }
 
     try {
-      // Resolve node to get objectId
+      // 解析节点拿到 objectId
       const { object } = await this.send('DOM.resolveNode', { backendNodeId })
 
-      // Scroll element into view first
+      // 先把元素滚动到可视区域
       await this.send('Runtime.callFunctionOn', {
         objectId: object.objectId,
         functionDeclaration: 'function() { this.scrollIntoViewIfNeeded(); }',
       })
 
-      // Get element box model after scroll for up-to-date click coordinates
+      // 滚动后重新获取元素几何信息，得到准确的点击坐标
       const geometry = await this.getElementGeometry(ref)
       const x = geometry.clickPoint.x
       const y = geometry.clickPoint.y
 
-      // Use native input events for trusted mouse interaction
+      // 使用原生输入事件进行可信的鼠标交互（trusted event）
       await this.clickAtCoordinates(x, y)
 
       return geometry
@@ -805,6 +832,7 @@ export class BrowserCDP {
     }
   }
 
+  // 根据 ref 填充输入框：聚焦、清空、逐字符输入、触发 change 事件
   async fillElement(ref: string, value: string): Promise<ElementGeometry> {
     const backendNodeId = this.refMap.get(ref)
     if (!backendNodeId) {
@@ -812,10 +840,10 @@ export class BrowserCDP {
     }
 
     try {
-      // Focus the element first
+      // 先聚焦元素
       await this.send('DOM.focus', { backendNodeId })
 
-      // Clear existing content
+      // 清空已有内容
       const { object } = await this.send('DOM.resolveNode', { backendNodeId })
       await this.send('Runtime.callFunctionOn', {
         objectId: object.objectId,
@@ -825,7 +853,7 @@ export class BrowserCDP {
         }`,
       })
 
-      // Type the new value character by character for realistic input
+      // 逐字符输入新值，模拟真实键盘
       for (const char of value) {
         await this.send('Input.dispatchKeyEvent', {
           type: 'keyDown',
@@ -837,7 +865,7 @@ export class BrowserCDP {
         })
       }
 
-      // Dispatch change event
+      // 触发 change 事件
       await this.send('Runtime.callFunctionOn', {
         objectId: object.objectId,
         functionDeclaration: `function() {
@@ -852,6 +880,7 @@ export class BrowserCDP {
     }
   }
 
+  // 根据 ref 选择下拉框/列表框选项：同时支持原生 <select> 和 ARIA 自定义控件
   async selectOption(ref: string, value: string): Promise<ElementGeometry> {
     const backendNodeId = this.refMap.get(ref)
     if (!backendNodeId) {
@@ -1040,6 +1069,7 @@ export class BrowserCDP {
     }
   }
 
+  // 根据 ref 设置文件输入框的文件路径
   async setFileInputFiles(ref: string, filePaths: string[]): Promise<ElementGeometry> {
     const backendNodeId = this.refMap.get(ref)
     if (!backendNodeId) {

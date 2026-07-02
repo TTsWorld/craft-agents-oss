@@ -1,3 +1,8 @@
+/**
+ * ChatDisplay — React 组件
+ * 
+ * 所属目录：app-shell
+ */
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 import { useEffect, useState, useMemo, useCallback } from "react"
@@ -77,10 +82,10 @@ import { resolveBranchNewPanelOption } from "./branching"
 import { handleErrorMessageAction } from "./error-message-actions"
 
 // ============================================================================
-// CSS Custom Highlight API helper
+// CSS Custom Highlight API 辅助函数
 // ============================================================================
 
-/** Access CSS.highlights lazily — avoids stale ref from module-init / HMR timing */
+/** 懒加载 CSS.highlights，避免模块初始化 / HMR 时拿到过期引用 */
 function getCSSHighlights(): Map<string, Highlight> | undefined {
   try {
     return (CSS as any).highlights as Map<string, Highlight> | undefined
@@ -90,10 +95,10 @@ function getCSSHighlights(): Map<string, Highlight> | undefined {
 }
 
 // ============================================================================
-// Overlay State Types
+// 浮层状态类型
 // ============================================================================
 
-/** State for multi-diff overlay (Edit/Write activities) */
+/** 多文件 diff 浮层状态（Edit/Write 类 activity） */
 interface MultiDiffOverlayState {
   type: 'multi-diff'
   changes: FileChange[]
@@ -101,16 +106,16 @@ interface MultiDiffOverlayState {
   focusedChangeId?: string
 }
 
-/** State for markdown overlay (pop-out, turn details, generic activities) */
+/** Markdown 浮层状态（弹出详情、回合详情、通用 activity） */
 interface MarkdownOverlayState {
   type: 'markdown'
   content: string
   title: string
-  /** When true, show raw markdown source in code viewer instead of rendered preview */
+  /** 为 true 时直接显示原始 Markdown 源码，而不是渲染预览 */
   forceCodeView?: boolean
 }
 
-/** Union of all overlay states, or null for no overlay */
+/** 所有浮层状态的联合类型；null 表示没有浮层 */
 type OverlayState =
   | { type: 'activity'; activity: ActivityItem }
   | MultiDiffOverlayState
@@ -134,19 +139,19 @@ interface ChatDisplayProps {
   onSendMessage: (message: string, attachments?: FileAttachment[], skillSlugs?: string[]) => void
   onOpenFile: (path: string) => void
   onOpenUrl: (url: string) => void
-  // Model selection
+  // 模型选择
   currentModel: string
   onModelChange: (model: string, connection?: string) => void
-  // Connection selection (locked after first message)
-  /** Callback when LLM connection changes (only works when session is empty) */
+  // 连接选择（第一条消息后锁定）
+  /** LLM 连接变化回调；只在会话为空时有效 */
   onConnectionChange?: (connectionSlug: string) => void
-  /** Ref for the input, used for external focus control */
+  /** 输入框 ref，供外部控制焦点 */
   textareaRef?: React.RefObject<RichTextInputHandle>
-  /** When true, disables input (e.g., when agent needs activation) */
+  /** 为 true 时禁用输入（例如 agent 需要激活） */
   disabled?: boolean
-  /** Pending permission request for this session */
+  /** 本会话待处理的权限请求 */
   pendingPermission?: PermissionRequest
-  /** Callback to respond to permission request */
+  /** 响应权限请求的回调 */
   onRespondToPermission?: (
     sessionId: string,
     requestId: string,
@@ -154,90 +159,89 @@ interface ChatDisplayProps {
     alwaysAllow: boolean,
     options?: import('../../../shared/types').PermissionResponseOptions
   ) => void
-  /** Pending credential request for this session */
+  /** 本会话待处理的凭据请求 */
   pendingCredential?: CredentialRequest
-  /** Callback to respond to credential request */
+  /** 响应凭据请求的回调 */
   onRespondToCredential?: (sessionId: string, requestId: string, response: CredentialResponse) => void
-  // Thinking level (session-level setting)
-  /** Current thinking level ('off', 'think', 'max') */
+  // 思考层级（会话级设置）
+  /** 当前思考层级：'off' / 'think' / 'max' */
   thinkingLevel?: ThinkingLevel
-  /** Callback when thinking level changes */
+  /** 思考层级变化回调 */
   onThinkingLevelChange?: (level: ThinkingLevel) => void
-  // Advanced options
-  /** Current permission mode */
+  // 高级选项
+  /** 当前权限模式 */
   permissionMode?: PermissionMode
   onPermissionModeChange?: (mode: PermissionMode) => void
-  /** Enabled permission modes for Shift+Tab cycling */
+  /** Shift+Tab 循环时可用的权限模式 */
   enabledModes?: PermissionMode[]
-  // Input value preservation (controlled from parent)
-  /** Current input value - preserved across mode switches and conversation changes */
+  // 输入值保持（由父组件受控）
+  /** 当前输入值；在模式切换和会话切换间保持 */
   inputValue?: string
-  /** Callback when input value changes */
+  /** 输入值变化回调 */
   onInputChange?: (value: string) => void
-  /** Persisted attachment draft for this session (hydrated from disk in ChatPage) */
+  /** 本会话的附件草稿（由 ChatPage 从磁盘恢复） */
   attachmentsValue?: FileAttachment[]
-  /** Callback when attachment draft changes (add, remove, clear on send) */
+  /** 附件草稿变化回调（添加、删除、发送后清空） */
   onAttachmentsChange?: (attachments: FileAttachment[]) => void
-  // Source selection
-  /** Available sources (enabled only) */
+  // Source 选择
+  /** 可用 sources（仅启用的） */
   sources?: LoadedSource[]
-  /** Callback when source selection changes */
+  /** source 选择变化回调 */
   onSourcesChange?: (slugs: string[]) => void
-  // Skill selection (for @mentions)
-  /** Available skills for @mention autocomplete */
+  // Skill 选择（用于 @mention 自动补全）
+  /** 可用于 @mention 自动补全的 skills */
   skills?: LoadedSkill[]
-  // Label selection (for #labels)
-  /** Available label configs (tree) for label menu and badge display */
+  // Label 选择（用于 #labels）
+  /** 可用标签配置（树形），用于标签菜单和徽标展示 */
   labels?: import('@craft-agent/shared/labels').LabelConfig[]
-  /** Callback when labels change */
+  /** 标签变化回调 */
   onLabelsChange?: (labels: string[]) => void
-  // State/status selection (for # menu and ActiveOptionBadges)
-  /** Available workflow states */
+  // 状态选择（用于 # 菜单和 ActiveOptionBadges）
+  /** 可用工作流状态 */
   sessionStatuses?: import('@/config/session-status-config').SessionStatus[]
-  /** Callback when session state changes */
+  /** 会话状态变化回调 */
   onSessionStatusChange?: (stateId: string) => void
-  /** Workspace ID for loading skill icons */
+  /** 工作区 ID，用于加载 skill 图标 */
   workspaceId?: string
-  // Working directory (per session)
-  /** Current working directory for this session */
+  // 工作目录（按会话）
+  /** 本会话当前工作目录 */
   workingDirectory?: string
-  /** Callback when working directory changes */
+  /** 工作目录变化回调 */
   onWorkingDirectoryChange?: (path: string) => void
-  /** Session folder path (for "Reset to Session Root" option) */
+  /** 会话文件夹路径（用于“重置到会话根目录”选项） */
   sessionFolderPath?: string
-  // Lazy loading
-  /** When true, messages are still loading - show spinner in messages area */
+  // 懒加载
+  /** 为 true 时表示消息仍在加载，消息区域显示 spinner */
   messagesLoading?: boolean
-  /** Message load failure shown instead of an infinite spinner */
+  /** 消息加载失败提示，替代无限 spinner */
   messagesLoadError?: string | null
-  /** Whether a retry is currently in flight */
+  /** 是否正在重试加载 */
   messagesRetrying?: boolean
-  /** Retry lazy-loading the session transcript */
+  /** 重试加载会话记录 */
   onRetryMessagesLoad?: () => void
-  // Tutorial
-  /** Disable send action (for tutorial guidance) */
+  // 新手引导
+  /** 禁用发送（用于引导步骤） */
   disableSend?: boolean
-  // Search highlighting (from session list search)
-  /** Search query for highlighting matches - passed from session list */
+  // 搜索高亮（来自会话列表搜索）
+  /** 用于高亮匹配项的搜索关键字，由会话列表传入 */
   searchQuery?: string
-  /** Whether search mode is active (prevents focus stealing to chat input) */
+  /** 搜索模式是否激活（防止焦点被抢回聊天输入框） */
   isSearchModeActive?: boolean
-  /** Callback when match info changes - for immediate UI updates */
+  /** 匹配信息变化回调，用于即时更新 UI */
   onMatchInfoChange?: (info: { count: number; index: number; isHighlighting: boolean; sessionId: string | null }) => void
-  // Compact mode (for EditPopover embedding and auto-compact / WebUI mobile)
-  /** Enable compact mode - hides non-essential UI elements for popover embedding */
+  // 紧凑模式（用于 EditPopover 嵌入、auto-compact / WebUI 移动端）
+  /** 启用紧凑模式：隐藏非必要 UI，适合嵌入弹窗 */
   compactMode?: boolean
   /**
-   * When compactMode is true, enable the compact (drawer-based) model selector
-   * next to the permission-mode pill. Defaults to false so EditPopover keeps
-   * its current behavior; ChatPage opts in when in auto-compact / mobile.
+   * compactMode 为 true 时，在权限模式 pill 旁启用紧凑（抽屉式）模型选择器。
+   * 默认 false，保证 EditPopover 保持现有行为；ChatPage 在 auto-compact / 移动端时启用。
    */
   enableCompactModelPicker?: boolean
-  /** Custom placeholder for input (used in compact mode for edit context) */
+  /** 输入框自定义占位文案（紧凑模式下编辑上下文用） */
   placeholder?: string | string[]
-  /** Label shown as empty state in compact mode (e.g., "Permission Settings") */
+  /** 紧凑模式下空状态显示的标签（如“权限设置”） */
   emptyStateLabel?: string
-  /** When true, the session's locked connection has been removed - disables send and shows unavailable state */
+  /** 为 true 时表示会话锁定的连接已被移除：禁用发送并显示不可用状态 */
   connectionUnavailable?: boolean
 }
 
@@ -249,7 +253,6 @@ import {
 } from './ChatDisplay.follow-ups'
 
 /**
- * Imperative handle exposed via forwardRef for navigation between matches
  */
 export interface ChatDisplayHandle {
   goToNextMatch: () => void
@@ -260,8 +263,8 @@ export interface ChatDisplayHandle {
 }
 
 /**
- * Processing status messages - cycles through these randomly
- * Inspired by Claude Code's playful status messages
+ * 处理中的状态文案 key 列表，会随机循环展示。
+ * 灵感来自 Claude Code 的轻松风格状态提示。
  */
 const PROCESSING_MESSAGE_KEYS = [
   'chat.processing.thinking',
@@ -317,7 +320,7 @@ const PROCESSING_MESSAGE_KEYS = [
 ]
 
 /**
- * Format elapsed time: "45s" under a minute, "1:02" for 1+ minutes
+ * 格式化已用时间：不到一分钟显示 "45s"，一分钟以上显示 "1:02"
  */
 function formatElapsed(seconds: number): string {
   if (seconds < 60) return `${seconds}s`
@@ -327,15 +330,15 @@ function formatElapsed(seconds: number): string {
 }
 
 interface ProcessingIndicatorProps {
-  /** Start timestamp (persists across remounts) */
+  /** 开始时间戳（跨重挂载保持） */
   startTime?: number
-  /** Override cycling messages with explicit status (e.g., "Compacting...") */
+  /** 用固定状态文案覆盖循环文案（例如 "Compacting..."） */
   statusMessage?: string
 }
 
 /**
- * ProcessingIndicator - Shows cycling status messages with elapsed time
- * Matches TurnCard header layout for visual continuity
+ * ProcessingIndicator：显示循环状态文案和已用时间。
+ * 布局与 TurnCard 头部保持一致，确保视觉连贯。
  */
 function ProcessingIndicator({ startTime, statusMessage }: ProcessingIndicatorProps) {
   const { t } = useTranslation()
@@ -344,10 +347,10 @@ function ProcessingIndicator({ startTime, statusMessage }: ProcessingIndicatorPr
     Math.floor(Math.random() * PROCESSING_MESSAGE_KEYS.length)
   )
 
-  // Update elapsed time every second using provided startTime
+  // 根据传入的 startTime 每秒更新已用时间
   React.useEffect(() => {
     const start = startTime || Date.now()
-    // Set initial elapsed immediately
+    // 立即设置初始值
     setElapsed(Math.floor((Date.now() - start) / 1000))
 
     const interval = setInterval(() => {
@@ -356,12 +359,12 @@ function ProcessingIndicator({ startTime, statusMessage }: ProcessingIndicatorPr
     return () => clearInterval(interval)
   }, [startTime])
 
-  // Cycle through messages every 10 seconds (only when not showing status)
+  // 每 10 秒切换一次文案（仅在没传固定 statusMessage 时）
   React.useEffect(() => {
-    if (statusMessage) return  // Don't cycle when showing status
+    if (statusMessage) return  // 有固定状态时不循环
     const interval = setInterval(() => {
       setMessageIndex(prev => {
-        // Pick a random different message
+        // 随机挑一个不同的文案
         let next = Math.floor(Math.random() * PROCESSING_MESSAGE_KEYS.length)
         while (next === prev && PROCESSING_MESSAGE_KEYS.length > 1) {
           next = Math.floor(Math.random() * PROCESSING_MESSAGE_KEYS.length)
@@ -372,16 +375,16 @@ function ProcessingIndicator({ startTime, statusMessage }: ProcessingIndicatorPr
     return () => clearInterval(interval)
   }, [statusMessage])
 
-  // Use status message if provided, otherwise cycle through default messages
+  // 传了固定状态就用固定状态，否则使用循环文案
   const displayMessage = statusMessage || t(PROCESSING_MESSAGE_KEYS[messageIndex])
 
   return (
     <div className="flex items-center gap-2 px-3 py-1 -mb-1 text-[13px] text-muted-foreground">
-      {/* Spinner in same location as TurnCard chevron */}
+      {/* Spinner 放在和 TurnCard chevron 相同的位置 */}
       <div className="w-3 h-3 flex items-center justify-center shrink-0">
         <Spinner className="text-[10px]" />
       </div>
-      {/* Label with crossfade animation on content change only */}
+      {/* 文案切换时只做交叉淡入淡出动画 */}
       <span className="relative h-5 flex items-center">
         <AnimatePresence mode="wait" initial={false}>
           <motion.span
@@ -405,8 +408,8 @@ function ProcessingIndicator({ startTime, statusMessage }: ProcessingIndicatorPr
 }
 
 /**
- * Scrolls to target element on mount, before browser paint.
- * Uses useLayoutEffect to ensure scroll happens before content is visible.
+ * 挂载后立即滚动到目标元素；在浏览器绘制前执行。
+ * 使用 useLayoutEffect 确保内容可见前完成滚动。
  */
 function ScrollOnMount({
   targetRef,
@@ -426,14 +429,14 @@ function ScrollOnMount({
 }
 
 /**
- * ChatDisplay - Main chat interface for a selected session
+ * ChatDisplay：选中会话的主聊天界面。
  *
- * Structure:
- * - Session Header: Avatar + workspace name
- * - Messages Area: Scrollable list of MessageBubble components
- * - Input Area: Textarea + Send button
+ * 结构：
+ * - 会话头部：头像 + 工作区名
+ * - 消息区：可滚动的消息气泡列表
+ * - 输入区：文本框 + 发送按钮
  *
- * Shows empty state when no session is selected
+ * 未选中会话时显示空状态。
  */
 export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>(function ChatDisplay({
   session,
@@ -449,77 +452,82 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   onRespondToPermission,
   pendingCredential,
   onRespondToCredential,
-  // Thinking level
+  // 思维层面
+
   thinkingLevel = 'medium',
   onThinkingLevelChange,
-  // Advanced options
+  // 
   permissionMode = 'ask',
   onPermissionModeChange,
   enabledModes,
-  // Input value preservation
+  // 输入值保存
+
   inputValue,
   onInputChange,
   attachmentsValue,
   onAttachmentsChange,
-  // Sources
+  // 
   sources,
   onSourcesChange,
-  // Skills (for @mentions)
+  // 
   skills,
-  // Labels (for #labels)
+  // 
   labels,
   onLabelsChange,
-  // States (for # menu and badge)
+  // 
   sessionStatuses,
   onSessionStatusChange,
   workspaceId,
-  // Working directory
+  // 
   workingDirectory,
   onWorkingDirectoryChange,
   sessionFolderPath,
-  // Lazy loading
+  // 延迟加载
+
   messagesLoading = false,
   messagesLoadError,
   messagesRetrying = false,
   onRetryMessagesLoad,
-  // Tutorial
+  // 
   disableSend = false,
-  // Search highlighting
+  // 
   searchQuery: externalSearchQuery,
   isSearchModeActive = false,
   onMatchInfoChange,
-  // Compact mode (for EditPopover embedding and auto-compact / WebUI mobile)
+  // 紧凑模式（用于 EditPopover 嵌入和自动紧凑/WebUI 移动）
+
   compactMode = false,
   enableCompactModelPicker = false,
   placeholder,
   emptyStateLabel,
-  // Connection unavailable
+  // 连接不可用
+
   connectionUnavailable = false,
 }, ref) {
   const { t } = useTranslation()
 
-  // Panel focus state (for multi-panel auto-scroll behavior)
+  // 面板焦点状态（用于多面板自动滚动行为）
   const appShellContext = useAppShellContext()
   const isFocusedPanel = appShellContext?.isFocusedPanel ?? true
 
-  // Input is only disabled when explicitly disabled (e.g., agent needs activation)
-  // User can type during streaming - submitting will stop the stream and send
+  // 输入框只在显式禁用时才禁用（例如 agent 需要激活）。
+  // 流式输出期间用户仍可输入，提交会停止流并发送。
   const isInputDisabled = disabled
   const messagesEndRef = React.useRef<HTMLDivElement>(null)
   const scrollViewportRef = React.useRef<HTMLDivElement>(null)
   const prevSessionIdRef = React.useRef<string | null>(null)
-  // Reverse pagination: show last N turns initially, load more on scroll up
+  // 反向分页：初始只展示最后 N 个回合，向上滚动时加载更多
   const TURNS_PER_PAGE = 20
   const [visibleTurnCount, setVisibleTurnCount] = React.useState(TURNS_PER_PAGE)
-  // Sticky-bottom: When true, auto-scroll on content changes. Toggled by user scroll behavior.
+  // 吸底开关：为 true 时内容变化自动滚动到底部；由用户滚动行为切换
   const isStickToBottomRef = React.useRef(true)
-  // Mirror isFocusedPanel into a ref so the ResizeObserver closure reads the latest value
+  // 把 isFocusedPanel 同步到 ref，保证 ResizeObserver 回调里读到最新值
   const isFocusedPanelRef = React.useRef(isFocusedPanel)
   isFocusedPanelRef.current = isFocusedPanel
-  // Skip smooth scroll briefly after session switch (instant scroll already happened)
+  // 会话切换后短暂跳过平滑滚动（已经用瞬时滚动处理过）
   const skipSmoothScrollUntilRef = React.useRef(0)
-  // Track message commit boundaries so we can auto-scroll when a new user message
-  // actually lands in state (important when attachments delay optimistic insertion).
+  // 记录消息提交边界，当新的用户消息真正落入状态时再自动滚动
+  // （附件延迟乐观插入时尤其重要）。
   const prevLastMessageIdRef = React.useRef<string | null>(null)
   const prevMessageCountRef = React.useRef(0)
   const prevSessionIdForCommitScrollRef = React.useRef<string | null>(null)
@@ -536,15 +544,15 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   } | null>(null)
   const followUpOpenNonceRef = React.useRef(0)
 
-  // Navigation for session branching
+  // 会话分叉导航
   const { navigate } = useNavigation()
 
-  // Get isDark from useTheme hook for overlay theme
-  // This accounts for scenic themes (like Haze) that force dark mode
+  // 从 useTheme 获取是否为暗色主题，用于浮层主题
+  // 这会处理像 Haze 这样强制暗色的风景主题
   const { isDark } = useTheme()
 
-  // Register as focus zone - when zone gains focus, focus the textarea
-  // Guard with isFocusedPanelRef so only the focused panel responds in multi-panel layouts
+  // 注册为焦点区域：当区域获得焦点时，聚焦输入框
+  // 用 isFocusedPanelRef 做守卫，多面板布局下只有聚焦面板响应
   const { zoneRef, isFocused } = useFocusZone({
     zoneId: 'chat',
     enabled: isFocusedPanel,
@@ -555,12 +563,12 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     },
   })
 
-  // Background tasks management
+  // 后台任务管理
   const { tasks: backgroundTasks, killTask } = useBackgroundTasks({
     sessionId: session?.id ?? ''
   })
 
-  // TurnCard expansion state — persisted to localStorage across session switches
+  // TurnCard 展开状态——跨会话切换持久化到 localStorage
   const {
     expandedTurns,
     toggleTurn,
@@ -570,13 +578,13 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
 
   // ============================================================================
-  // Search Highlighting (from session list search)
+  // 搜索高亮（来自会话列表搜索）
   // ============================================================================
-  // Current match index for navigation (internal state, exposed via ref)
+  // 当前匹配索引（内部状态，通过 ref 暴露给外部导航）
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0)
   const turnRefs = React.useRef<Map<string, HTMLDivElement>>(new Map())
-  // Inject ::highlight() styles at runtime to avoid LightningCSS build warnings
-  // (the optimizer doesn't recognize ::highlight as a valid pseudo-element yet)
+  // 运行时注入 ::highlight() 样式，避免 LightningCSS 构建警告
+  //（当前构建优化器还不把 ::highlight 当成合法伪元素）
   React.useEffect(() => {
     const id = 'search-highlight-styles'
     if (document.getElementById(id)) return
@@ -588,22 +596,21 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     `
     document.head.appendChild(style)
   }, [])
-  // Flag to control when scrolling to matches should happen
-  // Only scroll when: session changes with search active, or user clicks navigation
+  // 控制何时滚动到匹配项：仅在带搜索切换会话，或用户点击导航按钮时
   const shouldScrollToMatchRef = React.useRef(false)
   const prevSessionIdForScrollRef = React.useRef<string | null>(null)
 
-  // Use the external search query from props
+  // 使用外部传入的搜索关键字
   const searchQuery = externalSearchQuery || ''
-  // Require 2+ characters to activate in-chat search (aligned with session list isSearchMode)
+  // 至少 2 个字符才激活聊天内搜索（和会话列表的 isSearchMode 对齐）
   const isSearchActive = searchQuery.trim().length >= 2
 
-  // Focus textarea when zone gains focus via keyboard (Tab, Cmd+3, ArrowRight)
-  // Requires isFocused to be true - respects zone architecture
-  // Does NOT auto-focus just because session changed (that would steal focus from SessionList)
-  // Uses isSearchModeActive (prop) instead of isSearchActive (query-based) to prevent
-  // focus stealing when search is open but query is empty
-  // In multi-panel layouts, only the focused panel should auto-focus its textarea
+  // 当焦点区域通过键盘（Tab、Cmd+3、方向右）获得焦点时，聚焦输入框。
+  // 需要 isFocused 为 true——遵守焦点区域架构。
+  // 不会仅因会话切换就自动聚焦（那会抢走 SessionList 的焦点）。
+  // 使用 isSearchModeActive（props）而不是 isSearchActive（基于查询），
+  // 防止搜索框打开但查询为空时焦点被抢走。
+  // 多面板布局下，只有聚焦面板才会自动聚焦自己的输入框。
   useEffect(() => {
     if (session && !isSearchModeActive && isFocused && isFocusedPanel) {
       textareaRef.current?.focus()
@@ -632,12 +639,12 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     }
   }, [])
 
-  // Reset match state when session or search query changes
+  // 会话或搜索关键字变化时重置匹配状态
   useEffect(() => {
     const isSessionSwitch = prevSessionIdForScrollRef.current !== null && prevSessionIdForScrollRef.current !== session?.id
     prevSessionIdForScrollRef.current = session?.id ?? null
 
-    // If session switched with search active, trigger scroll to first match
+    // 如果切换会话时搜索仍激活，触发滚动到第一个匹配
     if (isSessionSwitch && isSearchActive) {
       shouldScrollToMatchRef.current = true
     }
@@ -645,7 +652,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     setCurrentMatchIndex(0)
   }, [session?.id, searchQuery, isSearchActive])
 
-  // Helper to count occurrences of a substring
+  // 统计子串出现次数的辅助函数
   const countOccurrences = useCallback((text: string, query: string): number => {
     const lowerText = text.toLowerCase()
     const lowerQuery = query.toLowerCase()
@@ -658,8 +665,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     return count
   }, [])
 
-  // Find ALL individual match occurrences (not just turns)
-  // Returns array with unique matchId for each occurrence
+  // 找出每个单独匹配出现的位置（不只是哪些 turn）
+  // 返回的数组里每项带唯一 matchId
   const matchingOccurrences = useMemo(() => {
     if (!searchQuery.trim() || !session?.messages) return []
     const startTime = performance.now()
@@ -672,7 +679,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       let textContent = ''
       let turnId = ''
 
-      // Use getTurnKey() for consistent IDs between text scan and DOM refs
+      // 文本扫描和 DOM ref 使用同一个 getTurnKey，保证 ID 一致
       turnId = getTurnKey(turn)
 
       if (turn.type === 'user') {
@@ -693,7 +700,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
         textContent = turn.message.content
       }
 
-      // Count occurrences in this turn's text content
+      // 统计该 turn 文本中的出现次数
       const occurrenceCount = countOccurrences(textContent, query)
       for (let i = 0; i < occurrenceCount; i++) {
         matches.push({
@@ -707,46 +714,47 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     return matches
   }, [searchQuery, session?.messages, session?.isProcessing, countOccurrences])
 
-  // Auto-expand pagination when search is active to show all matching turns
-  // This ensures match count is stable and all matches are highlightable from the start
+  // 搜索激活时自动展开分页，确保所有含匹配的 turn 都可见
+  // 这样匹配数量稳定，并且一开始就能高亮所有命中项
   useEffect(() => {
     if (!isSearchActive || matchingOccurrences.length === 0) return
 
-    // Find the earliest matching turn index (reduce to avoid RangeError on large arrays)
+    // 找到最早出现匹配的 turn 索引（用 reduce 避免大数组 RangeError）
     const earliestMatchTurnIndex = matchingOccurrences.reduce(
       (min, m) => m.turnIndex < min ? m.turnIndex : min,
       matchingOccurrences[0]!.turnIndex
     )
     const totalTurns = groupMessagesByTurn(session?.messages || [], { isSessionProcessing: session?.isProcessing }).length
 
-    // Calculate how many turns we need to show to include all matches
-    // totalTurns - visibleTurnCount = startIndex, so we need visibleTurnCount = totalTurns - earliestMatchTurnIndex + buffer
-    const requiredVisibleCount = totalTurns - earliestMatchTurnIndex + 5 // +5 buffer for context
+    // 计算需要显示多少个 turn 才能包含所有匹配。
+    // 
+    // 所以 requiredVisibleCount = totalTurns - earliestMatchTurnIndex + 上下文缓冲。
+    const requiredVisibleCount = totalTurns - earliestMatchTurnIndex + 5 // +5 作为上下文缓冲
 
     if (requiredVisibleCount > visibleTurnCount) {
       setVisibleTurnCount(requiredVisibleCount)
     }
   }, [isSearchActive, matchingOccurrences, session?.messages, session?.isProcessing, visibleTurnCount])
 
-  // Extract unique turn IDs that have matches (for highlighting)
+  // 提取有匹配的 turn ID（去重），供高亮使用
   const matchingTurnIds = useMemo(() => {
     const uniqueTurnIds = new Set(matchingOccurrences.map(m => m.turnId))
     return Array.from(uniqueTurnIds)
   }, [matchingOccurrences])
 
-  // With CSS Custom Highlight API, navigation is driven by logical matches — no DOM verification needed.
+  // CSS Custom Highlight API 直接用逻辑匹配驱动导航，不需要再校验 DOM。
   const validMatches = matchingOccurrences
 
-  // Auto-scroll to match ONLY when there's exactly one match
-  // Multiple matches: user navigates with chevrons to avoid jarring scroll
+  // 只有唯一匹配时才自动滚动；
+  // 多个匹配时让用户用上下 chevron 导航，避免突兀滚动。
   useEffect(() => {
     if (validMatches.length === 1 && isSearchActive) {
       shouldScrollToMatchRef.current = true
     }
   }, [validMatches.length, isSearchActive])
 
-  // Scroll to current match turn
-  // Only scrolls when shouldScrollToMatchRef is true (single match auto-scroll or nav button click)
+  // 滚动到当前匹配 turn
+  // 仅在 shouldScrollToMatchRef 为 true 时执行（单匹配自动滚动或导航按钮点击）
   useEffect(() => {
     if (!shouldScrollToMatchRef.current) return
 
@@ -755,7 +763,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       const { turnId, turnIndex } = matchData
       const totalTurns = totalTurnCountRef.current
 
-      // Check if the match is outside the visible range
+      // 如果匹配在当前可见范围之外，先扩展分页
       const currentStartIndex = Math.max(0, totalTurns - visibleTurnCount)
       if (turnIndex < currentStartIndex) {
         const newVisibleCount = totalTurns - turnIndex + 5
@@ -763,7 +771,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
         return
       }
 
-      // Scroll the turn into view
+      // 把 turn 滚入视野
       const turnEl = turnRefs.current.get(turnId)
       if (turnEl) {
         const rect = turnEl.getBoundingClientRect()
@@ -778,27 +786,27 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   }, [validMatches, currentMatchIndex, session?.id, visibleTurnCount])
 
   // ---------------------------------------------------------------------------
-  // CSS Custom Highlight API — non-destructive text highlighting
-  // Creates browser-native highlight ranges over matching text without
-  // modifying the DOM tree. Safe with React re-renders and streaming.
-  // Uses cross-node matching: concatenates text across node boundaries
-  // to find matches that span multiple DOM nodes (e.g. Shiki-split tokens).
+  // CSS Custom Highlight API：非破坏式文本高亮
+  // 在不修改 DOM 树的情况下，为匹配文本创建浏览器原生高亮范围。
+  // 对 React 重渲染和流式输出都安全。
+  // 使用跨节点匹配：把多个文本节点拼接起来查找，能命中跨节点边界的内容
+  //（例如被 Shiki 拆分的 token）。
   // ---------------------------------------------------------------------------
 
   const MAX_HIGHLIGHT_RANGES = 5000
-  // Store computed ranges so the active-match effect can restyle without re-walking the DOM
+  // 缓存已计算的范围，让 active-match 效果可以在不重走 DOM 的情况下重新着色
   const highlightRangesRef = React.useRef<Range[]>([])
 
-  // Effect 1: Walk DOM and collect highlight ranges when search/session/pagination changes
+  // Effect 1：搜索/会话/分页变化时遍历 DOM，收集高亮范围
   useEffect(() => {
     const cssHighlights = getCSSHighlights()
     highlightRangesRef.current = []
 
-    // Clear previous highlights
+    // 清除上一次高亮
     try {
       cssHighlights?.delete('search-passive')
       cssHighlights?.delete('search-active')
-    } catch { /* API unavailable — no-op */ }
+    } catch { /* API 不可用——静默忽略 */ }
 
     if (!searchQuery.trim() || !isSearchActive || !cssHighlights) return
 
@@ -813,10 +821,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
         if (allRanges.length >= MAX_HIGHLIGHT_RANGES) return
         if (!matchingTurnIdSet.has(turnKey)) return
 
-        // For assistant turns, narrow search to response content root
+        // assistant turn 只在其回复内容根节点内搜索
         const searchRoot = container.querySelector('[data-search-root="response"]') || container
 
-        // Collect ALL eligible text nodes (no query filter — needed for cross-node matching)
+        // 收集所有符合条件的文本节点（不过滤查询关键字——跨节点匹配需要完整文本）
         const walker = document.createTreeWalker(
           searchRoot,
           NodeFilter.SHOW_TEXT,
@@ -832,7 +840,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
           }
         )
 
-        // Build concatenated string with node offset mapping for cross-node matching
+        // 为跨节点匹配构建拼接字符串和节点偏移映射
         const textNodes: Text[] = []
         let currentNode: Node | null
         while ((currentNode = walker.nextNode())) {
@@ -850,14 +858,14 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
         const concatenated = textNodes.map(n => n.textContent || '').join('')
         const lowerConcatenated = concatenated.toLowerCase()
 
-        // Find all matches in the concatenated string
+        // 在拼接字符串中查找所有匹配
         let searchPos = 0
         while (searchPos < lowerConcatenated.length && allRanges.length < MAX_HIGHLIGHT_RANGES) {
           const idx = lowerConcatenated.indexOf(query, searchPos)
           if (idx === -1) break
           const matchEnd = idx + query.length
 
-          // Create a Range spanning the match (may cross node boundaries)
+          // 创建跨越匹配区域的 Range（可能跨多个节点）
           try {
             const range = new Range()
             let startSet = false
@@ -877,14 +885,14 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
               allRanges.push(range)
             }
           } catch {
-            // Range creation can fail if node was removed during walk
+            // 遍历期间节点被移除可能导致 Range 创建失败
           }
 
           searchPos = matchEnd
         }
       })
 
-      // Store ranges for the active-match effect to use
+      // 把范围存起来，供 active-match effect 使用
       highlightRangesRef.current = allRanges
 
       if (allRanges.length === 0 && matchingTurnIdSet.size > 0) {
@@ -894,18 +902,18 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       if (allRanges.length === 0) return
 
       try {
-        // Apply all ranges as passive initially — the active-match effect will restyle
+        // 初始全部设为 passive；active-match effect 会重新着色当前项
         cssHighlights.set('search-passive', new Highlight(...allRanges))
       } catch {
-        // Highlight API call failed — degrade gracefully
+        // Highlight API 调用失败——优雅降级
       }
     })
 
     return () => cancelAnimationFrame(rafId)
   }, [searchQuery, isSearchActive, matchingTurnIds, session?.id, visibleTurnCount])
 
-  // Effect 2: Update active/passive highlight split when navigation index changes
-  // Lightweight — just reshuffles existing Range objects between two Highlight instances
+  // Effect 2：导航索引变化时更新 active/passive 高亮分割
+  // 很轻量——只是在两个 Highlight 实例之间重新分配已有的 Range 对象
   useEffect(() => {
     const cssHighlights = getCSSHighlights()
     const allRanges = highlightRangesRef.current
@@ -921,35 +929,35 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
         cssHighlights.set('search-passive', new Highlight(...allRanges))
         cssHighlights.delete('search-active')
       }
-    } catch { /* graceful degradation */ }
+    } catch { /* 优雅降级 */ }
   }, [currentMatchIndex])
 
-  // Navigate to next match (no looping - stops at last match)
+  // 导航到下一个匹配（不循环，到末尾停止）
   const goToNextMatch = useCallback(() => {
     if (validMatches.length === 0) return
     setCurrentMatchIndex(prev => {
-      // Don't loop - stop at last match
+      // 不循环
       if (prev >= validMatches.length - 1) return prev
       shouldScrollToMatchRef.current = true
       return prev + 1
     })
   }, [validMatches])
 
-  // Navigate to previous match (no looping - stops at first match)
+  // 导航到上一个匹配（不循环，到开头停止）
   const goToPrevMatch = useCallback(() => {
     if (validMatches.length === 0) return
     setCurrentMatchIndex(prev => {
-      // Don't loop - stop at first match
+      // 不循环
       if (prev <= 0) return prev
       shouldScrollToMatchRef.current = true
       return prev - 1
     })
   }, [validMatches])
 
-  // With CSS Highlight API, highlighting is instant — no settling phase
+  // CSS Highlight API 高亮是即时的，没有 settling 阶段
   const isHighlighting = false
 
-  // Expose navigation via imperative handle (for session list navigation controls)
+  // 通过 imperative handle 暴露导航能力（供会话列表导航控制使用）
   React.useImperativeHandle(ref, () => ({
     goToNextMatch,
     goToPrevMatch,
@@ -958,7 +966,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     isHighlighting,
   }), [goToNextMatch, goToPrevMatch, validMatches.length, currentMatchIndex])
 
-  // Notify parent when match info (count, index, highlighting state) changes
+  // 当匹配信息（数量、索引、高亮状态）变化时通知父组件
   useEffect(() => {
     onMatchInfoChange?.({
       count: validMatches.length,
@@ -969,17 +977,17 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   }, [validMatches.length, currentMatchIndex, isHighlighting, session?.id, onMatchInfoChange])
 
   // ============================================================================
-  // Overlay State Management
+  // 浮层状态管理
   // ============================================================================
 
-  // Overlay state - controls which overlay is shown (if any)
+  // 浮层状态：控制当前显示哪个浮层（如果有）
   const [overlayState, setOverlayState] = useState<OverlayState>(null)
 
-  // Diff viewer settings - loaded from user preferences on mount, persisted on change
-  // These settings are stored in ~/.craft-agent/preferences.json (not localStorage)
+  // Diff 查看器设置：挂载时从用户偏好读取，变化时持久化
+  // 这些设置存在 ~/.craft-agent/preferences.json 里（不是 localStorage）
   const [diffViewerSettings, setDiffViewerSettings] = useState<Partial<DiffViewerSettings>>({})
 
-  // Load diff viewer settings from preferences on mount
+  // 挂载时加载 diff 查看器设置
   useEffect(() => {
     window.electronAPI.readPreferences().then(({ content }) => {
       try {
@@ -988,15 +996,15 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
           setDiffViewerSettings(prefs.diffViewer)
         }
       } catch {
-        // Ignore parse errors, use defaults
+        // 解析错误时忽略，使用默认值
       }
     })
   }, [])
 
-  // Persist diff viewer settings to preferences when changed
+  // diff 查看器设置变化时写回偏好文件
   const handleDiffViewerSettingsChange = useCallback((settings: DiffViewerSettings) => {
     setDiffViewerSettings(settings)
-    // Read current preferences, merge in new settings, write back
+    // 读取当前偏好，合并新设置后写回
     window.electronAPI.readPreferences().then(({ content }) => {
       try {
         const prefs = JSON.parse(content)
@@ -1004,36 +1012,36 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
         prefs.updatedAt = Date.now()
         window.electronAPI.writePreferences(JSON.stringify(prefs, null, 2))
       } catch {
-        // If preferences malformed, create fresh with just diffViewer
+        // 如果偏好文件损坏，只写入 diffViewer 重建
         window.electronAPI.writePreferences(JSON.stringify({ diffViewer: settings, updatedAt: Date.now() }, null, 2))
       }
     })
   }, [])
 
-  // Close overlay handler
+  // 关闭浮层
   const handleCloseOverlay = useCallback(() => {
     setOverlayState(null)
   }, [])
 
-  // Extract overlay cards for activity-based overlays (Input/Output, future extensible)
+  // 从 activity 浮层中提取卡片（Input/Output 等，方便后续扩展）
   const overlayCards = useMemo(() => {
     if (!overlayState || overlayState.type !== 'activity') return []
     return extractOverlayCards(overlayState.activity)
   }, [overlayState])
 
-  // Parsed output data for legacy output-only activity overlays
+  // 旧版仅 output 的 activity 浮层解析数据
   const activityOutputOverlayData = useMemo(() => {
     if (!overlayState || overlayState.type !== 'activity') return null
     return extractOverlayData(overlayState.activity)
   }, [overlayState])
 
-  // Stacked input/output cards are only enabled for Bash and MCP tools
+  // 堆叠输入/输出卡片仅对 Bash 和 MCP 工具启用
   const useStackedActivityOverlay = useMemo(() => {
     if (!overlayState || overlayState.type !== 'activity') return false
     return isStackedActivityTool(overlayState.activity)
   }, [overlayState])
 
-  // Pop-out handler - opens message in overlay (read-only markdown)
+  // 弹出消息到浮层（只读 markdown）
   const handlePopOut = useCallback((message: Message) => {
     if (!session) return
     setOverlayState({
@@ -1043,15 +1051,16 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     })
   }, [session])
 
-  // Ref to track total turn count for scroll handler
+  // 用于滚动处理中读取总 turn 数量
   const totalTurnCountRef = React.useRef(0)
 
-  // Latest message metadata (for commit-time auto-scroll)
+  // 最新消息元数据（用于提交时刻的自动滚动）
   const messageCount = session?.messages.length ?? 0
   const lastMessage = messageCount > 0 ? session?.messages[messageCount - 1] : undefined
   const lastMessageId = lastMessage?.id
   const lastMessageRole = lastMessage?.role
 
+  // 收集待处理的批注跟进项
   const pendingFollowUpAnnotations = useMemo<PendingFollowUpAnnotation[]>(() => {
     if (!session?.messages?.length) return []
 
@@ -1093,29 +1102,29 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     }))
   }, [pendingFollowUpAnnotations])
 
-  // Track scroll position to toggle sticky-bottom behavior
-  // - User scrolls up → unstick (stop auto-scrolling)
-  // - User scrolls back to bottom → re-stick (resume auto-scrolling)
-  // Also handles loading more turns when scrolling near top
+  // 监听滚动位置来切换吸底行为：
+  // - 用户向上滚动 → 取消吸底（停止自动滚动）
+  // - 用户滚回底部 → 恢复吸底（继续自动滚动）
+  // 同时处理靠近顶部时加载更多回合
   const handleScroll = React.useCallback(() => {
     const viewport = scrollViewportRef.current
     if (!viewport) return
     const { scrollTop, scrollHeight, clientHeight } = viewport
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight
-    // 20px threshold for "at bottom" detection
+    // 用 20px 阈值判断“是否在底部”
     isStickToBottomRef.current = distanceFromBottom < 20
 
-    // Load more turns when scrolling near top (within 100px)
+    // 靠近顶部（100px 内）时加载更多回合
     if (scrollTop < 100) {
       setVisibleTurnCount(prev => {
-        // Check if there are more turns to load
+        // 检查是否还有未显示的回合
         const currentStartIndex = Math.max(0, totalTurnCountRef.current - prev)
-        if (currentStartIndex <= 0) return prev // Already showing all
+        if (currentStartIndex <= 0) return prev // 已经全部显示
 
-        // Remember scroll height before adding more items
+        // 记住添加新项之前的滚动高度
         const prevScrollHeight = viewport.scrollHeight
 
-        // Schedule scroll position adjustment after render
+        // 渲染后调整滚动位置，避免跳动
         requestAnimationFrame(() => {
           const newScrollHeight = viewport.scrollHeight
           viewport.scrollTop = newScrollHeight - prevScrollHeight + scrollTop
@@ -1126,7 +1135,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     }
   }, [])
 
-  // Set up scroll event listener
+  // 绑定滚动事件监听
   React.useEffect(() => {
     const viewport = scrollViewportRef.current
     if (!viewport) return
@@ -1134,8 +1143,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     return () => viewport.removeEventListener('scroll', handleScroll)
   }, [handleScroll])
 
-  // Auto-scroll using ResizeObserver for streaming content
-  // Initial scroll is handled by ScrollOnMount (useLayoutEffect, before paint)
+  // 用 ResizeObserver 在流式内容输出时自动滚动。
+  // 初始滚动由 ScrollOnMount（useLayoutEffect，绘制前）处理。
   React.useEffect(() => {
     const viewport = scrollViewportRef.current
     if (!viewport) return
@@ -1143,35 +1152,35 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     const isSessionSwitch = prevSessionIdRef.current !== session?.id
     prevSessionIdRef.current = session?.id ?? null
 
-    // On session switch: reset UI state (scroll handled by ScrollOnMount)
+    // 会话切换时重置 UI 状态（滚动本身交给 ScrollOnMount）
     if (isSessionSwitch) {
       isStickToBottomRef.current = true
       setVisibleTurnCount(TURNS_PER_PAGE)
     }
 
-    // Debounced scroll for streaming - waits for layout to settle
+    // 流式滚动防抖：等布局稳定后再滚动
     let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
     const resizeObserver = new ResizeObserver(() => {
-      // Unfocused panels: always scroll to bottom instantly (user isn't reading them)
+      // 非聚焦面板：用户没在查看，总是瞬时滚到底
       if (!isFocusedPanelRef.current) {
         messagesEndRef.current?.scrollIntoView({ behavior: 'instant' })
         return
       }
 
-      // Focused panel: respect sticky-bottom preference
+      // 聚焦面板：尊重吸底偏好
       if (!isStickToBottomRef.current) return
 
-      // Clear pending scroll and wait for layout to settle
+      // 清除待处理滚动，等布局稳定
       if (debounceTimer) clearTimeout(debounceTimer)
       debounceTimer = setTimeout(() => {
-        // Skip smooth scroll if we just did an instant scroll (session switch/lazy load)
+        // 如果刚做过瞬时滚动（会话切换/懒加载），跳过平滑滚动
         if (Date.now() < skipSmoothScrollUntilRef.current) return
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
       }, 200)
     })
 
-    // Observe the scroll content container (first child of viewport)
+    // 观察滚动视口的内容容器（viewport 的第一个子元素）
     const content = viewport.firstElementChild
     if (content) {
       resizeObserver.observe(content)
@@ -1183,13 +1192,12 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     }
   }, [session?.id])
 
-  // Commit-time auto-scroll for new user messages.
-  // This complements submit-time scrolling and covers cases where attachments delay
-  // optimistic message insertion (e.g., thumbnail generation/resizing).
+  // 新用户消息真正落入状态后的提交时刻自动滚动。
+  // 补充提交时的滚动，覆盖附件延迟乐观插入的情况（如缩略图生成/缩放）。
   React.useEffect(() => {
     const currentSessionId = session?.id ?? null
 
-    // Reset baseline on session switch; defer to ScrollOnMount/session-switch logic.
+    // 会话切换时重置基准；滚动逻辑交给 ScrollOnMount / 会话切换逻辑。
     if (prevSessionIdForCommitScrollRef.current !== currentSessionId) {
       prevSessionIdForCommitScrollRef.current = currentSessionId
       prevLastMessageIdRef.current = lastMessageId ?? null
@@ -1202,14 +1210,14 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     const messageActuallyChanged = !!lastMessageId && lastMessageId !== previousLastId
     const countIncreased = messageCount > previousCount
 
-    // Update baselines before early returns to keep refs consistent.
+    // 提前更新基准，即使后面直接 return，也能保持 ref 一致
     prevLastMessageIdRef.current = lastMessageId ?? null
     prevMessageCountRef.current = messageCount
 
     if (!messageActuallyChanged || !countIncreased) return
     if (lastMessageRole !== 'user') return
 
-    // Sending a message should always re-stick to bottom.
+    // 发送消息时总是重新吸底
     isStickToBottomRef.current = true
 
     requestAnimationFrame(() => {
@@ -1219,8 +1227,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     })
   }, [session?.id, messageCount, lastMessageId, lastMessageRole])
 
-  // Handle message submission from InputContainer
-  // Backend handles interruption and queueing if currently processing
+  // 处理 InputContainer 的消息提交
+  // 后端会处理当前正在处理时的中断和排队
   const handleSubmit = (message: string, attachments?: FileAttachment[], skillSlugs?: string[]) => {
     const hasBaseMessage = message.trim().length > 0
     const followUpSection = formatFollowUpSection(pendingFollowUpAnnotations, {
@@ -1231,13 +1239,63 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       : message
     const normalizedMessage = normalizeFollowUpsMarkdown(messageWithFollowUps)
 
-    // Force stick-to-bottom when user sends a message
+    // 当用户发送消息时强制粘到底部
+
+* 通过forwardRef公开命令句柄，用于在比赛之间导航
+ 
+自动化列表 - 如果自动化过滤器处于活动状态，则按类型过滤  
+是否启用本地MCP服务器（影响stdio源状态）
+所有标签都通过点击进行导航——父标签和叶子标签都一样
+当位于第一个菜单项并按向上键时，重新聚焦搜索输入
+面板焦点导航（CMD+SHIFT+[ / ]）
+“标签”标题：显示至少具有一个标签的所有活动会话
+源自焦点小组的路线——所有小组都是同行的
+颜色继承的包装。克隆图标以添加裸道具（删除 EntityIcon 容器）。
+仅关注目标会话的聊天输入（多面板安全）。
+将键盘突出显示的项目滚动到视图中
+创建一个全新的专用浏览器窗口并将其聚焦。
+第一次按显示警告覆盖，第二次按中断
+重新生成标题时闪烁动画。  
+选择自动化时保留当前的自动化过滤器
+统一索引的状态计数偏移量
+会话将发出更新会话状态的“labels_changed”事件
+3. 来源、技能、背景
+各个待办事项状态视图的处理程序
+
+* MessageBubble - 根据其角色呈现单个消息
+*
+* 消息角色和样式：
+* - 用户：右对齐、蓝色（背景前景）、白色文本
+* - 助理：左对齐、灰色（背景静音）、使用可点击链接呈现的 Markdown
+* - 错误：左对齐、红色边框/背景、警告图标 + 错误消息
+ * - 状态：带有脉冲点的居中药丸徽章（例如，t("chat.processing.thinking")）
+*
+* 注意：工具消息由 TurnCard 呈现，而不是 MessageBubble
+ 
+--- 会话部分 ---
+ChatDisplay 突出显示的搜索状态
+使用“add-label”上下文打开 EditPopover，存储右键单击的标签
+特定标签：包括标有此标签或任何后代的会话
+不再使用 SessionStatusIcons - 图标来自动态 sessionStatuses
+聚焦模式 - 隐藏侧边栏，仅显示聊天内容  
+将 StatusConfig 转换为带有解析图标的 SessionStatus
+将触发器元素上的 data-edit-active 属性与 EditPopover 打开状态同步。
+删除源 - 由于代理系统被删除而简化
+实际上聚焦 DOM 元素
+这修复了 CMD+R 丢失过滤器的问题 - 以前仅在工作区切换上运行
+退出（注意：也由 macOS 上的本机菜单处理）
+当配置观察器触发时清除乐观状态（statusConfigs 更改）
+传播基本配置，覆盖上下文以包括右键单击的标签
+这可以在显示弹出窗口时使侧边栏项目在视觉上突出显示，
+1. 会话部分：所有带有状态项、已标记、存档为子项的会话（可展开）
+非活动组：自切换项目，然后是子项
+每个过滤器条目存储用于三态过滤的模式（“包含”或“排除”）。
+检查是否有任何子级具有活动过滤器（以在父级上显示指示器）
     isStickToBottomRef.current = true
     onSendMessage(normalizedMessage, attachments, skillSlugs)
 
-    // Persist sent marker on follow-up annotations so TurnCard can distinguish
-    // sent vs pending follow-ups. If user edits a follow-up later, TurnCard
-    // clears these markers and the annotation becomes pending again.
+    // 在批注跟进项上持久化“已发送”标记，让 TurnCard 区分已发送和待发送。
+    // 如果用户后续编辑跟进，TurnCard 会清除这些标记，重新变为待发送。
     if (session && pendingFollowUpAnnotations.length > 0) {
       const sentAt = Date.now()
       void Promise.all(pendingFollowUpAnnotations.map((followUp) => {
@@ -1265,8 +1323,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       })
     }
 
-    // Immediately scroll to bottom after sending - use requestAnimationFrame
-    // to ensure the DOM has updated with the new message
+    // 发送后立即滚动到底部；用 requestAnimationFrame 确保 DOM 已更新
     requestAnimationFrame(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     })
@@ -1287,7 +1344,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       return
     }
 
-    // Mimic pressing Send in the input after Save completes.
+    // Save 完成后模拟按下了输入框的发送按钮
     window.setTimeout(() => {
       window.dispatchEvent(new CustomEvent('craft:submit-input', {
         detail: { sessionId: session.id },
@@ -1295,15 +1352,14 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     }, 0)
   }, [session, isInputDisabled, disableSend, connectionUnavailable])
 
-  // Handle stop request from InputContainer
-  // silent=true when redirecting (sending new message), silent=false when user clicks Stop button
+  // 处理来自 InputContainer 的停止请求
+  // silent=true 表示重定向（发送新消息），silent=false 表示用户点击 Stop 按钮
   const handleStop = (silent = false) => {
     if (!session?.isProcessing) return
 
-    // Explicit Stop (not a redirect/new-message send): put the in-flight prompt
-    // back in the input so the user can tweak and resend. Append to any draft.
-    // Exclude isQueued messages — those are restored separately by the backend
-    // `restore_input` effect (App.tsx) and would otherwise double up here.
+    // 显式 Stop（不是重定向/发新消息）：把进行中的提示词放回输入框，方便用户修改重发。
+    // 追加到现有草稿后。排除 isQueued 消息——那些由后端 `restore_input` 效果单独恢复，
+    // 否则这里会重复追加。
     if (!silent) {
       const lastUserMsg = [...session.messages].reverse().find(m => m.role === 'user' && !m.isQueued)
       const restoredText = coerceInputText(lastUserMsg?.content)
@@ -1317,17 +1373,17 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     })
   }
 
-  // Per-frame scroll compensation during input height animation
-  // Only compensate when user is "stuck to bottom" - otherwise let them control their scroll position
+  // 输入框高度动画期间逐帧补偿滚动
+  // 只在用户处于“吸底”状态时补偿，否则保留用户手动滚动位置
   const handleAnimatedHeightChange = React.useCallback((delta: number) => {
     if (!isStickToBottomRef.current) return
     const viewport = scrollViewportRef.current
     if (!viewport) return
-    // Adjust scroll to maintain position relative to content
+    // 调整 scrollTop，保持相对内容的位置
     viewport.scrollTop += delta
   }, [])
 
-  // Handle structured input responses (permissions and credentials)
+  // 处理结构化输入响应（权限和凭据）
   const handleStructuredResponse = (response: StructuredResponse) => {
     if ((response.type === 'permission' || response.type === 'admin_approval') && pendingPermission && onRespondToPermission) {
       if (response.type === 'permission') {
@@ -1359,7 +1415,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     }
   }
 
-  // Build structured input state from pending requests (permissions take priority)
+  // 根据待处理请求构建结构化输入状态（权限优先）
   const structuredInput: StructuredInputState | undefined = React.useMemo(() => {
     if (pendingPermission) {
       if (pendingPermission.type === 'admin_approval') {
@@ -1383,16 +1439,16 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     return undefined
   }, [pendingPermission, pendingCredential])
 
-  // Memoize turn grouping - avoids O(n) iteration on every render/keystroke
+  // 缓存 turn 分组结果，避免每次渲染/按键都 O(n) 遍历
   const allTurns = React.useMemo(() => {
     if (!session) return []
     return groupMessagesByTurn(session.messages, { isSessionProcessing: session.isProcessing })
   }, [session?.messages, session?.isProcessing])
 
-  // Keep ref in sync for scroll handler
+  // 同步总 turn 数给滚动处理使用
   totalTurnCountRef.current = allTurns.length
 
-  // Reverse pagination: only render last N turns for fast initial render
+  // 反向分页：初始只渲染最后 N 个 turn，加快首屏渲染
   const startIndex = Math.max(0, allTurns.length - visibleTurnCount)
   const turns = allTurns.slice(startIndex)
   const hasMoreAbove = startIndex > 0
@@ -1479,8 +1535,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     scrollToFollowUpTurn(item)
   }, [scrollToFollowUpTurn])
 
-  // Compute if we should skip scroll-to-bottom (when search is active on session switch)
-  // At render time, prevSessionIdForScrollRef still has the OLD session ID, so we can detect the switch
+  // 判断本次渲染是否应跳过自动滚到底（会话切换且搜索激活时优先滚动到匹配）
+  // 渲染时 prevSessionIdForScrollRef 还保存旧会话 ID，因此能检测切换
   const isSessionSwitchForScroll = prevSessionIdForScrollRef.current !== null && prevSessionIdForScrollRef.current !== session?.id
   const skipScrollToBottom = isSessionSwitchForScroll && isSearchActive
   const hasUnrenderedLoadedMessages = !messagesLoading
@@ -1491,11 +1547,11 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     <div ref={zoneRef} className="flex h-full flex-col min-w-0" data-focus-zone="chat">
       {session ? (
         <div className="flex flex-1 flex-col min-h-0 min-w-0 relative">
-          {/* Content layer */}
+          {/* 内容层 */}
           <div className="flex flex-1 flex-col min-h-0 min-w-0 relative z-10">
-          {/* === MESSAGES AREA: Scrollable list of message bubbles === */}
+          {/* === 消息区：可滚动的消息气泡列表 === */}
           <div className="relative flex-1 min-h-0">
-            {/* Mask wrapper - fades content at top and bottom over transparent/image backgrounds */}
+            {/* 遮罩：在透明/图片背景上让顶部和底部内容渐隐 */}
             <div
               className="h-full"
               style={{
@@ -1509,7 +1565,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                 "mx-auto min-w-0",
                 compactMode ? "px-3 py-4 space-y-2" : [CHAT_LAYOUT.containerPadding, CHAT_LAYOUT.messageSpacing]
               )}>
-                {/* Session-level AnimatePresence: Prevents layout jump when switching sessions */}
+                {/* 会话级 AnimatePresence：切换会话时避免布局跳动 */}
                 <AnimatePresence mode={compactMode ? "sync" : "wait"} initial={false}>
                   <motion.div
                     key={compactMode ? 'compact-session' : session?.id}
@@ -1518,10 +1574,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                     exit={{ opacity: 0 }}
                     transition={compactMode ? { duration: 0 } : { duration: 0.1, ease: 'easeOut' }}
                   >
-                    {/* Loading/Content AnimatePresence: sync mode avoids stale loading exits masking ready content */}
+                    {/* 加载/内容 AnimatePresence：sync 模式防止旧 loading 退出动画遮住已就绪内容 */}
                     <AnimatePresence mode="sync" initial={false}>
                     {messagesLoading ? (
-                      /* Loading State: Show spinner while messages are being lazy loaded */
+                      /* 加载状态：懒加载消息时显示 spinner */
                       <motion.div
                         key="loading"
                         initial={{ opacity: 0 }}
@@ -1564,8 +1620,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                         </div>
                       </motion.div>
                     ) : (
-                    /* Turn-based Message Display - memoized to avoid re-grouping on every render */
-                    /* AnimatePresence handles the fade-in animation when transitioning from loading */
+                    /* 基于 turn 的消息展示（已 memo，避免每次渲染重新分组） */
+                    /* AnimatePresence 处理从加载状态过渡时的淡入 */
                     <motion.div
                       key={compactMode ? 'loaded-compact' : `loaded-${session?.id}`}
                       initial={{ opacity: 0 }}
@@ -1573,8 +1629,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                       exit={{ opacity: 0 }}
                       transition={compactMode ? { duration: 0 } : { duration: 0.1, ease: 'easeOut' }}
                     >
-                  {/* Scroll to bottom before paint - fires via useLayoutEffect */}
-                  {/* Skip when search is active on session switch - scroll to first match instead */}
+                  {/* 绘制前滚到底：通过 useLayoutEffect 触发 */}
+                  {/* 会话切换且搜索激活时跳过，改为滚动到第一个匹配 */}
                   <ScrollOnMount
                     targetRef={messagesEndRef}
                     skip={skipScrollToBottom}
@@ -1582,7 +1638,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                       skipSmoothScrollUntilRef.current = Date.now() + 500
                     }}
                   />
-                  {/* Empty state for compact mode - inviting conversational prompt, centered in full popover */}
+                  {/* 紧凑模式空状态：在弹窗中居中显示引导文案 */}
                   {compactMode && turns.length === 0 && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center select-none gap-1 pointer-events-none">
                       <span className="text-sm text-muted-foreground">{t("editPopover.whatToChange")}</span>
@@ -1598,20 +1654,20 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                       </div>
                     </div>
                   )}
-                  {/* Load more indicator - shown when there are older messages */}
+                  {/* “上方还有更多消息”提示 */}
                   {hasMoreAbove && (
                     <div className="text-center text-muted-foreground/60 text-xs py-3 select-none">
                       ↑ {t('chat.scrollUpForEarlier', { count: startIndex })}
                     </div>
                   )}
                   {turns.map((turn, index) => {
-                    // Compute turn key and check if it's a search match
+                    // 计算 turn key，并判断是否为搜索匹配
                     const turnKey = getTurnKey(turn)
                     const isCurrentMatch = isSearchActive && matchingTurnIds[currentMatchIndex] === turnKey
                     const isAnyMatch = isSearchActive && matchingTurnIds.includes(turnKey)
 
-                    // User turns - render with MemoizedMessageBubble
-                    // Extra padding creates visual separation from AI responses
+                    // 用户 turn：用 MemoizedMessageBubble 渲染
+                    // 额外间距让 AI 回复之间有视觉分隔
                     if (turn.type === 'user') {
                       return (
                         <div
@@ -1635,7 +1691,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                       )
                     }
 
-                    // System turns (error, status, info, warning) - render with MemoizedMessageBubble
+                    // 系统 turn（error/status/info/warning）：用 MemoizedMessageBubble 渲染
                     if (turn.type === 'system') {
                       return (
                         <div
@@ -1666,10 +1722,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                       )
                     }
 
-                    // Auth-request turns - render inline auth UI
-                    // mt-2 matches ResponseCard spacing for visual consistency
+                    // 认证请求 turn：直接内联渲染认证 UI
+                    // mt-2 与 ResponseCard 间距一致，保证视觉统一
                     if (turn.type === 'auth-request') {
-                      // Interactive only if no user message follows
+                      // 只有后面没有用户消息时才可交互
                       const isAuthInteractive = !turns.slice(index + 1).some(t => t.type === 'user')
                       return (
                         <div
@@ -1691,10 +1747,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                       )
                     }
 
-                    // Check if this is the last response (for Accept Plan button visibility)
+                    // 判断是否是最后一条回复（用于“接受计划”按钮是否显示）
                     const isLastResponse = index === turns.length - 1 || !turns.slice(index + 1).some(t => t.type === 'user')
 
-                    // Assistant turns - render with TurnCard (buffered streaming)
+                    // Assistant turn：用 TurnCard 渲染（带缓冲流式）
                     const assistantUiKey = getAssistantTurnUiKey(turn, index)
                     return (
                       <div
@@ -1737,7 +1793,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                                 branchFromMessageId: messageId,
                                 branchFromSessionId: session.id,
                                 name: `Branch of ${session.name || 'Untitled'}`,
-                                // Keep branch on the same backend/provider by inheriting parent session settings.
+                                // 通过继承父会话设置，将分支保持在同一后端/提供程序上。
+
                                 llmConnection: session.llmConnection,
                                 model: session.model,
                                 permissionMode: session.permissionMode,
@@ -1828,7 +1885,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                           }))
                         }}
                         onPopOut={(text) => {
-                          // Open raw markdown source in code viewer
+                          // 在代码查看器中打开原始 Markdown 源码
                           setOverlayState({
                             type: 'markdown',
                             content: text,
@@ -1837,7 +1894,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                           })
                         }}
                         onOpenDetails={() => {
-                          // Open turn details in markdown overlay
+                          // 在 Markdown 浮层中打开 turn 详情
                           const markdown = formatTurnAsMarkdown(turn)
                           setOverlayState({
                             type: 'markdown',
@@ -1846,8 +1903,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                           })
                         }}
                         onOpenActivityDetails={(activity) => {
-                          // Write tool for .md/.txt → Document overlay (rendered markdown)
-                          // rather than multi-diff, since these are better viewed as formatted documents
+                          // Write 工具写入 .md/.txt → 使用文档浮层（渲染后的 Markdown），
+                          // 而不是 diff 浮层，因为这类文件更适合作为格式化文档查看
                           const isDocumentWrite = activity.toolName === 'Write' && (() => {
                             const actInput = activity.toolInput as Record<string, unknown> | undefined
                             const fp = (actInput?.file_path as string) || ''
@@ -1855,20 +1912,20 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                             return ext === 'md' || ext === 'txt'
                           })()
 
-                          // Edit/Write tool → Multi-file diff overlay (ungrouped, focused on this change)
-                          // Exception: Write to .md/.txt files goes to document overlay instead
+                          // Edit/Write 工具 → 多文件 diff 浮层（非分组模式，聚焦本次改动）
+                          // 例外：写入 .md/.txt 时走文档浮层
                           if ((activity.toolName === 'Edit' || activity.toolName === 'Write') && !isDocumentWrite) {
                             const changes = collectFileChangesFromActivities(turn.activities)
                             if (changes.length > 0) {
                               setOverlayState({
                                 type: 'multi-diff',
                                 changes,
-                                consolidated: false, // Ungrouped mode - show individual changes
+                                consolidated: false, // 非分组模式：显示单个改动
                                 focusedChangeId: getFirstFileChangeIdForActivity(activity.id, changes),
                               })
                             }
                           } else {
-                            // All other tools → open generic activity cards overlay (Input/Output)
+                            // 其他工具 → 通用 activity 卡片浮层（Input/Output）
                             setOverlayState({ type: 'activity', activity })
                           }
                         }}
@@ -1881,7 +1938,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                             setOverlayState({
                               type: 'multi-diff',
                               changes,
-                              consolidated: true, // Consolidated mode - group by file
+                              consolidated: true, // 分组模式：按文件分组
                             })
                           }
                         }}
@@ -1896,7 +1953,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                 </AnimatePresence>
                 {/* Processing Indicator - always visible while processing */}
                 {session.isProcessing && (() => {
-                  // Find the last user message timestamp for accurate elapsed time
+                  // 
                   const lastUserMsg = [...session.messages].reverse().find(m => m.role === 'user')
                   return (
                     <ProcessingIndicator
@@ -2112,15 +2169,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 })
 
 /**
- * MessageBubble - Renders a single message based on its role
- *
- * Message Roles & Styles:
- * - user:      Right-aligned, blue (bg-foreground), white text
- * - assistant: Left-aligned, gray (bg-muted), markdown rendered with clickable links
- * - error:     Left-aligned, red border/bg, warning icon + error message
- * - status:    Centered pill badge with pulsing dot (e.g., t("chat.processing.thinking"))
- *
- * Note: Tool messages are rendered by TurnCard, not MessageBubble
  */
 interface MessageBubbleProps {
   message: Message
@@ -2128,22 +2176,21 @@ interface MessageBubbleProps {
   onOpenUrl: (url: string) => void
   sessionId?: string
   /**
-   * Markdown render mode for assistant messages
-   * @default 'minimal'
    */
   renderMode?: RenderMode
   /**
-   * Callback to pop out message into a separate window
    */
   onPopOut?: (message: Message) => void
-  /** Compact mode - reduces padding for popover embedding */
+  /**
+   * 紧凑模式 - 减少弹出窗口嵌入的填充  
+   */
   compactMode?: boolean
-  /** Callback to resend the user message that preceded an error */
+  /**
+   */
   onRetry?: () => void
 }
 
 /**
- * ErrorMessage - Separate component for error messages to allow useState hook
  */
 function ErrorMessage({ message, onOpenUrl, sessionId, onRetry }: { message: Message; onOpenUrl?: (url: string) => void; sessionId?: string; onRetry?: () => void }) {
   const { t } = useTranslation()
@@ -2230,7 +2277,7 @@ function MessageBubble({
 }: MessageBubbleProps) {
   const { t } = useTranslation()
 
-  // === USER MESSAGE: Right-aligned bubble with attachments above ===
+  // 
   if (message.role === 'user') {
     return (
       <UserMessageBubble
@@ -2246,7 +2293,8 @@ function MessageBubble({
     )
   }
 
-  // === ASSISTANT MESSAGE: Left-aligned gray bubble with markdown rendering ===
+  // === 辅助消息：左对齐灰色气泡，带有 markdown 渲染 ===
+
   if (message.role === 'assistant') {
     return (
       <div className="flex justify-start group">
@@ -2290,12 +2338,14 @@ function MessageBubble({
     )
   }
 
-  // === ERROR MESSAGE: Red bordered bubble with warning icon and collapsible details ===
+  // === 错误消息：带有警告图标和可折叠详细信息的红色边框气泡 ===
+
   if (message.role === 'error') {
     return <ErrorMessage message={message} onOpenUrl={onOpenUrl} sessionId={sessionId} onRetry={onRetry} />
   }
 
-  // === STATUS MESSAGE: Matches ProcessingIndicator layout for visual consistency ===
+  // === 状态消息：匹配ProcessingIndicator 布局以实现视觉一致性===
+
   if (message.role === 'status') {
     return (
       <div className="flex items-center gap-2 px-3 py-1 -mb-1 text-[13px] text-muted-foreground">
@@ -2308,10 +2358,13 @@ function MessageBubble({
     )
   }
 
-  // === INFO MESSAGE: Icon and color based on level ===
+  // === 信息消息：基于级别的图标和颜色 ===
+
   if (message.role === 'info') {
-    // Compaction complete message - render as horizontal rule with centered label
-    // This persists after reload to show where context was compacted
+    // 压缩完成消息 - 渲染为带有居中标签的水平线
+
+    // 重新加载后仍然存在，以显示上下文被压缩的位置
+
     if (message.statusType === 'compaction_complete') {
       return (
         <div className="flex items-center gap-3 my-12 px-3">
@@ -2343,7 +2396,7 @@ function MessageBubble({
     )
   }
 
-  // === WARNING MESSAGE: Info themed bubble ===
+  // 
   if (message.role === 'warning') {
     return (
       <div className="flex justify-start">
@@ -2361,18 +2414,14 @@ function MessageBubble({
 }
 
 /**
- * MemoizedMessageBubble - Prevents re-renders of non-streaming messages
- *
- * During streaming, the entire message list gets updated on each delta.
- * This wrapper skips re-renders for messages that haven't changed,
- * significantly improving performance for long conversations.
  */
 const MemoizedMessageBubble = React.memo(MessageBubble, (prev, next) => {
-  // Always re-render streaming messages (content is changing)
+  // 
   if (prev.message.isStreaming || next.message.isStreaming) {
     return false
   }
-  // Skip re-render if key props unchanged
+  // 如果关键道具不变则跳过重新渲染
+
   return (
     prev.message.id === next.message.id &&
     prev.message.content === next.message.content &&

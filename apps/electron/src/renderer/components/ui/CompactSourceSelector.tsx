@@ -1,3 +1,10 @@
+/**
+ * CompactSourceSelector — 紧凑/触摸模式下的 Source 选择抽屉。
+ *
+ * Source 是 Agent 可调用的外部能力（MCP 服务器、API、本地文件夹等）。
+ * 这个组件与桌面端 SourceSelectorPopover 语义一致（多选、可切换），
+ * 但改用 Drawer（底部抽屉）渲染，不依赖锚点定位，并且每行都是 44px 以上的触控区。
+ */
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, DatabaseZap, Search } from 'lucide-react'
@@ -12,22 +19,21 @@ import {
 } from '@/components/ui/drawer'
 import type { LoadedSource } from '../../../shared/types'
 
+/** CompactSourceSelector 的 props。 */
 export interface CompactSourceSelectorProps {
+  /** 抽屉是否打开 */
   open: boolean
+  /** 打开状态变化回调 */
   onOpenChange: (open: boolean) => void
+  /** 可选的 Source 列表 */
   sources: LoadedSource[]
+  /** 已选中的 Source slug 数组 */
   selectedSlugs: string[]
+  /** 切换某个 Source 选中状态的回调 */
   onToggleSlug: (slug: string) => void
 }
 
-/**
- * CompactSourceSelector — bottom-sheet source picker for compact/touch mode.
- *
- * Mirrors the desktop SourceSelectorPopover semantics (multi-select with toggle)
- * but renders inside a Drawer so it doesn't depend on anchor positioning and
- * gives every row a 44+px tap target. The trigger button stays in FreeFormInput;
- * this component is open-state-driven.
- */
+/** 紧凑模式 Source 选择器 */
 export function CompactSourceSelector({
   open,
   onOpenChange,
@@ -38,7 +44,7 @@ export function CompactSourceSelector({
   const { t } = useTranslation()
   const [filter, setFilter] = React.useState('')
 
-  // Reset filter whenever the drawer closes so the next open starts fresh.
+  // 抽屉关闭时重置过滤词，下次打开保持干净状态。
   React.useEffect(() => {
     if (!open) setFilter('')
   }, [open])

@@ -1,34 +1,34 @@
 import { cn } from "@/lib/utils"
 import { Button, type ButtonProps } from "@/components/ui/button"
-import { Spinner } from "@craft-agent/ui"
+import { Spinner } from '@craft-agent/ui'
 
 /* =============================================================================
-   ADD WORKSPACE PRIMITIVES
+   添加工作区基础组件
 
-   Shared components for consistent styling across the Add Workspace flow.
-   These primitives ensure:
-   - Unified visual design across all steps
-   - Easy global style updates
-   - Consistent spacing and typography
+   这些共享组件为“添加工作区”多步骤流程提供一致的样式与交互：
+   - 统一的视觉风格
+   - 便于全局调整样式
+   - 一致的间距与排版
 ============================================================================= */
 
 // =============================================================================
-// CONTAINER
+// 容器
 // =============================================================================
 
 interface AddWorkspaceContainerProps {
+  /** 子节点，React 会把 JSX 子元素作为这个字段传入 */
   children: React.ReactNode
   className?: string
 }
 
 /**
- * AddWorkspaceContainer - Main container for workspace creation steps
+ * AddWorkspaceContainer - 创建工作区步骤的外层容器
  *
- * Provides:
- * - Fixed width (28rem)
- * - Background with rounded corners
- * - Strong shadow for elevation
- * - Consistent padding
+ * 提供：
+ * - 固定最大宽度（28rem）
+ * - 圆角背景
+ * - 明显阴影以提升层级
+ * - 统一内边距
  */
 export function AddWorkspaceContainer({ children, className }: AddWorkspaceContainerProps) {
   return (
@@ -43,21 +43,21 @@ export function AddWorkspaceContainer({ children, className }: AddWorkspaceConta
 }
 
 // =============================================================================
-// STEP HEADER
+// 步骤标题
 // =============================================================================
 
 interface AddWorkspaceStepHeaderProps {
-  /** The main title */
+  /** 主标题文案 */
   title: string
-  /** Optional description below the title */
+  /** 标题下方的可选说明，类型为 ReactNode，可以是一段 JSX */
   description?: React.ReactNode
   className?: string
 }
 
 /**
- * AddWorkspaceStepHeader - Title and description for workspace steps
+ * AddWorkspaceStepHeader - 每个工作区步骤的标题与说明
  *
- * Always center-aligned with tight spacing for visual consistency.
+ * 始终居中对齐，保持紧凑间距，保证视觉一致性。
  */
 export function AddWorkspaceStepHeader({
   title,
@@ -79,9 +79,15 @@ export function AddWorkspaceStepHeader({
 }
 
 // =============================================================================
-// BUTTONS
+// 按钮
 // =============================================================================
 
+/**
+ * 主按钮 props
+ *
+ * Omit<ButtonProps, 'variant' | 'children'> 表示从通用 ButtonProps 里剔除 variant 和 children，
+ * 再由本接口重新声明，以便限制变体并允许 children 可选。
+ */
 interface AddWorkspacePrimaryButtonProps extends Omit<ButtonProps, 'variant' | 'children'> {
   children?: React.ReactNode
   loading?: boolean
@@ -89,10 +95,10 @@ interface AddWorkspacePrimaryButtonProps extends Omit<ButtonProps, 'variant' | '
 }
 
 /**
- * AddWorkspacePrimaryButton - Primary action button for workspace flow
+ * AddWorkspacePrimaryButton - 添加工作区流程的主操作按钮
  *
- * Used for main actions like "Create", "Open", etc.
- * Includes loading state with spinner.
+ * 用于“创建”、“打开”等主要动作，内置 loading 状态并显示 Spinner。
+ * 默认文案为 "Continue"，可通过 children 覆盖。
  */
 export function AddWorkspacePrimaryButton({
   children = 'Continue',
@@ -120,14 +126,19 @@ export function AddWorkspacePrimaryButton({
   )
 }
 
+/**
+ * 次级按钮 props
+ *
+ * 继承 ButtonProps 但剔除 variant，内部固定使用 secondary 变体。
+ */
 interface AddWorkspaceSecondaryButtonProps extends Omit<ButtonProps, 'variant'> {
   children?: React.ReactNode
 }
 
 /**
- * AddWorkspaceSecondaryButton - Secondary action button for workspace flow
+ * AddWorkspaceSecondaryButton - 添加工作区流程的次级按钮
  *
- * Used for actions like "Browse", or inline actions within forms.
+ * 用于“浏览”等辅助操作，或表单内的内联操作。
  */
 export function AddWorkspaceSecondaryButton({
   children,

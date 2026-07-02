@@ -1,13 +1,13 @@
 /**
- * TelegramConnectDialog — token-input pairing flow in a modal.
+ * TelegramConnectDialog —— 在模态框里输入 bot token 完成配对。
  *
- * Sibling to WhatsAppConnectDialog: same Dialog shape, different auth flow
- * (Telegram Bot API doesn't support QR login — only bot tokens issued by
- * @BotFather). User pastes a token → Test → Save → dialog closes.
+ * 与 WhatsAppConnectDialog 是“兄弟组件”：对话框外形相同，但鉴权流程不同。
+ * Telegram Bot API 不支持二维码登录，只能通过 @BotFather 发放的 bot token 连接。
+ * 用户粘贴 token → 测试 → 保存 → 对话框关闭。
  *
- * Used by MessagingSettingsPage as the only flow for saving Telegram tokens.
- * The `reconfigure` prop is set when the user picks "Reconfigure" from the
- * three-dot menu, so the UI treats it as replacing an existing token.
+ * 由 MessagingSettingsPage 用作保存 Telegram token 的唯一入口。
+ * `reconfigure` 为 true 时表示“重新配置”：用户在三点菜单中选择 Reconfigure 时传入，
+ * UI 文案会体现“替换已有 token”。
  */
 
 import * as React from 'react'
@@ -29,11 +29,12 @@ import { SettingsSecretInput } from '@/components/settings'
 interface TelegramConnectDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** When true, treat the flow as "replace existing token" (used from Reconfigure menu item). */
+  // 为 true 时把流程视为“替换已有 token”（来自 Reconfigure 菜单项）
   reconfigure?: boolean
   onSaved?: () => void
 }
 
+// 测试连接的结果状态机，TS 可辨识联合类型
 type TestResult =
   | { state: 'idle' }
   | { state: 'testing' }
@@ -51,8 +52,7 @@ export function TelegramConnectDialog({
   const [saving, setSaving] = React.useState(false)
   const [test, setTest] = React.useState<TestResult>({ state: 'idle' })
 
-  // Reset local state whenever dialog (re)opens — keeps reconfigure attempts
-  // from leaking previous success/error badges.
+  // 每次对话框打开/关闭时重置本地状态，避免重新配置时残留上次的成功/失败标记
   React.useEffect(() => {
     if (!open) {
       setToken('')
@@ -61,6 +61,7 @@ export function TelegramConnectDialog({
     }
   }, [open])
 
+  // 点击“测试连接”：调用主进程验证 token 是否有效
   const handleTest = async () => {
     const trimmed = token.trim()
     if (!trimmed) return
@@ -80,6 +81,7 @@ export function TelegramConnectDialog({
     }
   }
 
+  // 点击“保存”：把验证通过的 token 持久化到主进程配置
   const handleSave = async () => {
     const trimmed = token.trim()
     if (!trimmed) return

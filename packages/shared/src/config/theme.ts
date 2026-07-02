@@ -1,78 +1,73 @@
 /**
- * Theme Configuration
+ * 主题配置。
  *
- * App-level theme system with preset themes.
- * Light mode is default, with optional dark mode overrides.
- *
- * Storage locations:
- * - App override:   ~/.craft-agent/theme.json
- * - Preset themes:  ~/.craft-agent/themes/*.json
+ * 应用级主题系统，内置多套预设主题，默认浅色模式，可单独覆盖深色模式。
+ * 存储位置：
+ * - 应用覆盖：~/.craft-agent/theme.json
+ * - 预设主题：~/.craft-agent/themes/*.json
  */
 
 /**
- * CSS color string - any valid CSS color format:
- * - Hex: #8b5cf6, #8b5cf6cc
- * - RGB: rgb(139, 92, 246), rgba(139, 92, 246, 0.8)
- * - HSL: hsl(262, 83%, 58%)
- * - OKLCH: oklch(0.58 0.22 293) (recommended)
- * - Named: purple, rebeccapurple
+ * CSS 颜色字符串，支持任意合法 CSS 颜色格式：
+ * - 十六进制：#8b5cf6, #8b5cf6cc
+ * - RGB：rgb(139, 92, 246), rgba(139, 92, 246, 0.8)
+ * - HSL：hsl(262, 83%, 58%)
+ * - OKLCH：oklch(0.58 0.22 293)（推荐）
+ * - 命名颜色：purple, rebeccapurple
  */
 export type CSSColor = string;
 
 /**
- * Core theme colors (6-color semantic system)
+ * 核心主题色（6 色语义系统）
  */
 export interface ThemeColors {
   background?: CSSColor;
   foreground?: CSSColor;
-  accent?: CSSColor; // Brand purple (Execute mode)
-  info?: CSSColor; // Amber (Ask mode, warnings)
-  success?: CSSColor; // Green
-  destructive?: CSSColor; // Red
+  accent?: CSSColor; // 品牌紫（Execute 模式）
+  info?: CSSColor; // 琥珀色（Ask 模式、警告）
+  success?: CSSColor; // 绿色
+  destructive?: CSSColor; // 红色
 }
 
 /**
- * Surface colors for specific UI regions
- * All optional - fall back to `background` if not set
+ * 特定 UI 区域使用的表面色。
+ * 全部可选，未设置时回退到 background。
  */
 export interface SurfaceColors {
-  paper?: CSSColor; // AI messages, cards, elevated content
-  navigator?: CSSColor; // Left sidebar background
-  input?: CSSColor; // Input field background
-  popover?: CSSColor; // Dropdowns, modals, context menus (always solid, no transparency)
-  popoverSolid?: CSSColor; // Guaranteed 100% opaque popover bg (required for scenic mode)
+  paper?: CSSColor; // AI 消息、卡片、抬高内容
+  navigator?: CSSColor; // 左侧边栏背景
+  input?: CSSColor; // 输入框背景
+  popover?: CSSColor; // 下拉框、弹窗、右键菜单（始终纯色，无透明度）
+  popoverSolid?: CSSColor; // 保证 100% 不透明的 popover 背景（scenic 模式必需）
 }
 
-/**
- * Theme mode - solid (default) or scenic (background image with glass panels)
- */
+/** 主题模式：solid（默认）或 scenic（背景图+玻璃面板） */
 export type ThemeMode = 'solid' | 'scenic';
 
 /**
- * Theme overrides - light mode default, optional dark overrides
- * App-level only (no workspace cascading)
+ * 主题覆盖：默认浅色，可选深色覆盖。
+ * 仅应用级，不涉及 workspace 级联。
  */
 export interface ThemeOverrides extends ThemeColors, SurfaceColors {
-  // Optional dark mode overrides (includes both semantic and surface colors)
+  // 可选的深色模式覆盖（包含语义色和表面色）
   dark?: ThemeColors & SurfaceColors;
 
   /**
-   * Theme mode: 'solid' (default) or 'scenic'
-   * - solid: Traditional solid color backgrounds
-   * - scenic: Full-window background image with glass panels
+   * 主题模式：'solid'（默认）或 'scenic'
+   * - solid：传统纯色背景
+   * - scenic：全窗口背景图 + 玻璃面板
    */
   mode?: ThemeMode;
 
   /**
-   * Background image URL for scenic mode
-   * Remote URL to background image (JPEG, PNG, WebP recommended)
-   * Required when mode='scenic', ignored otherwise
+   * scenic 模式的背景图 URL。
+   *  mode='scenic' 时必填，其他模式忽略。
    */
   backgroundImage?: string;
 }
 
 /**
- * Deep merge two theme objects (source wins for defined values)
+ * 深度合并两个主题对象（source 中已定义的值优先）。
  */
 const COLOR_KEYS: (keyof ThemeColors)[] = [
   'background',
@@ -91,7 +86,7 @@ const SURFACE_KEYS: (keyof SurfaceColors)[] = [
   'popoverSolid',
 ];
 
-// Combined keys for merging (all color properties)
+// 合并时使用的全部颜色 key（语义色 + 表面色）
 const ALL_COLOR_KEYS = [...COLOR_KEYS, ...SURFACE_KEYS] as const;
 
 function mergeThemes(
@@ -103,19 +98,19 @@ function mergeThemes(
 
   const result: ThemeOverrides = { ...base };
 
-  // Merge top-level color properties (semantic + surface)
+  // 合并顶层颜色属性（语义色 + 表面色）
   for (const key of ALL_COLOR_KEYS) {
     if (override[key] !== undefined) {
       result[key] = override[key];
     }
   }
 
-  // Merge scenic mode properties
+  // 合并 scenic 模式属性
   if (override.mode !== undefined) result.mode = override.mode;
   if (override.backgroundImage !== undefined)
     result.backgroundImage = override.backgroundImage;
 
-  // Deep merge dark overrides
+  // 深度合并深色覆盖
   if (override.dark) {
     result.dark = { ...base.dark };
     for (const key of ALL_COLOR_KEYS) {
@@ -129,8 +124,8 @@ function mergeThemes(
 }
 
 /**
- * Resolve theme from app-level source
- * (Workspace cascading has been removed for simplicity)
+ * 从应用级主题源解析出最终主题。
+ * （workspace 级联已移除，简化逻辑。）
  */
 export function resolveTheme(
   app?: ThemeOverrides
@@ -139,21 +134,21 @@ export function resolveTheme(
 }
 
 /**
- * Convert hex color to RGB values string (e.g., "255, 128, 0")
- * Optionally darkens the color by a factor (0-1, where 0.7 = 70% brightness)
- * Returns null if not a valid hex color
+ * 把十六进制颜色转成 RGB 数值字符串，例如 "255, 128, 0"。
+ * 可通过 darkenFactor（0-1）按系数压暗颜色，0.7 表示 70% 亮度。
+ * 不是合法十六进制时返回 null。
  */
 function hexToRgbValues(hex: string, darkenFactor: number = 1): string | null {
   let r: number, g: number, b: number;
 
-  // Match 6 digit hex colors
+  // 匹配 6 位十六进制
   const match = hex.match(/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
   if (match) {
     r = parseInt(match[1]!, 16);
     g = parseInt(match[2]!, 16);
     b = parseInt(match[3]!, 16);
   } else {
-    // Try 3-digit hex
+    // 尝试 3 位十六进制
     const shortMatch = hex.match(/^#?([a-f\d])([a-f\d])([a-f\d])$/i);
     if (!shortMatch) return null;
     r = parseInt(shortMatch[1]! + shortMatch[1]!, 16);
@@ -161,7 +156,7 @@ function hexToRgbValues(hex: string, darkenFactor: number = 1): string | null {
     b = parseInt(shortMatch[3]! + shortMatch[3]!, 16);
   }
 
-  // Apply darkening factor
+  // 应用压暗系数
   r = Math.round(r * darkenFactor);
   g = Math.round(g * darkenFactor);
   b = Math.round(b * darkenFactor);
@@ -170,23 +165,23 @@ function hexToRgbValues(hex: string, darkenFactor: number = 1): string | null {
 }
 
 /**
- * Generate CSS variable declarations from theme
- * @param theme - Resolved theme object
- * @param isDark - Whether to apply dark mode overrides
- * @returns CSS string with variable declarations
+ * 从主题生成 CSS 变量声明。
+ * @param theme - 已解析的主题对象
+ * @param isDark - 是否应用深色模式覆盖
+ * @returns 包含 CSS 变量声明的字符串
  */
 export function themeToCSS(theme: ThemeOverrides, isDark: boolean = false): string {
   const vars: string[] = [];
 
-  // Get effective colors (merge dark overrides if in dark mode)
+  // 生效颜色：深色模式下合并 dark 覆盖
   const colors: ThemeColors & SurfaceColors =
     isDark && theme.dark ? { ...theme, ...theme.dark } : theme;
 
-  // Semantic color variables
+  // 语义色变量
   if (colors.background) vars.push(`--background: ${colors.background};`);
   if (colors.foreground) {
     vars.push(`--foreground: ${colors.foreground};`);
-    // Also output RGB version for shadow borders (only works with hex colors)
+    // 同时输出 RGB 版本，用于阴影边框（仅对十六进制颜色有效）
     const rgbValues = hexToRgbValues(colors.foreground);
     if (rgbValues) {
       vars.push(`--foreground-rgb: ${rgbValues};`);
@@ -194,8 +189,8 @@ export function themeToCSS(theme: ThemeOverrides, isDark: boolean = false): stri
   }
   if (colors.accent) {
     vars.push(`--accent: ${colors.accent};`);
-    // Also output darkened RGB version for shadow-tinted (only works with hex colors)
-    // Use 70% brightness for a proper shadow effect
+    // 同时输出压暗后的 RGB 版本，用于带色调的阴影（仅对十六进制有效）
+    // 使用 70% 亮度获得合适的阴影效果
     const rgbValues = hexToRgbValues(colors.accent, 0.7);
     if (rgbValues) {
       vars.push(`--accent-rgb: ${rgbValues};`);
@@ -205,19 +200,19 @@ export function themeToCSS(theme: ThemeOverrides, isDark: boolean = false): stri
   if (colors.success) vars.push(`--success: ${colors.success};`);
   if (colors.destructive) vars.push(`--destructive: ${colors.destructive};`);
 
-  // Surface color variables (fall back to background if not set)
-  // These enable fine-grained control over specific UI regions
+  // 表面色变量（未设置时回退到 background）
+  // 用于精细控制特定 UI 区域
   const bg = colors.background || 'var(--background)';
   vars.push(`--paper: ${colors.paper || bg};`);
   vars.push(`--navigator: ${colors.navigator || bg};`);
   vars.push(`--input: ${colors.input || bg};`);
   vars.push(`--popover: ${colors.popover || bg};`);
-  // popoverSolid: guaranteed 100% opaque for scenic mode popovers
-  // Falls back to popover, then background (should always be solid in scenic themes)
+  // popoverSolid：scenic 模式下要求 100% 不透明
+  // 依次回退到 popoverSolid、popover、background（scenic 主题应保证其为纯色）
   vars.push(`--popover-solid: ${colors.popoverSolid || colors.popover || bg};`);
 
-  // Theme mode (background image is set directly on document.documentElement.style
-  // to avoid style sheet size limits with large data URLs)
+  // 主题模式（backgroundImage 直接设置在 document.documentElement.style 上，
+  // 避免大数据 URL 导致样式表体积过大）
   const mode = theme.mode || 'solid';
   vars.push(`--theme-mode: ${mode};`);
 
@@ -225,25 +220,24 @@ export function themeToCSS(theme: ThemeOverrides, isDark: boolean = false): stri
 }
 
 /**
- * Hex equivalents of background colors for Electron BrowserWindow.
- * The main process cannot use CSS/oklch colors, so we provide hex values
- * that visually match the DEFAULT_THEME oklch colors.
+ * 给 Electron BrowserWindow 用的背景色十六进制值。
+ * 主进程无法使用 CSS/oklch 颜色，所以提供与 DEFAULT_THEME oklch 颜色视觉匹配的 hex 值。
  */
 export const BACKGROUND_HEX = {
-  light: '#faf9fb', // matches oklch(0.98 0.003 265)
-  dark: '#302f33', // matches oklch(0.2 0.005 270)
+  light: '#faf9fb', // 匹配 oklch(0.98 0.003 265)
+  dark: '#302f33', // 匹配 oklch(0.2 0.005 270)
 } as const;
 
 /**
- * Get background color hex value for BrowserWindow backgroundColor.
- * Use this in the main process where CSS variables aren't available.
+ * 获取 BrowserWindow backgroundColor 用的背景色 hex 值。
+ * 在主进程等没有 CSS 变量的地方使用。
  */
 export function getBackgroundColor(isDark: boolean): string {
   return isDark ? BACKGROUND_HEX.dark : BACKGROUND_HEX.light;
 }
 
 /**
- * Default theme values (matches current index.css)
+ * 默认主题值（与当前 index.css 保持一致）
  */
 export const DEFAULT_THEME: ThemeOverrides = {
   background: 'oklch(0.98 0.003 265)',
@@ -263,11 +257,11 @@ export const DEFAULT_THEME: ThemeOverrides = {
 };
 
 // ============================================
-// Preset Themes
+// 预设主题
 // ============================================
 
 /**
- * Shiki theme configuration for syntax highlighting
+ * Shiki 语法高亮主题配置
  */
 export interface ShikiThemeConfig {
   light?: string;
@@ -275,8 +269,8 @@ export interface ShikiThemeConfig {
 }
 
 /**
- * Extended theme file format with metadata
- * Used for preset themes stored as JSON files
+ * 扩展主题文件格式（带元数据）。
+ * 用于存储为 JSON 文件的预设主题。
  */
 export interface ThemeFile extends ThemeOverrides {
   name?: string;
@@ -289,16 +283,16 @@ export interface ThemeFile extends ThemeOverrides {
 }
 
 /**
- * Preset theme with ID and path
+ * 预设主题条目：包含 ID、路径和解析后的主题数据。
  */
 export interface PresetTheme {
-  id: string; // filename without .json (e.g., 'dracula')
-  path: string; // full path to theme.json
-  theme: ThemeFile; // parsed theme data
+  id: string; // 不含 .json 的文件名，如 'dracula'
+  path: string; // theme.json 的完整路径
+  theme: ThemeFile; // 解析后的主题数据
 }
 
 /**
- * Default Shiki themes (used when no preset is selected)
+ * 默认 Shiki 主题（未选择预设时使用）
  */
 export const DEFAULT_SHIKI_THEME: ShikiThemeConfig = {
   light: 'github-light',
@@ -306,7 +300,7 @@ export const DEFAULT_SHIKI_THEME: ShikiThemeConfig = {
 };
 
 /**
- * Get Shiki theme name for current mode
+ * 根据当前模式获取 Shiki 主题名。
  */
 export function getShikiTheme(
   shikiConfig: ShikiThemeConfig | undefined,

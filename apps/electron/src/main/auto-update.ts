@@ -1,17 +1,16 @@
 /**
- * Auto-update module using electron-updater
+ * auto-update.ts —— 自动更新模块（基于 electron-updater）。
  *
- * Handles checking for updates, downloading, and installing via the standard
- * electron-updater library. Updates are served from https://agents.craft.do/electron/latest
- * using the generic provider (YAML manifests + binaries on R2/S3).
+ * 负责检查、下载、安装 Electron 应用更新。更新包从 https://agents.craft.do/electron/latest
+ * 分发，使用 generic provider（YAML 清单 + 放在 R2/S3 上的二进制）。
  *
- * Platform behavior:
- * - macOS: Downloads zip, extracts and swaps app bundle atomically
- * - Windows: Downloads NSIS installer, runs silently on quit
- * - Linux: Downloads AppImage, replaces current file
+ * 各平台行为：
+ * - macOS：下载 zip，解压后原子替换 app bundle
+ * - Windows：下载 NSIS 安装包，退出时静默运行
+ * - Linux：下载 AppImage，替换当前文件
  *
- * All platforms support download-progress events (electron-updater v6.8.0+).
- * quitAndInstall() handles restart natively — no external scripts.
+ * 所有平台都支持 download-progress 进度事件（electron-updater v6.8.0+）。
+ * quitAndInstall() 会原生处理重启，不需要外部脚本。
  */
 
 import { autoUpdater } from 'electron-updater'
@@ -29,13 +28,13 @@ import { readJsonFileSync } from '@craft-agent/shared/utils/files'
 import { RPC_CHANNELS, type UpdateInfo } from '../shared/types'
 import type { EventSink } from '@craft-agent/server-core/transport'
 
-// Platform detection
+// 平台检测（类似 Go 的 runtime.GOOS）
 const PLATFORM = platform()
 const IS_MAC = PLATFORM === 'darwin'
 const IS_WINDOWS = PLATFORM === 'win32'
 
-// Get the update cache directory path (for file watcher fallback on macOS)
-// electron-updater uses these paths:
+// 获取 electron-updater 的更新缓存目录（macOS 文件监听兜底用）
+// electron-updater 默认路径：
 // - Windows: %LOCALAPPDATA%/{appName}-updater/pending
 // - macOS: ~/Library/Caches/{appName}-updater/pending
 // - Linux: ~/.cache/{appName}-updater/pending
@@ -44,7 +43,7 @@ function getUpdateCacheDir(): string {
   if (IS_MAC) {
     return path.join(app.getPath('home'), 'Library', 'Caches', `${appName}-updater`, 'pending')
   } else if (IS_WINDOWS) {
-    // Windows uses LOCALAPPDATA, not APPDATA (roaming)
+    // Windows 用 LOCALAPPDATA，不是 APPDATA（后者是漫游配置）
     const localAppData = process.env.LOCALAPPDATA || path.join(app.getPath('home'), 'AppData', 'Local')
     return path.join(localAppData, `${appName}-updater`, 'pending')
   } else {
@@ -53,7 +52,7 @@ function getUpdateCacheDir(): string {
   }
 }
 
-// Module state — keeps track of update info for IPC queries
+// 模块级状态：保存当前更新信息，供 IPC handler 查询
 let updateInfo: UpdateInfo = {
   available: false,
   currentVersion: getAppVersion(),
@@ -64,47 +63,48 @@ let updateInfo: UpdateInfo = {
 
 let eventSink: EventSink | null = null
 
-// Flag to indicate update is in progress — used to prevent force exit during quitAndInstall
+// 更新进行中的标记，用于在 quitAndInstall 期间避免强制退出打断更新流程
 let __isUpdating = false
 
-// Hook fired immediately before quitAndInstall, while BrowserWindows still exist.
-// electron-updater destroys windows between quitAndInstall and before-quit firing,
-// so the regular before-quit save site would see an empty array.
+// 在 quitAndInstall 之前执行的钩子，此时 BrowserWindow 还存在。
+// electron-updater 会在 quitAndInstall 和 before-quit 之间销毁窗口，
+// 所以常规的 before-quit 保存逻辑会拿到空窗口列表。
 let beforeUpdateQuitHook: (() => void) | null = null
 
 /**
- * Register a callback to run inside installUpdate() before quitAndInstall.
- * Used by index.ts to snapshot multi-window state while windows are still alive.
+ * 注册一个回调，installUpdate() 在调用 quitAndInstall() 之前执行它。
+ * index.ts 用它在大批窗口仍存活时抓拍多窗口状态。
  */
 export function setBeforeUpdateQuitHook(fn: () => void): void {
   beforeUpdateQuitHook = fn
 }
 
 /**
- * Check if an update installation is in progress.
- * Used by main process to avoid force-quitting during update.
+ * 检查是否正在安装更新。
+ * 主进程用它避免在更新期间强制退出。
  */
 export function isUpdating(): boolean {
   return __isUpdating
 }
 
 /**
- * Set the event sink for broadcasting update events to renderer windows
+ * 设置事件 sink，用于向所有渲染进程窗口广播更新事件。
+ * EventSink 是 server-core 的推送抽象，类似发布订阅里的 publish 函数。
  */
 export function setAutoUpdateEventSink(sink: EventSink): void {
   eventSink = sink
 }
 
 /**
- * Get current update info (called by IPC handler)
+ * 获取当前更新信息（IPC handler 调用）。
  */
 export function getUpdateInfo(): UpdateInfo {
   return { ...updateInfo }
 }
 
 /**
- * Broadcast update info to all renderer windows.
- * Creates a snapshot to avoid race conditions during broadcast.
+ * 向所有渲染进程窗口广播更新信息。
+ * 先拍一份快照再发送，避免广播过程中状态被并发修改。
  */
 function broadcastUpdateInfo(): void {
   if (!eventSink) return
@@ -114,7 +114,7 @@ function broadcastUpdateInfo(): void {
 }
 
 /**
- * Broadcast download progress to all renderer windows.
+ * 向所有渲染进程窗口广播下载进度（0-100）。
  */
 function broadcastDownloadProgress(progress: number): void {
   if (!eventSink) return
@@ -122,15 +122,15 @@ function broadcastDownloadProgress(progress: number): void {
   eventSink(RPC_CHANNELS.update.DOWNLOAD_PROGRESS, { to: 'all' }, progress)
 }
 
-// ─── Configure electron-updater ───────────────────────────────────────────────
+// ─── 配置 electron-updater ───────────────────────────────────────────────────
 
-// Auto-download updates in the background after detection
+// 检测到更新后自动在后台下载
 autoUpdater.autoDownload = true
 
-// Install on app quit (if update is downloaded but user hasn't clicked "Restart")
+// 应用退出时自动安装（已下载但用户还没点「重启」的情况）
 autoUpdater.autoInstallOnAppQuit = true
 
-// Use the logger for electron-updater internal logging
+// 把 electron-updater 内部日志桥接到我们的主日志
 autoUpdater.logger = {
   info: (msg: unknown) => mainLog.info('[electron-updater]', msg),
   warn: (msg: unknown) => mainLog.warn('[electron-updater]', msg),
@@ -138,7 +138,7 @@ autoUpdater.logger = {
   debug: (msg: unknown) => mainLog.info('[electron-updater:debug]', msg),
 }
 
-// ─── Event handlers ───────────────────────────────────────────────────────────
+// ─── 事件处理器 ───────────────────────────────────────────────────────────────
 
 autoUpdater.on('checking-for-update', () => {
   mainLog.info('[auto-update] Checking for updates...')
@@ -147,7 +147,7 @@ autoUpdater.on('checking-for-update', () => {
 autoUpdater.on('update-available', (info) => {
   autoUpdateLog.info(`Update available: ${updateInfo.currentVersion} → ${info.version}`)
 
-  // First, check electron-updater's internal state (most reliable)
+  // 先检查 electron-updater 内部状态（最可靠）
   const internalState = checkElectronUpdaterState()
   if (internalState.ready) {
     mainLog.info(`[auto-update] electron-updater reports download ready`)
@@ -162,7 +162,7 @@ autoUpdater.on('update-available', (info) => {
     return
   }
 
-  // Fallback: check if file exists in cache directory
+  // 兜底：检查缓存目录里是否已经有下载好的文件
   const existing = checkForExistingDownload()
   if (existing.exists) {
     mainLog.info(`[auto-update] Update already downloaded (file check), setting state to ready`)
@@ -190,6 +190,7 @@ autoUpdater.on('update-available', (info) => {
 autoUpdater.on('update-not-available', (info) => {
   mainLog.info(`[auto-update] Already up to date (${info.version})`)
 
+  // 已经是最新版，重置状态
   updateInfo = {
     ...updateInfo,
     available: false,
@@ -208,6 +209,7 @@ autoUpdater.on('download-progress', (progress) => {
 autoUpdater.on('update-downloaded', async (info) => {
   autoUpdateLog.info(`Update downloaded: v${info.version}`)
 
+  // 下载完成，状态置为 ready，并重建菜单以显示「安装更新…」选项
   updateInfo = {
     ...updateInfo,
     available: true,
@@ -217,7 +219,7 @@ autoUpdater.on('update-downloaded', async (info) => {
   }
   broadcastUpdateInfo()
 
-  // Rebuild menu to show "Install Update..." option
+  // 重建菜单，显示「安装更新…」选项
   const { rebuildMenu } = await import('./menu')
   rebuildMenu()
 })
@@ -225,6 +227,7 @@ autoUpdater.on('update-downloaded', async (info) => {
 autoUpdater.on('error', (error) => {
   autoUpdateLog.error('electron-updater error', error)
 
+  // 下载出错，记录错误信息并广播
   updateInfo = {
     ...updateInfo,
     downloadState: 'error',
@@ -233,20 +236,20 @@ autoUpdater.on('error', (error) => {
   broadcastUpdateInfo()
 })
 
-// ─── Exported API ─────────────────────────────────────────────────────────────
+// ─── 导出 API ─────────────────────────────────────────────────────────────────
 
 /**
- * Check if electron-updater already has a validated download ready.
- * This uses electron-updater's internal state which is more reliable than file checks.
+ * 检查 electron-updater 内部是否已有验证过的下载包。
+ * 比文件检查更可靠，因为它直接读内部 helper 状态。
  */
 function checkElectronUpdaterState(): { ready: boolean; version?: string } {
   try {
-    // Access electron-updater's internal downloadedUpdateHelper
-    // @ts-expect-error - accessing internal API for reliability
+    // 访问 electron-updater 内部 downloadedUpdateHelper（非公开 API）
+    // @ts-expect-error - 为了可靠性主动访问内部 API
     const helper = autoUpdater.downloadedUpdateHelper
     if (helper) {
       mainLog.info(`[auto-update] downloadedUpdateHelper exists, cacheDir: ${helper.cacheDir}`)
-      // @ts-expect-error - accessing internal API
+      // @ts-expect-error - 访问内部 API
       const versionInfo = helper.versionInfo
       if (versionInfo) {
         mainLog.info(`[auto-update] electron-updater has validated download: ${JSON.stringify(versionInfo)}`)
@@ -260,16 +263,15 @@ function checkElectronUpdaterState(): { ready: boolean; version?: string } {
 }
 
 /**
- * Options for checkForUpdates
+ * checkForUpdates 的选项。
  */
 interface CheckOptions {
-  /** If true, automatically start download when update is found (default: true) */
+  /** true 表示发现更新时自动下载（默认 true） */
   autoDownload?: boolean
 }
 
 /**
- * Check if a downloaded update already exists in the cache directory.
- * This helps detect updates that were downloaded in a previous session.
+ * 检查缓存目录里是否已经有之前会话下载好的更新包。
  */
 function checkForExistingDownload(): { exists: boolean; version?: string } {
   try {
@@ -284,14 +286,14 @@ function checkForExistingDownload(): { exists: boolean; version?: string } {
     const files = fs.readdirSync(cacheDir)
     mainLog.info(`[auto-update] Files in cache: ${JSON.stringify(files)}`)
 
-    // Look for update info file that electron-updater creates
+    // 查找 electron-updater 创建的 update-info.json
     const updateInfoFile = files.find(f => f === 'update-info.json')
     if (updateInfoFile) {
       const infoPath = path.join(cacheDir, updateInfoFile)
       const info = readJsonFileSync(infoPath) as Record<string, unknown> | null
       mainLog.info(`[auto-update] update-info.json contents: ${JSON.stringify(info)}`)
 
-      // electron-updater uses 'fileName' (not 'path') in update-info.json
+      // electron-updater 在 update-info.json 里用 'fileName'（不是 'path'）
       const fileName = (info?.fileName || info?.path) as string | undefined
       if (fileName && fs.existsSync(path.join(cacheDir, fileName))) {
         mainLog.info(`[auto-update] Found existing download via update-info.json: ${fileName}`)
@@ -299,7 +301,7 @@ function checkForExistingDownload(): { exists: boolean; version?: string } {
       }
     }
 
-    // Fallback: check for any installer/zip/dmg file
+    // 兜底：只要找到常见安装包格式就认为已下载
     const downloadFile = files.find(f =>
       f.endsWith('.zip') ||
       f.endsWith('.exe') ||
@@ -321,30 +323,30 @@ function checkForExistingDownload(): { exists: boolean; version?: string } {
 }
 
 /**
- * Check for available updates.
- * Returns the current UpdateInfo state after check completes.
+ * 检查是否有可用更新。
+ * 返回检查完成后的 UpdateInfo 状态。
  *
- * @param options.autoDownload - If false, only checks without downloading (for manual "Check Now")
+ * @param options.autoDownload - false 表示只检查不下载（用于设置页「立即检查」）
  */
 export async function checkForUpdates(options: CheckOptions = {}): Promise<UpdateInfo> {
   const { autoDownload = true } = options
 
-  // Temporarily override autoDownload for this check if needed
-  // (e.g., manual check from settings shouldn't auto-download on metered connections)
+  // 临时覆盖 autoDownload，本次检查结束后再恢复
+  // 例如：设置页手动检查时，不应在按流量计费的网络下自动下载
   const previousAutoDownload = autoUpdater.autoDownload
   autoUpdater.autoDownload = autoDownload
 
   try {
-    // Check for updates - this returns a promise that resolves with the check result
+    // checkForUpdates 返回检查结果 Promise
     const result = await autoUpdater.checkForUpdates()
 
-    // If update is available and was already downloaded, the update-downloaded event
-    // should fire. Wait a moment for events to settle before returning.
+    // 如果有更新且已经下载过，update-downloaded 事件应该会触发。
+    // 等待一小段时间让事件落稳再返回。
     if (result?.updateInfo) {
-      // Give electron-updater time to fire update-downloaded if file exists
+      // 给 electron-updater 一点时间触发 update-downloaded（如果文件已存在）
       await new Promise(resolve => setTimeout(resolve, 500))
 
-      // Double-check: if we're still showing 'downloading' but file exists, update state
+      // 二次确认：如果状态还是 downloading 但文件已存在，则改成 ready
       if (updateInfo.downloadState === 'downloading') {
         const existing = checkForExistingDownload()
         if (existing.exists) {
@@ -366,7 +368,7 @@ export async function checkForUpdates(options: CheckOptions = {}): Promise<Updat
       error: error instanceof Error ? error.message : 'Check failed',
     }
   } finally {
-    // Restore previous autoDownload setting
+    // 恢复之前的 autoDownload 设置
     autoUpdater.autoDownload = previousAutoDownload
   }
 
@@ -374,12 +376,12 @@ export async function checkForUpdates(options: CheckOptions = {}): Promise<Updat
 }
 
 /**
- * Install the downloaded update and restart the app.
- * Calls electron-updater's quitAndInstall which handles:
- * - macOS: Extracts zip and swaps app bundle
- * - Windows: Runs NSIS installer silently
- * - Linux: Replaces AppImage file
- * Then relaunches the app automatically.
+ * 安装已下载的更新并重启应用。
+ * 调用 electron-updater 的 quitAndInstall，它会处理：
+ * - macOS：解压 zip 并替换 app bundle
+ * - Windows：静默运行 NSIS 安装包
+ * - Linux：替换 AppImage 文件
+ * 然后自动重新启动应用。
  */
 export async function installUpdate(): Promise<void> {
   if (updateInfo.downloadState !== 'ready') {
@@ -391,24 +393,24 @@ export async function installUpdate(): Promise<void> {
   updateInfo = { ...updateInfo, downloadState: 'installing' }
   broadcastUpdateInfo()
 
-  // Clear dismissed version since user is explicitly updating
+  // 用户明确更新，清除之前「忽略此版本」的标记
   clearDismissedUpdateVersion()
 
-  // Set flag to prevent force exit from breaking electron-updater's shutdown sequence
+  // 设置标记，防止强制退出打断 electron-updater 的关闭流程
   __isUpdating = true
 
-  // Diagnostic correlation with before-quit's [update-flow] log. If these
-  // window counts diverge, electron-updater is destroying windows between
-  // here and before-quit firing — confirms the multi-window restore bug.
+  // 与 before-quit 的 [update-flow] 日志做诊断关联。如果这里的窗口数
+  // 和 before-quit 时不同，说明 electron-updater 在这之间销毁了窗口——
+  // 这正是多窗口恢复问题的根因。
   autoUpdateLog.info('installUpdate pre-quit', {
     electronWindowCount: BrowserWindow.getAllWindows().length,
     downloadState: updateInfo.downloadState,
     latestVersion: updateInfo.latestVersion,
   })
 
-  // Snapshot window state BEFORE quitAndInstall — electron-updater destroys
-  // BrowserWindows between this call and before-quit firing, so the regular
-  // before-quit save would clobber window-state.json with an empty array.
+  // 在 quitAndInstall 之前抓拍窗口状态——electron-updater 会在这个调用
+  // 和 before-quit 之间销毁 BrowserWindow，导致常规的 before-quit 保存
+  // 把 window-state.json 覆盖成空数组。
   try {
     beforeUpdateQuitHook?.()
   } catch (err) {
@@ -416,8 +418,8 @@ export async function installUpdate(): Promise<void> {
   }
 
   try {
-    // isSilent=false shows the installer UI on Windows if needed (fallback)
-    // isForceRunAfter=true ensures the app relaunches after install
+    // isSilent=false：Windows 需要时显示安装器 UI（兜底）
+    // isForceRunAfter=true：确保安装完成后重新启动应用
     autoUpdater.quitAndInstall(false, true)
   } catch (error) {
     __isUpdating = false
@@ -429,7 +431,7 @@ export async function installUpdate(): Promise<void> {
 }
 
 /**
- * Result of update check on launch
+ * 启动时更新检查的结果。
  */
 export interface UpdateOnLaunchResult {
   action: 'none' | 'skipped' | 'ready' | 'downloading'
@@ -438,10 +440,10 @@ export interface UpdateOnLaunchResult {
 }
 
 /**
- * Check for updates on app launch.
- * - Checks immediately (no delay)
- * - Respects dismissed version (skips notification but allows manual check)
- * - Auto-downloads if update available
+ * 应用启动时检查更新。
+ * - 立即检查，不延迟
+ * - 尊重用户「忽略此版本」的选择（跳过通知，但允许手动检查）
+ * - 有更新时自动下载
  */
 export async function checkForUpdatesOnLaunch(): Promise<UpdateOnLaunchResult> {
   autoUpdateLog.info('Checking for updates on launch...')
@@ -452,7 +454,7 @@ export async function checkForUpdatesOnLaunch(): Promise<UpdateOnLaunchResult> {
     return { action: 'none' }
   }
 
-  // Check if this version was dismissed by user
+  // 检查用户是否忽略了该版本
   const dismissedVersion = getDismissedUpdateVersion()
   if (dismissedVersion === info.latestVersion) {
     mainLog.info(`[auto-update] Update ${info.latestVersion} was dismissed, skipping notification`)
@@ -463,6 +465,6 @@ export async function checkForUpdatesOnLaunch(): Promise<UpdateOnLaunchResult> {
     return { action: 'ready', version: info.latestVersion }
   }
 
-  // Download in progress — will notify when ready via update-downloaded event
+  // 正在下载中，等下载完成后的 update-downloaded 事件再通知
   return { action: 'downloading', version: info.latestVersion }
 }

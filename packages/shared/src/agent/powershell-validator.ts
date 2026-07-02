@@ -1,17 +1,17 @@
 /**
- * PowerShell Command Validator
+ * PowerShell 命令校验器
  *
- * Uses PowerShell's native System.Management.Automation.Language.Parser to create
- * a proper AST and validate commands in Explore mode. This mirrors the approach
- * used by bash-validator.ts but for PowerShell syntax.
+ * 借助 PowerShell 自带的 System.Management.Automation.Language.Parser 构造出
+ * 完整的 AST，进而在 Explore 模式下对命令做精细校验。整体思路与 bash-validator.ts
+ * 一致，只是面向 PowerShell 语法。
  *
- * AST Node Types (from PowerShell):
- * - ScriptBlockAst: Root node
- * - PipelineAst: Pipeline of commands
- * - CommandAst: Simple command with elements
- * - CommandExpressionAst: Expression used as command
- * - SubExpressionAst: $(...) substitution
- * - ScriptBlockExpressionAst: { ... } script blocks
+ * AST 节点类型（来自 PowerShell 解析器）：
+ * - ScriptBlockAst: 根节点
+ * - PipelineAst: 由管道串联的命令
+ * - CommandAst: 单条简单命令及其元素
+ * - CommandExpressionAst: 以表达式形式出现的命令
+ * - SubExpressionAst: $(...) 形式的子表达式
+ * - ScriptBlockExpressionAst: { ... } 形式的脚本块
  */
 
 import { spawnSync } from 'child_process';
@@ -20,20 +20,20 @@ import { debug } from '../utils/debug.ts';
 import type { CompiledBashPattern } from './mode-types.ts';
 
 // ============================================================
-// Module Root (set at Electron startup)
+// 模块根目录（在 Electron 启动时设置）
 // ============================================================
 
 /**
- * Module-level root directory for the PowerShell parser script.
- * Set once at Electron startup via setPowerShellValidatorRoot(__dirname).
+ * PowerShell 解析脚本所在的根目录。
+ * 在 Electron 启动时通过 setPowerShellValidatorRoot(__dirname) 一次性设置。
  */
 let _validatorRoot: string | undefined;
 
 /**
- * Register the directory containing the PowerShell parser script.
- * Call this once at app startup: setPowerShellValidatorRoot(join(__dirname, 'resources'))
+ * 登记包含 PowerShell 解析脚本的目录。
+ * 应用启动时调用一次即可：setPowerShellValidatorRoot(join(__dirname, 'resources'))
  *
- * After this, the validator will look for powershell-parser.ps1 in this directory.
+ * 设置后，校验器会到该目录下查找 powershell-parser.ps1。
  */
 export function setPowerShellValidatorRoot(dir: string): void {
   _validatorRoot = dir;
@@ -41,17 +41,17 @@ export function setPowerShellValidatorRoot(dir: string): void {
 }
 
 // ============================================================
-// Types
+// 类型定义
 // ============================================================
 
 /**
- * Result of validating a PowerShell command AST.
+ * 校验一条 PowerShell 命令后的结果
  */
 export interface PowerShellValidationResult {
   allowed: boolean;
-  /** Primary reason for rejection (if not allowed) */
+  /** 拒绝时的主要原因（仅当 allowed=false 时有意义） */
   reason?: PowerShellValidationReason;
-  /** Individual results for compound commands */
+  /** 复合命令中各子命令的逐条结果 */
   subcommandResults?: SubcommandResult[];
 }
 
@@ -75,7 +75,7 @@ export type PowerShellValidationReason =
   | { type: 'powershell_unavailable'; explanation: string };
 
 // ============================================================
-// AST Node Types (from PowerShell parser output)
+// AST 节点类型（对应 PowerShell 解析器输出的 JSON）
 // ============================================================
 
 interface ASTNode {
@@ -178,14 +178,14 @@ interface ParseResult {
 }
 
 // ============================================================
-// Dangerous Cmdlets and Patterns
+// 危险 Cmdlet 与模式
 // ============================================================
 
 /**
- * Cmdlets that are dangerous because they write to the filesystem or execute code.
+ * 因会写文件或执行代码而被判定为"危险"的 Cmdlet 列表
  */
 const DANGEROUS_CMDLETS = new Set([
-  // File writing
+  // 写文件
   'out-file',
   'set-content',
   'add-content',
@@ -196,7 +196,7 @@ const DANGEROUS_CMDLETS = new Set([
   'rename-item',
   'clear-content',
 
-  // Code execution
+  // 执行代码
   'invoke-expression',
   'iex',
   'invoke-command',
@@ -205,22 +205,22 @@ const DANGEROUS_CMDLETS = new Set([
   'start',
   'saps',
 
-  // Script execution
+  // 执行脚本
   'invoke-item',
   'ii',
 
-  // Downloading with output
+  // 带输出下载
   'invoke-webrequest',
   'iwr',
   'invoke-restmethod',
   'irm',
 
-  // Registry modification
+  // 修改注册表
   'set-itemproperty',
   'new-itemproperty',
   'remove-itemproperty',
 
-  // Service/process modification
+  // 修改服务/进程
   'stop-process',
   'kill',
   'stop-service',
@@ -228,7 +228,7 @@ const DANGEROUS_CMDLETS = new Set([
   'restart-service',
   'set-service',
 
-  // Dangerous aliases
+  // 危险别名
   'del',
   'rd',
   'rm',
@@ -241,34 +241,34 @@ const DANGEROUS_CMDLETS = new Set([
 ]);
 
 /**
- * Check if a cmdlet name is inherently dangerous.
+ * 判断某个 Cmdlet 名是否属于"危险 Cmdlet"
  */
 function isDangerousCmdlet(cmdlet: string): boolean {
   return DANGEROUS_CMDLETS.has(cmdlet.toLowerCase());
 }
 
 // ============================================================
-// PowerShell Process Management
+// PowerShell 进程管理
 // ============================================================
 
 let powershellAvailable: boolean | null = null;
 let powershellPath: string | null = null;
 
 /**
- * Check if PowerShell (pwsh) is available on this system.
- * Uses synchronous check for compatibility with existing validation flow.
+ * 检查本机是否有 PowerShell（pwsh）可用。
+ * 为了与现有校验流程兼容，采用同步检查。
  */
 export function isPowerShellAvailable(): boolean {
   if (powershellAvailable !== null) {
     return powershellAvailable;
   }
 
-  // Try pwsh first (PowerShell Core - cross-platform), then Windows PowerShell by name
+  // 先尝试 pwsh（PowerShell Core，跨平台），再按名尝试 Windows PowerShell
   const candidates: string[] = ['pwsh', 'powershell'];
 
-  // On Windows, also try the full path to powershell.exe as a fallback.
-  // Spawned subprocesses (e.g. from Electron) may not inherit the full system
-  // PATH, so 'powershell' by name can fail even though it's always installed.
+  // 在 Windows 上，再把 powershell.exe 的全路径作为兜底加入候选。
+  // 因为 spawn 出来的子进程（如 Electron 启动的）可能拿不到完整的系统 PATH，
+  // 仅凭 'powershell' 这个名字可能失败 —— 虽然 Windows 一定装了它。
   if (process.platform === 'win32') {
     const systemRoot = process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows';
     candidates.push(join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'));
@@ -290,7 +290,7 @@ export function isPowerShellAvailable(): boolean {
         return true;
       }
     } catch {
-      // Try next option
+      // 试下一个候选
     }
   }
 
@@ -300,8 +300,8 @@ export function isPowerShellAvailable(): boolean {
 }
 
 /**
- * Get the path to the PowerShell parser script.
- * Requires setPowerShellValidatorRoot() to have been called at startup.
+ * 获取 PowerShell 解析脚本的全路径。
+ * 要求启动时已调用过 setPowerShellValidatorRoot()。
  */
 function getParserScriptPath(): string {
   if (!_validatorRoot) {
@@ -313,8 +313,8 @@ function getParserScriptPath(): string {
 }
 
 /**
- * Parse a PowerShell command using the native parser.
- * Synchronous for compatibility with existing validation flow.
+ * 调用 PowerShell 原生解析器解析一条命令。
+ * 为了与现有校验流程兼容采用同步实现。
  */
 function parseCommand(command: string): ParseResult {
   if (!powershellPath) {
@@ -331,7 +331,7 @@ function parseCommand(command: string): ParseResult {
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: 10000,
         encoding: 'utf8',
-        maxBuffer: 10 * 1024 * 1024, // 10MB for large ASTs
+        maxBuffer: 10 * 1024 * 1024, // 10MB，大型 AST 时用得到
       }
     );
 
@@ -369,21 +369,21 @@ function parseCommand(command: string): ParseResult {
 }
 
 // ============================================================
-// Validation Logic
+// 校验逻辑
 // ============================================================
 
 /**
- * Validate a PowerShell command using AST analysis.
+ * 通过 AST 分析校验一条 PowerShell 命令。
  *
- * @param command - The PowerShell command string to validate
- * @param patterns - Compiled regex patterns for allowed commands
- * @returns Validation result with detailed reason if rejected
+ * @param command - 待校验的 PowerShell 命令字符串
+ * @param patterns - 已编译的允许命令正则列表
+ * @returns 校验结果（若被拒绝，附带详细原因）
  */
 export function validatePowerShellCommand(
   command: string,
   patterns: CompiledBashPattern[]
 ): PowerShellValidationResult {
-  // Check if PowerShell is available
+  // 先确认 PowerShell 可用
   if (!isPowerShellAvailable()) {
     return {
       allowed: false,
@@ -394,7 +394,7 @@ export function validatePowerShellCommand(
     };
   }
 
-  // Parse the command
+  // 解析命令
   const parseResult = parseCommand(command);
 
   if (!parseResult.success || !parseResult.ast) {
@@ -407,7 +407,7 @@ export function validatePowerShellCommand(
     };
   }
 
-  // Check for parse errors
+  // 检查解析阶段产生的错误
   if (parseResult.parseErrors && parseResult.parseErrors.length > 0) {
     return {
       allowed: false,
@@ -418,7 +418,7 @@ export function validatePowerShellCommand(
     };
   }
 
-  // Validate the AST
+  // 对 AST 做结构校验
   const subcommandResults: SubcommandResult[] = [];
   const result = validateNode(parseResult.ast, patterns, subcommandResults);
 
@@ -429,7 +429,7 @@ export function validatePowerShellCommand(
 }
 
 /**
- * Recursively validate an AST node.
+ * 递归校验 AST 节点
  */
 function validateNode(
   node: ASTNode,
@@ -457,6 +457,7 @@ function validateNode(
       return validateCommandExpression(node as CommandExpressionAst, patterns, results);
 
     case 'AssignmentStatementAst':
+      // 赋值会改变状态，直接拒绝
       return {
         allowed: false,
         reason: {
@@ -466,6 +467,7 @@ function validateNode(
       };
 
     case 'SubExpressionAst':
+      // $(...) 子表达式会执行其内部命令，拒绝
       return {
         allowed: false,
         reason: {
@@ -475,6 +477,7 @@ function validateNode(
       };
 
     case 'ScriptBlockExpressionAst':
+      // { } 脚本块可执行任意代码，拒绝
       return {
         allowed: false,
         reason: {
@@ -484,20 +487,20 @@ function validateNode(
       };
 
     default:
-      // Check for dangerous patterns in any node
+      // 其他类型：检查其中是否含危险结构
       return validateGenericNode(node, patterns, results);
   }
 }
 
 /**
- * Validate a ScriptBlockAst (root node).
+ * 校验 ScriptBlockAst（根节点）
  */
 function validateScriptBlock(
   node: ScriptBlockAst,
   patterns: CompiledBashPattern[],
   results: SubcommandResult[]
 ): PowerShellValidationResult {
-  // Validate each block
+  // 逐个校验其中的代码块
   for (const block of [node.BeginBlock, node.ProcessBlock, node.EndBlock]) {
     if (block) {
       const result = validateNode(block, patterns, results);
@@ -510,7 +513,7 @@ function validateScriptBlock(
 }
 
 /**
- * Validate a NamedBlockAst.
+ * 校验 NamedBlockAst
  */
 function validateNamedBlock(
   node: NamedBlockAst,
@@ -527,14 +530,14 @@ function validateNamedBlock(
 }
 
 /**
- * Validate a PipelineAst.
+ * 校验 PipelineAst
  */
 function validatePipeline(
   node: PipelineAst,
   patterns: CompiledBashPattern[],
   results: SubcommandResult[]
 ): PowerShellValidationResult {
-  // Check for background execution
+  // 检查是否后台执行
   if (node.Background) {
     return {
       allowed: false,
@@ -545,7 +548,7 @@ function validatePipeline(
     };
   }
 
-  // Validate each pipeline element
+  // 逐段校验管道中的每个元素
   for (const element of node.PipelineElements || []) {
     const result = validateNode(element, patterns, results);
     if (!result.allowed) {
@@ -557,14 +560,14 @@ function validatePipeline(
 }
 
 /**
- * Validate a CommandAst.
+ * 校验 CommandAst
  */
 function validateCommand(
   node: CommandAst,
   patterns: CompiledBashPattern[],
   results: SubcommandResult[]
 ): PowerShellValidationResult {
-  // Check invocation operator
+  // 检查调用运算符
   if (node.InvocationOperator === 'Dot') {
     return {
       allowed: false,
@@ -585,13 +588,13 @@ function validateCommand(
     };
   }
 
-  // Check for file redirections
+  // 检查文件重定向
   for (const redirect of node.Redirections || []) {
     if (redirect.Type === 'FileRedirectionAst') {
       const fileRedirect = redirect as FileRedirectionAst;
       const target = fileRedirect.Location?.Text || 'unknown';
 
-      // Allow redirection to $null (PowerShell's /dev/null)
+      // 允许重定向到 $null（PowerShell 中的 /dev/null）
       if (target.toLowerCase() === '$null') {
         continue;
       }
@@ -607,17 +610,17 @@ function validateCommand(
     }
   }
 
-  // Build command string for pattern matching
+  // 拼接命令字符串，用于 pattern 匹配
   const commandParts: string[] = [];
 
   for (const element of node.CommandElements || []) {
-    // Check each element for dangerous constructs
+    // 先检查每个元素是否含危险结构
     const dangerCheck = checkForDangerousConstructs(element);
     if (dangerCheck) {
       return { allowed: false, reason: dangerCheck };
     }
 
-    // Extract text for pattern matching
+    // 提取文本用于后续 pattern 匹配
     const text = getElementText(element);
     if (text) {
       commandParts.push(text);
@@ -627,7 +630,7 @@ function validateCommand(
   const commandStr = commandParts.join(' ');
   const cmdletName = commandParts[0] || '';
 
-  // Check if cmdlet is inherently dangerous
+  // 是否为内置的危险 Cmdlet
   if (isDangerousCmdlet(cmdletName)) {
     const subResult: SubcommandResult = {
       command: commandStr,
@@ -646,20 +649,20 @@ function validateCommand(
     };
   }
 
-  // Check against safe patterns (case-insensitive for PowerShell)
-  // PowerShell cmdlets are case-insensitive, so Get-Process == get-process == GET-PROCESS
+  // 与只读 pattern 列表比对（PowerShell 大小写不敏感：
+  // Get-Process == get-process == GET-PROCESS）
   const matchesPattern = patterns.some(pattern => {
-    // Try original pattern first
+    // 先用原始正则试一次
     if (pattern.regex.test(commandStr)) {
       return true;
     }
-    // If pattern doesn't have 'i' flag, try case-insensitive match
+    // 若正则未带 i 标志，再以大小写不敏感方式重试一次
     if (!pattern.regex.flags.includes('i')) {
       try {
         const caseInsensitiveRegex = new RegExp(pattern.source, pattern.regex.flags + 'i');
         return caseInsensitiveRegex.test(commandStr);
       } catch {
-        // If regex creation fails, fall back to original result
+        // 重建正则失败则沿用之前的结果
         return false;
       }
     }
@@ -688,7 +691,7 @@ function validateCommand(
 }
 
 /**
- * Validate a CommandExpressionAst.
+ * 校验 CommandExpressionAst
  */
 function validateCommandExpression(
   node: CommandExpressionAst,
@@ -699,7 +702,7 @@ function validateCommandExpression(
 }
 
 /**
- * Validate any node for dangerous patterns.
+ * 对任意节点做"危险结构"通用检查
  */
 function validateGenericNode(
   node: ASTNode,
@@ -715,7 +718,7 @@ function validateGenericNode(
 }
 
 /**
- * Check an AST node for dangerous constructs.
+ * 在 AST 节点中扫描已知的危险结构
  */
 function checkForDangerousConstructs(node: ASTNode): PowerShellValidationReason | null {
   if (!node) {
@@ -737,7 +740,7 @@ function checkForDangerousConstructs(node: ASTNode): PowerShellValidationReason 
 
     case 'ExpandableStringExpressionAst': {
       const expandable = node as ExpandableStringExpressionAst;
-      // Check for subexpressions in the string
+      // 字符串里嵌了子表达式也要拒绝
       for (const nested of expandable.NestedExpressions || []) {
         if (nested.Type === 'SubExpressionAst') {
           return {
@@ -750,11 +753,11 @@ function checkForDangerousConstructs(node: ASTNode): PowerShellValidationReason 
     }
 
     case 'InvokeMemberExpressionAst': {
-      // Method invocation could be dangerous
+      // 方法调用可能危险
       const invoke = node as InvokeMemberExpressionAst;
       const memberText = invoke.Member?.Text?.toLowerCase() || '';
 
-      // Block potentially dangerous method calls
+      // 拦截可能执行代码的方法名
       const dangerousMethods = ['invoke', 'invokescript', 'create', 'start'];
       if (dangerousMethods.some(m => memberText.includes(m))) {
         return {
@@ -770,7 +773,7 @@ function checkForDangerousConstructs(node: ASTNode): PowerShellValidationReason 
 }
 
 /**
- * Get the text value from a command element.
+ * 从命令元素中取其文本表示
  */
 function getElementText(node: ASTNode): string | null {
   if (!node) {
@@ -793,28 +796,28 @@ function getElementText(node: ASTNode): string | null {
 }
 
 /**
- * Synchronous check if command looks like PowerShell syntax.
- * Used to determine whether to use PowerShell or bash validation.
+ * 同步判断一条命令"看起来像不像 PowerShell 语法"。
+ * 用于决定到底走 PowerShell 校验器还是 bash 校验器。
  */
 export function looksLikePowerShell(command: string): boolean {
   const psPatterns = [
-    // Cmdlet pattern: Verb-Noun
+    // Cmdlet 形式：动词-名词
     /\b(Get|Set|New|Remove|Add|Clear|Write|Read|Out|ConvertTo|ConvertFrom|Test|Select|Where|ForEach|Sort|Group|Measure|Compare|Format|Export|Import|Start|Stop|Invoke|Enable|Disable|Register|Unregister|Update|Find|Install|Uninstall|Save|Publish|Push|Pop)-\w+/i,
 
-    // PowerShell variables in pipeline
+    // 管道里出现 PowerShell 变量
     /\$\w+\s*\|/,
 
-    // PowerShell operators
+    // PowerShell 运算符
     /\s-(?:eq|ne|gt|lt|ge|le|like|notlike|match|notmatch|contains|notcontains|in|notin|replace|split|join)\s/i,
 
-    // Array/hashtable literals
+    // 数组 / 哈希表字面量
     /@\([^)]*\)/,
     /@\{[^}]*\}/,
 
-    // PowerShell specific cmdlets
+    // PowerShell 专有 Cmdlet
     /\b(Where-Object|Select-Object|ForEach-Object|Sort-Object|Group-Object|Measure-Object)\b/i,
 
-    // Common PowerShell aliases that differ from Unix
+    // 与 Unix 不同、PowerShell 特有的常用别名
     /\b(gci|gcm|gps|gsv|gjb)\b/i,
   ];
 
@@ -822,50 +825,50 @@ export function looksLikePowerShell(command: string): boolean {
 }
 
 // ============================================================
-// Write Target Extraction (for plans folder exception)
+// 写入目标路径提取（用于 plans 目录例外放行）
 // ============================================================
 
 /**
- * Detect and unwrap `powershell.exe -Command "..."` wrapper, returning the inner command.
+ * 识别并剥离 `powershell.exe -Command "..."` 外壳，返回其中的内层命令。
  *
- * Codex on Windows often wraps PowerShell commands in:
+ * Codex 在 Windows 上经常把 PowerShell 命令包成：
  *   "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -Command "Set-Content -Path \"...\" ..."
  *   powershell.exe -NoProfile -Command "..."
  *   pwsh -Command "..."
  *
- * The PS AST parser sees `powershell.exe` as the top-level command (not the inner cmdlet),
- * so extractPowerShellWriteTarget() fails. This function strips the wrapper and returns
- * the inner command with escaped quotes unescaped, so it can be re-parsed.
+ * PS AST 解析时会把 `powershell.exe` 当成顶层命令（而非里面的 Cmdlet），
+ * 导致 extractPowerShellWriteTarget() 失败。这里先把这层壳剥掉、把转义引号还原，
+ * 再交给真正的提取逻辑重新解析。
  */
 export function unwrapPowerShellCommand(command: string): string | null {
-  // Match: "C:\...\powershell.exe" -Command "inner"  OR  powershell.exe -Command "inner"  OR  pwsh -Command "inner"
-  // Optional flags like -NoProfile -NonInteractive before -Command
+  // 匹配："C:\...\powershell.exe" -Command "inner"  或  powershell.exe -Command "inner"  或  pwsh -Command "inner"
+  // -Command 之前允许出现 -NoProfile / -NonInteractive 之类的开关
   const match = command.match(
     /^(?:"[^"]*[/\\]?(?:powershell|pwsh)(?:\.exe)?"\s+|(?:powershell|pwsh)(?:\.exe)?\s+)(?:-(?!Command)\w+\s+)*-Command\s+"((?:[^"\\]|\\.)*)"\s*$/i
   );
   if (!match?.[1]) return null;
-  // Unescape inner escaped quotes: \" → "
+  // 把 \" 还原成 "
   return match[1].replace(/\\"/g, '"');
 }
 
-/** Read cmdlets that read files */
+/** 读取类 Cmdlet */
 const READ_CMDLETS = ['get-content', 'gc', 'type'];
 
-/** Write cmdlets that output to files */
+/** 写入类 Cmdlet */
 const WRITE_CMDLETS = ['out-file', 'set-content', 'add-content'];
 
 /**
- * Extract file path from PowerShell write commands using AST analysis.
- * Used to check if a write command targets the plans folder.
+ * 借助 AST 分析，从 PowerShell 写命令中提取目标文件路径。
+ * 用于判断一条写命令是否落在 plans 目录内（若是则放行）。
  *
- * @param command - The PowerShell command string
- * @returns The file path if a write cmdlet is detected, null otherwise
+ * @param command - PowerShell 命令字符串
+ * @returns 若识别为写命令则返回目标路径，否则返回 null
  */
 export function extractPowerShellWriteTarget(command: string): string | null {
   if (!isPowerShellAvailable()) return null;
 
-  // If wrapped in powershell.exe -Command "...", unwrap and re-parse the inner command.
-  // The PS AST parser would see powershell.exe as the top-level command (not the write cmdlet).
+  // 若被 powershell.exe -Command "..." 包了一层，先剥掉再递归解析内层命令。
+  // 因为 PS AST 会把 powershell.exe 当作顶层命令，看不到真正的写 Cmdlet。
   const innerCommand = unwrapPowerShellCommand(command);
   if (innerCommand) {
     return extractPowerShellWriteTarget(innerCommand);
@@ -874,18 +877,18 @@ export function extractPowerShellWriteTarget(command: string): string | null {
   const parseResult = parseCommand(command);
   if (!parseResult.success || !parseResult.ast) return null;
 
-  // Find the last command in any pipeline (where write cmdlets typically appear)
+  // 找到管道中"最后一条"命令（写 Cmdlet 通常出现在这里）
   const lastCmd = findLastPipelineCommand(parseResult.ast);
   if (!lastCmd) return null;
 
-  // Check if it's a write cmdlet
+  // 判断它是不是写 Cmdlet
   const cmdName = getCommandName(lastCmd);
   if (!cmdName || !WRITE_CMDLETS.includes(cmdName.toLowerCase())) return null;
 
-  // Extract -FilePath or -Path parameter value
+  // 提取 -FilePath / -Path 参数对应的值
   let targetPath = extractParameterValue(lastCmd, ['FilePath', 'Path']);
 
-  // Fallback: check for positional parameter (e.g. Out-File C:\temp\file.txt)
+  // 兜底：尝试位置参数（如 Out-File C:\temp\file.txt）
   if (!targetPath) {
     targetPath = extractFirstPositionalArg(lastCmd);
   }
@@ -897,21 +900,21 @@ export function extractPowerShellWriteTarget(command: string): string | null {
 }
 
 /**
- * Extract file path from PowerShell read commands using AST analysis.
- * Used to detect file reads (Get-Content, gc, type) for prerequisite tracking.
+ * 借助 AST 分析，从 PowerShell 读命令中提取目标文件路径。
+ * 用于检测文件读取（Get-Content/gc/type），服务于前置依赖追踪。
  *
- * Handles complex cases like:
+ * 能处理一些复杂写法，例如：
  * - Get-Content -Path "file.txt" -Encoding UTF8
  * - gc file.txt | Select-String "pattern"
  * - powershell.exe -Command "Get-Content file.txt"
  *
- * @param command - The PowerShell command string
- * @returns The file path if a read cmdlet is detected, null otherwise
+ * @param command - PowerShell 命令字符串
+ * @returns 若识别为读命令则返回目标路径，否则返回 null
  */
 export function extractPowerShellReadTarget(command: string): string | null {
   if (!isPowerShellAvailable()) return null;
 
-  // If wrapped in powershell.exe -Command "...", unwrap and re-parse the inner command.
+  // 若被 powershell.exe -Command "..." 包了一层，先剥掉再递归解析
   const innerCommand = unwrapPowerShellCommand(command);
   if (innerCommand) {
     return extractPowerShellReadTarget(innerCommand);
@@ -920,18 +923,18 @@ export function extractPowerShellReadTarget(command: string): string | null {
   const parseResult = parseCommand(command);
   if (!parseResult.success || !parseResult.ast) return null;
 
-  // Find the first command in any pipeline (where read cmdlets appear as data source)
+  // 找到管道中"第一条"命令（读 Cmdlet 通常作为数据源出现在这里）
   const firstCmd = findFirstPipelineCommand(parseResult.ast);
   if (!firstCmd) return null;
 
-  // Check if it's a read cmdlet
+  // 判断它是不是读 Cmdlet
   const cmdName = getCommandName(firstCmd);
   if (!cmdName || !READ_CMDLETS.includes(cmdName.toLowerCase())) return null;
 
-  // Extract -Path or -LiteralPath parameter value
+  // 提取 -Path / -LiteralPath 参数对应的值
   let targetPath = extractParameterValue(firstCmd, ['Path', 'LiteralPath']);
 
-  // Fallback: positional parameter (e.g. Get-Content C:\temp\file.txt)
+  // 兜底：位置参数（如 Get-Content C:\temp\file.txt）
   if (!targetPath) {
     targetPath = extractFirstPositionalArg(firstCmd);
   }
@@ -940,8 +943,8 @@ export function extractPowerShellReadTarget(command: string): string | null {
 }
 
 /**
- * Find the first CommandAst in a pipeline within the AST.
- * Read cmdlets are typically the data source (first in pipeline).
+ * 在 AST 中找到"管道里第一条" CommandAst。
+ * 读 Cmdlet 通常作为数据源出现在管道头部。
  */
 function findFirstPipelineCommand(ast: ASTNode): CommandAst | null {
   const pipeline = findFirstPipeline(ast);
@@ -955,14 +958,14 @@ function findFirstPipelineCommand(ast: ASTNode): CommandAst | null {
 }
 
 /**
- * Find the last CommandAst in a pipeline within the AST.
+ * 在 AST 中找到"管道里最后一条" CommandAst
  */
 function findLastPipelineCommand(ast: ASTNode): CommandAst | null {
-  // Navigate to the first pipeline
+  // 定位到第一条管道
   const pipeline = findFirstPipeline(ast);
   if (!pipeline || !pipeline.PipelineElements?.length) return null;
 
-  // Get the last element in the pipeline
+  // 取管道末尾的元素
   const lastElement = pipeline.PipelineElements[pipeline.PipelineElements.length - 1];
   if (lastElement?.Type === 'CommandAst') {
     return lastElement as CommandAst;
@@ -971,7 +974,7 @@ function findLastPipelineCommand(ast: ASTNode): CommandAst | null {
 }
 
 /**
- * Recursively find the first PipelineAst in the AST.
+ * 递归地在 AST 中查找第一条 PipelineAst
  */
 function findFirstPipeline(node: ASTNode): PipelineAst | null {
   if (!node) return null;
@@ -980,7 +983,7 @@ function findFirstPipeline(node: ASTNode): PipelineAst | null {
     return node as PipelineAst;
   }
 
-  // Check ScriptBlockAst
+  // 进入 ScriptBlockAst
   if (node.Type === 'ScriptBlockAst') {
     const scriptBlock = node as ScriptBlockAst;
     for (const block of [scriptBlock.EndBlock, scriptBlock.ProcessBlock, scriptBlock.BeginBlock]) {
@@ -991,7 +994,7 @@ function findFirstPipeline(node: ASTNode): PipelineAst | null {
     }
   }
 
-  // Check NamedBlockAst
+  // 进入 NamedBlockAst
   if (node.Type === 'NamedBlockAst') {
     const namedBlock = node as NamedBlockAst;
     for (const stmt of namedBlock.Statements || []) {
@@ -1004,13 +1007,13 @@ function findFirstPipeline(node: ASTNode): PipelineAst | null {
 }
 
 /**
- * Get the command name from a CommandAst.
+ * 从 CommandAst 中取出命令名
  */
 function getCommandName(cmd: CommandAst): string | null {
   if (!cmd.CommandElements?.length) return null;
 
   const firstElement = cmd.CommandElements[0];
-  // Command name is typically a StringConstantExpressionAst
+  // 命令名通常是 StringConstantExpressionAst
   if (firstElement?.Type === 'StringConstantExpressionAst') {
     return (firstElement as StringConstantExpressionAst).Value || null;
   }
@@ -1018,8 +1021,7 @@ function getCommandName(cmd: CommandAst): string | null {
 }
 
 /**
- * Extract a parameter value from a CommandAst.
- * Looks for named parameters like -FilePath or -Path.
+ * 从 CommandAst 中提取某个命名参数（如 -FilePath / -Path）对应的值
  */
 function extractParameterValue(cmd: CommandAst, paramNames: string[]): string | null {
   if (!cmd.CommandElements) return null;
@@ -1029,17 +1031,17 @@ function extractParameterValue(cmd: CommandAst, paramNames: string[]): string | 
   for (let i = 0; i < cmd.CommandElements.length; i++) {
     const element = cmd.CommandElements[i];
 
-    // Check for CommandParameterAst (named parameter)
+    // 寻找 CommandParameterAst（命名参数）
     if (element?.Type === 'CommandParameterAst') {
       const param = element as CommandParameterAst;
       const paramName = param.ParameterName?.toLowerCase();
 
       if (paramName && lowerParamNames.includes(paramName)) {
-        // Parameter value might be in Argument property or next element
+        // 参数值可能在 Argument 属性，也可能在下一个元素
         if (param.Argument) {
           return extractStringValue(param.Argument);
         }
-        // Check next element for the value
+        // 取下一个元素作为值
         const nextElement = cmd.CommandElements[i + 1];
         if (nextElement && nextElement.Type !== 'CommandParameterAst') {
           return extractStringValue(nextElement);
@@ -1052,25 +1054,24 @@ function extractParameterValue(cmd: CommandAst, paramNames: string[]): string | 
 }
 
 /**
- * Extract the first positional argument from a CommandAst.
- * Skips the command name (index 0) and any named parameters (CommandParameterAst)
- * along with their values. Returns the first remaining string element.
+ * 从 CommandAst 中提取第一个位置参数（positional argument）。
+ * 跳过下标 0（命令名）以及所有命名参数（CommandParameterAst）和它们的值，
+ * 返回剩下的第一个字符串元素。
  *
- * This handles commands like: Out-File C:\temp\file.txt
- * where the path is a positional parameter (no -FilePath flag).
+ * 用于处理形如 Out-File C:\temp\file.txt 这种路径作为位置参数（没有 -FilePath 标志）的写法。
  */
 function extractFirstPositionalArg(cmd: CommandAst): string | null {
   if (!cmd.CommandElements || cmd.CommandElements.length < 2) return null;
 
-  let i = 1; // Skip index 0 (cmdlet name)
+  let i = 1; // 跳过下标 0（Cmdlet 名）
   while (i < cmd.CommandElements.length) {
     const element = cmd.CommandElements[i];
     if (element?.Type === 'CommandParameterAst') {
-      // Skip the parameter name and its value (next element)
+      // 跳过参数名和它的值（下一个元素）
       i += 2;
       continue;
     }
-    // First non-parameter element is the positional argument
+    // 第一个非参数元素就是位置参数
     if (!element) return null;
     return extractStringValue(element);
   }
@@ -1078,7 +1079,7 @@ function extractFirstPositionalArg(cmd: CommandAst): string | null {
 }
 
 /**
- * Extract string value from various AST node types.
+ * 从多种 AST 节点类型中提取字符串值
  */
 function extractStringValue(node: ASTNode): string | null {
   if (!node) return null;
@@ -1089,7 +1090,7 @@ function extractStringValue(node: ASTNode): string | null {
     case 'ExpandableStringExpressionAst':
       return (node as ExpandableStringExpressionAst).Value || null;
     default:
-      // Fallback to Text property which contains the raw text
+      // 兜底取 Text 字段（原始文本），并去掉首尾引号
       return node.Text?.replace(/^['"]|['"]$/g, '') || null;
   }
 }

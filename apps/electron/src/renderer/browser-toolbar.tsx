@@ -1,9 +1,8 @@
 /**
- * Browser Toolbar — React entry point
+ * Browser Toolbar — React 入口。
  *
- * Renders the shared BrowserControls component inside a chromeless
- * BrowserWindow. Communicates with the main process via a dedicated
- * preload script (browser-toolbar preload).
+ * 在无框 BrowserWindow 中渲染共享的 BrowserControls 组件。
+ * 通过专用的 browser-toolbar preload 脚本与 main 进程通信。
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'

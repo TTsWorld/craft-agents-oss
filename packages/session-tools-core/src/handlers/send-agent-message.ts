@@ -2,12 +2,17 @@ import type { SessionToolContext } from '../context.ts';
 import type { ToolResult } from '../types.ts';
 import { successResponse, errorResponse } from '../response.ts';
 
+// send_agent_message 参数：目标会话 ID、消息内容、可选附件
 export interface SendAgentMessageArgs {
   sessionId: string;
   message: string;
   attachments?: Array<{ path: string; name?: string }>;
 }
 
+/**
+ * 处理 send_agent_message tool 调用。
+ * 允许一个会话向另一个会话发送消息，实现会话间通信（类似 Go 里跨 goroutine 发消息，但这里是持久化会话）。
+ */
 export async function handleSendAgentMessage(
   ctx: SessionToolContext,
   args: SendAgentMessageArgs
@@ -24,13 +29,13 @@ export async function handleSendAgentMessage(
     return errorResponse('message is required.');
   }
 
-  // Prevent self-send (would create a recursive loop)
+  // 防止自己给自己发消息，避免递归循环
   if (args.sessionId === ctx.sessionId) {
     return errorResponse('Cannot send a message to your own session. Use a different sessionId.');
   }
 
   try {
-    // Build sender envelope so the target session knows who sent the message
+    // 构造发送者信封，让目标会话知道是谁发来的
     const senderName = ctx.getSessionInfo?.()?.name ?? ctx.sessionId;
     const wrappedMessage = [
       `[Message from session "${ctx.sessionId}" (${senderName})]`,

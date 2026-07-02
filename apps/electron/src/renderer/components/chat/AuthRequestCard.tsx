@@ -11,12 +11,16 @@ import type { AuthRequestType, AuthStatus } from '@craft-agent/core/types'
 import { validateBasicAuthCredentials, getPasswordValue, getPasswordLabel, getPasswordPlaceholder } from '@/utils/auth-validation'
 
 // ============================================================================
-// Primitives
+// 基础类型与样式
 // ============================================================================
 
+/** 认证卡片的四种视觉状态 */
 type AuthCardVariant = 'default' | 'success' | 'error' | 'muted'
 
-// Variant styles - bg colors are animated via Framer Motion, text via CSS transition
+/**
+ * 各状态的背景色、文字色与阴影色。
+ * 背景色使用 oklch 透明色（success/error），或 CSS 变量；文字与阴影通过 CSS 类切换。
+ */
 const VARIANT_STYLES: Record<AuthCardVariant, { bg: string; textClass: string; shadowColor?: string }> = {
   default: { bg: 'var(--background)', textClass: 'text-foreground shadow-minimal' },
   success: { bg: 'oklch(from var(--success) l c h / 0.03)', textClass: 'text-[var(--success-text)] shadow-tinted', shadowColor: 'var(--success-rgb)' },
@@ -24,6 +28,7 @@ const VARIANT_STYLES: Record<AuthCardVariant, { bg: string; textClass: string; s
   muted: { bg: 'var(--foreground-3)', textClass: 'text-foreground/70 shadow-minimal' },
 }
 
+/** 卡片头部区域的 props：图标、标题、副标题、描述等 */
 interface AuthCardHeaderProps {
   icon?: LucideIcon
   iconClassName?: string
@@ -34,6 +39,11 @@ interface AuthCardHeaderProps {
   description?: string
 }
 
+/**
+ * AuthCardHeader - 认证卡片的头部信息展示
+ *
+ * 左侧可选图标，右侧为标题、副标题、描述；整体继承父级文字颜色。
+ */
 function AuthCardHeader({
   icon: Icon,
   iconClassName,
@@ -45,17 +55,17 @@ function AuthCardHeader({
 }: AuthCardHeaderProps) {
   return (
     <div className="flex gap-3">
-      {/* Icon aligned to first line of text (optional) */}
+      {/* 图标与第一行文字对齐，可选传 */}
       {Icon && <Icon className={cn('h-4 w-4 shrink-0 mt-0.5', iconClassName)} />}
       <div className="flex-1 min-w-0">
-        {/* Title inherits container text color */}
+        {/* 标题继承外层文字颜色 */}
         <div className="text-sm font-medium leading-5">
           {title}
           {titleSuffix && (
             <span className="text-xs text-muted-foreground ml-2">({titleSuffix})</span>
           )}
         </div>
-        {/* Subtitles use 50% opacity of inherited color */}
+        {/* 副标题使用继承颜色的 50% 透明度 */}
         {subtitle && (
           <div className="text-xs mt-0.5 opacity-50">
             {subtitle}
@@ -74,6 +84,7 @@ function AuthCardHeader({
   )
 }
 
+/** 卡片底部操作栏的 props：主按钮、次按钮、提示文字 */
 interface AuthCardActionsProps {
   primary: {
     label: string
@@ -92,6 +103,11 @@ interface AuthCardActionsProps {
   hint?: string
 }
 
+/**
+ * AuthCardActions - 认证卡片底部按钮栏
+ *
+ * 渲染主按钮（支持 loading）、可选的次要按钮，以及最右侧的提示文案。
+ */
 function AuthCardActions({ primary, secondary, hint }: AuthCardActionsProps) {
   const PrimaryIcon = primary.icon
   const SecondaryIcon = secondary?.icon
@@ -136,31 +152,34 @@ function AuthCardActions({ primary, secondary, hint }: AuthCardActionsProps) {
 }
 
 // ============================================================================
-// Main Component
+// 主组件
 // ============================================================================
 
 interface AuthRequestCardProps {
   message: Message
-  /** Callback to respond to credential request */
+  /** 提交凭据响应的回调；由外层 chat 组件传入 */
   onRespondToCredential?: (sessionId: string, requestId: string, response: CredentialResponse) => void
-  /** Session ID for this auth request */
+  /** 当前 auth request 所属 session 的 id */
   sessionId: string
-  /** Whether the card is interactive (last message, no user message after). Default true. */
+  /**
+   * 该卡片是否可交互。
+   * 通常只有最后一条消息且用户尚未回复时才为 true。默认 true。
+   */
   isInteractive?: boolean
 }
 
 /**
- * AuthRequestCard - Inline auth UI displayed in chat history
+ * AuthRequestCard - 聊天历史中的内联认证卡片
  *
- * Renders different UIs based on auth type:
- * - credential: Form for API key, bearer token, basic auth
- * - oauth/oauth-google/oauth-slack/oauth-microsoft: OAuth flow with browser redirect
+ * 根据 authRequestType 渲染不同 UI：
+ * - credential: API Key、Basic Auth、多 Header 等凭据输入表单
+ * - oauth / oauth-google / oauth-slack / oauth-microsoft: 跳转浏览器完成 OAuth
  *
- * Status handling:
- * - pending: Show interactive form/button
- * - completed: Show success state
- * - cancelled: Show cancelled state
- * - failed: Show error state
+ * 根据 authStatus 展示不同状态：
+ * - pending: 可交互表单/按钮
+ * - completed: 成功状态
+ * - cancelled: 已取消
+ * - failed: 失败并显示错误信息
  */
 export function AuthRequestCard({ message, onRespondToCredential, sessionId, isInteractive = true }: AuthRequestCardProps) {
   const [value, setValue] = useState('')
@@ -188,7 +207,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
     authWorkspace,
   } = message
 
-  // Multi-header state: { "DD-API-KEY": "", "DD-APPLICATION-KEY": "" }
+  // 多 Header 模式：形如 { "DD-API-KEY": "", "DD-APPLICATION-KEY": "" }
   const [headerValues, setHeaderValues] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {}
     if (authHeaderNames) {
@@ -201,15 +220,16 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
 
   const isBasicAuth = authCredentialMode === 'basic'
   const isMultiHeader = authCredentialMode === 'multi-header'
-  const passwordRequired = authPasswordRequired ?? true  // default true for backward compatibility
+  const passwordRequired = authPasswordRequired ?? true  // 默认 true，保持向后兼容
 
-  // Validation logic
+  // 校验逻辑：Basic Auth 校验用户名密码；多 Header 要求每个 header 非空；单字段要求 value 非空
   const isValid = isBasicAuth
     ? validateBasicAuthCredentials(username, password, passwordRequired)
     : isMultiHeader
     ? authHeaderNames?.every(name => headerValues[name]?.trim().length > 0) ?? false
     : value.trim().length > 0
 
+  /** 提交凭据：根据模式组装 CredentialResponse，并通过回调发送给 main/session 层 */
   const handleSubmit = useCallback(() => {
     if (!isValid || !authRequestId || !onRespondToCredential) return
 
@@ -223,7 +243,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
         cancelled: false
       })
     } else if (isMultiHeader) {
-      // Trim all header values
+      // 对所有 header 值做 trim
       const trimmedHeaders: Record<string, string> = {}
       for (const [key, val] of Object.entries(headerValues)) {
         trimmedHeaders[key] = val.trim()
@@ -242,16 +262,19 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
     }
   }, [isBasicAuth, isMultiHeader, username, password, value, headerValues, isValid, onRespondToCredential, sessionId, authRequestId, passwordRequired])
 
+  /** 取消当前认证请求 */
   const handleCancel = useCallback(() => {
     if (!authRequestId || !onRespondToCredential) return
     onRespondToCredential(sessionId, authRequestId, { type: 'credential', cancelled: true })
   }, [onRespondToCredential, sessionId, authRequestId])
 
+  /** 拦截 form 提交，避免页面刷新 */
   const handleFormSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
     handleSubmit()
   }, [handleSubmit])
 
+  /** 键盘快捷键：Enter 提交、Escape 取消 */
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && isValid) {
       handleSubmit()
@@ -260,8 +283,11 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
     }
   }, [isValid, handleSubmit, handleCancel])
 
+  /**
+   * 处理 OAuth 登录按钮点击。
+   * 这是“客户端驱动”的 OAuth：本地启动回调服务监听，token 仍由服务端持有，renderer 只负责拉起浏览器。
+   */
   const handleOAuthClick = useCallback(async () => {
-    // Client-driven OAuth: callback server runs locally, server owns tokens
     if (!authRequestId || !authSourceSlug) {
       console.warn('[AuthRequestCard] handleOAuthClick bailed: missing', {
         authRequestId: authRequestId ?? 'MISSING',
@@ -287,7 +313,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
     }
   }, [sessionId, authRequestId, authSourceSlug])
 
-  // Get field labels
+  // 获取表单字段标签：优先使用服务端下发的 authLabels，否则使用默认文案
   const credentialLabel = authLabels?.credential ||
     (authCredentialMode === 'bearer' ? 'Bearer Token' : 'API Key')
   const usernameLabel = authLabels?.username || 'Username'
@@ -295,7 +321,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
   const passwordLabel = getPasswordLabel(basePasswordLabel, passwordRequired)
   const passwordPlaceholder = getPasswordPlaceholder(basePasswordLabel, passwordRequired)
 
-  // Get auth type label
+  // 将 authRequestType 映射为用户可读的认证方式名称
   const getAuthTypeLabel = (type: AuthRequestType | undefined) => {
     switch (type) {
       case 'oauth':
@@ -314,15 +340,14 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
 
   const authTypeLabel = getAuthTypeLabel(authRequestType)
 
-  // Determine variant based on status
+  // 根据状态决定卡片的视觉变体
   const variant: AuthCardVariant =
     authStatus === 'completed' ? 'success' :
     authStatus === 'cancelled' ? 'muted' :
     authStatus === 'failed' ? 'error' :
     'default'
 
-  // Determine if we need action bar (pending states with forms/buttons)
-  // Show actions when: pending credential form, OR pending OAuth that hasn't started yet
+  // 是否需要显示底部操作栏：pending 状态下，凭据表单或尚未开始的 OAuth 都需要按钮
   const isOAuth = authRequestType && authRequestType !== 'credential'
   const hasActions = authStatus === 'pending' && (
     !isOAuth || !isSubmitting
@@ -330,7 +355,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
 
   const { bg: variantBg, textClass: variantTextClass, shadowColor } = VARIANT_STYLES[variant]
 
-  // Compact card view for non-interactive terminal states (after user sends message)
+  // 非交互态且非 pending 时：使用紧凑只读视图展示结果（如已完成/失败）
   if (!isInteractive && authStatus !== 'pending') {
     const StatusIcon = authStatus === 'completed' ? CheckCircle2 : XCircle
     const title =
@@ -361,9 +386,9 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
     )
   }
 
-  // Render inner content based on state
+  // 根据状态渲染卡片主体内容
   const renderContent = () => {
-    // Completed state
+    // 已完成
     if (authStatus === 'completed') {
       return (
         <AuthCardHeader
@@ -375,7 +400,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
       )
     }
 
-    // Cancelled state
+    // 已取消
     if (authStatus === 'cancelled') {
       return (
         <AuthCardHeader
@@ -385,7 +410,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
       )
     }
 
-    // Failed state
+    // 失败
     if (authStatus === 'failed') {
       return (
         <AuthCardHeader
@@ -396,7 +421,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
       )
     }
 
-    // OAuth authenticating state (waiting for browser)
+    // OAuth 正在进行：等待浏览器完成授权
     if (isOAuth && isSubmitting) {
       return (
         <div className="flex gap-3">
@@ -413,7 +438,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
       )
     }
 
-    // OAuth pending state (button)
+    // OAuth 待开始：显示说明与登录按钮
     if (isOAuth) {
       return (
         <AuthCardHeader
@@ -423,7 +448,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
       )
     }
 
-    // Credential input form - just the header part
+    // 凭据输入：仅渲染头部说明，输入框由 renderCredentialFields 负责
     return (
       <AuthCardHeader
         title={`${authSourceName} Authentication`}
@@ -432,7 +457,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
     )
   }
 
-  // Render the credential form fields (separate from header for layout)
+  // 渲染凭据输入表单字段
   const renderCredentialFields = () => {
     if (authStatus !== 'pending' || isOAuth) return null
 
@@ -440,7 +465,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
       <div className="space-y-3">
         {isBasicAuth ? (
           <>
-            {/* Username field */}
+            {/* 用户名字段 */}
             <div className="space-y-1.5">
               <Label htmlFor={`auth-username-${authRequestId}`} className="text-xs">
                 {usernameLabel}
@@ -462,7 +487,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
                 />
               </div>
             </div>
-            {/* Password field */}
+            {/* 密码字段 */}
             <div className="space-y-1.5">
               <Label htmlFor={`auth-password-${authRequestId}`} className="text-xs">
                 {passwordLabel}
@@ -493,7 +518,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
             </div>
           </>
         ) : isMultiHeader && authHeaderNames ? (
-          /* Multi-header fields (e.g., Datadog DD-API-KEY + DD-APPLICATION-KEY) */
+          /* 多 Header 字段，例如 Datadog 的 DD-API-KEY + DD-APPLICATION-KEY */
           <>
             {authHeaderNames.map((headerName, index) => (
               <div key={headerName} className="space-y-1.5">
@@ -531,7 +556,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
             ))}
           </>
         ) : (
-          /* Single credential field (API key, bearer token) */
+          /* 单字段凭据：API Key 或 Bearer Token */
           <div className="space-y-1.5">
             <Label htmlFor={`auth-value-${authRequestId}`} className="text-xs">
               {credentialLabel}
@@ -568,7 +593,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
           </div>
         )}
 
-        {/* Hint */}
+        {/* 提示文字 */}
         {authHint && (
           <p className="text-[11px] text-muted-foreground">
             {authHint}
@@ -578,11 +603,11 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
     )
   }
 
-  // Render action buttons
+  // 渲染底部操作按钮
   const renderActions = () => {
     if (!hasActions) return null
 
-    // OAuth pending - sign in button
+    // OAuth 待开始：显示“Sign in with XXX”按钮
     if (isOAuth) {
       return (
         <AuthCardActions
@@ -599,7 +624,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
       )
     }
 
-    // Credential form - save button (uses type="submit" inside form)
+    // 凭据表单：显示 Save / Cancel，Save 受校验与提交状态控制
     return (
       <AuthCardActions
         primary={{
@@ -618,7 +643,7 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
     )
   }
 
-  // Whether this is a pending credential form (needs form wrapper for 1Password)
+  // 当前是否为 pending 状态的凭据表单（需要 form 包装以支持密码管理器）
   const isCredentialForm = authStatus === 'pending' && !isOAuth
 
   const cardContent = (
@@ -645,8 +670,8 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
         ...(shadowColor ? { '--shadow-color': shadowColor } as React.CSSProperties : {})
       }}
     >
-      {/* Form wrapper enables password manager (1Password) detection and autofill.
-          action points to the source URL for domain-based credential matching. */}
+      {/* 用 form 包裹凭据表单，便于 1Password 等密码管理器识别；
+          action 指向 source URL，用于按域名匹配已存凭据。 */}
       {isCredentialForm ? (
         <form
           onSubmit={handleFormSubmit}
@@ -663,7 +688,8 @@ export function AuthRequestCard({ message, onRespondToCredential, sessionId, isI
 }
 
 /**
- * Memoized version for performance in chat list
+ * 使用 React.memo 缓存卡片，避免聊天列表滚动时重复渲染未变化的认证消息。
+ * 只有当 message id、认证状态、sessionId、交互标志变化时才重新渲染。
  */
 export const MemoizedAuthRequestCard = React.memo(AuthRequestCard, (prev, next) => {
   return (

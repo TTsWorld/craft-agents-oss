@@ -1,10 +1,16 @@
+/**
+ * 右键菜单组件（Context Menu）
+ *
+ * 基于 Radix UI 的 ContextMenu 封装，提供统一的样式和快捷键支持。
+ * Electron 的 renderer 进程相当于前端页面，这里用的是 React + TSX 组件。
+ */
 import * as React from "react"
 import * as ContextMenuPrimitive from "@radix-ui/react-context-menu"
 import { CheckIcon, ChevronRightIcon, CircleIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
-// Context for keyboard shortcut registration and menu control
+// 快捷键处理函数类型：无入参、无返回值，类似 Go 的 func()
 type ShortcutHandler = () => void
 const ContextMenuShortcutContext = React.createContext<{
   register: (key: string, handler: ShortcutHandler) => void
@@ -115,9 +121,9 @@ function ContextMenuContent({
   const shortcutRegistry = React.useRef<Map<string, ShortcutHandler>>(new Map())
   const contentRef = React.useRef<HTMLDivElement>(null)
 
-  // Close the menu by pressing Escape programmatically
+  // 通过程序派发 Escape 键事件来关闭菜单
   const closeMenu = React.useCallback(() => {
-    // Dispatch Escape key to close the menu
+    // 在 content 元素上触发 keydown 事件，让 Radix 自己处理关闭
     contentRef.current?.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
     )
@@ -134,10 +140,10 @@ function ContextMenuContent({
   }), [closeMenu])
 
   const handleKeyDown = React.useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
-    // Call original onKeyDown if provided
+    // 如果调用方传了 onKeyDown，先执行它
     onKeyDown?.(e)
 
-    // Check if key matches a registered shortcut
+    // 查找当前按下的键是否注册了快捷方式（不区分大小写）
     const handler = shortcutRegistry.current.get(e.key.toLowerCase())
     if (handler && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault()
@@ -183,7 +189,7 @@ function ContextMenuItem({
   React.useEffect(() => {
     if (!shortcut || !shortcutContext || !onClick) return
 
-    // Register the shortcut with a handler that simulates a click and closes menu
+    // 注册快捷键：触发时模拟一次点击并关闭菜单
     const handler = () => {
       onClick({} as React.MouseEvent<HTMLDivElement>)
       shortcutContext.close()

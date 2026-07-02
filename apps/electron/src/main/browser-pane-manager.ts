@@ -1,9 +1,8 @@
 /**
- * BrowserPaneManager
+ * browser-pane-manager.ts —— 浏览器面板管理器。
  *
- * Owns browser instances as dedicated BrowserWindow objects.
- * Each instance maps 1:1 to a full native window while preserving
- * shared session/cookie partition and CDP automation support.
+ * 每个浏览器实例对应一个独立的 BrowserWindow 窗口，同时共享 session/cookie 分区，
+ * 并通过 CDP（Chrome DevTools Protocol）支持自动化操作。
  */
 
 import { join, parse as parsePath } from 'path'
@@ -35,7 +34,7 @@ export type { BrowserInstanceInfo }
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 const TOOLBAR_LOAD_MAX_RETRIES = 4
 const TOOLBAR_LOAD_RETRY_DELAY_MS = 500
-const TOOLBAR_HEIGHT = 48
+const TOOLBAR_HEIGHT = 48           // 工具栏高度（像素），pageView 会据此偏移
 const MAX_CONSOLE_LOG_ENTRIES = 500
 const MAX_NETWORK_LOG_ENTRIES = 500
 const MAX_DOWNLOAD_LOG_ENTRIES = 200
@@ -108,7 +107,7 @@ const THEME_COLOR_EXTRACTOR_FN = String.raw`
 }
 `
 
-/** IPC channels for the browser toolbar preload */
+/** 浏览器工具栏 preload 使用的 IPC channel */
 const TOOLBAR_CHANNELS = {
   NAVIGATE: 'browser-toolbar:navigate',
   GO_BACK: 'browser-toolbar:go-back',
@@ -154,10 +153,9 @@ interface BrowserInstance {
   ownerType: 'session' | 'manual'
   ownerSessionId: string | null
   /**
-   * Workspace this instance is associated with, or `null` for unbound manual
-   * windows. Renderers in other workspaces filter such entries out of the tab
-   * strip / status badge. Stamped at create-time (or first bind) — once non-null,
-   * subsequent rebinds may overwrite it with the new binder's workspace.
+   * 实例所属 workspace；未绑定的手动窗口为 null。
+   * 其他 workspace 的渲染进程会在标签栏/状态徽标里过滤掉这些条目。
+   * 在创建时（或首次 bind）打戳；一旦非 null，后续重新绑定可能用新 binder 的 workspace 覆盖它。
    */
   workspaceId: string | null
   isVisible: boolean
@@ -195,7 +193,7 @@ export interface BrowserScreenshotOptions {
   refs?: string[]
   includeLastAction?: boolean
   includeMetadata?: boolean
-  /** Annotate screenshot with @eN labels on all interactive elements from accessibility tree */
+  /** 是否在截图上用 @eN 标签标注可访问性树中的所有交互元素 */
   annotate?: boolean
   format?: 'png' | 'jpeg'
   jpegQuality?: number
@@ -376,7 +374,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     this.setupSessionPermissions(ses)
     this.setupSessionObservers(ses)
 
-    // Match background to current OS theme to prevent black/white flash on open
+    // 根据当前系统主题设置背景色，避免打开时闪黑/闪白
     const bgColor = nativeTheme.shouldUseDarkColors ? '#2b292e' : '#fafafb'
 
     const window = new BrowserWindow({
@@ -384,9 +382,9 @@ export class BrowserPaneManager implements IBrowserPaneManager {
       height: 900,
       minWidth: 700,
       minHeight: 500,
-      show: false, // Always hidden until toolbar is painted (ready-to-show)
+      show: false, // 等工具栏绘制完成后再显示（ready-to-show 机制）
       backgroundColor: bgColor,
-      // Fully chromeless — toolbar is rendered in a dedicated BrowserView
+      // 无边框窗口：工具栏单独放在一个 BrowserView 里渲染
       frame: false,
       webPreferences: {
         partition: SESSION_PARTITION,
@@ -433,7 +431,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
       },
     })
 
-    // Set BrowserView backgrounds to match theme so about:blank doesn't flash white
+    // 让 BrowserView 背景匹配主题，避免 about:blank 闪白
     const toolbarWcWithBg = toolbarView.webContents as typeof toolbarView.webContents & { setBackgroundColor?: (color: string) => void }
     toolbarWcWithBg.setBackgroundColor?.('#00000000')
     const pageWcWithBg = pageView.webContents as typeof pageView.webContents & { setBackgroundColor?: (color: string) => void }
@@ -508,7 +506,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
 
     void this.loadToolbarPage(instance)
       .finally(() => {
-        // Safety net: if Electron never fires ready-to-show, still unblock focus/show behavior.
+        // 安全网：如果 Electron 始终没触发 ready-to-show，仍然让 focus/show 能继续
         if (!instance.toolbarReady) {
           this.markToolbarReady(instance, 'toolbar-load-finalized')
         }
@@ -531,7 +529,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     const destroyedBefore = instance.window.isDestroyed()
     mainLog.info(`[browser-pane] destroy requested id=${id} destroyedBefore=${destroyedBefore} keepAlive=${instance.keepAliveOnWindowClose}`)
 
-    // Clear pending timers before destroying the window
+    // 销毁窗口前清理待处理定时器
     if (instance.inPageThemeTimer) {
       clearTimeout(instance.inPageThemeTimer)
       instance.inPageThemeTimer = null
@@ -540,7 +538,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     instance.pendingShowOnReady = false
     instance.pendingShowToken += 1
 
-    // Clean up in-flight network tracking for this instance's webContents
+    // 清理该实例 webContents 的飞行中网络请求统计
     const wcId = instance.pageView.webContents.id
     this.inFlightRequestsByWebContentsId.delete(wcId)
     this.lastNetworkActivityByWebContentsId.delete(wcId)
@@ -565,7 +563,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     } catch (error) {
       mainLog.warn(`[browser-pane] destroy failed id=${id} error=${error instanceof Error ? error.message : String(error)}`)
     } finally {
-      // Finalize synchronously in case closed does not fire (or fires later).
+      // 同步完成收尾：防止 closed 事件不触发（或延迟触发）导致内存泄漏
       this.finalizeDestroyedInstance(instance, 'destroy')
       mainLog.info(`[browser-pane] destroy completed id=${id} removed=${!this.instances.has(id)}`)
     }
@@ -581,9 +579,8 @@ export class BrowserPaneManager implements IBrowserPaneManager {
   }
 
   /**
-   * Get an instance that is confirmed alive (window not destroyed).
-   * Throws a clear error if the instance is missing or its window was closed.
-   * Automatically cleans up stale entries from the instance map.
+   * 获取确认存活的实例（窗口未被销毁）。
+   * 实例不存在或窗口已关闭时抛出明确错误，并自动清理失效条目。
    */
   private requireAliveInstance(id: string): BrowserInstance {
     const instance = this.instances.get(id)
@@ -796,8 +793,8 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     const win = instance.window
     if (win.isDestroyed()) return
 
-    // If toolbar hasn't painted yet, defer showing until markToolbarReady runs.
-    // Token guard prevents stale deferred focus from showing after hide/destroy.
+    // 如果工具栏还没绘制好，先延迟显示，等 markToolbarReady 触发。
+    // pendingShowToken 防止 hide/destroy 后过期的延迟 focus 又把它显示出来。
     if (!instance.toolbarReady) {
       if (instance.pendingShowOnReady) return
       instance.pendingShowOnReady = true
@@ -818,9 +815,9 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     const instance = this.instances.get(id)
     if (!instance) return
 
-    // Re-entrancy guard: bail if a hide is already in progress. Prevents the
-    // 'close' listener from re-entering hide() during teardown, which can crash
-    // Chromium's compositor when the BrowserView is mid-load.
+    // 重入保护：如果已经在隐藏过程中就直接返回。
+    // 防止 close 监听器在拆卸期间再次进入 hide()，
+    // 此时 BrowserView 可能还在加载，会导致 Chromium 合成器崩溃。
     if (instance.isHiding) return
 
     const win = instance.window
@@ -828,7 +825,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
 
     instance.isHiding = true
 
-    // Cancel any deferred show request queued before toolbar was ready.
+    // 取消工具栏就绪前挂起的延迟显示请求
     if (instance.pendingShowOnReady) {
       instance.pendingShowOnReady = false
       instance.pendingShowToken += 1
@@ -836,9 +833,8 @@ export class BrowserPaneManager implements IBrowserPaneManager {
 
     this.forceCloseToolbarMenu(instance, 'window-hide')
 
-    // Cancel an in-flight page load before hiding. Hiding the window while the
-    // BrowserView is still loading can trigger a Chromium compositor assertion
-    // and kill the main process.
+    // 隐藏前取消正在进行的页面加载。
+    // 在 BrowserView 仍在加载时隐藏窗口可能触发 Chromium 合成器断言并导致主进程崩溃。
     if (instance.isLoading) {
       try {
         const pageWc = instance.pageView.webContents
@@ -852,8 +848,8 @@ export class BrowserPaneManager implements IBrowserPaneManager {
 
     instance.isVisible = false
 
-    // Defer the state-change callback so native window teardown completes before
-    // listeners (which may touch BrowserView/Chromium internals) run.
+    // 把状态变更回调推迟到原生窗口拆卸完成后，
+    // 避免监听器在 BrowserView/Chromium 内部仍在拆卸时访问它们。
     queueMicrotask(() => {
       instance.isHiding = false
       this.emitStateChange(instance)
@@ -1056,11 +1052,11 @@ export class BrowserPaneManager implements IBrowserPaneManager {
   async screenshot(id: string, options?: BrowserScreenshotOptions): Promise<BrowserScreenshotResult> {
     const instance = this.requireAliveInstance(id)
 
-    // Hide native agent overlay so it doesn't appear in captures
+    // 截图前隐藏 agent 原生覆盖层，避免它出现在截图里
     const suspendedOverlay = this.suspendOverlayForCapture(instance)
 
     try {
-      // When annotating, force agent mode and gather refs from accessibility tree
+      // 如果要求标注，强制使用 agent 模式并从可访问性树收集 refs
       const annotate = !!options?.annotate
       const mode = (annotate || options?.mode === 'agent') ? 'agent' : 'raw'
 
@@ -1186,7 +1182,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
         try {
           await instance.cdp.clearTemporaryOverlay()
         } catch {
-          // ignore cleanup errors
+          // 清理时报错可忽略
         }
       }
     } finally {
@@ -1428,8 +1424,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
       return null
     }
 
-    // Downscale from device pixels to CSS pixels so screenshot coordinates
-    // match click-at viewport coordinates (uses Skia Lanczos via 'best')
+    // 把设备像素缩放回 CSS 像素，使截图坐标与 click-at 视口坐标一致（使用 Skia Lanczos 'best' 算法）
     const dpr = options.dpr ?? 1
     if (dpr > 1) {
       const size = image.getSize()
@@ -1460,7 +1455,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
         idleMs: SCREENSHOT_NETWORK_IDLE_MS,
       })
     } catch {
-      // network-idle can fail on continuously active pages; still proceed after bounded delay
+      // 持续有活动的页面可能等不到 network-idle，受限延时后仍继续
     }
 
     await this.sleep(SCREENSHOT_RETRY_DELAY_MS)
@@ -1607,7 +1602,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     return instance.downloads.slice(-limit)
   }
 
-  // validateUploadFilePath removed — uses shared validateFilePath from @craft-agent/server-core/handlers
+  // validateUploadFilePath 已移除，统一使用 @craft-agent/server-core/handlers 里的共享 validateFilePath
 
   async uploadFile(id: string, ref: string, filePaths: string[]): Promise<ElementGeometry> {
     const instance = this.requireAliveInstance(id)
@@ -1632,7 +1627,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
 
     this.layoutAllViews(instance)
 
-    // Return effective viewport dimensions after OS/window min-size constraints are applied.
+    // 返回应用 OS/窗口最小尺寸约束后的有效视口尺寸
     const [appliedContentWidth, appliedContentHeight] = instance.window.getContentSize()
     return {
       width: Math.max(0, Math.floor(appliedContentWidth)),
@@ -1653,17 +1648,17 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     const title = instance.title || ''
     const url = instance.currentUrl || ''
 
-    // Title-based detection
+    // 基于标题的检测
     if (/^Just a moment/i.test(title)) {
       signals.push('title:just-a-moment')
     }
 
-    // URL-based detection
+    // 基于 URL 的检测
     if (url.includes('/cdn-cgi/challenge-platform/')) {
       signals.push('url:cdn-cgi-challenge')
     }
 
-    // DOM-based detection via JS evaluation
+    // 基于 DOM 的检测（通过 JS 执行）
     try {
       const domSignals = await instance.pageView.webContents.executeJavaScript(`(() => {
         const signals = [];
@@ -1682,7 +1677,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
         signals.push(...domSignals)
       }
     } catch {
-      // JS evaluation can fail if page is in a weird state — don't block on it
+      // 页面状态异常时 JS 执行可能失败，不阻塞检测流程
     }
 
     try {
@@ -1700,7 +1695,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
         signals.push(`ax:near-empty(${actionableCount}/${snapshot.nodes.length})`)
       }
     } catch {
-      // AX snapshot can fail transiently during navigation; ignore
+      // 导航期间可访问性快照可能瞬时失败，忽略
     }
 
     const detected = signals.length > 0
@@ -1731,9 +1726,8 @@ export class BrowserPaneManager implements IBrowserPaneManager {
       instance.boundSessionId = sessionId
       instance.ownerType = 'session'
       instance.ownerSessionId = sessionId
-      // Adopt the new binder's workspace. Manual windows being reused for a
-      // session start carrying that session's workspace so the receiving
-      // workspace's UI sees them and others don't.
+      // 采用新 binder 的 workspace。手动窗口被 session 复用时，
+      // 需要带上该 session 的 workspace，这样对应 workspace 的 UI 才能看到它。
       if (options?.workspaceId !== undefined) {
         instance.workspaceId = options.workspaceId
       }
@@ -1746,18 +1740,18 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     if (instance) {
       instance.boundSessionId = null
       instance.ownerType = 'manual'
-      // Preserve ownerSessionId as last-known owner for lifecycle targeting.
+      // 保留 ownerSessionId 作为最近已知拥有者，便于后续生命周期命令（如 close、hide）定位
       this.emitStateChange(instance)
     }
   }
 
-  /** Unbind all instances bound to the given session (non-destructive — window stays alive and reusable). */
+  /** 解绑某个 session 绑定的所有实例（非销毁，窗口保持存活并可复用）。 */
   unbindAllForSession(sessionId: string): void {
     for (const instance of this.instances.values()) {
       if (instance.boundSessionId === sessionId) {
         instance.boundSessionId = null
         instance.ownerType = 'manual'
-        // Keep ownerSessionId for post-turn lifecycle commands like `close` and `hide`.
+        // 保留 ownerSessionId，用于 turn 结束后的生命周期命令（如 close、hide）
         instance.ownerSessionId = instance.ownerSessionId ?? sessionId
         this.emitStateChange(instance)
         mainLog.info(`[browser-pane] Unbound instance ${instance.id} from session ${sessionId} (owner retained: ${instance.ownerSessionId ?? 'none'})`)
@@ -1779,20 +1773,16 @@ export class BrowserPaneManager implements IBrowserPaneManager {
   }
 
   /**
-   * Pick an unbound window that the caller's workspace is allowed to adopt.
+   * 挑选一个允许被调用方 workspace 收养的手动窗口。
    *
-   * Why workspace filtering matters: when a session ends, its window stays
-   * alive and becomes `ownerType='manual'` so the next turn of the **same**
-   * session can re-bind it. But the window keeps its original `workspaceId`.
-   * Without filtering, a session in workspace B would grab a window left
-   * behind by workspace A — moving the window across workspaces, which is
-   * exactly the leak this whole workspace-isolation work is fixing.
+   * workspace 过滤的重要性：session 结束时，其窗口会保持存活并变成
+   * ownerType='manual'，以便同一 session 的下一个 turn 重新绑定它。
+   * 但窗口仍保留原来的 workspaceId。如果不加过滤，workspace B 的 session
+   * 可能会拿走 workspace A 遗留的窗口，造成跨 workspace 的窗口泄漏。
    *
-   * Rule: adoption is allowed if the unbound window has `workspaceId === null`
-   * (truly user-opened, no workspace context) OR matches the caller's
-   * `workspaceId`. Same-workspace reuse covers the legitimate "turn ended,
-   * next turn re-binds" case as well as any future turn of any session in
-   * that workspace.
+   * 规则：只有当未绑定窗口的 workspaceId === null（真正用户手动打开、无 workspace 上下文）
+   * 或与调用方 workspaceId 一致时才允许收养。同 workspace 复用既覆盖了
+   * "turn 结束、下一 turn 重新绑定" 的合法场景，也覆盖该 workspace 下任何未来 turn。
    */
   private findReusableUnboundInstance(workspaceId: string | null): BrowserInstance | null {
     const candidates = Array.from(this.instances.values()).filter(
@@ -1803,7 +1793,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     )
     if (candidates.length === 0) return null
 
-    // Prefer visible windows first, then fall back to first available.
+    // 优先找可见窗口，没有则取第一个可用窗口
     return candidates.find((i) => i.isVisible) ?? candidates[0]
   }
 
@@ -1814,8 +1804,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     const workspaceId = options?.workspaceId ?? null
     const existing = this.getBoundForSession(sessionId)
     if (existing) {
-      // Already bound — adopt the workspace if the caller provided one and the
-      // existing instance was bound before we knew about its workspace.
+      // 已经绑定过：如果调用方提供了 workspace，且旧实例在绑定前还不知道 workspace，则补录 workspaceId
       if (options?.workspaceId !== undefined) {
         const instance = this.instances.get(existing)
         if (instance) instance.workspaceId = options.workspaceId
@@ -1826,9 +1815,8 @@ export class BrowserPaneManager implements IBrowserPaneManager {
       return existing
     }
 
-    // Reuse an unbound/manual window before creating a new one — local
-    // sessions only. Remote agents must always get a fresh window so they
-    // can never hijack a window the user opened manually.
+    // 创建新窗口前先复用未绑定的手动窗口——仅本地 session。
+    // 远端 agent 必须拿到全新窗口，永远不允许接管用户手动打开的窗口。
     const allowReuseManual = options?.allowReuseManual ?? true
     if (allowReuseManual) {
       const reusable = this.findReusableUnboundInstance(workspaceId)
@@ -1906,7 +1894,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     this.updateNativeOverlayState(instance)
   }
 
-  /** Resolve the app's current accent color as a concrete CSS value (not a var reference). */
+  /** 解析应用当前强调色为具体 CSS 值（不是 CSS 变量引用）。 */
   private getResolvedAccentColor(): string {
     const isDark = nativeTheme.shouldUseDarkColors
     const userTheme = loadAppTheme()
@@ -2047,7 +2035,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
       return
     }
 
-    // Menu mode: transparent full-page tap-catcher, no visuals
+    // 菜单模式：透明全页面点击捕获层，不显示视觉元素
     void instance.nativeOverlayView.webContents.executeJavaScript(`(() => {
       const overlay = document.getElementById('overlay');
       const chip = document.getElementById('chip');
@@ -2218,7 +2206,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
         "if (window.location.hash.includes('launch=')) history.replaceState(null, '', window.location.pathname + window.location.search);",
       )
     } catch {
-      // Best effort cleanup only
+      // 尽力清理，忽略错误
     }
 
     return handled
@@ -2313,7 +2301,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     instance.toolbarView.webContents.send(TOOLBAR_CHANNELS.STATE_UPDATE, state)
   }
 
-  /** Register IPC handlers for toolbar actions. Call once at app startup. */
+  /** 注册工具栏动作的 IPC handler。应用启动时调用一次。 */
   registerToolbarIpc(): void {
     const findInstance = (instanceId: string): BrowserInstance | undefined => {
       return this.instances.get(instanceId)
@@ -2384,16 +2372,16 @@ export class BrowserPaneManager implements IBrowserPaneManager {
   }
 
   // ---------------------------------------------------------------------------
-  // Capability IPC — dispatcher for the `client:browser:invoke` WS capability.
+  // Capability IPC —— `client:browser:invoke` WebSocket 能力的分发器。
   //
-  // Sits between the preload bridge (which receives the WS request from the
-  // remote server) and the real BrowserPaneManager. It rewrites session IDs to
-  // an owner-key namespace, refuses any instance ID not owned by the calling
-  // (workspaceId, sessionId), and blocks unsafe methods like `uploadFile` or
-  // (optionally) `evaluate`.
+  // 它位于 preload 桥（接收远端服务器 WS 请求）和真正的 BrowserPaneManager 之间。
+  // 职责：
+  // - 把 session ID 改写为 owner-key 命名空间，避免远端和本地 session 冲突；
+  // - 拒绝不属于调用方 (workspaceId, sessionId) 的实例 ID；
+  // - 拦截 uploadFile 等不安全方法，以及可选地拦截 evaluate。
   // ---------------------------------------------------------------------------
 
-  /** Register the `__browser:invoke` IPC handler. Call once at app startup. */
+  /** 注册 `__browser:invoke` IPC handler。应用启动时调用一次。 */
   registerCapabilityIpc(): void {
     ipcMain.handle('__browser:invoke', async (_event, req: BrowserCapabilityRequest) => {
       return await this.dispatchCapability(req)
@@ -2401,7 +2389,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     mainLog.info('[browser-pane] Capability IPC handler registered')
   }
 
-  /** Owner-key namespacing: remote sessions can't collide with local sessions. */
+  /** owner-key 命名空间：远端 session 不会和本地 session 冲突。 */
   private toOwnerKey(workspaceId: string, sessionId: string): string {
     return `remote:${workspaceId}:${sessionId}`
   }
@@ -2418,7 +2406,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     return { workspaceId: rest.slice(0, colon), sessionId: rest.slice(colon + 1) }
   }
 
-  /** Replace `remote:${ws}:${sid}` owner-keys with raw `sid` on outbound payloads. */
+  /** 在出站数据里把 `remote:${ws}:${sid}` owner-key 还原为原始 `sid`。 */
   private stripOwnerKeysInPlace<T extends Partial<BrowserInstanceInfo>>(info: T): T {
     if (this.isRemoteOwnerKey(info.boundSessionId)) {
       info.boundSessionId = this.parseOwnerKey(info.boundSessionId)!.sessionId
@@ -2430,8 +2418,8 @@ export class BrowserPaneManager implements IBrowserPaneManager {
   }
 
   /**
-   * Throws `BROWSER_INSTANCE_NOT_OWNED` unless the instance belongs to `ownerKey`.
-   * Called by every dispatcher branch that accepts an instanceId — including read-only ones.
+   * 校验实例是否属于 ownerKey，否则抛出 `BROWSER_INSTANCE_NOT_OWNED`。
+   * 所有接受 instanceId 的分支（包括只读分支）都会调用。
    */
   private requireOwnedInstance(instanceId: string, ownerKey: string): void {
     const instance = this.instances.get(instanceId)
@@ -2445,7 +2433,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     }
   }
 
-  /** Session-scoped listInstances — never returns workspace-wide windows to a remote agent. */
+  /** session 作用域的 listInstances —— 永远不要把整个 workspace 的窗口返回给远端 agent。 */
   private listInstancesForOwner(ownerKey: string): BrowserInstanceInfo[] {
     const infos: BrowserInstanceInfo[] = []
     for (const instance of this.instances.values()) {
@@ -2461,15 +2449,12 @@ export class BrowserPaneManager implements IBrowserPaneManager {
   }
 
   /**
-   * Extract a plain {@link BrowserInstanceSnapshot} from a live `BrowserInstance`.
+   * 从活的 BrowserInstance 中提取一个纯对象的 BrowserInstanceSnapshot。
    *
-   * `this.getInstance(id)` returns the full instance, which has non-cloneable
-   * Electron native references (`window: BrowserWindow`, `pageView: BrowserView`,
-   * `toolbarView`, ...). When we ship the result back over the `__browser:invoke`
-   * IPC channel, Electron's structured-clone serializer throws
-   * "An object could not be cloned" — see the user-reported bug on the remote
-   * bridge path. Always pass the live instance through this helper before
-   * returning over IPC.
+   * `this.getInstance(id)` 返回的实例包含不可克隆的 Electron 原生引用
+   * （window: BrowserWindow、pageView: BrowserView、toolbarView 等）。
+   * 如果直接通过 `__browser:invoke` IPC 通道返回，Electron 的结构化克隆序列化器会抛出
+   * "An object could not be cloned"。因此返回 IPC 前必须经过这个 helper 投影成纯对象。
    */
   private toSnapshot(instance: BrowserInstance): BrowserInstanceSnapshot {
     return {
@@ -2490,7 +2475,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     }
   }
 
-  /** Main dispatcher. Strongly-typed `switch` over `IBrowserPaneManager` methods. */
+  /** 主分发器：对 `IBrowserPaneManager` 方法做强类型 switch。 */
   private async dispatchCapability(req: BrowserCapabilityRequest): Promise<unknown> {
     if (!req || req.v !== 1) {
       throw new CodedError('HANDLER_ERROR',
@@ -2500,7 +2485,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
     const args = req.args ?? []
 
     switch (req.method) {
-      // -- Session-scoped (no instanceId arg, takes a sessionId) ----------------
+      // -- Session 作用域（不需要 instanceId 参数，直接用 sessionId） ----------
       case 'createForSession': {
         const [, options] = args as [string, { show?: boolean } | undefined]
         return this.createForSession(ownerKey, {
@@ -2509,12 +2494,11 @@ export class BrowserPaneManager implements IBrowserPaneManager {
           workspaceId: req.workspaceId,
         })
       }
-      // Remote agents must NEVER reuse an existing manual / unbound window —
-      // even one that was previously bound to a local session. The
-      // workspaceId-aware reuse filter is best-effort (it can still match
-      // legacy windows stamped with workspaceId=null), so we belt-and-brace
-      // by disabling manual reuse on every remote lifecycle path. Each remote
-      // session-id namespace gets a fresh window unless it already owns one.
+      // 远端 agent 永远不许复用已有的手动/未绑定窗口——
+      // 即使它之前绑定过本地 session 也不行。
+      // workspaceId 感知的复用过滤只是尽力而为（仍可能匹配到 workspaceId=null 的遗留窗口），
+      // 所以每一条远端生命周期路径都显式禁用 manual 复用。
+      // 每个远端 session-id 命名空间都会拿到全新窗口，除非它已拥有一个。
       case 'getOrCreateForSession':
         return this.createForSession(ownerKey, {
           show: false,
@@ -2564,9 +2548,8 @@ export class BrowserPaneManager implements IBrowserPaneManager {
         this.requireOwnedInstance(instanceId, ownerKey)
         const live = this.getInstance(instanceId)
         if (!live) return undefined
-        // `getInstance` returns the live BrowserInstance (which embeds non-
-        // cloneable Electron native objects). Project to a plain snapshot
-        // before crossing the IPC boundary.
+        // getInstance 返回的是包含不可克隆 Electron 原生对象的实时 BrowserInstance，
+        // 跨越 IPC 边界前要先投影成普通快照对象。
         return this.stripOwnerKeysInPlace(this.toSnapshot(live))
       }
       case 'listInstances':
@@ -2763,12 +2746,12 @@ export class BrowserPaneManager implements IBrowserPaneManager {
   }
 
   // ---------------------------------------------------------------------------
-  // Agent Control — persistent overlay while agent is using the browser
+  // Agent Control —— agent 使用浏览器时显示的持久覆盖层
   // ---------------------------------------------------------------------------
 
   /**
-   * Activate or update the agent control overlay on the browser instance
-   * bound to the given session. Called from sessions.ts on browser_* tool_start events.
+   * 激活或更新绑定到指定 session 的浏览器实例上的 agent 控制覆盖层。
+   * 由 sessions.ts 在 browser_* tool_start 事件时调用。
    */
   setAgentControl(
     sessionId: string,
@@ -2784,8 +2767,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
           intent: meta.intent,
         }
 
-        // Backfill workspaceId for instances that were created before the
-        // workspace was known (legacy callers / pre-workspaceId code paths).
+        // 为 workspace 已知前创建的实例补录 workspaceId（兼容遗留调用/早期代码路径）
         if (options?.workspaceId !== undefined && instance.workspaceId === null) {
           instance.workspaceId = options.workspaceId
         }
@@ -2802,8 +2784,8 @@ export class BrowserPaneManager implements IBrowserPaneManager {
   }
 
   /**
-   * Clear the agent control overlay for the given session.
-   * Called on explicit browser_tool release and session/window teardown.
+   * 清除指定 session 的 agent 控制覆盖层。
+   * 在显式释放 browser_tool 或 session/窗口拆卸时调用。
    */
   clearAgentControl(sessionId: string): void {
     for (const instance of this.instances.values()) {
@@ -2847,17 +2829,18 @@ export class BrowserPaneManager implements IBrowserPaneManager {
   }
 
   /**
-   * Extract a theme color from the page using Safari 26-style heuristics.
-   * Priority: media-aware theme-color meta → elementsFromPoint (fixed/sticky headers) → body/html bg.
-   * All colors pass through (including white/black) — contrast is handled by the renderer.
-   * Guards against stale extraction (URL change during async executeJavaScript).
+   * 用类似 Safari 26 的启发式规则从页面提取主题色。
+   * 优先级：感知 media 的 theme-color meta → elementsFromPoint（固定/粘性头）→ body/html 背景。
+   * 所有颜色都透传（包括白/黑），对比度由渲染进程处理。
+   * 防止陈旧结果：异步 executeJavaScript 期间如果 URL 变化则丢弃结果。
    */
   private async extractThemeColor(instance: BrowserInstance): Promise<void> {
-    if (instance.themeColor) return // already set by did-change-theme-color or observer
+    // 如果页面已经通过 did-change-theme-color 事件或观察者设置了主题色，就直接返回
+    if (instance.themeColor) return
     const urlAtStart = instance.currentUrl
     try {
       const color = await instance.pageView.webContents.executeJavaScript(`(${THEME_COLOR_EXTRACTOR_FN})()`)
-      // Guard: if user navigated away during extraction, discard stale result
+      // 如果提取期间用户导航走了，丢弃陈旧结果
       if (instance.currentUrl !== urlAtStart) return
       if (typeof color === 'string' && color.length > 0) {
         this.applyThemeColor(instance, color)
@@ -2985,7 +2968,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
           clearScheduled();
         };
 
-        // Fast first color for initial toolbar paint and after SPA route changes
+        // 首次快速取色：用于工具栏初始绘制和 SPA 路由变化后
         schedule();
       })()
     `).catch(() => {
@@ -3119,7 +3102,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
         return dir
       }
     }
-    // Fallback: OS downloads folder for manual/unbound windows
+    // 兜底：手动/未绑定窗口使用系统下载目录
     return app.getPath('downloads')
   }
 
@@ -3195,7 +3178,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
       const instance = this.getInstanceByWebContentsId(wcId)
       if (!instance) return
 
-      // Auto-save: set a deterministic path so Electron doesn't show a native dialog
+      // 自动保存：设置确定路径，避免 Electron 弹出原生保存对话框
       const downloadsDir = this.resolveDownloadsDir(instance)
       const filename = this.uniqueFilename(downloadsDir, item.getFilename())
       const savePath = join(downloadsDir, filename)
@@ -3311,9 +3294,8 @@ export class BrowserPaneManager implements IBrowserPaneManager {
 
       if (interceptToHide) {
         event.preventDefault()
-        // Skip if a hide is already in flight — hide() guards against re-entry
-        // itself, but bailing here also avoids redundant log noise during the
-        // teardown race that triggered issue #695.
+        // 如果已经在隐藏中则跳过——hide() 本身也有重入保护，
+        // 但这里提前返回还能避免触发 issue #695 的拆卸竞争时产生冗余日志。
         if (!instance.isHiding) {
           this.hide(instance.id)
         }
@@ -3351,7 +3333,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
       instance.isLoading = false
       instance.canGoBack = pageWc.canGoBack()
       instance.canGoForward = pageWc.canGoForward()
-      // Drain in-flight count — all pending requests are settled once loading stops
+      // 加载停止时清空飞行中计数：所有待处理请求都已结束
       this.inFlightRequestsByWebContentsId.set(pageWc.id, 0)
       this.lastNetworkActivityByWebContentsId.set(pageWc.id, Date.now())
       this.emitStateChange(instance)
@@ -3395,14 +3377,15 @@ export class BrowserPaneManager implements IBrowserPaneManager {
         instance.inPageThemeTimer = null
       }
       instance.themeObserverToken = null
-      instance.themeColor = null // reset for new page (batched with state push below)
+      // 新页面加载时重置主题色（和下方的状态推送合并处理）
+      instance.themeColor = null
       const normalized = this.normalizePageState(url, pageWc.getTitle())
       instance.currentUrl = normalized.url
       instance.title = normalized.title
       mainLog.info(`[browser-pane] did-navigate id=${instance.id} from=${previousUrl} to=${instance.currentUrl}`)
       instance.canGoBack = pageWc.canGoBack()
       instance.canGoForward = pageWc.canGoForward()
-      // Drain in-flight count — prior page's requests are cancelled on navigation
+      // 导航时清空上一页的飞行中计数：之前页面的请求已被取消
       this.inFlightRequestsByWebContentsId.set(pageWc.id, 0)
       this.lastNetworkActivityByWebContentsId.set(pageWc.id, Date.now())
       this.emitStateChange(instance)
@@ -3431,7 +3414,7 @@ export class BrowserPaneManager implements IBrowserPaneManager {
           return
         }
 
-        // SPA route change — re-extract theme color (debounced)
+        // SPA 路由变化：防抖重新提取主题色
         if (instance.inPageThemeTimer) clearTimeout(instance.inPageThemeTimer)
         instance.themeObserverToken = null
         instance.themeColor = null

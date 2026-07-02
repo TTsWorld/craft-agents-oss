@@ -1,3 +1,24 @@
+/**
+ * 文件：ClaudeAgent（Claude 后端实现）
+ *
+ * 角色：直接调用 Anthropic Claude Agent SDK，把 SDK 的 query() 异步生成器流
+ * 转换为本项目统一的 AgentEvent。它是 BaseAgent 最重要的子类。
+ *
+ * 重点：
+ * - SDK Options 构造：mcpServers（session 工具 + source 代理 + docs）、thinking 配置、
+ *   systemPrompt（mini agent 用精简 prompt，普通模式附加到 claude_code preset）。
+ * - Source 代理：createSourceProxyServers() 为每个已连接 source 生成一个 SDK MCP server，
+ *   实际调用通过 McpClientPool 集中到主进程执行，避免每个后端各自维护连接。
+ * - JSON Schema -> Zod：jsonPropToZod() 把 source 工具的输入 schema 转成 Zod，
+ *   这样 SDK 能正确校验参数，而不是用 z.unknown()。
+ * - 权限请求：Bash 等危险命令通过 pendingPermissions Map + onPermissionRequest 回调
+ *   让用户审批；Claude 的 session-scoped 工具运行在同进程，回调注册表可直接工作。
+ * - 错误映射：SDK 抛出的 SDKAssistantMessageError 由 claude-sdk-error-mapper.ts
+ *   映射成用户友好的 AgentError（billing/rate_limit/context/attachment 等）。
+ * - Source 激活 drain：通过 SourceActivationDrainController 在 batch-boundary 处
+ *   延迟触发 source_activated + forceAbort，避免并行 tool_result 丢失。
+ */
+
 import { query, createSdkMcpServer, tool, AbortError, type Query, type SDKMessage, type SDKUserMessage, type SDKAssistantMessageError, type Options } from '@anthropic-ai/claude-agent-sdk';
 import { getDefaultOptions, resetClaudeConfigCheck } from './options.ts';
 // Local type for SDK user message content blocks (text, image, document)

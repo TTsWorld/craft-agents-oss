@@ -1,8 +1,8 @@
 /**
  * AutomationInfoPage
  *
- * Detail view for a selected automation, using the Info_Page compound component system.
- * Follows SourceInfoPage pattern: Hero → Sections (When, Then, Settings, History, JSON).
+ * 选中自动化的详情页，基于 Info_Page 复合组件系统构建。
+ * 遵循 SourceInfoPage 的结构：Hero → 分区（When、Then、Settings、History、JSON）。
  */
 
 import * as React from 'react'
@@ -28,7 +28,7 @@ import { getEventDisplayName, getPermissionDisplayName, flattenConditions, type 
 import { describeCron, computeNextRuns } from './utils'
 
 // ============================================================================
-// Component
+// 组件
 // ============================================================================
 
 export interface AutomationInfoPageProps {
@@ -58,8 +58,8 @@ export function AutomationInfoPage({
   const workspace = useActiveWorkspace()
   const nextRuns = automation.cron ? computeNextRuns(automation.cron) : []
 
-  // Lightweight per-mount fetch — mirrors the pattern used in MessagingSettingsPage.
-  // Only fired when the matcher actually declares a topic to avoid unnecessary IPC.
+  // 每次挂载时轻量拉取一次：与 MessagingSettingsPage 保持一致。
+  // 只在 matcher 声明了 topic 时才发起 IPC，避免不必要的进程间通信。
   const [hasSupergroup, setHasSupergroup] = React.useState<boolean | null>(null)
   React.useEffect(() => {
     if (!automation.telegramTopic) {
@@ -103,7 +103,7 @@ export function AutomationInfoPage({
       />
 
       <Info_Page.Content>
-        {/* Hero */}
+        {/* 顶部 Hero 区 */}
         <div className="flex items-start justify-between">
           <Info_Page.Hero
             avatar={<AutomationAvatar event={automation.event} fluid />}
@@ -113,7 +113,7 @@ export function AutomationInfoPage({
           {editActions}
         </div>
 
-        {/* Disabled warning */}
+        {/* 已禁用提示 */}
         {!automation.enabled && (
           <Info_Alert variant="warning" icon={<PauseCircle className="h-4 w-4" />}>
             <Info_Alert.Title>{t('automations.pausedTitle')}</Info_Alert.Title>
@@ -123,7 +123,7 @@ export function AutomationInfoPage({
           </Info_Alert>
         )}
 
-        {/* Section: When */}
+        {/* 分区：触发条件（When） */}
         <Info_Section
           title={t('automations.sectionWhen')}
           description={t('automations.sectionWhenDescription')}
@@ -172,7 +172,7 @@ export function AutomationInfoPage({
           </Info_Table>
         </Info_Section>
 
-        {/* Section: If (conditions) — hidden when empty */}
+        {/* 分区：条件（If）—— 为空时隐藏 */}
         {automation.conditions && automation.conditions.length > 0 && (
           <Info_Section
             title={t('automations.sectionIf')}
@@ -191,7 +191,7 @@ export function AutomationInfoPage({
           </Info_Section>
         )}
 
-        {/* Section: Then */}
+        {/* 分区：执行动作（Then） */}
         <Info_Section
           title={t('automations.sectionThen')}
           description={t('automations.sectionThenDescription', { count: automation.actions.length })}
@@ -204,12 +204,12 @@ export function AutomationInfoPage({
           </div>
         </Info_Section>
 
-        {/* Test results (if any) */}
+        {/* 测试结果（如果有） */}
         {testResult && testResult.state !== 'idle' && (
           <AutomationTestPanel result={testResult} />
         )}
 
-        {/* Section: Settings */}
+        {/* 分区：设置 */}
         <Info_Section title={t('automations.sectionSettings')} actions={editActions}>
           <Info_Table>
             <Info_Table.Row label={t('automations.labelAccessLevel')} value={getPermissionDisplayName(automation.permissionMode)} />
@@ -245,7 +245,7 @@ export function AutomationInfoPage({
           </Info_Table>
         </Info_Section>
 
-        {/* Section: Recent Activity */}
+        {/* 分区：最近活动 */}
         <Info_Section
           title={t('automations.sectionRecentActivity')}
           description={executions.length > 0 ? t('automations.lastNRuns', { count: executions.length }) : undefined}
@@ -253,7 +253,7 @@ export function AutomationInfoPage({
           <AutomationEventTimeline entries={executions} onReplay={onReplay} />
         </Info_Section>
 
-        {/* Section: Raw config (JSON) */}
+        {/* 分区：原始配置（JSON） */}
         <Info_Section title={t('automations.sectionRawConfig')}>
           <div className="rounded-[8px] shadow-minimal overflow-hidden [&_pre]:!bg-transparent [&_.relative]:!bg-transparent [&_.relative]:!border-0 [&_.relative>div:first-child]:!bg-transparent [&_.relative>div:first-child]:!border-0">
             <Info_Markdown maxHeight={300} fullscreen>

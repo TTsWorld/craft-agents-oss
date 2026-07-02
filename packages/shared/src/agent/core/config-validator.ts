@@ -1,72 +1,82 @@
 /**
- * ConfigValidator - Pre-Write Configuration Validation
+ * ConfigValidator - 配置写前校验器
  *
- * Provides validation utilities for configuration files before writing.
- * Both ClaudeAgent and PiAgent can use this to validate Write/Edit tool
- * inputs before they modify config files.
+ * 【中文学习注释 - 文件级】
+ * 本文件是 Agent 核心的“配置写前校验器”。LLM 用 Write/Edit 工具修改配置文件时，
+ * 如果内容格式错误（如 JSON 少了个逗号），可能导致整个应用无法启动。这个类在真正落盘前拦截错误。
  *
- * Key responsibilities:
- * - Validate JSON syntax before writing
- * - Detect config file types by path/extension
- * - Provide helpful error messages for malformed configs
+ * 核心职责：
+ * 1. 根据文件路径/后缀识别配置类型（json / toml / yaml）。
+ * 2. 识别是否为 Craft Agent 自身的配置文件（.craft-agent/...）。
+ * 3. validateContent 按类型调用对应校验函数；JSON 用 JSON.parse，TOML/YAML 做基础语法检查。
+ * 4. formatErrors 把校验结果格式化成人类可读文本，返回给 LLM/用户。
+ *
+ * 与 Golang 类比：很像一个输入校验中间件，return (valid bool, errors []string)。
+ * TypeScript 注意点：
+ * - ConfigValidationResult 使用 interface 描述返回结构，比 Golang 的命名返回值更清晰。
+ * - private 方法 getLineColumn 只在类内部使用，类似 Golang 的小写未导出函数。
  */
 
 import type { ConfigValidationResult, ConfigFileType, ConfigValidatorConfig } from './types.ts';
 
 /**
- * Patterns for detecting known config file types.
+ * 已知配置文件类型的匹配规则表。
+ * 数组元素是 `{ pattern: RegExp; type: ConfigFileType }` 的对象字面量类型——
+ * TS 在变量后用 `[]` 注解，表示这是一个元素为该对象类型的数组。
+ * `i` 标志表示大小写不敏感。
  */
 const CONFIG_FILE_PATTERNS: { pattern: RegExp; type: ConfigFileType }[] = [
-  // JSON configs
+  // JSON 配置
   { pattern: /\.json$/i, type: 'json' },
-  { pattern: /\.jsonc$/i, type: 'json' },
-  // TOML configs
+  { pattern: /\.jsonc$/i, type: 'json' }, // jsonc：带注释的 JSON
+  // TOML 配置
   { pattern: /\.toml$/i, type: 'toml' },
-  // YAML configs
+  // YAML 配置（同时匹配 .yaml 和 .yml，`?` 表示前一个字符可选）
   { pattern: /\.ya?ml$/i, type: 'yaml' },
 ];
 
 /**
- * Craft Agent specific config files that have known schemas.
+ * Craft Agent 自身的配置文件路径正则集合（这些文件有明确的 schema，校验更严格）。
  */
 const CRAFT_AGENT_CONFIG_PATTERNS = [
-  // Main config
+  // 主配置
   /\.craft-agent\/config\.json$/,
-  // Preferences
+  // 偏好设置
   /\.craft-agent\/preferences\.json$/,
-  // Source configs
+  // Source 配置
   /\.craft-agent\/workspaces\/[^/]+\/sources\/[^/]+\/config\.json$/,
-  // Permissions
+  // 权限配置
   /\.craft-agent\/workspaces\/[^/]+\/permissions\.json$/,
   /\.craft-agent\/permissions\/[^/]+\.json$/,
-  // Theme
+  // 主题
   /\.craft-agent\/workspaces\/[^/]+\/theme\.json$/,
-  // Statuses
+  // 状态
   /\.craft-agent\/workspaces\/[^/]+\/statuses\/config\.json$/,
-  // Labels
+  // 标签
   /\.craft-agent\/workspaces\/[^/]+\/labels\.json$/,
-  // Tool icons
+  // 工具图标
   /\.craft-agent\/tool-icons\/tool-icons\.json$/,
 ];
 
 /**
- * ConfigValidator provides pre-write validation for config files.
+ * ConfigValidator - 配置写前校验器。
  *
- * Usage:
+ * 用法示例：
  * ```typescript
  * const validator = new ConfigValidator();
  *
- * // Check file type before writing
+ * // 写入前先判断文件类型
  * const fileType = validator.getConfigType('/path/to/config.json');
  *
- * // Validate content before writing
+ * // 写入前校验内容
  * const result = validator.validateContent('/path/to/config.json', newContent);
  * if (!result.valid) {
- *   // Show errors to user/agent
+ *   // 把错误展示给用户/agent
  * }
  * ```
  */
 export class ConfigValidator {
+  // 持有可选的配置项（当前主要为预留扩展点）
   private config: ConfigValidatorConfig;
 
   constructor(config: ConfigValidatorConfig = {}) {
@@ -74,14 +84,16 @@ export class ConfigValidator {
   }
 
   // ============================================================
-  // Config Type Detection
+  // 配置类型探测
   // ============================================================
 
   /**
-   * Detect the config file type based on path/extension.
+   * 根据文件路径/后缀探测配置文件类型。
    *
-   * @param filePath - Path to the file
-   * @returns Config type or null if not a known config format
+   * 注意：Windows 下会把路径统一为小写并改用正斜杠，便于跨平台比较。
+   *
+   * @param filePath - 文件路径
+   * @returns 配置类型；若非已知配置格式则返回 null
    */
   getConfigType(filePath: string): ConfigFileType {
     const normalizedPath = process.platform === 'win32'
@@ -98,10 +110,10 @@ export class ConfigValidator {
   }
 
   /**
-   * Check if a file path is a Craft Agent config file.
+   * 判断文件路径是否属于 Craft Agent 自身的配置文件。
    *
-   * @param filePath - Path to check
-   * @returns true if this is a Craft Agent config
+   * @param filePath - 要检查的路径
+   * @returns 是 Craft Agent 配置文件时返回 true
    */
   isCraftAgentConfig(filePath: string): boolean {
     const normalizedPath = process.platform === 'win32'
@@ -111,16 +123,20 @@ export class ConfigValidator {
   }
 
   // ============================================================
-  // Content Validation
+  // 内容校验
   // ============================================================
 
   /**
-   * Validate content before writing to a config file.
-   * Detects the file type from the path and validates accordingly.
+   * 写配置前的统一入口：先探测文件类型，再分发到对应校验器。
    *
-   * @param filePath - Path to the file being written
-   * @param content - Content to validate
-   * @returns Validation result with errors/warnings
+   * 说明：
+   * - JSON：直接 JSON.parse，失败则返回错误并尝试定位行号列号。
+   * - TOML/YAML：项目没有引入完整解析器，只做基础语法扫描，返回 warnings。
+   * - 未知类型：直接放行（valid: true）。
+   *
+   * @param filePath - 要写入的文件路径
+   * @param content - 待校验的内容
+   * @returns 校验结果，含 errors / warnings
    */
   validateContent(filePath: string, content: string): ConfigValidationResult {
     const fileType = this.getConfigType(filePath);
@@ -133,16 +149,16 @@ export class ConfigValidator {
       case 'yaml':
         return this.validateYaml(content);
       default:
-        // Unknown file type - no validation
+        // 未知文件类型，不做校验
         return { valid: true };
     }
   }
 
   /**
-   * Validate JSON content.
+   * 校验 JSON 内容。
    *
-   * @param content - JSON string to validate
-   * @returns Validation result
+   * @param content - 要校验的 JSON 字符串
+   * @returns 校验结果
    */
   validateJson(content: string): ConfigValidationResult {
     try {
@@ -151,7 +167,7 @@ export class ConfigValidator {
     } catch (e) {
       const error = e instanceof Error ? e.message : 'Unknown JSON parse error';
 
-      // Try to extract line/column info from error message
+      // 尝试从错误信息中提取行号/列号
       const lineMatch = error.match(/line (\d+)/i);
       const colMatch = error.match(/column (\d+)/i);
       const posMatch = error.match(/position (\d+)/i);
@@ -173,30 +189,30 @@ export class ConfigValidator {
   }
 
   /**
-   * Validate TOML content (basic syntax check).
-   * Note: Full TOML validation would require a TOML parser.
+   * 校验 TOML 内容（基础语法检查）。
+   * 说明：完整 TOML 校验需要引入专门的 TOML 解析器，这里只覆盖常见问题。
    *
-   * @param content - TOML string to validate
-   * @returns Validation result
+   * @param content - 要校验的 TOML 字符串
+   * @returns 校验结果
    */
   validateToml(content: string): ConfigValidationResult {
     const warnings: string[] = [];
 
-    // Basic checks for common TOML issues
+    // TOML 常见问题基础检查
     const lines = content.split('\n');
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!.trim();
 
-      // Skip comments and empty lines
+      // 跳过注释和空行
       if (line.startsWith('#') || line === '') continue;
 
-      // Check for unclosed brackets in section headers
+      // 检查节头中是否有未闭合的方括号
       if (line.startsWith('[') && !line.match(/^\[+[^\]]+\]+$/)) {
         warnings.push(`Line ${i + 1}: Possibly malformed section header: ${line}`);
       }
 
-      // Check for missing equals in key-value pairs (not sections or arrays)
+      // 检查键值对中是否缺少等号（节头或数组除外）
       if (!line.startsWith('[') && !line.includes('=') && !line.startsWith(']')) {
         warnings.push(`Line ${i + 1}: Missing '=' in key-value pair: ${line}`);
       }
@@ -209,33 +225,33 @@ export class ConfigValidator {
   }
 
   /**
-   * Validate YAML content (basic syntax check).
-   * Note: Full YAML validation would require a YAML parser.
+   * 校验 YAML 内容（基础语法检查）。
+   * 说明：完整 YAML 校验需要引入专门的 YAML 解析器，这里只覆盖常见问题。
    *
-   * @param content - YAML string to validate
-   * @returns Validation result
+   * @param content - 要校验的 YAML 字符串
+   * @returns 校验结果
    */
   validateYaml(content: string): ConfigValidationResult {
     const warnings: string[] = [];
 
-    // Basic checks for common YAML issues
+    // YAML 常见问题基础检查
     const lines = content.split('\n');
     let indentStack: number[] = [0];
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!;
 
-      // Skip empty lines and comments
+      // 跳过空行与注释
       if (line.trim() === '' || line.trim().startsWith('#')) continue;
 
-      // Check indentation consistency (should be spaces, not tabs)
+      // 检查缩进一致性（应使用空格而非制表符）
       if (line.match(/^\t/)) {
         warnings.push(`Line ${i + 1}: Uses tab indentation (YAML prefers spaces)`);
       }
 
-      // Check for trailing colons without values on same or next line
+      // 检查行尾冒号是否缺少同行或下一行的值
       if (line.trim().endsWith(':') && !line.includes(': ')) {
-        // This is a mapping key - check next line exists and is indented
+        // 这是一个映射键，检查下一行存在且已缩进
         const nextLine = lines[i + 1];
         if (nextLine && !nextLine.startsWith(' ') && !nextLine.startsWith('\t') && nextLine.trim() !== '') {
           warnings.push(`Line ${i + 1}: Mapping key '${line.trim()}' has no nested content`);
@@ -250,11 +266,11 @@ export class ConfigValidator {
   }
 
   // ============================================================
-  // Utility Methods
+  // 工具方法
   // ============================================================
 
   /**
-   * Get line and column number from a character position.
+   * 根据字符位置计算所在的行号和列号。
    */
   private getLineColumn(content: string, position: number): { line: number; column: number } {
     const lines = content.slice(0, position).split('\n');
@@ -264,11 +280,11 @@ export class ConfigValidator {
   }
 
   /**
-   * Format validation errors for display.
+   * 把校验结果格式化成便于展示的文本。
    *
-   * @param result - Validation result
-   * @param filePath - Path to the file (for context)
-   * @returns Formatted error string
+   * @param result - 校验结果
+   * @param filePath - 文件路径（用于上下文提示）
+   * @returns 格式化后的错误字符串
    */
   formatErrors(result: ConfigValidationResult, filePath?: string): string {
     if (result.valid && !result.warnings?.length) {

@@ -1,18 +1,15 @@
 /**
  * MessagingSettingsPage
  *
- * Configure messaging platform connections (Telegram, WhatsApp, Lark) and
- * view active session bindings.
+ * 配置消息平台连接（Telegram、WhatsApp、Lark）并查看当前绑定的会话。
  *
- * Layout:
- *  - One SettingsCard per platform
- *  - Each card renders a PlatformRow: [brand logo] [name] [API · status]
- *    with a Connect button (disconnected) or three-dot menu (connected)
- *  - Telegram-specific: direct (DM) bindings render directly under the bot
- *    row, then a separator, then a collapsible Supergroup section that
- *    expands to show topic-bound bindings. Mirrors the chevron pattern
- *    used by AiSettingsPage's `WorkspaceOverrideCard`.
- *  - WhatsApp / Lark: bindings render as a flat list under their bot row.
+ * 布局：
+ *  - 每个平台对应一张 SettingsCard
+ *  - 每张卡片渲染一行 PlatformRow：[品牌图标] [名称] [API · 状态]，
+ *    未连接时显示“连接”按钮，已连接时显示三点菜单
+ *  - Telegram 特化：机器人行下方直接展示私信绑定，再通过分隔线展示可折叠的 Supergroup 区块，
+ *    展开后显示话题绑定；折叠箭头样式与 AiSettingsPage 的 WorkspaceOverrideCard 保持一致
+ *  - WhatsApp / Lark：绑定会话在机器人行下方以平铺列表展示
  */
 
 import * as React from 'react'
@@ -73,19 +70,20 @@ import { getSessionTitle } from '@/utils/session'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
 import type { MessagingPlatformRuntimeInfo } from '../../../shared/types'
 
+/** 页面元数据：设置导航中的“消息平台”页面 */
 export const meta: DetailsPageMeta = {
   navigator: 'settings',
   slug: 'messaging',
 }
 
+/** 消息平台设置页面 */
 export default function MessagingSettingsPage() {
   const { t } = useTranslation()
   const activeWorkspace = useActiveWorkspace()
   const setBindings = useSetAtom(setMessagingBindingsAtom)
   const workspaceId = activeWorkspace?.id
 
-  // Single fetch + subscription at the page level so both PlatformRows read
-  // from the already-populated atom instead of subscribing twice.
+  // 在页面层级统一拉取并订阅消息绑定数据，避免两个 PlatformRow 各自订阅两次
   React.useEffect(() => {
     if (!workspaceId) return
     let cancelled = false
@@ -94,7 +92,7 @@ export default function MessagingSettingsPage() {
         const rows = await window.electronAPI.getMessagingBindings()
         if (!cancelled) setBindings(rows as MessagingBinding[])
       } catch {
-        // Silent — a toast here would be noisy on first load.
+        // 静默失败：首次加载时弹 Toast 会过于嘈杂
       }
     }
     load()
@@ -132,7 +130,7 @@ export default function MessagingSettingsPage() {
 }
 
 // ---------------------------------------------------------------------------
-// Platform row
+// 平台行
 // ---------------------------------------------------------------------------
 
 type Platform = 'telegram' | 'whatsapp' | 'lark'
@@ -143,23 +141,19 @@ const PLATFORM_LABEL_KEYS: Record<Platform, string> = {
   lark: 'settings.messaging.lark.title',
 }
 
-// Row column geometry shared across the bot header and all child rows.
-// 16px outer padding (`px-4`) + 22px icon slot + 12px gap (`gap-3`).
-// Secondary icons render at 16px inside the same 22px slot for a clean
-// visual hierarchy without the column edge shifting.
+// 机器人行头与所有子行共用的列几何参数：
+// 16px 外边框 (`px-4`) + 22px 图标槽 + 12px 间距 (`gap-3`)。
+// 次级图标以 16px 渲染并居中在同一 22px 槽内，保持视觉层级且不让列边缘错位。
 const ROW_ICON_SIZE = 22
 const SUB_ROW_ICON_SIZE = 16
 const SUB_ROW_ICON_STROKE = 1.5
 
-/** 22px-wide invisible spacer that lets a row inherit the icon column's
- *  geometry without rendering an icon (used for topic rows that align to
- *  the supergroup name above). */
+/** 22px 宽的占位元素，让行继承图标列尺寸而不实际渲染图标（用于与上方 Supergroup 名称对齐的话题行）。 */
 function IconSpacer() {
   return <div className="shrink-0" style={{ width: ROW_ICON_SIZE, height: ROW_ICON_SIZE }} />
 }
 
-/** Wraps a Lucide icon at `SUB_ROW_ICON_SIZE` inside the row's 22px slot
- *  so it stays centred in the same column as the bot logo above. */
+/** 将 Lucide 图标以 `SUB_ROW_ICON_SIZE` 大小包裹在行内的 22px 槽中，使其与上方机器人图标在同一列居中。 */
 function SubRowIcon({
   icon: Icon,
   size = SUB_ROW_ICON_SIZE,
@@ -198,15 +192,13 @@ function PlatformRow({ platform, workspaceId }: { platform: Platform; workspaceI
   const [connectOpen, setConnectOpen] = React.useState(false)
   const [reconfigure, setReconfigure] = React.useState(false)
   const [menuOpen, setMenuOpen] = React.useState(false)
-  // Telegram supergroup state — only relevant when platform === 'telegram'.
-  // Lifted into PlatformRow so the supergroup sub-row sits inside the same
-  // SettingsCard as the bot connection.
+  // Telegram Supergroup 状态 —— 仅在 platform === 'telegram' 时有效。
+  // 提升到 PlatformRow 层级，使 Supergroup 子行与机器人连接共用同一张 SettingsCard。
   const [supergroup, setSupergroup] = React.useState<{ chatId: string; title: string } | null>(null)
   const [supergroupDialogOpen, setSupergroupDialogOpen] = React.useState(false)
 
-  // Telegram workspace access mode — telegram only. Lifted up so the
-  // dropdown can decide whether to show "Unlock", and TelegramAccessSection
-  // receives it as a controlled prop. Symmetric with `supergroup` state.
+  // Telegram 工作区访问模式 —— 仅 Telegram 有效。
+  // 提升到本组件，使下拉菜单决定是否显示“解锁”，并将受控值传给 TelegramAccessSection；与 supergroup 状态对称管理。
   const [telegramAccessMode, setTelegramAccessMode] =
     React.useState<PlatformAccessMode>('open')
 
@@ -216,7 +208,7 @@ function PlatformRow({ platform, workspaceId }: { platform: Platform; workspaceI
       const sg = await window.electronAPI.getMessagingSupergroup()
       setSupergroup(sg ? { chatId: sg.chatId, title: sg.title } : null)
     } catch {
-      // silent — empty state means "not configured"
+      // 静默失败：空状态即表示“未配置”
     }
   }, [platform])
 
@@ -226,7 +218,7 @@ function PlatformRow({ platform, workspaceId }: { platform: Platform; workspaceI
       const mode = await window.electronAPI.getMessagingPlatformAccessMode('telegram')
       setTelegramAccessMode(mode as PlatformAccessMode)
     } catch {
-      // silent — default 'open' covers fresh / disconnected state
+      // 静默失败：默认值 'open' 已覆盖初始/未连接状态
     }
   }, [platform])
 
@@ -237,10 +229,9 @@ function PlatformRow({ platform, workspaceId }: { platform: Platform; workspaceI
   React.useEffect(() => {
     if (platform !== 'telegram') return
     void refreshTelegramAccessMode()
-    // Lock-down migrates open bindings → inherit, which fires
-    // onMessagingBindingChanged. Unlock doesn't migrate, but PlatformRow
-    // and TelegramAccessSection both call setTelegramAccessMode after the
-    // API write, so the prop stays in sync without an extra event.
+    // 锁定操作会把 open 绑定迁移为 inherit，触发 onMessagingBindingChanged；
+    // 解锁不会迁移，但 PlatformRow 与 TelegramAccessSection 在写入 API 后都会调用 setTelegramAccessMode，
+    // 因此受控属性无需额外事件即可保持同步。
     const off = window.electronAPI.onMessagingBindingChanged((wsId) => {
       if (wsId === workspaceId) void refreshTelegramAccessMode()
     })
@@ -272,8 +263,7 @@ function PlatformRow({ platform, workspaceId }: { platform: Platform; workspaceI
     }
   }, [platform, workspaceId])
 
-  // Mirror AI Settings pattern: close menu first, then fire the action on the
-  // next frame — avoids a known menu/dialog teardown race.
+  // 沿用 AI 设置页的处理模式：先关闭菜单，再在下一帧执行操作，避免已知的菜单/对话框卸载竞态。
   const runAfterMenuClose = React.useCallback((action: () => void) => {
     setMenuOpen(false)
     requestAnimationFrame(action)
@@ -478,7 +468,7 @@ function PlatformRow({ platform, workspaceId }: { platform: Platform; workspaceI
 }
 
 // ---------------------------------------------------------------------------
-// Telegram bindings body — direct sessions + collapsible supergroup
+// Telegram 绑定内容区 —— 私信会话 + 可折叠的 Supergroup
 // ---------------------------------------------------------------------------
 
 interface TelegramBindingsBodyProps {
@@ -516,8 +506,7 @@ function TelegramBindingsBody({
         const owners = await window.electronAPI.getMessagingPlatformOwners('telegram')
         if (!cancelled) setWorkspaceOwners(owners)
       } catch {
-        // Silent — falls back to empty list which BindingAllowListPopover
-        // handles gracefully (shows "no known users" hint).
+        // 静默失败：回退到空列表，BindingAllowListPopover 会优雅处理（显示“无已知用户”提示）
       }
     }
     void load()
@@ -539,9 +528,9 @@ function TelegramBindingsBody({
     },
     [],
   )
-  // Telegram bindings split cleanly on `threadId`:
-  //   - undefined: DM ("direct session") — at most one per workspace
-  //   - number:    topic in the paired supergroup
+  // Telegram 绑定按 `threadId` 一分为二：
+  //   - undefined: 私信（direct session），每个工作区最多一个
+  //   - number:    已配对 Supergroup 中的话题
   const directBindings = React.useMemo(() => bindings.filter((b) => b.threadId === undefined), [bindings])
   const topicBindings = React.useMemo(() => bindings.filter((b) => b.threadId !== undefined), [bindings])
 
@@ -603,9 +592,8 @@ function DirectSessionRow({
   const { t } = useTranslation()
   const meta = sessionMetaMap.get(binding.sessionId)
   const sessionLabel = meta ? getSessionTitle(meta) : binding.channelName || binding.channelId
-  // Layout convention here matches the Supergroup row: the binding *type*
-  // ("Direct message session") is the primary label, the session name drops
-  // to the subtitle. Keeps Direct and Supergroup rows visually parallel.
+  // 此处布局约定与 Supergroup 行保持一致：绑定“类型”（私信会话）作为主标签，会话名作为副标题，
+  // 使 Direct 行与 Supergroup 行在视觉上保持平行。
   return (
     <div className="flex items-center gap-3 px-4 py-2.5">
       <SubRowIcon icon={MessageSquare} />
@@ -670,9 +658,8 @@ function PairedSupergroupSection({
   onAccessChange: (bindingId: string, next: BindingAccess) => void
 }) {
   const { t } = useTranslation()
-  // Default open when there are topics — gives users immediate visibility
-  // into where automations are routing. Empty paired supergroups stay
-  // collapsed since there's nothing interesting to show yet.
+  // 存在话题时默认展开，让用户立即看到自动化路由的目标位置；
+  // 尚未绑定任何话题时保持折叠，避免空状态占用空间。
   const [isExpanded, setIsExpanded] = React.useState(topicBindings.length > 0)
 
   const subtitle =
@@ -810,8 +797,7 @@ function FlatBindingRow({
   onOpen: () => void
   onUnbind: () => void
 }) {
-  // Used by WhatsApp + Lark (no supergroup/topic concept) — same compact
-  // row the page used to render for every platform before the Telegram split.
+  // WhatsApp + Lark 使用（无 Supergroup/话题概念）—— 紧凑行样式与 Telegram 拆分前一致。
   const meta = sessionMetaMap.get(binding.sessionId)
   const sessionLabel = meta ? getSessionTitle(meta) : binding.channelName || binding.channelId
   return (
@@ -843,7 +829,7 @@ function RowActions({ onOpen, onUnbind }: { onOpen: () => void; onUnbind: () => 
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助函数
 // ---------------------------------------------------------------------------
 
 function buildDescription(

@@ -1,26 +1,24 @@
 /**
- * Opens a URL in the default browser.
+ * 用系统默认浏览器打开 URL
  *
- * Prefers Electron's shell.openExternal() which uses native OS APIs and
- * works reliably in packaged apps (no PATH dependency).  Falls back to
- * the 'open' npm package for non-Electron environments.
+ * 优先使用 Electron 的 shell.openExternal()，它调用原生 OS API，在打包应用中更可靠（不依赖 PATH）。
+ * 非 Electron 环境回退到 'open' npm 包。
  *
- * The 'open' package spawns `open` (macOS) / `xdg-open` (Linux) as a
- * child process, which fails with `spawn open ENOENT` in some packaged
- * Electron builds where PATH is stripped.
+ * 注意：'open' 包会 spawn `open`（macOS）/ `xdg-open`（Linux）子进程，在某些打包后的 Electron
+ * 构建中可能因为 PATH 被剥离而失败（spawn open ENOENT）。
  *
- * ALWAYS use this instead of importing 'open' directly.
+ * 始终使用本函数，而不是直接 import 'open'。
  *
- * @param url - The URL to open in the default browser
+ * @param url - 要在默认浏览器中打开的 URL
  */
 export async function openUrl(url: string): Promise<void> {
-  // Prefer Electron's native API — no child process spawn, no PATH issues.
+  // 优先走 Electron 原生 API：无子进程、无 PATH 问题
   try {
     const { shell } = await import('electron');
     await shell.openExternal(url);
     return;
   } catch {
-    // Not in Electron main process — fall back to 'open' package.
+    // 不在 Electron 主进程，回退到 'open' 包
   }
 
   const open = await import('open');

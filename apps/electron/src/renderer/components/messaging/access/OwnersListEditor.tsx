@@ -1,18 +1,15 @@
 /**
- * Editor for the workspace-level "allowed users" list per platform.
+ * 工作空间级“允许用户”列表编辑器，按平台维护。
  *
- * The list is the source of truth for who can run pre-binding commands
- * (`/new`, `/bind`) and acts as the default `allowedSenderIds` for any
- * binding whose `mode === 'inherit'`.
+ * 这个列表决定谁能执行预绑定命令（如 `/new`、`/bind`），
+ * 也作为 `mode === 'inherit'` 的 binding 默认的 `allowedSenderIds`。
  *
- * Designed to render *inside* the collapsible "Allowed users" section in
- * Settings → Messaging — so per-row content is indented with an `IconSpacer`
- * to align with the parent header's text column, mirroring topic rows under
- * a paired supergroup.
+ * 组件被设计为渲染在 Settings → Messaging 里可折叠的“Allowed users”区域内，
+ * 因此每行用 `IconSpacer` 做缩进，与父标题的文字列对齐，
+ * 样式与“已配对超级群”下的 topic 行保持一致。
  *
- * The "add user" affordance is the pending-requests panel: typing numeric
- * Telegram user_ids by hand is a UX dead-end. Owners promote senders with
- * one click after the gateway records a rejected attempt.
+ * 没有“手动添加用户”输入框：让用户手动输入 Telegram 数字 user_id 体验很差。
+ * 添加用户走 pending-requests 面板：网关记录被拒绝的尝试后，owner 一键提升即可。
  */
 
 import * as React from 'react'
@@ -21,21 +18,20 @@ import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { PlatformOwner } from './types'
 
-/** Width must match the icon column used by adjacent rows / parent headers. */
+// 图标列宽度，必须与相邻行/父标题的图标列宽度一致，才能对齐
 const ROW_ICON_SLOT_PX = 22
 
 interface Props {
   owners: PlatformOwner[]
-  /** Whether the gateway is gating on this list. When false, the list is shown
-   *  as informational and the "Lock down" CTA is the primary action elsewhere. */
+  // enforced 为 true 表示网关真的会按这个列表拦截；为 false 时列表仅作信息展示，
+  // “锁定”操作由别处（AccessModeBanner）承载。
   enforced: boolean
   onRemove: (userId: string) => void
-  /** Identifies the current user so we can render a "(You)" tag. */
+  // 当前用户 ID，用于给当前用户显示“(你)”标记
   currentUserId?: string
 }
 
-/** 22px-wide invisible spacer keeping rows aligned with the parent header's
- *  text column (no per-row icon, matching the topic-row pattern). */
+// 22px 宽的透明占位符，让无图标的行与父标题文字列对齐（参考 topic 行模式）
 function IconSpacer() {
   return <div className="shrink-0" style={{ width: ROW_ICON_SLOT_PX, height: ROW_ICON_SLOT_PX }} />
 }

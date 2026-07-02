@@ -1,32 +1,32 @@
 /**
- * Entity Color Validation
+ * 实体颜色校验（Entity Color Validation）
  *
- * Zod schemas and validation utilities for EntityColor values.
- * Used by config validators to ensure color values in statuses/labels configs are valid.
+ * 提供 Zod schema 和校验函数，用于确保 status/label 配置里的颜色值格式正确。
+ * 配置加载、持久化、LLM 生成配置时都会调用这些工具做校验。
  */
 
 import { z } from 'zod'
 import { SYSTEM_COLOR_NAMES } from './types.ts'
 
 // ============================================================================
-// CSS Color Validation
+// CSS 颜色格式校验
 // ============================================================================
 
-/** Hex color: #RGB, #RRGGBB, or #RRGGBBAA */
+/** 匹配 hex 颜色：#RGB、#RRGGBB 或 #RRGGBBAA */
 const HEX_PATTERN = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/
 
-/** OKLCH: oklch(L C H) or oklch(L C H / A) */
+/** 匹配 OKLCH：oklch(L C H) 或 oklch(L C H / A) */
 const OKLCH_PATTERN = /^oklch\(\s*[\d.]+\s+[\d.]+\s+[\d.]+(\s*\/\s*[\d.]+%?)?\s*\)$/
 
-/** RGB/RGBA: rgb(r, g, b) or rgba(r, g, b, a) */
+/** 匹配 RGB/RGBA：rgb(r, g, b) 或 rgba(r, g, b, a) */
 const RGB_PATTERN = /^rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+(\s*,\s*[\d.]+)?\s*\)$/
 
-/** HSL/HSLA: hsl(h, s%, l%) or hsla(h, s%, l%, a) */
+/** 匹配 HSL/HSLA：hsl(h, s%, l%) 或 hsla(h, s%, l%, a) */
 const HSL_PATTERN = /^hsla?\(\s*\d+\s*,\s*\d+%\s*,\s*\d+%(\s*,\s*[\d.]+)?\s*\)$/
 
 /**
- * Check if a string is a valid CSS color value.
- * Supports hex, OKLCH, RGB/RGBA, and HSL/HSLA formats.
+ * 判断字符串是否是合法的 CSS 颜色值。
+ * 当前支持 hex、OKLCH、RGB/RGBA、HSL/HSLA 四种格式。
  */
 export function isValidCSSColor(value: string): boolean {
   return (
@@ -38,24 +38,25 @@ export function isValidCSSColor(value: string): boolean {
 }
 
 // ============================================================================
-// System Color Validation
+// 系统色校验
 // ============================================================================
 
-/** Pattern for system color: name or name/opacity */
+/** 系统色正则：颜色名，或颜色名/透明度 */
 const SYSTEM_COLOR_PATTERN = /^([a-z]+)(\/(\d+))?$/
 
 /**
- * Check if a string is a valid system color (name with optional /opacity).
- * Validates that the name is a known system color and opacity is 0–100.
+ * 判断字符串是否是合法系统色（名称 + 可选 /透明度）。
+ * 会校验名称是否在已知系统色列表中，以及透明度是否在 0–100 之间。
  */
 export function isValidSystemColor(value: string): boolean {
   const match = SYSTEM_COLOR_PATTERN.exec(value)
   if (!match) return false
 
   const name = match[1]!
+  // 这里用 `as readonly string[]` 把常量数组断言为 string[]，方便 .includes 接受任意字符串
   if (!(SYSTEM_COLOR_NAMES as readonly string[]).includes(name)) return false
 
-  // Check opacity if present
+  // 如果有透明度，校验范围
   if (match[3] !== undefined) {
     const opacity = Number(match[3])
     if (!Number.isFinite(opacity) || opacity < 0 || opacity > 100) return false
@@ -65,18 +66,19 @@ export function isValidSystemColor(value: string): boolean {
 }
 
 // ============================================================================
-// EntityColor Validation
+// EntityColor 校验
 // ============================================================================
 
 /**
- * Check if a value is a valid EntityColor.
- * Accepts system color strings or custom color objects.
+ * 判断一个值是否是合法的 EntityColor。
+ * 接受系统色字符串或自定义颜色对象。
  */
 export function isValidEntityColor(value: unknown): boolean {
   if (typeof value === 'string') {
     return isValidSystemColor(value)
   }
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    // `as Record<string, unknown>` 是类型断言：告诉 TS 把这个对象当成“键为 string、值为 unknown”的字典
     const obj = value as Record<string, unknown>
     if (typeof obj.light !== 'string' || !isValidCSSColor(obj.light)) return false
     if (obj.dark !== undefined && (typeof obj.dark !== 'string' || !isValidCSSColor(obj.dark))) return false
@@ -90,18 +92,18 @@ export function isValidEntityColor(value: unknown): boolean {
 // ============================================================================
 
 /**
- * Zod schema for EntityColor.
+ * EntityColor 的 Zod schema。
  *
- * Uses superRefine instead of a raw z.union to produce a single, actionable error
- * message that an LLM can use to self-correct — rather than confusing dual-branch
- * union errors from Zod (which would show both "invalid string" and "expected object").
+ * 这里用 `z.any().superRefine(...)` 而不是 `z.union(...)`，
+ * 是因为 Zod 的 union 在报错时会同时给出两条分支的错误（“字符串不对”和“期望对象”），
+ * 对 LLM 自修正不友好。用 superRefine 可以只返回一条清晰、可操作的错误信息。
  *
- * Valid forms:
- * - System color string: "accent", "foreground/50", "info/80"
- * - Custom color object: { light: "#EF4444", dark?: "#F87171" }
+ * 合法形式：
+ * - 系统色字符串："accent"、"foreground/50"、"info/80"
+ * - 自定义颜色对象：{ light: "#EF4444", dark?: "#F87171" }
  */
 export const EntityColorSchema = z.any().superRefine((val, ctx) => {
-  // --- String path: validate as system color ---
+  // --- 字符串分支：按系统色校验 ---
   if (typeof val === 'string') {
     if (!isValidSystemColor(val)) {
       ctx.addIssue({
@@ -116,7 +118,7 @@ export const EntityColorSchema = z.any().superRefine((val, ctx) => {
     return
   }
 
-  // --- Object path: validate as custom color ---
+  // --- 对象分支：按自定义色校验 ---
   if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
     const obj = val as Record<string, unknown>
 
@@ -152,7 +154,7 @@ export const EntityColorSchema = z.any().superRefine((val, ctx) => {
     return
   }
 
-  // --- Invalid type ---
+  // --- 其他类型：直接报错 ---
   ctx.addIssue({
     code: z.ZodIssueCode.custom,
     message: `Invalid color value (got ${typeof val}). `

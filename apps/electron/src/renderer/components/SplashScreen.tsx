@@ -1,3 +1,8 @@
+/**
+ * SplashScreen — React 组件
+ * 
+ * 所属目录：components
+ */
 import { motion } from 'motion/react'
 import { CraftAgentsSymbol } from './icons/CraftAgentsSymbol'
 

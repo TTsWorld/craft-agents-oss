@@ -1,8 +1,9 @@
 /**
- * Config Validate Handler
+ * Config Validate Handler（配置校验处理器）
  *
- * Validates Craft Agent configuration files.
- * Uses full validators if available (Claude), otherwise basic validation (Codex).
+ * 校验 Craft Agent 的各类配置文件。
+ * 如果上下文提供完整校验器（Claude 环境），则使用 Zod 做全面校验；
+ * 否则退回到基础 JSON 字段检查（Codex 环境）。
  */
 
 import { join } from 'node:path';
@@ -19,16 +20,16 @@ import {
 } from '../validation.ts';
 import { getSourceConfigPath } from '../source-helpers.ts';
 
+// config_validate 参数：target 指定要校验哪类配置，sourceSlug 仅在 target=sources 时使用
 export interface ConfigValidateArgs {
   target: 'config' | 'sources' | 'statuses' | 'preferences' | 'permissions' | 'automations' | 'tool-icons' | 'all';
   sourceSlug?: string;
 }
 
 /**
- * Handle the config_validate tool call.
+ * 处理 config_validate tool 调用。
  *
- * If ctx.validators is available, uses full Zod validators.
- * Otherwise falls back to basic JSON field checking.
+ * 优先使用 ctx.validators 做完整校验；如果没有则走基础 JSON 字段检查。
  */
 export async function handleConfigValidate(
   ctx: SessionToolContext,
@@ -37,7 +38,7 @@ export async function handleConfigValidate(
   const { target, sourceSlug } = args;
   const craftAgentRoot = join(homedir(), '.craft-agent');
 
-  // If full validators available (Claude), use them
+  // 完整校验器路径（通常对应 Claude 环境）
   if (ctx.validators) {
     try {
       let result;
@@ -81,7 +82,7 @@ export async function handleConfigValidate(
     }
   }
 
-  // Fallback: basic validation (Codex path)
+  // 降级路径：基础 JSON 字段检查（Codex 环境）
   switch (target) {
     case 'config': {
       const result = validateJsonFileHasFields(
@@ -97,7 +98,7 @@ export async function handleConfigValidate(
         const result = validateJsonFileHasFields(sourcePath, ['slug', 'name', 'type']);
         return successResponse(formatValidationResult(result));
       } else {
-        // Validate all sources
+        // 校验 workspace 下所有 source
         const sourcesDir = join(ctx.workspacePath, 'sources');
         if (!ctx.fs.exists(sourcesDir)) {
           return successResponse('✓ No sources directory (no sources to validate)');
@@ -113,7 +114,7 @@ export async function handleConfigValidate(
               ['slug', 'name', 'type']
             );
             if (!sourceResult.valid) {
-              // Prefix errors with source name
+              // 把错误路径加上 source 目录前缀，方便定位
               sourceResult.errors = sourceResult.errors.map(e => ({
                 ...e,
                 path: `${entry}/${e.path}`,
@@ -145,7 +146,7 @@ export async function handleConfigValidate(
     }
 
     case 'permissions': {
-      // Check workspace-level permissions.json
+      // 检查 workspace 级的权限文件；没有则使用默认值
       const workspacePermsPath = join(ctx.workspacePath, 'permissions.json');
       if (!ctx.fs.exists(workspacePermsPath)) {
         return successResponse('✓ No workspace permissions.json (using defaults)');

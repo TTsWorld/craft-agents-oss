@@ -1,8 +1,8 @@
 /**
- * ws shim — browser uses native WebSocket.
+ * ws 模块的浏览器垫片：浏览器直接使用原生 WebSocket。
  *
- * The WsRpcServer imports WebSocketServer from 'ws' but is never
- * instantiated in the browser. This shim satisfies the bundler.
+ * WsRpcServer 会 import WebSocketServer，但在浏览器里不会真正实例化。
+ * 这个垫片只是为了满足打包器的静态分析。
  */
 
 /* eslint-disable @typescript-eslint/no-unused-vars */
@@ -15,6 +15,6 @@ export class WebSocketServer {
   address() { return null }
 }
 
-// Re-export native WebSocket for the client
+// 客户端复用浏览器原生 WebSocket
 export const WebSocket = globalThis.WebSocket
 export type { WebSocket as default }

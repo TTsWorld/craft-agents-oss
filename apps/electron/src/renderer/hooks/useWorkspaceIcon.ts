@@ -1,40 +1,40 @@
 /**
  * useWorkspaceIcon Hook
  *
- * Fetches workspace icons as data URLs for rendering in img tags.
- * Handles file:// to data URL conversion via IPC since Electron's CSP
- * blocks direct file:// URLs in the renderer.
+ * 获取工作区图标并转为可在 <img> 中渲染的 URL。
+ * 由于 Electron 的 CSP 会阻止 renderer 直接使用 file:// URL，
+ * 因此通过 IPC 把 file:// 转为 data URL。
  *
- * Used by settings pages that display workspace icons.
+ * 用于设置页面展示工作区图标。
  */
 
 import { useState, useEffect, useRef } from 'react'
 import type { Workspace } from '../../shared/types'
 
-// Module-level cache to avoid redundant fetches across component instances
-// Key: workspaceId, Value: { dataUrl, sourceUrl }
+// 模块级缓存，避免多个组件实例重复请求
+// key: workspaceId, value: { dataUrl, sourceUrl }
 const iconCache = new Map<string, { dataUrl: string; sourceUrl: string }>()
 
 /**
- * Hook to get a workspace icon as a renderable URL.
+ * 获取单个工作区图标的可渲染 URL。
  *
- * - Remote URLs (http/https) are returned directly
- * - Local file:// URLs are converted to data URLs via IPC
- * - Returns undefined while loading or if no icon exists
+ * - 远程 URL（http/https）直接返回
+ * - 本地 file:// URL 通过 IPC 转为 data URL
+ * - 加载中或没有图标时返回 undefined
  *
- * @param workspace - The workspace object with iconUrl
- * @returns Data URL or remote URL for the icon, or undefined
+ * @param workspace - 带 iconUrl 的 workspace 对象
+ * @returns 图标的数据 URL 或远程 URL，没有则 undefined
  */
 export function useWorkspaceIcon(workspace: Workspace | undefined): string | undefined {
   const [iconUrl, setIconUrl] = useState<string | undefined>(() => {
     if (!workspace?.iconUrl) return undefined
 
-    // Remote URLs can be used directly
+    // 远程 URL 可直接使用
     if (workspace.iconUrl.startsWith('http://') || workspace.iconUrl.startsWith('https://')) {
       return workspace.iconUrl
     }
 
-    // Check cache for file:// URLs
+    // 检查 file:// URL 是否已缓存
     const cached = iconCache.get(workspace.id)
     if (cached && cached.sourceUrl === workspace.iconUrl) {
       return cached.dataUrl
@@ -43,7 +43,7 @@ export function useWorkspaceIcon(workspace: Workspace | undefined): string | und
     return undefined
   })
 
-  // Track the workspace to detect changes
+  // 跟踪 workspace 以便检测变化
   const workspaceRef = useRef(workspace)
 
   useEffect(() => {
@@ -52,27 +52,27 @@ export function useWorkspaceIcon(workspace: Workspace | undefined): string | und
       return
     }
 
-    // Remote URLs - use directly
+    // 远程 URL 直接使用
     if (workspace.iconUrl.startsWith('http://') || workspace.iconUrl.startsWith('https://')) {
       setIconUrl(workspace.iconUrl)
       return
     }
 
-    // Not a file:// URL - skip
+    // 非 file:// URL 跳过
     if (!workspace.iconUrl.startsWith('file://')) {
       setIconUrl(undefined)
       return
     }
 
-    // Check if already cached with same source URL
+    // 若缓存命中且源 URL 未变，直接复用
     const cached = iconCache.get(workspace.id)
     if (cached && cached.sourceUrl === workspace.iconUrl) {
       setIconUrl(cached.dataUrl)
       return
     }
 
-    // Extract icon filename from file:// URL
-    // e.g., "file:///path/to/icon.png?t=123" -> "icon.png"
+    // 从 file:// URL 中提取图标文件名
+    // 例如 "file:///path/to/icon.png?t=123" -> "icon.png"
     const urlWithoutQuery = workspace.iconUrl.split('?')[0]
     const iconFilename = urlWithoutQuery.split('/').pop()
     if (!iconFilename) {
@@ -80,7 +80,7 @@ export function useWorkspaceIcon(workspace: Workspace | undefined): string | und
       return
     }
 
-    // Fetch via IPC and convert to data URL
+    // 通过 IPC 读取并转为 data URL
     let cancelled = false
 
     async function fetchIcon() {
@@ -89,13 +89,13 @@ export function useWorkspaceIcon(workspace: Workspace | undefined): string | und
         if (cancelled) return
 
         if (result) {
-          // readWorkspaceImage returns raw SVG for .svg files, data URL for others
+          // .svg 返回原始 SVG 字符串，其他格式返回 data URL
           let dataUrl = result
           if (iconFilename!.endsWith('.svg')) {
             dataUrl = `data:image/svg+xml;base64,${btoa(result)}`
           }
 
-          // Cache the result
+          // 缓存结果
           iconCache.set(workspace!.id, { dataUrl, sourceUrl: workspace!.iconUrl! })
           setIconUrl(dataUrl)
         } else {
@@ -120,11 +120,11 @@ export function useWorkspaceIcon(workspace: Workspace | undefined): string | und
 }
 
 /**
- * Hook to get icons for multiple workspaces at once.
- * More efficient than calling useWorkspaceIcon for each workspace.
+ * 批量获取多个工作区的图标。
+ * 比每个 workspace 单独调用 useWorkspaceIcon 更高效。
  *
- * @param workspaces - Array of workspace objects
- * @returns Map of workspaceId -> icon URL (data URL or remote URL)
+ * @param workspaces - workspace 对象数组
+ * @returns workspaceId -> 图标 URL（data URL 或远程 URL）的 Map
  */
 export function useWorkspaceIcons(workspaces: Workspace[]): Map<string, string> {
   const [iconMap, setIconMap] = useState<Map<string, string>>(() => {
@@ -132,13 +132,13 @@ export function useWorkspaceIcons(workspaces: Workspace[]): Map<string, string> 
     for (const ws of workspaces) {
       if (!ws.iconUrl) continue
 
-      // Remote URLs
+      // 远程 URL
       if (ws.iconUrl.startsWith('http://') || ws.iconUrl.startsWith('https://')) {
         map.set(ws.id, ws.iconUrl)
         continue
       }
 
-      // Cached file:// URLs
+      // 已缓存的 file:// URL
       const cached = iconCache.get(ws.id)
       if (cached && cached.sourceUrl === ws.iconUrl) {
         map.set(ws.id, cached.dataUrl)
@@ -156,23 +156,23 @@ export function useWorkspaceIcons(workspaces: Workspace[]): Map<string, string> 
       for (const workspace of workspaces) {
         if (!workspace.iconUrl) continue
 
-        // Remote URLs - use directly
+        // 远程 URL 直接使用
         if (workspace.iconUrl.startsWith('http://') || workspace.iconUrl.startsWith('https://')) {
           newMap.set(workspace.id, workspace.iconUrl)
           continue
         }
 
-        // Not a file:// URL - skip
+        // 非 file:// URL 跳过
         if (!workspace.iconUrl.startsWith('file://')) continue
 
-        // Check cache first
+        // 优先查缓存
         const cached = iconCache.get(workspace.id)
         if (cached && cached.sourceUrl === workspace.iconUrl) {
           newMap.set(workspace.id, cached.dataUrl)
           continue
         }
 
-        // Extract icon filename
+        // 提取图标文件名
         const urlWithoutQuery = workspace.iconUrl.split('?')[0]
         const iconFilename = urlWithoutQuery.split('/').pop()
         if (!iconFilename) continue

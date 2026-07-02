@@ -1,13 +1,15 @@
 /**
  * Info_Alert
  *
- * Warning/error/info/success alert boxes with compound Title/Description.
+ * 信息页中的警告 / 错误 / 信息 / 成功提示框，采用复合组件写法（Title + Description）。
+ * 类似 Go 中一个 struct 带多个方法，这里用 Object.assign 把子组件挂到根组件上。
  */
 
 import * as React from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 
+/** 使用 class-variance-authority 定义 alert 的样式变体（variant / inline） */
 const alertVariants = cva('rounded-[8px] border', {
   variants: {
     variant: {
@@ -30,7 +32,7 @@ const alertVariants = cva('rounded-[8px] border', {
 export interface Info_AlertProps
   extends React.HTMLAttributes<HTMLDivElement>,
     VariantProps<typeof alertVariants> {
-  /** Optional leading icon */
+  /** 可选的前置图标 */
   icon?: React.ReactNode
 }
 

@@ -1,17 +1,17 @@
 /**
- * Automation System Type Definitions
+ * 自动化系统类型定义
  *
- * All types, interfaces, and type exports for the automations system.
+ * 所有类型、接口和类型导出都集中在这里。
  */
 
 import type { PermissionMode } from '../agent/mode-types.ts';
 import type { ThinkingLevel } from '../agent/thinking-levels.ts';
 
 // ============================================================================
-// Event Types
+// 事件类型
 // ============================================================================
 
-/** App events - handled by Craft */
+/** App 事件 - 由 Craft 内部处理 */
 export type AppEvent =
   | 'LabelAdd'
   | 'LabelRemove'
@@ -21,7 +21,7 @@ export type AppEvent =
   | 'SessionStatusChange'
   | 'SchedulerTick';
 
-/** Agent events - passed to Claude SDK */
+/** Agent 事件 - 会传给 Claude SDK 的 hook */
 export type AgentEvent =
   | 'PreToolUse'
   | 'PostToolUse'
@@ -51,132 +51,131 @@ export const AGENT_EVENTS: AgentEvent[] = [
 ];
 
 // ============================================================================
-// Action Definitions
+// 动作定义
 // ============================================================================
 
-/** A prompt action - sends a prompt to Craft Agent */
+/** Prompt 动作：向 Craft Agent 发送一条 prompt */
 export interface PromptAction {
   type: 'prompt';
   prompt: string;
-  /** LLM connection slug for the created session (falls back to default if not found) */
+  /** 新建会话使用的 LLM connection slug（找不到则回退到默认） */
   llmConnection?: string;
-  /** Model ID for the created session (falls back to provider default if invalid) */
+  /** 新建会话使用的模型 ID（无效则回退到 provider 默认） */
   model?: string;
   /**
-   * Thinking level for the created session.
-   * When omitted, falls back to the workspace default (then DEFAULT_THINKING_LEVEL).
+   * 新建会话的思考级别。
+   * 省略时先回退 workspace 默认，再回退 DEFAULT_THINKING_LEVEL。
    */
   thinkingLevel?: ThinkingLevel;
 }
 
-/** HTTP method for webhook actions */
+/** Webhook 动作的 HTTP 方法 */
 export type WebhookHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
-/** Body format for webhook actions */
+/** Webhook 动作的请求体格式 */
 export type WebhookBodyFormat = 'json' | 'form' | 'raw';
 
-/** Authentication shorthand for webhook actions */
+/** Webhook 动作的认证简写 */
 export type WebhookAuth =
   | { type: 'basic'; username: string; password: string }
   | { type: 'bearer'; token: string };
 
-/** A webhook action - sends an HTTP request to an endpoint */
+/** Webhook 动作：向某个端点发送 HTTP 请求 */
 export interface WebhookAction {
   type: 'webhook';
-  /** The URL to send the webhook to (http or https) */
+  /** 目标 URL（http 或 https） */
   url: string;
-  /** HTTP method (default: POST) */
+  /** HTTP 方法，默认 POST */
   method?: WebhookHttpMethod;
-  /** HTTP headers as key-value pairs */
+  /** 请求头键值对 */
   headers?: Record<string, string>;
-  /** Body format: 'json' sends Content-Type application/json, 'form' URL-encodes, 'raw' sends as-is */
+  /** 请求体格式：json 发 application/json，form 做 URL 编码，raw 原样发送 */
   bodyFormat?: WebhookBodyFormat;
-  /** Request body — JSON object when bodyFormat is 'json' or 'form', string when 'raw' */
+  /** 请求体 - json/form 格式时为对象，raw 格式时为字符串 */
   body?: unknown;
-  /** Capture response body in result (truncated to 4KB). Default: false */
+  /** 是否在结果中截取响应体（最多 4KB），默认 false */
   captureResponse?: boolean;
-  /** Authentication shorthand (applied before custom headers) */
+  /** 认证简写（会先应用，再应用自定义 headers，因此 headers 可覆盖） */
   auth?: WebhookAuth;
 }
 
 export type AutomationAction = PromptAction | WebhookAction;
 
 // ============================================================================
-// Condition Types
+// 条件类型
 // ============================================================================
 
-/** Time-of-day and day-of-week condition */
+/** 时间和星期条件 */
 export interface TimeCondition {
   condition: 'time';
-  /** Start time in 24h HH:MM format */
+  /** 开始时间，24 小时制 HH:MM */
   after?: string;
-  /** End time in 24h HH:MM format */
+  /** 结束时间，24 小时制 HH:MM */
   before?: string;
-  /** Days of week (3-letter lowercase: mon, tue, wed, thu, fri, sat, sun) */
+  /** 星期，3 字母小写：mon/tue/wed/thu/fri/sat/sun */
   weekday?: string[];
-  /** IANA timezone (falls back to matcher timezone, then system local) */
+  /** IANA 时区（先回退 matcher 时区，再回退系统本地时区） */
   timezone?: string;
 }
 
-/** State/field check condition with HA-style from/to for transitions */
+/** 状态/字段检查条件，支持 HA 风格的 from/to transition */
 export interface StateCondition {
   condition: 'state';
-  /** Field name to check (e.g. 'permissionMode', 'sessionStatus', 'labels', 'isFlagged') */
+  /** 要检查的字段名，例如 'permissionMode'、'sessionStatus'、'labels'、'isFlagged' */
   field: string;
-  /** Exact value match */
+  /** 精确值匹配 */
   value?: unknown;
-  /** Transition: previous value (mapped via TRANSITION_FIELDS) */
+  /** Transition：旧值（通过 TRANSITION_FIELDS 映射） */
   from?: unknown;
-  /** Transition: new value (mapped via TRANSITION_FIELDS) */
+  /** Transition：新值（通过 TRANSITION_FIELDS 映射） */
   to?: unknown;
-  /** Array membership check */
+  /** 数组包含检查 */
   contains?: string;
-  /** Negation: matches anything except this value */
+  /** 取反：匹配除该值外的任何值 */
   not_value?: unknown;
 }
 
-/** Logical composition condition (and/or/not) */
+/** 逻辑组合条件（与/或/非） */
 export interface LogicalCondition {
   condition: 'and' | 'or' | 'not';
   conditions: AutomationCondition[];
 }
 
-/** Union of all condition types */
+/** 所有条件类型的联合 */
 export type AutomationCondition = TimeCondition | StateCondition | LogicalCondition;
 
 // ============================================================================
-// Matcher Definition
+// Matcher 定义
 // ============================================================================
 
 export interface AutomationMatcher {
-  /** Short 6-character hex ID for stable identification across config changes. */
+  /** 6 位十六进制短 ID，用于配置变更后仍能稳定标识同一个 matcher */
   id?: string;
-  /** Optional display name. If omitted, derived from the first action. */
+  /** 可选显示名。省略时从第一个 action 推导。 */
   name?: string;
-  /** Regex pattern for matching event data (not used for SchedulerTick) */
+  /** 用于匹配事件数据的正则（SchedulerTick 不使用） */
   matcher?: string;
-  /** Cron expression for SchedulerTick events (5-field format) */
+  /** SchedulerTick 事件使用的 cron 表达式（5 字段格式） */
   cron?: string;
-  /** IANA timezone for cron evaluation (e.g., "Europe/Budapest", "America/New_York") */
+  /** cron 求值使用的 IANA 时区，例如 "Europe/Budapest" */
   timezone?: string;
-  /** Permission mode for sessions created by prompt actions. */
+  /** prompt action 创建会话的权限模式 */
   permissionMode?: PermissionMode;
-  /** Labels to apply to sessions created by prompt actions */
+  /** prompt action 创建会话要附加的标签 */
   labels?: string[];
-  /** Whether this automation matcher is enabled. Defaults to true. Set to false to disable without removing. */
+  /** 该 matcher 是否启用，默认 true；设为 false 可在不删除的情况下禁用 */
   enabled?: boolean;
-  /** Optional conditions that must all pass (AND) after matcher matches, before actions fire */
+  /** 可选条件：matcher 匹配后、action 触发前必须全部通过（AND） */
   conditions?: AutomationCondition[];
   /**
-   * Optional Telegram forum-topic name. When set, sessions spawned by this
-   * matcher are bound to a forum topic of this name in the workspace's paired
-   * supergroup. The topic is created on first use and reused thereafter.
-   * Multiple matchers using the same value share one topic.
+   * 可选 Telegram 论坛主题名。
+   * 设置后，该 matcher 创建的会话会绑定到 workspace 配对超级群中的对应主题。
+   * 首次使用时创建主题，之后复用；多个 matcher 使用相同值会共享一个主题。
    *
-   * Silently ignored when:
-   *   - No supergroup is paired in Settings → Messaging → Telegram
-   *   - The Telegram bot is not connected
-   *   - The bot lacks "Manage Topics" permission in the supergroup
+   * 以下情况会被静默忽略：
+   *   - Settings → Messaging → Telegram 中没有配对超级群
+   *   - Telegram 机器人未连接
+   *   - 机器人在超级群中没有“管理主题”权限
    */
   telegramTopic?: string;
   actions: AutomationAction[];
@@ -187,76 +186,76 @@ export interface AutomationsConfig {
 }
 
 // ============================================================================
-// Action Results
+// 动作结果
 // ============================================================================
 
-/** References parsed from a prompt (@name for sources and skills) */
+/** 从 prompt 中解析出的 @name 引用（source 和 skill 都用 @name 语法） */
 export interface PromptReferences {
   /**
-   * All @name references found in the prompt.
-   * These could be sources (@linear, @github) or skills (@commit, @review-pr).
-   * The caller should resolve which are sources vs skills based on available configurations.
+   * prompt 中找到的所有 @name 引用。
+   * 可能是 source（如 @linear、@github）或 skill（如 @commit、@review-pr）。
+   * 调用方需根据可用配置判断哪些是 source、哪些是 skill。
    */
   mentions: string[];
 }
 
-/** Result of a prompt action - returns the prompt to be executed by caller */
+/** Prompt 动作的结果：把展开后的 prompt 返回给调用方执行 */
 export interface PromptActionResult {
   type: 'prompt';
   prompt: string;
-  /** The expanded prompt with environment variables substituted */
+  /** 已替换环境变量的展开后 prompt */
   expandedPrompt: string;
-  /** References to sources and skills found in the prompt */
+  /** prompt 中引用的 source/skill */
   references: PromptReferences;
 }
 
-/** Result of a webhook action */
+/** Webhook 动作的结果 */
 export interface WebhookActionResult {
   type: 'webhook';
-  /** The URL that was called */
+  /** 实际调用的 URL */
   url: string;
-  /** HTTP status code from the response */
+  /** 响应 HTTP 状态码 */
   statusCode: number;
-  /** Whether the request was successful (2xx status) */
+  /** 请求是否成功（2xx 状态） */
   success: boolean;
-  /** Error message if the request failed */
+  /** 失败时的错误信息 */
   error?: string;
-  /** Number of attempts made (1 = no retry, 2+ = retried) */
+  /** 尝试次数（1 表示未重试，2+ 表示重试过） */
   attempts?: number;
-  /** Total duration including retries, in ms */
+  /** 含重试在内的总耗时（毫秒） */
   durationMs?: number;
-  /** Captured response body (only when captureResponse is true, truncated to 4KB) */
+  /** 截取的响应体（仅在 captureResponse 为 true 时存在，最多 4KB） */
   responseBody?: string;
 }
 
 export type ActionExecutionResult = PromptActionResult | WebhookActionResult;
 
-/** A pending prompt with its metadata */
+/** 待执行的 prompt 及其元数据 */
 export interface PendingPrompt {
-  /** The session ID this prompt should be sent to */
+  /** 该 prompt 要发送到的会话 ID */
   sessionId: string | undefined;
-  /** The automation matcher ID this prompt originated from */
+  /** 来源 matcher ID */
   matcherId?: string;
-  /** Human-readable automation name (from matcher.name or derived fallback) */
+  /** 人类可读的自动化名（来自 matcher.name 或推导） */
   automationName?: string;
-  /** The expanded prompt text */
+  /** 展开后的 prompt 文本 */
   prompt: string;
   /**
-   * All @mentions found in the prompt (sources and skills).
-   * The caller should resolve which are sources vs skills based on available configurations.
+   * prompt 中找到的所有 @mention（source 和 skill）。
+   * 调用方需根据可用配置解析哪些是 source/skill。
    */
   mentions: string[];
-  /** Labels to apply to the created session */
+  /** 要附加到新建会话的标签 */
   labels?: string[];
-  /** Permission mode for the created session (from matcher config) */
+  /** 新建会话的权限模式（来自 matcher 配置） */
   permissionMode?: PermissionMode;
-  /** LLM connection slug for the created session (falls back to default if not found) */
+  /** 新建会话使用的 LLM connection slug（找不到则回退默认） */
   llmConnection?: string;
-  /** Model ID for the created session (falls back to provider default if invalid) */
+  /** 新建会话使用的模型 ID（无效则回退 provider 默认） */
   model?: string;
-  /** Thinking level for the created session (falls back to workspace default when omitted) */
+  /** 新建会话的思考级别（省略则回退 workspace 默认） */
   thinkingLevel?: ThinkingLevel;
-  /** Forum-topic name to bind the new session to (Telegram supergroup, when paired). */
+  /** 新建会话要绑定的 Telegram 论坛主题名（仅在配对超级群时生效） */
   telegramTopic?: string;
 }
 
@@ -264,15 +263,15 @@ export interface AutomationResult {
   event: string;
   matched: number;
   results: ActionExecutionResult[];
-  /** Prompts that should be executed by Craft Agent (with metadata) */
+  /** 应由 Craft Agent 执行的 prompt（含元数据） */
   pendingPrompts: PendingPrompt[];
 }
 
 // ============================================================================
-// Validation Types
+// 验证类型
 // ============================================================================
 
-/** Internal validation result that includes the parsed config */
+/** 内部验证结果，包含解析后的配置 */
 export type AutomationsValidationResult = {
   valid: boolean;
   errors: string[];
@@ -280,36 +279,36 @@ export type AutomationsValidationResult = {
 };
 
 // ============================================================================
-// SDK Types
+// SDK 类型
 // ============================================================================
 
 /**
- * SDK automation input type - union of all possible SDK event inputs
+ * SDK 自动化输入类型 - 所有可能的 SDK 事件输入的联合。
  */
 export interface SdkAutomationInput {
   hook_event_name: string;
-  // Tool events
+  // 工具事件
   tool_name?: string;
   tool_input?: Record<string, unknown>;
   tool_response?: string;
   tool_use_id?: string;
-  // Session events
+  // 会话事件
   source?: string;  // startup, resume, clear, compact
   model?: string;
-  // Subagent events
+  // 子代理事件
   agent_id?: string;
   agent_type?: string;
-  // User prompt events
+  // 用户 prompt 事件
   prompt?: string;
-  // Notification events
+  // 通知事件
   message?: string;
   title?: string;
-  // Error events
+  // 错误事件
   error?: string;
 }
 
 /**
- * SDK automation callback signature (matches Claude SDK HookCallback type)
+ * SDK 自动化回调签名（与 Claude SDK 的 HookCallback 类型对应）。
  */
 export type SdkAutomationCallback = (
   input: SdkAutomationInput,
@@ -318,8 +317,8 @@ export type SdkAutomationCallback = (
 ) => Promise<{ continue: boolean; reason?: string }>;
 
 /**
- * SDK automation matcher format (matches Claude SDK HookCallbackMatcher type)
- * Note: The `hooks` field name is kept as-is to match the Claude SDK interface.
+ * SDK automation matcher 格式（与 Claude SDK 的 HookCallbackMatcher 类型对应）。
+ * 注意：hooks 字段名保持与 Claude SDK 接口一致。
  */
 export interface SdkAutomationCallbackMatcher {
   matcher?: string;
@@ -328,18 +327,18 @@ export interface SdkAutomationCallbackMatcher {
 }
 
 // ============================================================================
-// Session Metadata
+// 会话元数据
 // ============================================================================
 
 /**
- * Lightweight session metadata for diffing.
- * Only includes fields that trigger automations.
+ * 轻量级会话元数据，仅包含会触发自动化的字段。
+ * 用于前后两次快照 diff，判断要不要发事件。
  */
 export interface SessionMetadataSnapshot {
   permissionMode?: string;
   labels?: string[];
   isFlagged?: boolean;
   sessionStatus?: string;
-  /** Session name (user-defined or auto-generated) */
+  /** 会话名称（用户定义或自动生成） */
   sessionName?: string;
 }

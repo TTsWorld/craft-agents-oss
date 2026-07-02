@@ -5,9 +5,10 @@ import { Check, CreditCard, Key, Cpu } from "lucide-react"
 import { StepFormLayout, BackButton, ContinueButton } from "./primitives"
 import type { LlmAuthType, LlmProviderType } from "@craft-agent/shared/config/llm-connections"
 
-/** Provider segment for the segmented control */
+/** 分段控件（segmented control）的当前选中的提供商分组 */
 export type ProviderSegment = 'anthropic' | 'pi'
 
+// Beta 角标小组件
 const BetaBadge = ({ label }: { label: string }) => (
   <span className="inline px-1.5 pt-[2px] pb-[3px] text-[10px] font-accent font-bold rounded-[4px] bg-accent text-background ml-1 relative -top-[1px]">
     {label}
@@ -15,8 +16,8 @@ const BetaBadge = ({ label }: { label: string }) => (
 )
 
 /**
- * API setup method for onboarding.
- * Maps to specific LlmProviderType + LlmAuthType combinations.
+ * API 设置方式。
+ * 每种方式对应一组 LlmProviderType + LlmAuthType。
  *
  * - 'claude_oauth' → anthropic + oauth
  * - 'anthropic_api_key' → anthropic + api_key
@@ -32,7 +33,8 @@ export type ApiSetupMethod =
   | 'pi_api_key'
 
 /**
- * Map ApiSetupMethod to the underlying LLM connection types.
+ * 把 ApiSetupMethod 映射为底层 LLM 连接类型。
+ * 类似 Golang 里的 switch 枚举转换函数。
  */
 export function apiSetupMethodToConnectionTypes(method: ApiSetupMethod): {
   providerType: LlmProviderType;
@@ -52,6 +54,7 @@ export function apiSetupMethodToConnectionTypes(method: ApiSetupMethod): {
   }
 }
 
+// 单个 API 设置选项的数据结构
 interface ApiSetupOption {
   id: ApiSetupMethod
   name: string
@@ -60,6 +63,7 @@ interface ApiSetupOption {
   providerType: LlmProviderType
 }
 
+// 每种设置方式对应的图标
 const API_SETUP_ICONS: Record<ApiSetupMethod, React.ReactNode> = {
   claude_oauth: <CreditCard className="size-4" />,
   anthropic_api_key: <Key className="size-4" />,
@@ -68,17 +72,18 @@ const API_SETUP_ICONS: Record<ApiSetupMethod, React.ReactNode> = {
   pi_api_key: <Key className="size-4" />,
 }
 
+// API 设置步骤的 props 接口
 interface APISetupStepProps {
   selectedMethod: ApiSetupMethod | null
   onSelect: (method: ApiSetupMethod) => void
   onContinue: () => void
   onBack: () => void
-  /** Initial segment to show (defaults to 'anthropic') */
+  /** 默认展示的分组，默认 anthropic */
   initialSegment?: ProviderSegment
 }
 
 /**
- * Individual option button component
+ * 单个选项按钮组件
  */
 function OptionButton({
   option,
@@ -101,7 +106,7 @@ function OptionButton({
           : "bg-foreground-2"
       )}
     >
-      {/* Icon */}
+      {/* 图标 */}
       <div
         className={cn(
           "flex size-10 shrink-0 items-center justify-center rounded-lg",
@@ -111,7 +116,7 @@ function OptionButton({
         {option.icon}
       </div>
 
-      {/* Content */}
+      {/* 内容 */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="font-medium text-sm">{option.name}</span>
@@ -121,7 +126,7 @@ function OptionButton({
         </p>
       </div>
 
-      {/* Check */}
+      {/* 选中勾选标记 */}
       <div
         className={cn(
           "flex size-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors",
@@ -137,7 +142,7 @@ function OptionButton({
 }
 
 /**
- * Segmented control for provider selection
+ * 提供商分组分段控件
  */
 function ProviderSegmentedControl({
   activeSegment,
@@ -171,12 +176,12 @@ function ProviderSegmentedControl({
 }
 
 /**
- * APISetupStep - Choose how to connect your AI agents
+ * APISetupStep - 选择如何连接 AI 服务
  *
- * Features a segmented control to filter by provider:
- * - Anthropic - Claude Pro/Max or API Key
- * - OpenAI - ChatGPT Plus/Pro or API Key
- * - GitHub Copilot - Copilot subscription
+ * 使用分段控件按提供商过滤：
+ * - Anthropic：Claude Pro/Max 或 API Key
+ * - OpenAI：ChatGPT Plus/Pro 或 API Key
+ * - GitHub Copilot：Copilot 订阅
  */
 export function APISetupStep({
   selectedMethod,
@@ -236,14 +241,12 @@ export function APISetupStep({
     },
   ]
 
-  // Filter options based on active segment
+  // 根据当前分组过滤可选项
   const filteredOptions = API_SETUP_OPTIONS.filter(o => o.providerType === activeSegment)
 
-  // Handle segment change - clear selection if it doesn't belong to new segment
+  // 切换分组时保留当前选择，不自动清空（用户可能切回来看）
   const handleSegmentChange = (segment: ProviderSegment) => {
     setActiveSegment(segment)
-    // If current selection doesn't match the new segment, don't auto-clear
-    // (user might want to keep it and switch back)
   }
 
   return (
@@ -257,21 +260,21 @@ export function APISetupStep({
         </>
       }
     >
-      {/* Provider segmented control */}
+      {/* 提供商分段控件 */}
       <ProviderSegmentedControl
         activeSegment={activeSegment}
         onSegmentChange={handleSegmentChange}
         segmentLabels={SEGMENT_LABELS}
       />
 
-      {/* Segment description */}
+      {/* 分组描述 */}
       <div className="bg-foreground-2 rounded-[8px] p-4 mb-3">
         <p className="text-sm text-muted-foreground text-center">
           {SEGMENT_DESCRIPTIONS[activeSegment]}
         </p>
       </div>
 
-      {/* Filtered options for selected provider - min-h keeps size consistent across tabs */}
+      {/* 当前分组下的选项列表；min-h 让切换分组时高度保持一致 */}
       <div className="space-y-3 min-h-[180px]">
         {filteredOptions.map((option) => (
           <OptionButton

@@ -1,8 +1,8 @@
 /**
- * Cron Matching Utilities for Automations
+ * Cron 匹配工具
  *
- * Determines if a cron expression matches the current time.
- * Used by SchedulerTick automations to trigger at specific intervals.
+ * 判断 cron 表达式是否匹配当前时间。
+ * 供 SchedulerTick 自动化触发使用。
  */
 
 import { Cron } from 'croner';
@@ -11,16 +11,15 @@ import { createLogger } from '../utils/debug.ts';
 const log = createLogger('cron-matcher');
 
 /**
- * Check if a cron expression matches the current time.
- * Uses croner's nextRun to determine if the current minute matches the cron pattern.
+ * 检查 cron 表达式是否匹配当前分钟。
  *
- * @param cronExpr - Cron expression in 5-field format (minute hour day-of-month month day-of-week)
- * @param timezone - Optional IANA timezone (e.g., "Europe/Budapest", "America/New_York")
- * @returns true if the cron expression matches the current minute
+ * @param cronExpr - 5 字段 cron 表达式：分 时 日 月 周几
+ * @param timezone - 可选 IANA 时区，例如 "Europe/Budapest"
+ * @returns 当前分钟匹配时返回 true
  *
  * @example
- * matchesCron('* * * * *')                    // Matches every minute
- * matchesCron('0 9 * * *', 'Europe/Budapest') // Matches 9:00 AM Budapest time
+ * matchesCron('* * * * *')                    // 每分钟都匹配
+ * matchesCron('0 9 * * *', 'Europe/Budapest') // 布达佩斯时间 9:00 匹配
  */
 export function matchesCron(cronExpr: string, timezone?: string): boolean {
   try {
@@ -28,11 +27,11 @@ export function matchesCron(cronExpr: string, timezone?: string): boolean {
     const job = new Cron(cronExpr, options);
     const now = new Date();
 
-    // Get start of current minute (floored to :00 seconds)
+    // 把当前时间截断到本分钟 :00 秒
     const startOfMinute = new Date(now);
     startOfMinute.setSeconds(0, 0);
 
-    // Check from 1 second before the start of this minute
+    // 从本分钟开始前 1 秒检查下一次执行时间
     const checkFrom = new Date(startOfMinute.getTime() - 1000);
     const nextRun = job.nextRun(checkFrom);
 
@@ -40,7 +39,7 @@ export function matchesCron(cronExpr: string, timezone?: string): boolean {
     log.debug(`[matchesCron] now=${now.toISOString()}, startOfMinute=${startOfMinute.toISOString()}`);
     log.debug(`[matchesCron] checkFrom=${checkFrom.toISOString()}, nextRun=${nextRun?.toISOString() || 'null'}`);
 
-    // If nextRun falls within the current minute, we have a match
+    // 如果下一次执行落在当前这一分钟内，就算匹配
     if (!nextRun) {
       log.debug(`[matchesCron] No nextRun, returning false`);
       return false;

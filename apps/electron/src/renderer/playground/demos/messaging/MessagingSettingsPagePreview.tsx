@@ -1,23 +1,29 @@
 /**
  * MessagingSettingsPagePreview
+ * MessagingSettingsPagePreview：消息设置页面的 playground 预览包装器。
  *
  * Thin playground wrapper around the real MessagingSettingsPage that drives
  * the mock messaging state via `window.__playgroundMessaging` based on
  * variant props. Lets you toggle Telegram/WhatsApp connection status and
  * seed bindings without the component needing playground-specific props.
+ * 它通过 playground 变体 props 驱动 mock 状态，让设计师可以在没有后端的情况下切换连接状态和绑定数据。
  */
 
 import * as React from 'react'
+// jotai 是 React 状态管理库；useSetAtom 只返回设置 atom 的函数，不订阅 atom 变化。
 import { useSetAtom } from 'jotai'
 import MessagingSettingsPage from '../../../pages/settings/MessagingSettingsPage'
 import { setMessagingBindingsAtom, type MessagingBinding } from '../../../atoms/messaging'
 import { sessionMetaMapAtom, type SessionMeta } from '../../../atoms/sessions'
 import { playgroundMessagingHandle } from '../../mock-utils'
 
+// playground 预设：无绑定、一条绑定、多条绑定。
 type BindingsPreset = 'none' | 'one' | 'many'
 
+// playground 工作区 ID，用于把 mock 数据限定在 playground 范围内。
 const PLAYGROUND_WORKSPACE_ID = 'playground-workspace'
 
+// 根据预设生成不同的 MessagingBinding 数组；...base 展开语法复用公共字段。
 function buildBindings(preset: BindingsPreset): MessagingBinding[] {
   const base = {
     workspaceId: PLAYGROUND_WORKSPACE_ID,
@@ -74,6 +80,7 @@ function buildBindings(preset: BindingsPreset): MessagingBinding[] {
  * Mock SessionMeta entries matching the mock bindings so `getSessionTitle`
  * resolves to a real-looking title in the playground (instead of the
  * sessionId-slice fallback).
+ * 模拟 SessionMeta，让 getSessionTitle 在 playground 里显示真实名称而不是 sessionId。
  */
 const MOCK_SESSION_META: Record<string, SessionMeta> = {
   'session-aaa': {
@@ -93,23 +100,27 @@ const MOCK_SESSION_META: Record<string, SessionMeta> = {
   },
 }
 
+/** MessagingSettingsPagePreviewProps：组件 props 类型定义 */
 export interface MessagingSettingsPagePreviewProps {
   telegramConnected: boolean
   whatsappConnected: boolean
   bindings: BindingsPreset
 }
 
+/** MessagingSettingsPagePreview：函数 */
 export function MessagingSettingsPagePreview({
   telegramConnected,
   whatsappConnected,
   bindings,
 }: MessagingSettingsPagePreviewProps) {
+  // 从 jotai 拿到设置函数，用于直接修改全局状态（这里把 mock 绑定写进 atom）。
   const setBindingsAtom = useSetAtom(setMessagingBindingsAtom)
   const setSessionMetaMap = useSetAtom(sessionMetaMapAtom)
 
   // Seed session metadata once so `getSessionTitle` resolves to a real name
   // for the mock bindings. Runs on mount; cleared on unmount to avoid leaking
   // fake sessions into other playground demos.
+  // 组件挂载时把 mock session 元数据写入 atom；卸载时清理，避免污染其他 demo。
   React.useEffect(() => {
     setSessionMetaMap((prev) => {
       const next = new Map(prev)
@@ -125,6 +136,7 @@ export function MessagingSettingsPagePreview({
     }
   }, [setSessionMetaMap])
 
+  // 当 Telegram 连接状态 prop 变化时，同步到 playground mock handle。
   React.useEffect(() => {
     playgroundMessagingHandle.setTelegramConnected(
       telegramConnected,
@@ -132,6 +144,7 @@ export function MessagingSettingsPagePreview({
     )
   }, [telegramConnected])
 
+  // 当 WhatsApp 连接状态 prop 变化时，同步到 playground mock handle。
   React.useEffect(() => {
     playgroundMessagingHandle.setWhatsAppConnected(
       whatsappConnected,
@@ -139,6 +152,7 @@ export function MessagingSettingsPagePreview({
     )
   }, [whatsappConnected])
 
+  // 当绑定 preset 变化时，生成绑定数据并同时写入 mock handle 和 jotai atom。
   React.useEffect(() => {
     const seeded = buildBindings(bindings)
     playgroundMessagingHandle.setBindings(seeded)
@@ -147,5 +161,6 @@ export function MessagingSettingsPagePreview({
     setBindingsAtom(seeded)
   }, [bindings, setBindingsAtom])
 
+  // 渲染真实页面组件，所有 playground 状态已通过副作用注入。
   return <MessagingSettingsPage />
 }

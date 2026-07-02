@@ -1,9 +1,9 @@
 /**
- * Server DTO types — data shapes used by RPC handlers and SessionManager.
+ * 服务端 DTO 类型——RPC handler 与 SessionManager 使用的数据结构。
  *
- * These were previously in apps/electron/src/shared/types.ts.
- * Extracted here so handler code in @craft-agent/server-core can import
- * from @craft-agent/shared/protocol without reaching into the app.
+ * 这些类型原先放在 apps/electron/src/shared/types.ts，
+ * 现在抽取到 @craft-agent/shared/protocol，
+ * 这样 @craft-agent/server-core 里的 handler 代码无需反向依赖 app 层。
  */
 
 import type {
@@ -23,47 +23,48 @@ import type {
   CredentialAuthRequest as SharedCredentialAuthRequest,
 } from '../agent/index'
 
-// Re-export generateMessageId for handler convenience
+// 为方便 handler 复用，从 core 再导出 generateMessageId。
 export { generateMessageId } from '@craft-agent/core/types'
 
 // ---------------------------------------------------------------------------
-// Session types
+// Session 类型
 // ---------------------------------------------------------------------------
 
 /**
- * Dynamic status ID referencing workspace status config.
- * Validated at runtime via validateSessionStatus().
- * Falls back to 'todo' if status doesn't exist.
+ * 会话状态 ID，指向 workspace 配置里的某个 status。
+ * 运行时会通过 validateSessionStatus() 校验；
+ * 若对应的 status 不存在则回退为 'todo'。
  */
 export type SessionStatus = string
 
+// 内置状态 ID，相当于系统预设的几种任务状态。
 export type BuiltInStatusId = 'todo' | 'in-progress' | 'needs-review' | 'done' | 'cancelled'
 
 /**
- * Electron-specific Session type (includes runtime state).
- * Extends core Session with messages array and processing state.
+ * Electron 端的 Session 类型（包含运行时状态）。
+ * 在 core 的 Session 基础上扩展了 messages 数组与处理状态。
  */
 export interface Session {
   id: string
   workspaceId: string
   workspaceName: string
   name?: string
-  /** Preview of first user message (from JSONL header, for lazy-loaded sessions) */
+  /** 第一条用户消息的预览（来自 JSONL header，用于懒加载会话）。 */
   preview?: string
   lastMessageAt: number
   messages: Message[]
   isProcessing: boolean
   isFlagged?: boolean
-  /** Permission mode for this session ('safe', 'ask', 'allow-all') */
+  /** 当前会话的权限模式（'safe' | 'ask' | 'allow-all'）。 */
   permissionMode?: PermissionMode
   sessionStatus?: SessionStatus
-  /** Labels (additive tags, many-per-session — bare IDs or "id::value" entries) */
+  /** 标签（可加多个，ID 或 "id::value" 形式）。 */
   labels?: string[]
   lastReadMessageId?: string
   /**
-   * Explicit unread flag - single source of truth for NEW badge.
-   * Set to true when assistant message completes while user is NOT viewing.
-   * Set to false when user views the session (and not processing).
+   * 显式未读标记：NEW badge 的唯一真相源。
+   * 当助手完成回复而用户未在看该会话时设为 true；
+   * 当用户查看会话（且不在处理中）时设为 false。
    */
   hasUnread?: boolean
   enabledSourceSlugs?: string[]
@@ -77,7 +78,7 @@ export interface Session {
   lastMessageRole?: 'user' | 'assistant' | 'plan' | 'tool' | 'error'
   lastFinalMessageId?: string
   isAsyncOperationOngoing?: boolean
-  /** @deprecated Use isAsyncOperationOngoing instead */
+  /** @deprecated 请改用 isAsyncOperationOngoing。 */
   isRegeneratingTitle?: boolean
   currentStatus?: {
     message: string
@@ -93,10 +94,10 @@ export interface Session {
     costUsd: number
     cacheReadTokens?: number
     cacheCreationTokens?: number
-    /** Model's context window size in tokens (from SDK modelUsage) */
+    /** 模型上下文窗口大小（来自 SDK modelUsage）。 */
     contextWindow?: number
   }
-  /** When true, session is hidden from session list (e.g., mini edit sessions) */
+  /** 为 true 时该会话在列表中隐藏（例如 mini edit 会话）。 */
   hidden?: boolean
   isArchived?: boolean
   archivedAt?: number
@@ -119,21 +120,21 @@ export interface Session {
   taskDraft?: boolean
 }
 
+// 创建会话时可选项。
 export interface CreateSessionOptions {
   name?: string
   permissionMode?: PermissionMode
   /**
-   * Reasoning/thinking level override. When set, takes precedence over workspace
-   * and global defaults. Silently ignored by the underlying SDK on non-reasoning
-   * models (e.g. gpt-4o) — provider drivers don't attach the reasoning param to
-   * the API request for models with `reasoning: false` in the Pi SDK catalog.
+   * 推理/思考级别覆盖。设置后优先于 workspace 与全局默认值。
+   * 对非推理模型（如 gpt-4o）会被底层 SDK 静默忽略——
+   * Pi SDK catalog 中 `reasoning: false` 的模型不会附带 reasoning 参数。
    */
   thinkingLevel?: ThinkingLevel
   /**
-   * Working directory for the session:
-   * - 'user_default' or undefined: Use workspace's configured default working directory
-   * - 'none': No working directory (session folder only)
-   * - Absolute path string: Use this specific path
+   * 会话的工作目录：
+   * - 'user_default' 或 undefined：使用 workspace 配置的默认目录
+   * - 'none'：没有工作目录（仅 session 文件夹）
+   * - 绝对路径字符串：使用指定路径
    */
   workingDirectory?: string | 'user_default' | 'none'
   model?: string
@@ -145,11 +146,11 @@ export interface CreateSessionOptions {
   isFlagged?: boolean
   enabledSourceSlugs?: string[]
   /**
-   * Message ID to branch from. This is a hard context cutoff:
-   * the new session must not include model context from later parent messages.
+   * 从哪条消息分叉。这是一个硬上下文截断：
+   * 新会话不能包含父会话后续消息的模型上下文。
    */
   branchFromMessageId?: string
-  /** Parent session ID used together with branchFromMessageId. */
+  /** 与 branchFromMessageId 一起使用的父会话 ID。 */
   branchFromSessionId?: string
   /** Bind the new session to a workspace project (inherits project's workingDirectory). */
   projectId?: string
@@ -171,6 +172,7 @@ export interface CreateSessionOptions {
   applyTaskLabel?: boolean
 }
 
+// 跨服务端/远程迁移会话时传输的 payload。
 export interface RemoteSessionTransferPayload {
   sourceSessionId: string
   name?: string
@@ -185,11 +187,11 @@ export interface ImportRemoteSessionTransferResult {
 }
 
 // ---------------------------------------------------------------------------
-// Tasks (Conductor) DTOs — wire contract for the tasks:* channels.
+// Tasks（Conductor）DTO —— tasks:* 频道的线缆契约。
 // ---------------------------------------------------------------------------
 
 export interface TaskValidationIssueDto {
-  /** Dotted path into the spec, e.g. "nodes.design.depends_on". */
+  /** spec 内的点号路径，例如 "nodes.design.depends_on"。 */
   path: string
   message: string
   severity: 'error' | 'warning'
@@ -200,88 +202,86 @@ export interface TaskValidationResultDto {
   valid: boolean
   errors: TaskValidationIssueDto[]
   warnings: TaskValidationIssueDto[]
-  /** Pre-flight estimate: total nodes and how many sessions a run would spawn. */
+  /** 预检估算：总节点数以及一次运行会派生多少个 session。 */
   estimate?: { nodeCount: number; sessionNodeCount: number }
 }
 
 export interface TaskCreateRequest {
-  /** task.yaml source text (authoritative). */
+  /** task.yaml 源文本（权威来源）。 */
   yaml: string
   /**
-   * When this YAML was authored by a `tasks:generate` orchestrator, the id of that hidden
-   * draft session. tasks:create promotes it in place (clears taskDraft, binds taskSlug)
-   * instead of minting a second top-level session — preventing duplicate board tiles (#bug1).
-   * Only honored when the draft is still unadopted and its slug matches; otherwise ignored.
+   * 当此 YAML 由 `tasks:generate` 编排器生成时，该隐藏草稿 session 的 id。
+   * tasks:create 会就地提升它（清除 taskDraft、绑定 taskSlug），
+   * 而不是另起一个顶级 session —— 避免出现重复的看板卡片（#bug1）。
+   * 仅当草稿仍未被采纳且 slug 匹配时生效；否则忽略。
    */
   orchestratorSessionId?: string
   /**
-   * Edit-mode bind: the id of an existing, board-visible session (e.g. a quick-add tile) that the
-   * user is saving this spec onto. tasks:create calls `bindExistingSessionToTask` and HARD-ERRORS
-   * if the bind fails — it must never fall through to minting a fresh orchestrator (that would
-   * leave a duplicate tile). Distinct from `orchestratorSessionId`, which adopts a hidden draft.
+   * 编辑模式绑定：用户正在把 spec 保存到的一个已存在、看板上可见的 session（如快速添加的卡片）
+   * 的 id。tasks:create 会调用 `bindExistingSessionToTask`，绑定失败时硬报错 ——
+   * 绝不能回退到创建新编排器（那会留下重复卡片）。与 `orchestratorSessionId` 不同，后者是采纳隐藏草稿。
    */
   attachToExistingSession?: string
 }
 
 export interface TaskCreateResult {
-  /** Empty string when validation failed — inspect `validation`. */
+  /** 校验失败时为空字符串 —— 检查 `validation`。 */
   slug: string
-  /** The persistent parent/orchestrator session (author + final verifier). */
+  /** 持久化的父级/编排器 session（作者 + 最终验证者）。 */
   orchestratorSessionId: string
   validation: TaskValidationResultDto
   /**
-   * Resolved id of the reserved "Task" label applied to the orchestrator. May differ from the
-   * literal 'task' (a user-owned label with that name forces a fresh slug like 'task-2'), so
-   * navigation/filtering MUST use this id. Undefined when label application failed (fail-soft).
+   * 应用到编排器的保留 "Task" 标签的已解析 id。可能与字面量 'task' 不同
+   *（用户自有的同名标签会强制生成新 slug 如 'task-2'），因此导航/过滤必须使用此 id。
+   * 标签应用失败时为 undefined（容错）。
    */
   taskLabelId?: string
 }
 
 export interface TaskGenerateRequest {
-  /** Natural-language goal the orchestrator turns into a task.yaml DAG. */
+  /** 编排器要转化为 task.yaml DAG 的自然语言目标。 */
   goal: string
-  /** Optional working title for the task / orchestrator session. */
+  /** 任务/编排器 session 的可选工作标题。 */
   title?: string
-  /** Optional model for the orchestrator session (defaults to the session default). */
+  /** 编排器 session 的可选模型（默认为 session 默认模型）。 */
   model?: string
-  /** Optional working directory for the orchestrator session (defaults to project/workspace cwd). */
+  /** 编排器 session 的可选工作目录（默认为 project/workspace cwd）。 */
   cwd?: string
-  /** Project to bind the draft orchestrator to, so it authors against the project's `<project_context>`. */
+  /** 要绑定到的项目，使草稿编排器基于该项目的 `<project_context>` 进行编写。 */
   projectId?: string
   /**
-   * LLM connection slug that serves `model`. Required for non-default (e.g. pi/*) models — without it
-   * the authoring turn can't resolve a backend and completes instantly with no output (invalid spec).
+   * 服务 `model` 的 LLM 连接 slug。非默认模型（如 pi/*）必填 ——
+   * 否则编写轮次无法解析后端并立即完成且无输出（无效 spec）。
    */
   llmConnection?: string
-  /** Task-level source slugs the draft orchestrator may author against (omitted → workspace default). */
+  /** 草稿编排器可使用的 task 级 source slug（省略 → workspace 默认）。 */
   enabledSourceSlugs?: string[]
-  /** Permission mode for the draft orchestrator, so its authoring turn matches the task's chosen
-   *  autonomy from the start instead of running at the workspace default until adoption. */
+  /** 草稿编排器的权限模式，使其编写轮次从一开始就匹配任务选择的自主程度，
+   *  而非在采纳前一直运行在 workspace 默认模式。 */
   permissionMode?: PermissionMode
 }
 
 /**
- * Synchronous ack for `tasks:generate`. The orchestrator session is created immediately
- * (cheap) and returned right away; the authored spec arrives later via the `tasks:generated`
- * push event. This keeps the RPC well under the uniform client timeout even when authoring
- * takes longer than the request budget.
+ * `tasks:generate` 的同步确认。编排器 session 会立即创建（开销很小）并马上返回；
+ * 编写好的 spec 稍后通过 `tasks:generated` 推送事件到达。这样即使编写耗时
+ * 超出请求预算，RPC 也能远低于统一客户端超时。
  */
 export interface TaskGenerateAck {
-  /** The persistent orchestrator session, reachable immediately so its work is never lost. */
+  /** 持久化的编排器 session，立即可达，确保其工作不会丢失。 */
   orchestratorSessionId: string
 }
 
 export interface TaskGenerateResult {
-  /** The persistent orchestrator session that authored the spec (also handles revisions). */
+  /** 编写 spec 的持久化编排器 session（也负责处理修订）。 */
   orchestratorSessionId: string
-  /** Slug of the authored spec; empty when generation produced an invalid spec. */
+  /** 编写出的 spec 的 slug；生成无效 spec 时为空。 */
   slug: string
-  /** Parsed TaskSpec when valid (consumers cast to TaskSpec from @craft-agent/shared/tasks). */
+  /** 有效时解析出的 TaskSpec（消费者从 @craft-agent/shared/tasks 转型）。 */
   spec?: unknown
-  /** The raw task.yaml the orchestrator produced — shown and editable in the editor. */
+  /** 编排器生成的原始 task.yaml —— 在编辑器中展示并可编辑。 */
   yaml: string
   validation: TaskValidationResultDto
-  /** Set when generation failed before producing a spec (e.g. orchestrator turn errored/timed out). */
+  /** 在生成 spec 前就失败时设置（例如编排器轮次出错/超时）。 */
   error?: string
 }
 
@@ -308,55 +308,56 @@ export interface TaskRunSnapshotDto {
   status: string
   orchestratorSessionId?: string
   nodes: TaskNodeRunStateDto[]
-  /** Sum of each child's (input + output) tokens observed at completion. */
+  /** 完成时观测到的每个子任务的（输入 + 输出）token 之和。 */
   tokensUsed: number
 }
 
 export interface TaskGetResult {
   slug: string
   validation: TaskValidationResultDto
-  /** The parsed TaskSpec (from @craft-agent/shared/tasks) when valid; consumers cast. */
+  /** 有效时解析出的 TaskSpec（来自 @craft-agent/shared/tasks）；消费者转型。 */
   spec?: unknown
-  /** Active run snapshot when a runId was supplied and known; otherwise null. */
+  /** 提供了 runId 且已知时的活跃运行快照；否则为 null。 */
   run?: TaskRunSnapshotDto | null
 }
 
-/** One subtask's outcome in a completed/persisted run, for the editor's Results tab. */
+/** 已完成/持久化运行中单个子任务的结果，用于编辑器的 Results 标签页。 */
 export interface TaskResultNodeDto {
   id: string
   title: string
   /** pending | running | done | failed | cancelled | skipped */
   state: string
-  /** The child session that ran this node, recovered from the run log (drill-in link). */
+  /** 运行该节点的子 session，从运行日志恢复（可深入查看链接）。 */
   sessionId?: string
-  /** The node's recorded final output text (from nodes/<id>.json), when present. */
+  /** 该节点记录的最终输出文本（来自 nodes/<id>.json），存在时提供。 */
   output?: string
 }
 
 /**
- * Storage-backed read of a task run's outcome — verdict + per-node final output, recovered from
- * the persisted run artifacts (run-log.jsonl, nodes/<id>.json, per-run spec.json snapshot). Unlike
- * `TaskRunSnapshotDto` this survives restart and does not require an active in-memory run.
+ * 存储层读取的任务运行结果 —— 结论 + 每个节点的最终输出，从持久化的运行产物中恢复
+ *（run-log.jsonl、nodes/<id>.json、每次运行的 spec.json 快照）。与 `TaskRunSnapshotDto`
+ * 不同，它能在重启后保留且不需要内存中的活跃运行。
  */
 export interface TaskResultsDto {
   slug: string
-  /** The run inspected; null when the task has never been run. */
+  /** 检查的运行；任务从未运行过时为 null。 */
   runId: string | null
-  /** All run ids for this task (newest last), for a run picker. */
+  /** 该任务的所有运行 id（最新在最后），用于运行选择器。 */
   runIds: string[]
-  /** The most recent verdict (kept for back-compat with single-verdict consumers). */
+  /** 最近的结论（为单结论消费者保留以向后兼容）。 */
   verdict?: { result: 'pass' | 'fail' | 'unparsed'; reason?: string; nodes?: string[] }
-  /** Every verdict in order (a FAIL→repair loop produces several), for the Results history view. */
+  /** 按顺序排列的所有结论（FAIL→修复循环会产生多个），用于 Results 历史视图。 */
   verdicts?: { result: 'pass' | 'fail' | 'unparsed'; reason?: string; nodes?: string[] }[]
-  /** Repair-loop accounting: attempts consumed (= count of FAIL verdicts) and the resolved cap. */
+  /** 修复循环核算：已消耗的尝试次数（= FAIL 结论数）和解析出的上限。 */
   repair?: { used: number; max: number }
-  /** Terminal run status recovered from the run-log (completed | failed | stopped | …). */
+  /** 从运行日志恢复的终止运行状态（completed | failed | stopped | …）。 */
   runStatus?: string
-  /** The run's acceptance criteria (from the per-run spec snapshot), shown above the verdict. */
+  /** 该运行的验收标准（来自每次运行的 spec 快照），显示在结论上方。 */
   acceptanceCriteria?: string
   nodes: TaskResultNodeDto[]
 }
 
+// 权限模式当前状态，包含切换来源与时间戳。
 export interface PermissionModeState {
   permissionMode: PermissionMode
   previousPermissionMode?: PermissionMode
@@ -367,10 +368,10 @@ export interface PermissionModeState {
 }
 
 // ---------------------------------------------------------------------------
-// Session events (main → renderer)
+// Session 事件（主进程 → 渲染进程）
 // ---------------------------------------------------------------------------
 
-// turnId: Correlation ID from the API's message.id, groups all events in an assistant turn
+// turnId：API 返回 message.id 的关联 ID，一次 assistant 回复产生的所有事件共享它。
 export type SessionEvent =
   | { type: 'text_delta'; sessionId: string; delta: string; turnId?: string }
   | { type: 'text_complete'; sessionId: string; text: string; isIntermediate?: boolean; turnId?: string; parentToolUseId?: string; timestamp?: number; messageId?: string }
@@ -434,9 +435,11 @@ export interface SendMessageOptions {
 }
 
 // ---------------------------------------------------------------------------
-// Session commands (consolidated operations)
+// Session 命令（合并多种操作）
 // ---------------------------------------------------------------------------
 
+// SessionCommand：对会话执行的一个命令，
+// 通过 `type` 字段区分不同操作，类似 Go 的 tagged union（sum type）。
 export type SessionCommand =
   | { type: 'flag' }
   | { type: 'unflag' }
@@ -475,13 +478,14 @@ export interface NewChatActionParams {
 }
 
 // ---------------------------------------------------------------------------
-// Permission / credential types
+// Permission / credential 类型
 // ---------------------------------------------------------------------------
 
 export type { BasePermissionRequest }
 
 /**
- * Permission request with session context (for multi-session Electron app)
+ * 带 session 上下文的权限请求（多会话 Electron 应用）。
+ * 继承自 core 的 BasePermissionRequest，并补充 sessionId。
  */
 export interface PermissionRequest extends BasePermissionRequest {
   sessionId: string
@@ -491,7 +495,7 @@ export interface PermissionResponseOptions {
   rememberForMinutes?: number
 }
 
-// Re-export for handler convenience
+// 为方便 handler，从 agent 模块重导出 credential 相关类型。
 export type { SharedCredentialInputMode as CredentialInputMode }
 export type CredentialRequest = SharedCredentialAuthRequest
 export type { SharedAuthRequest as AuthRequest }
@@ -506,29 +510,29 @@ export interface CredentialResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Directory browsing types (remote mode)
+// 目录浏览类型（远程模式）
 // ---------------------------------------------------------------------------
 
-/** Server-side directory listing result (for remote directory browsing). */
+/** 服务端目录列表结果（用于远程目录浏览）。 */
 export interface DirectoryListingResult {
-  /** Normalized absolute path of the listed directory (after resolve(), not symlink-resolved). */
+  /** 规范化后的目录绝对路径（经过 resolve，未解析符号链接）。 */
   currentPath: string
-  /** Parent directory path, or null if at root. */
+  /** 父目录路径，已到根时为 null。 */
   parentPath: string | null
-  /** Pre-split breadcrumb segments for display (computed server-side). */
+  /** 服务端计算好的面包屑分段，直接供 UI 展示。 */
   breadcrumbs: Array<{ name: string; path: string }>
-  /** Server platform info. */
+  /** 服务端操作系统平台。 */
   platform: 'win32' | 'darwin' | 'linux'
-  /** Whether the server truncated the directory list for safety/performance. */
+  /** 服务端是否出于安全/性能原因截断了目录列表。 */
   truncated: boolean
-  /** Total number of matching child directories before truncation. */
+  /** 截断前匹配的子目录总数。 */
   totalEntries: number
-  /** Child directory entries. */
+  /** 子目录条目。 */
   entries: Array<{ name: string; path: string; isSymlink: boolean }>
 }
 
 // ---------------------------------------------------------------------------
-// File types
+// 文件类型
 // ---------------------------------------------------------------------------
 
 export interface FileAttachment {
@@ -558,14 +562,13 @@ export interface FileSearchResult {
 }
 
 // ---------------------------------------------------------------------------
-// LLM connection types
+// LLM connection 类型
 // ---------------------------------------------------------------------------
 
 /**
- * Resolved Anthropic OAuth identity (issue #838), captured from the
- * token-exchange response. Shape mirrors `ClaudeOAuthIdentity` in
- * `auth/claude-oauth.ts`; kept in the protocol layer so DTOs stay decoupled
- * from the auth module. All fields optional and fail-soft.
+ * 解析后的 Anthropic OAuth 身份（issue #838），来自 token exchange 响应。
+ * 形状与 auth/claude-oauth.ts 中的 ClaudeOAuthIdentity 一致；
+ * 放在协议层是为了让 DTO 与 auth 模块解耦。所有字段都是可选，便于容错。
  */
 export interface ClaudeOAuthIdentityDto {
   account?: { uuid?: string; emailAddress?: string }
@@ -580,23 +583,23 @@ export interface LlmConnectionSetup {
   models?: string[] | null
   piAuthProvider?: string
   modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
-  /** When true, reject setup if the connection doesn't already exist (reauth guard). */
+  /** 为 true 时，若该连接不存在则拒绝设置（用于重新认证保护）。 */
   updateOnly?: boolean
-  /** Custom endpoint protocol for arbitrary OpenAI/Anthropic-compatible APIs */
+  /** 自定义端点协议，用于任意 OpenAI/Anthropic 兼容 API。 */
   customEndpoint?: CustomEndpointConfig
-  /** IAM credentials for Pi+Bedrock (piAuthProvider='amazon-bedrock') connections */
+  /** Pi+Bedrock（piAuthProvider='amazon-bedrock'）的 IAM 凭证。 */
   iamCredentials?: {
     accessKeyId: string
     secretAccessKey: string
     sessionToken?: string
   }
-  /** AWS region for Pi+Bedrock connections */
+  /** Pi+Bedrock 的 AWS 区域。 */
   awsRegion?: string
-  /** Bedrock authentication method — determines auth type for Pi+Bedrock connections */
+  /** Bedrock 认证方式，决定 Pi+Bedrock 连接使用哪种认证。 */
   bedrockAuthMethod?: 'iam_credentials' | 'environment'
   /**
-   * Resolved Anthropic OAuth identity (issue #838), threaded through setup so it
-   * persists for both new and re-auth connections. Optional and fail-soft.
+   * 解析后的 Anthropic OAuth 身份（issue #838），
+   * 贯穿 setup 流程，使新建和重新认证都能持久化。可选且容错。
    */
   oauthIdentity?: ClaudeOAuthIdentityDto
 }
@@ -607,7 +610,7 @@ export interface TestLlmConnectionParams {
   baseUrl?: string
   model?: string
   piAuthProvider?: string
-  /** Optional custom endpoint protocol hint so setup tests mirror runtime routing */
+  /** 可选的自定义端点协议提示，使 setup 测试与运行时路由保持一致。 */
   customEndpoint?: CustomEndpointConfig
 }
 
@@ -617,7 +620,7 @@ export interface TestLlmConnectionResult {
 }
 
 // ---------------------------------------------------------------------------
-// Source / skill types
+// Source / skill 类型
 // ---------------------------------------------------------------------------
 
 export interface SkillFile {
@@ -632,12 +635,14 @@ export interface OAuthResult {
   error?: string
 }
 
+// MCP（Model Context Protocol）验证结果。
 export interface McpValidationResult {
   success: boolean
   error?: string
   tools?: string[]
 }
 
+// 单个 MCP tool 及其权限开关。
 export interface McpToolWithPermission {
   name: string
   description?: string
@@ -651,7 +656,7 @@ export interface McpToolsResult {
 }
 
 // ---------------------------------------------------------------------------
-// Search types
+// 搜索类型
 // ---------------------------------------------------------------------------
 
 export interface SessionSearchMatch {
@@ -667,7 +672,7 @@ export interface SessionSearchResult {
 }
 
 // ---------------------------------------------------------------------------
-// Session result types
+// Session 结果类型
 // ---------------------------------------------------------------------------
 
 export interface UnreadSummary {
@@ -689,7 +694,7 @@ export interface RefreshTitleResult {
 }
 
 // ---------------------------------------------------------------------------
-// Plan types
+// Plan 类型
 // ---------------------------------------------------------------------------
 
 export interface PlanStep {
@@ -711,7 +716,7 @@ export interface Plan {
 }
 
 // ---------------------------------------------------------------------------
-// System types
+// System 类型
 // ---------------------------------------------------------------------------
 
 export interface GitBashStatus {
@@ -730,7 +735,7 @@ export interface UpdateInfo {
 }
 
 // ---------------------------------------------------------------------------
-// Workspace types
+// Workspace 类型
 // ---------------------------------------------------------------------------
 
 export interface WorkspaceSettings {
@@ -746,7 +751,7 @@ export interface WorkspaceSettings {
 }
 
 // ---------------------------------------------------------------------------
-// Auth result types
+// Auth 结果类型
 // ---------------------------------------------------------------------------
 
 export interface ClaudeOAuthResult {
@@ -754,15 +759,15 @@ export interface ClaudeOAuthResult {
   token?: string
   error?: string
   /**
-   * Resolved Anthropic identity (issue #838), forwarded to the renderer so it
-   * can thread it into the SETUP payload (which is what persists it). Present
-   * only when the token-exchange response carried identity.
+   * 解析后的 Anthropic 身份（issue #838），转发给渲染进程，
+   * 由渲染进程把它放进 SETUP payload 里持久化。
+   * 仅当 token exchange 响应携带身份时才存在。
    */
   identity?: ClaudeOAuthIdentityDto
 }
 
 // ---------------------------------------------------------------------------
-// Automation types
+// Automation 类型
 // ---------------------------------------------------------------------------
 
 export type TestAutomationAction =
@@ -776,7 +781,7 @@ export interface TestAutomationPayload {
   actions: TestAutomationAction[]
   permissionMode?: PermissionMode
   labels?: string[]
-  /** Forwarded from the matcher; routes test-run sessions into a Telegram topic when paired. */
+  /** 由 matcher 透传；测试运行会话配对 Telegram topic 时使用。 */
   telegramTopic?: string
 }
 
@@ -789,7 +794,7 @@ export interface TestAutomationResult {
 }
 
 // ---------------------------------------------------------------------------
-// Window types
+// Window 类型
 // ---------------------------------------------------------------------------
 
 export type WindowCloseRequestSource = 'keyboard-shortcut' | 'window-button' | 'unknown'
@@ -799,7 +804,7 @@ export interface WindowCloseRequest {
 }
 
 // ---------------------------------------------------------------------------
-// Browser / navigation types (data shapes used by BroadcastEventMap)
+// Browser / navigation 类型（BroadcastEventMap 使用的数据形状）
 // ---------------------------------------------------------------------------
 
 export interface BrowserInstanceInfo {
@@ -817,11 +822,10 @@ export interface BrowserInstanceInfo {
   agentControlActive: boolean
   themeColor: string | null
   /**
-   * Workspace that owns this browser instance, or `null` for unbound manual
-   * windows. Renderers filter the tab strip / status badge by `activeWorkspaceId`
-   * so a session in workspace A doesn't see windows opened by workspace B.
-   * Missing/null entries always pass the filter — this keeps older renderers
-   * and main processes that pre-date the field working unchanged.
+   * 拥有该浏览器实例的 workspace；未绑定的手动窗口为 null。
+   * 渲染进程用 activeWorkspaceId 过滤标签条/状态徽标，
+   * 避免 workspace A 的会话看到 workspace B 打开的窗口。
+   * 缺失或 null 默认通过过滤，以保持旧版本主进程/渲染进程兼容。
    */
   workspaceId?: string | null
 }

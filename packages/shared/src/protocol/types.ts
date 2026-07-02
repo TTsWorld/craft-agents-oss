@@ -1,67 +1,71 @@
 /**
- * Wire protocol types for the WS-based RPC layer.
+ * 基于 WebSocket 的 RPC 层底层协议类型。
  *
- * Shared between server (main process / headless) and client (renderer / Node).
+ * 服务端（主进程 / headless）与客户端（渲染进程 / Node）共用。
+ * 这些类型只描述“线上格式”，不涉具体业务。
  */
 
 // ---------------------------------------------------------------------------
-// Message envelope
+// 消息信封（message envelope）：所有 WS 消息都套在这个结构里发送
 // ---------------------------------------------------------------------------
 
+// MessageType：消息在协议层面的角色，类似一个小的消息 opcode。
 export type MessageType =
-  | 'handshake'
-  | 'handshake_ack'
-  | 'request'
-  | 'response'
-  | 'event'
-  | 'error'
-  | 'sequence_ack'
+  | 'handshake'          // 握手：客户端发起连接
+  | 'handshake_ack'      // 握手确认：服务端回应
+  | 'request'            // 请求：客户端调用某个 channel
+  | 'response'           // 响应：服务端返回结果
+  | 'event'              // 事件：服务端主动推送
+  | 'error'              // 错误：调用失败
+  | 'sequence_ack'       // 可靠投递确认
 
+// MessageEnvelope：RPC 消息的最外层结构，类比 Go 中一个统一协议头 + body 的 struct。
 export interface MessageEnvelope {
-  /** Correlation ID. UUIDv4 for requests; echoed in responses. */
+  /** 关联 ID。请求用 UUIDv4；响应/事件会原样带回，用于匹配一次往返。 */
   id: string
   type: MessageType
-  /** Required for request / response / event / error. */
+  /** request / response / event / error 必须携带的频道名，对应 RPC_CHANNELS 里的字符串。 */
   channel?: string
-  /** Request args or event payload. */
+  /** 请求参数或事件负载。unknown[] 表示未做业务校验，上层 handler 会再 narrow。 */
   args?: unknown[]
-  /** Response payload. */
+  /** 响应返回的数据。 */
   result?: unknown
-  /** Structured error. */
+  /** 结构化错误信息。 */
   error?: WireError
-  /** Sent on handshake / handshake_ack. */
+  /** 握手/握手确认时携带的协议版本号。 */
   protocolVersion?: string
-  /** Sent on handshake by the client. */
+  /** 握手时由客户端上报的 workspaceId，用于确定请求应路由到哪个服务端。 */
   workspaceId?: string
-  /** Sent on handshake for remote auth. */
+  /** 握手时携带的远程认证 token。 */
   token?: string
-  /** Assigned by server in handshake_ack. */
+  /** 服务端在 handshake_ack 中分配的客户端唯一标识。 */
   clientId?: string
-  /** Server identity stamp on outgoing events. For MultiClient source disambiguation. */
+  /** 服务端身份戳，用于多客户端场景下区分事件来源。 */
   serverId?: string
-  /** Electron webContents.id, sent on handshake by local clients. */
+  /** 本地 Electron 客户端握手时上报的 webContents.id。 */
   webContentsId?: number
-  /** Client capabilities advertised on handshake. */
+  /** 握手时客户端宣告自己支持的能力列表。 */
   clientCapabilities?: string[]
-  /** Server-registered channels, sent in handshake_ack. Clients use this to avoid calling unavailable channels. */
+  /** 握手确认中返回服务端已注册的 channel 列表，客户端可据此跳过未支持的调用。 */
   registeredChannels?: string[]
 
-  // -- Reliable delivery fields --
+  // -- 可靠投递相关字段 --
 
-  /** Per-client monotonic delivery sequence number, assigned when an event is targeted to that client. */
+  /** 每个客户端单调递增的投递序号，服务端给该客户端的每个目标事件分配。 */
   seq?: number
-  /** Client's last processed per-client seq — sent in sequence_ack and reconnect handshake. */
+  /** 客户端已处理的最新 seq，出现在 sequence_ack 和重连握手。 */
   lastSeq?: number
-  /** Previous clientId — sent by client on reconnect handshake. */
+  /** 重连时客户端上报的上一次 clientId，服务端用来找旧缓冲区。 */
   reconnectClientId?: string
-  /** True when handshake_ack is for a reconnection (vs fresh connect). */
+  /** true 表示 handshake_ack 是因为重连，而非新建连接。 */
   reconnected?: boolean
-  /** True when server buffer was evicted — client must do a full state refresh. */
+  /** true 表示服务端缓冲区已被驱逐，客户端需要做一次全量状态刷新。 */
   stale?: boolean
-  /** Server app version, sent in handshake_ack. Clients can use this for compatibility checks. */
+  /** 服务端版本号，出现在 handshake_ack，客户端可用作兼容性判断。 */
   serverVersion?: string
 }
 
+// WireError：跨进程/跨网络传输的结构化错误。
 export interface WireError {
   code: ErrorCode
   message: string
@@ -69,9 +73,10 @@ export interface WireError {
 }
 
 // ---------------------------------------------------------------------------
-// Error codes
+// 错误码
 // ---------------------------------------------------------------------------
 
+// ErrorCode：协议层所有已知错误码的联合类型。
 export type ErrorCode =
   | 'HANDLER_ERROR'
   | 'CHANNEL_NOT_FOUND'
@@ -92,6 +97,7 @@ export type ErrorCode =
   | 'BROWSER_REMOTE_UPLOAD_NOT_SUPPORTED'
   | 'BROWSER_REMOTE_EVALUATE_BLOCKED'
 
+// KNOWN_ERROR_CODES：运行时可校验的合法错误码集合。
 const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<ErrorCode>([
   'HANDLER_ERROR',
   'CHANNEL_NOT_FOUND',
@@ -113,16 +119,17 @@ const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<ErrorCode>([
   'BROWSER_REMOTE_EVALUATE_BLOCKED',
 ])
 
+// isErrorCode：类型保护（type predicate）。
+// 返回 true 时，TypeScript 会把 value 缩窄为 ErrorCode。
 export function isErrorCode(value: unknown): value is ErrorCode {
   return typeof value === 'string' && KNOWN_ERROR_CODES.has(value)
 }
 
 /**
- * Sender-side helper for throwing transport errors with a typed `code`.
+ * 发送方抛出带 code 的传输错误的辅助类。
  *
- * Class identity is lost across the wire — the transport reconstructs a plain
- * `Error` with `.code` on the receiving side. Receivers MUST branch on
- * `err.code === 'X'`, never `err instanceof CodedError`.
+ * 注意：类身份在跨 wire 传输时会丢失——对端收到的是普通 Error + .code。
+ * 因此接收方必须按 err.code === 'X' 判断，不要 instanceof CodedError。
  */
 export class CodedError extends Error {
   readonly code: ErrorCode
@@ -134,39 +141,40 @@ export class CodedError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Push target (server → clients)
+// 推送目标（服务端 → 客户端）：决定事件推送给谁
 // ---------------------------------------------------------------------------
 
 export type PushTarget =
-  | { to: 'all'; exclude?: string }
-  | { to: 'workspace'; workspaceId: string; exclude?: string }
-  | { to: 'client'; clientId: string }
+  | { to: 'all'; exclude?: string }                       // 所有客户端，可排除某个 clientId
+  | { to: 'workspace'; workspaceId: string; exclude?: string } // 某个 workspace 下的客户端
+  | { to: 'client'; clientId: string }                   // 单个客户端
 
 // ---------------------------------------------------------------------------
-// Protocol constants
+// 协议常量
 // ---------------------------------------------------------------------------
 
+// 协议版本号，握手时用于兼容性校验。
 export const PROTOCOL_VERSION = '1.0'
 
-/** Heartbeat interval in ms. Server pings every 30s. */
+/** 心跳间隔（毫秒）。服务端每 30 秒 ping 一次。 */
 export const HEARTBEAT_INTERVAL_MS = 30_000
 
-/** Client that misses this many pongs gets terminated. */
+/** 连续丢失多少次 pong 后，服务端会断开该客户端。 */
 export const HEARTBEAT_MAX_MISSED = 2
 
-/** Default request timeout in ms. */
+/** 默认请求超时时间（毫秒）。 */
 export const REQUEST_TIMEOUT_MS = 30_000
 
-// -- Reliable delivery constants --
+// -- 可靠投递常量 --
 
-/** Max events to retain per client in the ring buffer. */
+/** 每个客户端环形缓冲区最多保留多少条事件。 */
 export const EVENT_BUFFER_MAX_SIZE = 500
 
-/** Events older than this are evicted from the buffer. */
+/** 缓冲区中事件的最大存活时间（毫秒），超过即被驱逐。 */
 export const EVENT_BUFFER_TTL_MS = 30_000
 
-/** How long to retain a disconnected client's buffer for potential reconnect. */
+/** 断线客户端的缓冲区保留多久（毫秒），供潜在重连恢复。 */
 export const DISCONNECTED_CLIENT_TTL_MS = 60_000
 
-/** Client sends a sequence_ack every N ms. */
+/** 客户端每隔多少毫秒发送一次 sequence_ack。 */
 export const SEQUENCE_ACK_INTERVAL_MS = 5_000

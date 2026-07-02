@@ -24,13 +24,11 @@ export interface SessionMessagesLoadState {
 }
 
 /**
- * Derive the renderer's message-load UI state from both the explicit loaded flag
- * and the actual per-session atom payload.
+ * 根据显式的 loaded 标记与会话 atom 中的实际数据，推导渲染进程的消息加载 UI 状态。
  *
- * The loaded flag is intentionally separate from session data for lazy loading,
- * but recovery/reconnect paths can temporarily get them out of sync. If the
- * session atom already contains messages, the transcript should render instead
- * of staying hidden behind a stale loading spinner.
+ * loaded 标记与会话数据被故意分开，以支持懒加载；
+ * 但恢复/重连路径可能短暂地让两者不同步。
+ * 如果会话 atom 里已经有消息，就应该渲染聊天记录，而不是被陈旧的 loading 状态遮住。
  */
 export function deriveSessionMessagesLoadState({
   session,
@@ -64,6 +62,10 @@ export function deriveSessionMessagesLoadState({
   }
 }
 
+/**
+ * 判断会话加载失败是否应按 transport 回退处理。
+ * 仅当 transport 处于远程模式且错误/状态属于连接层问题（auth、network、timeout、连接中、重连中、失败、断开）时返回 true。
+ */
 export function shouldTreatSessionLoadFailureAsTransportFallback(
   state: TransportConnectionState | null | undefined,
 ): boolean {
@@ -79,6 +81,9 @@ export function shouldTreatSessionLoadFailureAsTransportFallback(
     || state.status === 'disconnected'
 }
 
+/**
+ * 把会话加载错误格式化为可展示的字符串。
+ */
 export function formatSessionLoadFailure(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message
   if (typeof error === 'string' && error.trim()) return error

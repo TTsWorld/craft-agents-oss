@@ -1,16 +1,15 @@
 /**
- * NavigatorPanel - Middle panel component for list-based navigation
+ * NavigatorPanel - 列表导航用的中间面板组件
  *
- * Displays a header with title, optional action buttons, and
- * renders children (SessionList or SourcesListPanel) in a scrollable area.
+ * 结构：顶部一个固定标题栏（可带操作按钮），下方是滚动内容区。
+ * 常见子节点是 SessionList（会话列表）或 SourcesListPanel（来源列表）。
  *
- * Layout:
+ * 布局：
  * ┌────────────────────────────┐
- * │ Header (title)             │
- * │ + action buttons           │
+ * │ 标题栏（+ 操作按钮）        │
  * ├────────────────────────────┤
  * │                            │
- * │   children (list content)  │
+ * │   子节点（列表内容）        │
  * │                            │
  * └────────────────────────────┘
  */
@@ -20,19 +19,23 @@ import { Panel } from './Panel'
 import { PanelHeader } from './PanelHeader'
 import { cn } from '@/lib/utils'
 
+/** NavigatorPanelProps：组件 props 类型定义 */
 export interface NavigatorPanelProps {
-  /** Panel title (e.g., "Conversations", "Sources") */
+  /** 面板标题，例如 "Conversations"、"Sources" */
   title: string
-  /** Panel width in pixels */
+  /** 面板固定宽度（像素） */
   width: number
-  /** Action buttons rendered in the header (filter, add, etc.) */
+  /** 标题栏右侧的操作按钮，例如筛选、新增 */
   headerActions?: React.ReactNode
-  /** Main content (SessionList, SourcesListPanel, etc.) */
+  /** 主内容区，例如 SessionList、SourcesListPanel */
   children: React.ReactNode
-  /** Optional className for the container */
+  /** 容器额外的 CSS 类名 */
   className?: string
 }
 
+/**
+ * 中间列导航面板，组合 Panel + PanelHeader + 滚动内容。
+ */
 export function NavigatorPanel({
   title,
   width,

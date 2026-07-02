@@ -1,15 +1,15 @@
 /**
- * LabelBadgeRow - Renders a flex-wrap row of metadata-style label chips.
+ * LabelBadgeRow — 输入框上方的 Label 徽章行
  *
- * Positioned above the RichTextInput in FreeFormInput. Each badge shows
- * the label's color, name, and optional typed value. Clicking a badge
- * opens a LabelValuePopover for editing or removing.
+ * 在 FreeFormInput 的 RichTextInput 上方展示一组 Label 徽章。
+ * 每个徽章显示 Label 颜色、名称和可选的类型值；点击后弹出 LabelValuePopover
+ * 用于编辑或移除。
  *
- * Data flow:
- * - sessionLabels: string[] (e.g., ["bug", "priority::3", "due::2026-01-30"])
- * - labels: LabelConfig[] (workspace label tree for resolving colors/valueTypes)
- * - Parses each entry via parseLabelEntry() to extract id + rawValue
- * - Resolves LabelConfig from flat tree for color and valueType
+ * 数据流：
+ * - sessionLabels: string[]，编码后的标签条目，如 ["bug", "priority::3", "due::2026-01-30"]
+ * - labels: LabelConfig[]，workspace 的 Label 树，用于解析颜色/值类型
+ * - 先用 parseLabelEntry 解出 id + rawValue
+ * - 再从拍平的 Label 树中找到对应 LabelConfig
  */
 
 import * as React from 'react'
@@ -24,19 +24,19 @@ import { useTheme } from '@/context/ThemeContext'
 import { cn } from '@/lib/utils'
 
 export interface LabelBadgeRowProps {
-  /** Applied session labels (encoded strings like "bug" or "priority::3") */
+  /** 已应用的 Session labels（编码字符串，如 "bug" 或 "priority::3"） */
   sessionLabels: string[]
-  /** Full label config tree (for resolving colors, names, valueTypes) */
+  /** 完整 Label 配置树（用于解析颜色、名称、值类型） */
   labels: LabelConfig[]
-  /** Called when a label value is changed — receives the updated full sessionLabels array */
+  /** Label 值变化回调，接收更新后的完整 sessionLabels 数组 */
   onLabelsChange?: (updatedLabels: string[]) => void
-  /** Additional className for the container */
+  /** 容器额外 className */
   className?: string
 }
 
 /**
- * Flatten a recursive LabelConfig tree into a map of id → LabelConfig
- * for O(1) lookup when resolving session label entries.
+ * 把递归的 LabelConfig 树拍平成 id → LabelConfig 的 Map，
+ * 解析 session label 时可 O(1) 查找。
  */
 function flattenLabelTree(labels: LabelConfig[]): Map<string, LabelConfig> {
   const map = new Map<string, LabelConfig>()
@@ -52,6 +52,7 @@ function flattenLabelTree(labels: LabelConfig[]): Map<string, LabelConfig> {
   return map
 }
 
+/** Label 徽章行 */
 export function LabelBadgeRow({
   sessionLabels,
   labels,
@@ -60,23 +61,23 @@ export function LabelBadgeRow({
 }: LabelBadgeRowProps) {
   const { isDark } = useTheme()
 
-  // Track which badge's popover is open (by index)
+  // 记录当前打开 popover 的 badge 索引
   const [openIndex, setOpenIndex] = React.useState<number | null>(null)
 
-  // Memoize flat lookup map (only recompute when labels config changes)
+  // 缓存拍平后的查找表，只在 labels 配置变化时重新计算
   const labelMap = React.useMemo(() => flattenLabelTree(labels), [labels])
 
-  // Don't render if no labels applied
+  // 没有标签时不渲染
   if (sessionLabels.length === 0) return null
 
-  /** Update a specific label entry's value */
+  /** 更新某个 label 条目的值 */
   const handleValueChange = (index: number, labelId: string, newValue: string | undefined) => {
     const updated = [...sessionLabels]
     updated[index] = formatLabelEntry(labelId, newValue)
     onLabelsChange?.(updated)
   }
 
-  /** Remove a label at a specific index */
+  /** 移除某个索引的 label */
   const handleRemove = (index: number) => {
     const updated = sessionLabels.filter((_, i) => i !== index)
     onLabelsChange?.(updated)
@@ -88,7 +89,7 @@ export function LabelBadgeRow({
         const parsed = parseLabelEntry(entry)
         const config = labelMap.get(parsed.id)
 
-        // If no config found, create a minimal fallback so the badge still renders
+        // 找不到配置时，用最小 fallback 让徽章仍能渲染
         const resolvedConfig: LabelConfig = config ?? { id: parsed.id, name: parsed.id }
         const displayValue = parsed.rawValue ? formatDisplayValue(parsed.rawValue, resolvedConfig.valueType) : undefined
         const resolvedColor = resolvedConfig.color

@@ -1,45 +1,44 @@
 /**
- * Session Tools Core - Types
+ * session-tools-core 的类型定义
  *
- * Shared type definitions for session-scoped tools used by both
- * Claude (in-process) and Codex (subprocess) implementations.
+ * 供 Claude（同进程）和 Codex（子进程）两种实现共享的 session 级 tool 类型。
  */
 
 // ============================================================
-// Credential Input Modes
+// 凭证输入模式
 // ============================================================
 
 /**
- * Credential input modes for different authentication types
+ * 不同认证类型对应的凭证输入模式
  */
 export type CredentialInputMode = 'bearer' | 'basic' | 'header' | 'query' | 'multi-header';
 
 // ============================================================
-// Service Types (simplified for portability)
+// 服务类型（为可移植性做了简化）
 // ============================================================
 
 /**
- * Google service types for OAuth
+ * Google OAuth 服务类型
  */
 export type GoogleService = 'gmail' | 'calendar' | 'drive' | 'docs' | 'sheets' | 'youtube' | 'searchconsole';
 
 /**
- * Slack service types for OAuth
+ * Slack OAuth 服务类型
  */
 export type SlackService = 'messaging' | 'channels' | 'users' | 'files' | 'full';
 
 /**
- * Microsoft service types for OAuth
- * Note: 'microsoft-calendar' is used to distinguish from Google calendar
+ * Microsoft OAuth 服务类型
+ * 注意：'microsoft-calendar' 用于和 Google calendar 区分
  */
 export type MicrosoftService = 'outlook' | 'microsoft-calendar' | 'onedrive' | 'teams' | 'sharepoint';
 
 // ============================================================
-// Auth Request Types
+// 认证请求类型
 // ============================================================
 
 /**
- * Auth request type discriminator
+ * 认证请求的类型标签（discriminator）
  */
 export type AuthRequestType =
   | 'credential'
@@ -49,7 +48,7 @@ export type AuthRequestType =
   | 'oauth-microsoft';
 
 /**
- * Base auth request fields shared by all auth types
+ * 所有认证类型共用的基础字段
  */
 export interface BaseAuthRequest {
   requestId: string;
@@ -59,7 +58,7 @@ export interface BaseAuthRequest {
 }
 
 /**
- * Credential auth request - prompts for API key, bearer token, etc.
+ * 凭证认证请求 —— 提示用户输入 API key、bearer token 等
  */
 export interface CredentialAuthRequest extends BaseAuthRequest {
   type: 'credential';
@@ -72,23 +71,23 @@ export interface CredentialAuthRequest extends BaseAuthRequest {
   description?: string;
   hint?: string;
   headerName?: string;
-  /** Header names for multi-header auth (e.g., ["DD-API-KEY", "DD-APPLICATION-KEY"]) */
+  /** 多 header 认证的 header 名（如 ["DD-API-KEY", "DD-APPLICATION-KEY"]） */
   headerNames?: string[];
-  /** Source URL/domain for password manager credential matching (1Password, etc.) */
+  /** source URL/域名，用于密码管理器匹配凭证（1Password 等） */
   sourceUrl?: string;
-  /** For basic auth: whether password is required. Default true for backward compatibility. */
+  /** basic 认证是否必须填密码。为兼容旧行为，默认 true。 */
   passwordRequired?: boolean;
 }
 
 /**
- * MCP OAuth auth request - standard OAuth 2.0 + PKCE
+ * MCP OAuth 认证请求 —— 标准 OAuth 2.0 + PKCE
  */
 export interface McpOAuthAuthRequest extends BaseAuthRequest {
   type: 'oauth';
 }
 
 /**
- * Google OAuth auth request - Google-specific OAuth
+ * Google OAuth 认证请求 —— Google 专用 OAuth
  */
 export interface GoogleOAuthAuthRequest extends BaseAuthRequest {
   type: 'oauth-google';
@@ -96,7 +95,7 @@ export interface GoogleOAuthAuthRequest extends BaseAuthRequest {
 }
 
 /**
- * Slack OAuth auth request - Slack-specific OAuth
+ * Slack OAuth 认证请求 —— Slack 专用 OAuth
  */
 export interface SlackOAuthAuthRequest extends BaseAuthRequest {
   type: 'oauth-slack';
@@ -104,7 +103,7 @@ export interface SlackOAuthAuthRequest extends BaseAuthRequest {
 }
 
 /**
- * Microsoft OAuth auth request - Microsoft-specific OAuth
+ * Microsoft OAuth 认证请求 —— Microsoft 专用 OAuth
  */
 export interface MicrosoftOAuthAuthRequest extends BaseAuthRequest {
   type: 'oauth-microsoft';
@@ -112,7 +111,7 @@ export interface MicrosoftOAuthAuthRequest extends BaseAuthRequest {
 }
 
 /**
- * Union of all auth request types
+ * 所有认证请求类型的联合类型
  */
 export type AuthRequest =
   | CredentialAuthRequest
@@ -122,7 +121,7 @@ export type AuthRequest =
   | MicrosoftOAuthAuthRequest;
 
 /**
- * Auth result - sent back to agent after auth completes
+ * 认证结果 —— 认证完成后发回给 agent
  */
 export interface AuthResult {
   requestId: string;
@@ -130,18 +129,18 @@ export interface AuthResult {
   success: boolean;
   cancelled?: boolean;
   error?: string;
-  // Additional info for successful auth
-  email?: string;      // For Google/Microsoft OAuth
-  workspace?: string;  // For Slack OAuth
+  // 成功后的附加信息
+  email?: string;      // Google/Microsoft OAuth
+  workspace?: string;  // Slack OAuth
 }
 
 // ============================================================
-// Developer Feedback
+// 开发者反馈
 // ============================================================
 
 /**
- * Freeform feedback from the agent to the development team.
- * Persisted as individual JSON files for later review/batch-send.
+ * agent 发给开发团队的自由格式反馈。
+ * 以独立 JSON 文件持久化，方便后续批量查看/发送。
  */
 export interface DeveloperFeedback {
   id: string;
@@ -151,12 +150,12 @@ export interface DeveloperFeedback {
 }
 
 // ============================================================
-// Callback Message (IPC)
+// 回调消息（IPC）
 // ============================================================
 
 /**
- * Callback message for IPC with main process.
- * Used by Codex subprocess to communicate via stderr.
+ * 与主进程进行 IPC 的回调消息。
+ * Codex 子进程通过 stderr 发送这类消息。
  */
 export interface CallbackMessage {
   __callback__: string;
@@ -164,11 +163,11 @@ export interface CallbackMessage {
 }
 
 // ============================================================
-// Tool Result Types
+// Tool 结果类型
 // ============================================================
 
 /**
- * Text content block for tool responses
+ * tool 响应中的文本内容块
  */
 export interface TextContent {
   type: 'text';
@@ -176,24 +175,24 @@ export interface TextContent {
 }
 
 /**
- * Standard tool result type compatible with both SDK and MCP patterns
+ * 标准 tool 结果类型，兼容 SDK 和 MCP 两种模式
  */
 export interface ToolResult {
   content: TextContent[];
   /**
-   * Optional structured payload for MCP clients.
-   * Keep this as an object (not null) for compatibility with strict tool_result parsers.
+   * 给 MCP 客户端用的结构化负载。
+   * 保持为对象（不要设为 null），以兼容严格的 tool_result 解析器。
    */
   structuredContent?: Record<string, unknown>;
   isError?: boolean;
 }
 
 // ============================================================
-// Validation Result Types
+// 校验结果类型
 // ============================================================
 
 /**
- * Individual validation issue
+ * 单条校验问题
  */
 export interface ValidationIssue {
   path: string;
@@ -202,7 +201,7 @@ export interface ValidationIssue {
 }
 
 /**
- * Result of validation operations
+ * 校验操作的结果
  */
 export interface ValidationResult {
   valid: boolean;
@@ -211,31 +210,31 @@ export interface ValidationResult {
 }
 
 // ============================================================
-// Source Config Types (simplified for core package)
+// Source 配置类型（为 core 包做了简化）
 // ============================================================
 
 /**
- * Source type discriminator
+ * source 类型标签
  */
 export type SourceType = 'mcp' | 'api' | 'local';
 
 /**
- * MCP transport type
+ * MCP 传输类型
  */
 export type McpTransport = 'http' | 'sse' | 'stdio';
 
 /**
- * MCP auth type
+ * MCP 认证类型
  */
 export type McpAuthType = 'oauth' | 'bearer' | 'none';
 
 /**
- * API auth type
+ * API 认证类型
  */
 export type ApiAuthType = 'bearer' | 'header' | 'query' | 'basic' | 'oauth' | 'none';
 
 /**
- * MCP source configuration block
+ * MCP source 配置块
  */
 export interface McpSourceConfig {
   transport?: McpTransport;
@@ -246,18 +245,18 @@ export interface McpSourceConfig {
   args?: string[];
   env?: Record<string, string>;
   headers?: Record<string, string>;
-  /** Header names for credential-store auth (e.g., ["X-API-Key"]) */
+  /** 凭证仓库认证使用的 header 名（如 ["X-API-Key"]） */
   headerNames?: string[];
 }
 
 /**
- * API source configuration block
+ * API source 配置块
  */
 export interface ApiSourceConfig {
   baseUrl: string;
   authType: ApiAuthType;
   headerName?: string;
-  /** Header names for multi-header auth (e.g., ["DD-API-KEY", "DD-APPLICATION-KEY"]) */
+  /** 多 header 认证使用的 header 名（如 ["DD-API-KEY", "DD-APPLICATION-KEY"]） */
   headerNames?: string[];
   queryParam?: string;
   authScheme?: string;
@@ -267,16 +266,16 @@ export interface ApiSourceConfig {
     body?: Record<string, unknown>;
     headers?: Record<string, string>;
   };
-  // Google OAuth
+  // Google OAuth 配置
   googleService?: GoogleService;
   googleScopes?: string[];
   googleOAuthClientId?: string;
   googleOAuthClientSecret?: string;
-  // Slack OAuth
+  // Slack OAuth 配置
   slackService?: SlackService;
-  // Microsoft OAuth
+  // Microsoft OAuth 配置
   microsoftService?: MicrosoftService;
-  // Generic OAuth config (when authType is 'oauth' and provider is not google/slack/microsoft)
+  // 通用 OAuth 配置（authType 为 'oauth' 且不是 google/slack/microsoft 时）
   oauth?: {
     authorizationUrl: string;
     tokenUrl: string;
@@ -289,7 +288,7 @@ export interface ApiSourceConfig {
 }
 
 /**
- * Local source configuration block
+ * Local source 配置块
  */
 export interface LocalSourceConfig {
   path: string;
@@ -297,12 +296,12 @@ export interface LocalSourceConfig {
 }
 
 /**
- * Connection status for sources
+ * source 的连接状态
  */
 export type ConnectionStatus = 'connected' | 'disconnected' | 'error' | 'unknown';
 
 /**
- * Full source configuration (simplified version for core package)
+ * 完整的 source 配置（core 包使用的简化版本）
  */
 export interface SourceConfig {
   id: string;
@@ -315,13 +314,13 @@ export interface SourceConfig {
   api?: ApiSourceConfig;
   local?: LocalSourceConfig;
   isAuthenticated?: boolean;
-  lastTestedAt?: number; // millisecond timestamp
+  lastTestedAt?: number; // 毫秒时间戳
   createdAt?: number;
   updatedAt?: number;
-  // Display fields
+  // 展示字段
   tagline?: string;
-  icon?: string; // URL, emoji, or omitted for local file
-  // Connection tracking
+  icon?: string; // URL、emoji，或省略表示本地文件
+  // 连接追踪
   connectionStatus?: ConnectionStatus;
   connectionError?: string;
 }

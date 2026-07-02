@@ -1,5 +1,5 @@
 import { useCallback } from "react"
-import { useTranslation } from "react-i18next"
+import { useTranslation } from 'react-i18next'
 import { toast } from "sonner"
 
 interface UseSessionActionsOptions {
@@ -10,6 +10,12 @@ interface UseSessionActionsOptions {
   onDelete: (sessionId: string, skipConfirmation?: boolean) => Promise<boolean>
 }
 
+/**
+ * 会话操作 hook。
+ *
+ * 对“标星/取消标星、归档/取消归档、删除”等操作做统一封装，
+ * 并在操作成功后显示可撤销的 toast 提示。
+ */
 export function useSessionActions({
   onFlag,
   onUnflag,
@@ -68,8 +74,8 @@ export function useSessionActions({
   }, [onArchive, onUnarchive, t])
 
   const handleDeleteWithToast = useCallback(async (sessionId: string): Promise<boolean> => {
-    // Confirmation dialog is shown by handleDeleteSession in App.tsx
-    // We await so toast only shows after successful deletion (if user confirmed)
+    // 确认弹窗由 App.tsx 中的 handleDeleteSession 负责显示
+    // 这里 await 删除结果，只有用户确认并删除成功后才显示 toast
     const deleted = await onDelete(sessionId)
     if (deleted) {
       toast(t('toast.sessionDeleted'))

@@ -1,3 +1,8 @@
+/**
+ * CredentialRequest - 结构化输入：凭据请求。
+ *
+ * 安全的认证信息输入 UI，支持 bearer、basic、header、query、multi-header 等模式。
+ */
 import { useState, useCallback } from 'react'
 import { Key, User, Lock, Eye, EyeOff, Check, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -10,25 +15,26 @@ import { validateBasicAuthCredentials, getPasswordValue, getPasswordLabel, getPa
 interface CredentialRequestProps {
   request: CredentialRequestType
   onResponse: (response: CredentialResponse) => void
-  /** When true, removes container styling (shadow, rounded) - used when wrapped by InputContainer */
+  /** 为 true 时移除容器样式（阴影、圆角），用于被 InputContainer 包裹时 */
   unstyled?: boolean
 }
 
 /**
- * CredentialRequest - Secure input UI for authentication credentials
+ * CredentialRequest - 认证凭据的安全输入 UI。
  *
- * Supports multiple auth modes:
- * - bearer: Single token field (Bearer Token, API Key)
- * - basic: Username + Password fields
- * - header: API Key with custom header name shown
- * - query: API Key for query parameter auth
+ * 支持多种认证模式：
+ * - bearer：单个 token 字段
+ * - basic：用户名 + 密码
+ * - header：显示自定义 header 名的 API Key
+ * - query：用于 query 参数认证的 API Key
+ * - multi-header：多个 header 字段
  */
 export function CredentialRequest({ request, onResponse, unstyled = false }: CredentialRequestProps) {
   const [value, setValue] = useState('')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
-  // Multi-header state: { "DD-API-KEY": "", "DD-APPLICATION-KEY": "" }
+  // 多 header 状态，例如 { "DD-API-KEY": "", "DD-APPLICATION-KEY": "" }
   const [headerValues, setHeaderValues] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {}
     if (request.headerNames) {
@@ -41,9 +47,9 @@ export function CredentialRequest({ request, onResponse, unstyled = false }: Cre
 
   const isBasicAuth = request.mode === 'basic'
   const isMultiHeader = request.mode === 'multi-header'
-  const passwordRequired = request.passwordRequired ?? true  // default true for backward compatibility
+  const passwordRequired = request.passwordRequired ?? true  // 默认 true，兼容旧数据
 
-  // Validation logic
+  // 校验逻辑
   const isValid = isBasicAuth
     ? validateBasicAuthCredentials(username, password, passwordRequired)
     : isMultiHeader
@@ -61,7 +67,7 @@ export function CredentialRequest({ request, onResponse, unstyled = false }: Cre
         cancelled: false
       })
     } else if (isMultiHeader) {
-      // Trim all header values
+      // 去除所有 header 值的首尾空白
       const trimmedHeaders: Record<string, string> = {}
       for (const [key, val] of Object.entries(headerValues)) {
         trimmedHeaders[key] = val.trim()
@@ -97,7 +103,7 @@ export function CredentialRequest({ request, onResponse, unstyled = false }: Cre
     }
   }, [isValid, handleSubmit, handleCancel])
 
-  // Get field labels
+  // 获取各字段标签
   const credentialLabel = request.labels?.credential ||
     (request.mode === 'bearer' ? 'Bearer Token' : 'API Key')
   const usernameLabel = request.labels?.username || 'Username'
@@ -110,17 +116,17 @@ export function CredentialRequest({ request, onResponse, unstyled = false }: Cre
       'bg-background overflow-hidden h-full flex flex-col',
       unstyled ? 'border-0' : 'border border-border rounded-[8px] shadow-middle'
     )}>
-      {/* Form wraps the entire card so password managers (1Password) can detect fields.
-          action points to the source URL for domain-based credential matching. */}
+      {/* 用 form 包裹整张卡片，方便密码管理器（如 1Password）识别字段；
+          action 指向来源 URL，用于基于域名的凭据匹配。 */}
       <form
         onSubmit={handleFormSubmit}
         action={request.sourceUrl || undefined}
         method="post"
         className="flex flex-col flex-1 min-h-0"
       >
-        {/* Content */}
+        {/* 内容区 */}
         <div className="p-4 space-y-4 flex-1 min-h-0 flex flex-col overflow-y-auto">
-          {/* Header */}
+          {/* 头部说明 */}
           <div className="flex items-start gap-3">
             <div className="shrink-0 mt-0.5">
               <Key className="h-5 w-5 text-foreground" />
@@ -140,11 +146,11 @@ export function CredentialRequest({ request, onResponse, unstyled = false }: Cre
             </div>
           </div>
 
-          {/* Input fields */}
+          {/* 输入字段 */}
           <div className="space-y-3">
             {isBasicAuth ? (
               <>
-                {/* Username field */}
+                {/* 用户名字段 */}
                 <div className="space-y-1.5">
                   <Label htmlFor="credential-username" className="text-xs">
                     {usernameLabel}
@@ -165,7 +171,7 @@ export function CredentialRequest({ request, onResponse, unstyled = false }: Cre
                     />
                   </div>
                 </div>
-                {/* Password field */}
+                {/* 密码字段 */}
                 <div className="space-y-1.5">
                   <Label htmlFor="credential-password" className="text-xs">
                     {passwordLabel}
@@ -195,7 +201,7 @@ export function CredentialRequest({ request, onResponse, unstyled = false }: Cre
                 </div>
               </>
             ) : isMultiHeader && request.headerNames ? (
-              /* Multi-header fields (e.g., Datadog DD-API-KEY + DD-APPLICATION-KEY) */
+              /* 多 header 字段（例如 Datadog 的 DD-API-KEY + DD-APPLICATION-KEY） */
               <>
                 {request.headerNames.map((headerName, index) => (
                   <div key={headerName} className="space-y-1.5">
@@ -232,7 +238,7 @@ export function CredentialRequest({ request, onResponse, unstyled = false }: Cre
                 ))}
               </>
             ) : (
-              /* Single credential field (API key, bearer token) */
+              /* 单个凭据字段（API key、bearer token） */
               <div className="space-y-1.5">
                 <Label htmlFor="credential-value" className="text-xs">
                   {credentialLabel}
@@ -268,7 +274,7 @@ export function CredentialRequest({ request, onResponse, unstyled = false }: Cre
               </div>
             )}
 
-            {/* Hint */}
+            {/* 提示信息 */}
             {request.hint && (
               <p className="text-[11px] text-muted-foreground">
                 {request.hint}
@@ -277,7 +283,7 @@ export function CredentialRequest({ request, onResponse, unstyled = false }: Cre
           </div>
         </div>
 
-        {/* Action buttons */}
+        {/* 操作按钮 */}
         <div className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-2 border-t border-border/50">
           <Button
             type="submit"

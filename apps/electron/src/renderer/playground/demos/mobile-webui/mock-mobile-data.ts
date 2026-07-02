@@ -1,12 +1,15 @@
 /**
  * Mock data for the Mobile WebUI playground demos.
+ * Mobile WebUI playground 的共享 mock 数据文件。
  *
  * Single source of truth for sessions, messages, labels and workspace data
  * shared across AppMenuMobilePreview, SessionListMobilePreview and
  * ChatDisplayMobilePreview. Keep shapes shallow — only fields the components
  * actually read.
+ * 为 mobile-webui 目录下的三个 demo 提供统一数据；只填组件实际读取的字段。
  */
 
+// type-only imports：从 monorepo 其他包或上层目录导入类型，不引入运行时依赖。
 import type { Message } from '@craft-agent/core/types'
 import type { LabelConfig } from '@craft-agent/shared/labels'
 import type { LlmConnectionWithStatus } from '@config/llm-connections'
@@ -16,13 +19,18 @@ import type { SessionStatus } from '@/config/session-status-config'
 import * as React from 'react'
 import { Circle } from 'lucide-react'
 
+// 用下划线数字分隔符提高可读性；60_000 === 60000。
 const ONE_MINUTE = 60_000
 const ONE_HOUR = 60 * ONE_MINUTE
 const ONE_DAY = 24 * ONE_HOUR
 
+/** MOBILE_WORKSPACE_ID：常量 */
+// 演示用的 workspace ID；workspace 是 Agent 项目/上下文的容器，类似工作目录。
 export const MOBILE_WORKSPACE_ID = 'playground-mobile'
+/** MOBILE_WORKSPACE_SLUG：常量 */
 export const MOBILE_WORKSPACE_SLUG = 'mobile'
 
+/** MOCK_WORKSPACE：常量 */
 export const MOCK_WORKSPACE: Workspace = {
   id: MOBILE_WORKSPACE_ID,
   name: 'Mobile Demo',
@@ -31,6 +39,7 @@ export const MOCK_WORKSPACE: Workspace = {
   createdAt: Date.now() - 30 * ONE_DAY,
 }
 
+/** MOCK_LABELS：常量 */
 export const MOCK_LABELS: LabelConfig[] = [
   { id: 'feature', name: 'Feature', color: { light: '#10B981', dark: '#34D399' } },
   { id: 'bug', name: 'Bug', color: { light: '#EF4444', dark: '#F87171' } },
@@ -38,6 +47,8 @@ export const MOCK_LABELS: LabelConfig[] = [
   { id: 'design', name: 'Design', color: { light: '#8B5CF6', dark: '#A78BFA' } },
 ]
 
+/** MOCK_SESSION_STATUSES：常量 */
+// SessionStatus 的 icon 字段需要 React 元素；React.createElement 等价于 <Circle ... />。
 export const MOCK_SESSION_STATUSES: SessionStatus[] = [
   {
     id: 'todo',
@@ -73,11 +84,13 @@ export const MOCK_SESSION_STATUSES: SessionStatus[] = [
   },
 ]
 
+// 返回当前时间戳的辅助函数；多次调用取最新时间。
 const now = () => Date.now()
 
 /**
  * 10 sessions spread across today / yesterday / older, exercising flagged,
  * unread, archived and various statuses.
+ * 10 条 mock session，分布到今天/昨天/更早，覆盖标记、未读、归档和多种状态。
  */
 export const MOCK_SESSIONS: SessionMeta[] = [
   {
@@ -170,6 +183,7 @@ export const MOCK_SESSIONS: SessionMeta[] = [
  * Mock messages for ChatDisplay. Includes a user turn with a mention,
  * an assistant turn with markdown + a code block, and a streaming-style
  * trailing assistant turn that callers can flip off.
+ * 为 ChatDisplay 准备的 mock 消息：包含用户提问、助手回答（含 markdown 代码块）、可切换的流式消息。
  */
 export const MOCK_MESSAGES: Message[] = [
   {
@@ -225,6 +239,8 @@ export const MOCK_MESSAGES: Message[] = [
   },
 ]
 
+/** MOCK_SOURCES：常量 */
+// Source 是 Agent 可调用的外部数据/工具来源；type: 'mcp' 表示通过 MCP（Model Context Protocol）连接。
 export const MOCK_SOURCES: LoadedSource[] = [
   {
     config: {
@@ -266,6 +282,8 @@ export const MOCK_SOURCES: LoadedSource[] = [
   },
 ]
 
+/** MOCK_SKILLS：常量 */
+// Skill 是 Agent 可挂载的专项能力；这里先留空数组，下游 demo 会按需扩展。
 export const MOCK_SKILLS: LoadedSkill[] = []
 
 /**
@@ -275,6 +293,7 @@ export const MOCK_SKILLS: LoadedSkill[] = []
  * CompactModelSelector to render its switcher path (multi-connection),
  * its vision-toggle path (pi_compat), and its flat-list path (single
  * connection) when downstream demos slice this list.
+ * 两条 mock LLM 连接：一条 Anthropic，一条 pi_compat，用于测试模型选择器的多连接/单连接/vision 切换路径。
  */
 export const MOCK_LLM_CONNECTIONS: LlmConnectionWithStatus[] = [
   {
@@ -321,6 +340,7 @@ export const MOCK_LLM_CONNECTIONS: LlmConnectionWithStatus[] = [
 
 /**
  * Build a full Session with messages, given a session id and a slice of mocks.
+ * 根据 sessionId 和可选配置构建一个完整的 Session 对象；Session 是 Agent 一次对话的上下文。
  */
 export function buildMockSession(
   sessionId: string,

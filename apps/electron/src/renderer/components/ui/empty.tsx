@@ -1,3 +1,9 @@
+/**
+ * Empty — 空状态组件族。
+ *
+ * 提供 Empty、EmptyHeader、EmptyMedia、EmptyTitle、EmptyDescription、EmptyContent
+ * 等原子组件，用于列表/页面为空时的统一展示。
+ */
 import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"

@@ -1,3 +1,9 @@
+/**
+ * InputErrorBoundary - 聊天输入区的局部错误边界。
+ *
+ * 把输入框内的崩溃限制在输入区内部，避免整个聊天页面被空白。
+ * 比根错误边界更窄：格式错误的草稿或未来 composer bug 不应导致整个应用白屏。
+ */
 import * as React from 'react'
 import * as Sentry from '@sentry/electron/renderer'
 import { useTranslation } from 'react-i18next'
@@ -15,12 +21,7 @@ interface InputErrorBoundaryState {
   hasError: boolean
 }
 
-/**
- * Keeps chat input failures local to the composer area so the rest of the chat
- * page remains usable. This is intentionally narrower than the root Sentry
- * boundary because malformed drafts or future composer bugs should not blank the
- * entire app.
- */
+/** InputErrorBoundary - 限制输入区崩溃范围的类组件错误边界 */
 export class InputErrorBoundary extends React.Component<
   InputErrorBoundaryProps,
   InputErrorBoundaryState

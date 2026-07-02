@@ -1,4 +1,20 @@
 /**
+ * 文件：Claude Context Factory
+ *
+ * 角色：为 @craft-agent/session-tools-core 里共享的 session tool handler
+ * 创建 SessionToolContext。可以理解为 Go 中的依赖注入工厂：把 Node/Electron 侧
+ * 的具体能力（文件系统、凭证管理、MCP 校验、OAuth 配置检查）注入给跨后端复用
+ * 的 handler。
+ *
+ * 重点：
+ * - FileSystemInterface：用 node:fs 实现，让 session-tools-core 不直接依赖 Node API。
+ * - CredentialManagerInterface：桥接到 source credential manager，统一处理 OAuth/token。
+ * - ValidatorInterface：桥接到 workspace/source/skill/automation 等校验器。
+ * - 上下文包含 sessionId、workspacePath、plansFolderPath 等路径，供 SubmitPlan、
+ *   source auth 等工具使用。
+ */
+
+/**
  * Claude Context Factory
  *
  * Creates a SessionToolContext implementation for Claude with full access

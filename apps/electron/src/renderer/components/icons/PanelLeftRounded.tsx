@@ -1,8 +1,10 @@
 import type { SVGProps } from "react"
 
 /**
- * Custom left sidebar panel icon with rounded design.
- * Vertical divider on the left side, no arrow.
+ * 自定义圆角左侧面板图标。
+ *
+ * 左侧有一条竖线，表示左侧面板；无箭头，仅作状态展示。
+ * 在 Electron 渲染层里常用于展开/折叠左侧导航栏的按钮。
  */
 export function PanelLeftRounded(props: SVGProps<SVGSVGElement>) {
   return (

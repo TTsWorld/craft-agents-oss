@@ -1,3 +1,11 @@
+/**
+ * turn-card 注册项
+ *
+ * 这个文件演示 TurnCard 组件：一个“回合卡片”，把一次用户请求对应的 Agent 工具活动、
+ * 流式/完整回复、Todo 列表、以及全屏覆盖层（overlay）整合在一起。
+ * 涉及概念：turn（一个用户请求+AI 回复的回合）、tool use（Read/Grep/Bash 等工具调用）、
+ * stream（文字逐个出现）、session（一次对话）。
+ */
 import type { ComponentEntry } from './types'
 import { useState, useEffect, type ReactNode } from 'react'
 import {
@@ -55,10 +63,8 @@ export class AuthHandler {
 Would you like me to implement any improvements?`
 
 /**
- * Realistic streaming simulation with:
- * - Fast character streaming (simulates real LLM token rate)
- * - Component batching accumulates into word-sized chunks
- * - Pauses at punctuation for natural rhythm
+ * 模拟 LLM 流式输出：按速度逐字追加文本，在标点处停顿，让 UI 看起来像真实 streaming。
+ * 返回 { streamedText, isComplete }。
  */
 function useStreamingSimulation(
   fullText: string,
@@ -112,7 +118,7 @@ function useStreamingSimulation(
   return { streamedText, isComplete }
 }
 
-/** TurnCard wrapper that simulates streaming response */
+/** 包装 TurnCard，用上面的 hook 模拟流式回复。 */
 function StreamingSimulationTurnCard({
   activities,
   intent,
@@ -148,7 +154,7 @@ function StreamingSimulationTurnCard({
 }
 
 // ============================================================================
-// Sample Data
+// 示例数据（Sample Data）
 // ============================================================================
 
 const now = Date.now()
@@ -335,7 +341,7 @@ const emptyStreamingResponse: ResponseContent = {
 }
 
 // ============================================================================
-// Helper: Generate many activities for stress testing
+// 辅助函数：生成大量 activity 用于压力测试
 // ============================================================================
 
 /** Tool names and file paths for realistic variety */
@@ -360,8 +366,7 @@ const commentaryVariety = [
 ]
 
 /**
- * Generate a realistic sequence of activities with mixed tools and commentary.
- * Alternates between tool calls and intermediate messages for realism.
+ * 生成一组逼真的活动序列，工具调用和 LLM 中间说明交替出现。
  */
 function generateManyActivities(count: number): ActivityItem[] {
   const activities: ActivityItem[] = []
@@ -398,7 +403,7 @@ function generateManyActivities(count: number): ActivityItem[] {
 const manyActivities75 = generateManyActivities(75)
 
 // ============================================================================
-// Sample Todos (for TodoWrite visualization)
+// 示例 Todo 列表（用于 TodoWrite 可视化）
 // ============================================================================
 
 /** Empty state - no todos */
@@ -462,9 +467,10 @@ const todosLong: TodoItem[] = [
 ]
 
 // ============================================================================
-// Component Entry
+// 组件注册表条目（Component Registry Entries）
 // ============================================================================
 
+/** turn-card 组件注册列表。 */
 export const turnCardComponents: ComponentEntry[] = [
   {
     id: 'turn-card',
@@ -969,10 +975,10 @@ export const turnCardComponents: ComponentEntry[] = [
 ]
 
 // ============================================================================
-// Fullscreen Overlay Components
+// 全屏覆盖层组件（Fullscreen Overlay Components）
 // ============================================================================
 
-/** Sample markdown content for fullscreen testing */
+/** 用于全屏测试的示例 Markdown 内容。 */
 const sampleMarkdownContent = `# Authentication System Analysis
 
 I've completed my analysis of the authentication system. Here's what I found:

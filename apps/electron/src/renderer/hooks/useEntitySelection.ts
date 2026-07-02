@@ -1,15 +1,15 @@
 /**
- * useEntitySelection — Generic atom-backed selection factory.
+ * useEntitySelection — 基于 Jotai atom 的通用选择状态工厂。
  *
- * Creates a Jotai atom + hooks for any entity type (sessions, sources, skills).
- * Each call to createEntitySelection() produces an independent atom and hook set.
+ * 为任意实体类型（session、source、skill 等）创建独立的 atom 与 hook。
+ * 每次调用 createEntitySelection() 都会产生一组独立的 atom 和 hook。
  *
- * Hooks returned:
- * - useSelection()         — Full action hook (select, toggle, range, clear, etc.)
- * - useSelectionStore()    — Raw { state, setState } for useEntityListInteractions
- * - useIsMultiSelectActive() — Read-only boolean
- * - useSelectedIds()       — Read-only Set<string>
- * - useSelectionCount()    — Read-only number
+ * 返回的 hook：
+ * - useSelection()         — 完整操作 hook（select、toggle、range、clear 等）
+ * - useSelectionStore()    — 原始 { state, setState }，供 useEntityListInteractions 使用
+ * - useIsMultiSelectActive() — 只读布尔值
+ * - useSelectedIds()       — 只读 Set<string>
+ * - useSelectionCount()    — 只读数量
  */
 
 import { atom, useAtom, useAtomValue } from 'jotai'
@@ -97,7 +97,7 @@ export function createEntitySelection() {
 }
 
 // ============================================================================
-// Instances — one per entity type
+// 实例：每种实体类型一个
 // ============================================================================
 
 export const sessionSelection = createEntitySelection()

@@ -1,8 +1,8 @@
 /**
  * Info_Page
  *
- * Compound page layout component for Info pages.
- * Handles loading, error, and empty states with consistent styling.
+ * 信息页的复合布局组件，统一处理加载中、错误、空数据三种状态。
+ * 由 Root / Header / Hero / Content 四个子组件组合而成，类似 React 中的「复合组件」模式。
  */
 
 import * as React from 'react'
@@ -16,11 +16,11 @@ import { CHAT_LAYOUT } from '@/config/layout'
 
 export interface Info_PageProps {
   children: React.ReactNode
-  /** Show loading spinner */
+  /** 是否显示加载中 spinner */
   loading?: boolean
-  /** Show error state with message */
+  /** 错误状态提示文本 */
   error?: string
-  /** Show empty state with message */
+  /** 空状态提示文本 */
   empty?: string
   className?: string
 }
@@ -30,11 +30,11 @@ export interface Info_PageHeaderProps extends Omit<PanelHeaderProps, 'className'
 }
 
 export interface Info_PageHeroProps {
-  /** Avatar element */
+  /** 头像 / 图标元素 */
   avatar: React.ReactNode
-  /** Title displayed next to avatar */
+  /** 标题，显示在头像右侧 */
   title?: string
-  /** Tagline/description text below title */
+  /** 副标题 / 描述，显示在标题下方 */
   tagline?: string | null
   className?: string
 }
@@ -52,7 +52,7 @@ function Info_PageRoot({
   className,
 }: Info_PageProps) {
   const { t } = useTranslation()
-  // Extract header from children for consistent structure
+  // 从子元素中拆分出 Header，确保加载 / 错误 / 空状态时也能保持一致的页面结构
   let header: React.ReactNode = null
   const otherChildren: React.ReactNode[] = []
 
@@ -64,7 +64,7 @@ function Info_PageRoot({
     }
   })
 
-  // Loading state
+  // 加载中状态：保留 header，内容区显示 spinner
   if (loading) {
     return (
       <div className={cn('h-full flex flex-col', className)}>
@@ -76,7 +76,7 @@ function Info_PageRoot({
     )
   }
 
-  // Error state
+  // 错误状态：保留 header，内容区显示错误图标与提示
   if (error) {
     return (
       <div className={cn('h-full flex flex-col', className)}>
@@ -90,7 +90,7 @@ function Info_PageRoot({
     )
   }
 
-  // Empty state
+  // 空状态：保留 header，内容区显示 empty 提示
   if (empty) {
     return (
       <div className={cn('h-full flex flex-col', className)}>
@@ -102,7 +102,7 @@ function Info_PageRoot({
     )
   }
 
-  // Normal content
+  // 正常内容：header + 其余子元素
   return (
     <div className={cn('h-full flex flex-col', className)}>
       {header}
@@ -140,7 +140,7 @@ function Info_PageHero({ avatar, title, tagline, className }: Info_PageHeroProps
 function Info_PageContent({ children, className }: Info_PageContentProps) {
   return (
     <div className="relative flex-1 min-h-0">
-      {/* Mask wrapper - fades content at top and bottom over transparent/image backgrounds */}
+      {/* 遮罩容器：在透明或图片背景上，让内容在顶部和底部产生渐隐效果 */}
       <div
         className="h-full"
         style={{

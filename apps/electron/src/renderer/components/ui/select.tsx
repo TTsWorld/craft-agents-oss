@@ -1,3 +1,9 @@
+/**
+ * Select — 下拉选择组件
+ *
+ * 基于 Radix UI Select 封装。SelectPrimitive.Root/Group/Value 直接复用原组件，
+ * 只给 Trigger、Content、Item 等加上项目统一样式。
+ */
 import * as React from "react"
 import * as SelectPrimitive from "@radix-ui/react-select"
 import { Check, ChevronDown, ChevronUp } from "lucide-react"

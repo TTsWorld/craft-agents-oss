@@ -216,6 +216,7 @@ const sentryResolve: ActivityItem = {
   timestamp: now - 5000,
 }
 
+/** incidentResponseActivities：常量 */
 export const incidentResponseActivities: ActivityItem[] = [
   sentryFetchError,
   slackPostAlert,
@@ -231,6 +232,7 @@ export const incidentResponseActivities: ActivityItem[] = [
   sentryResolve,
 ]
 
+/** incidentResponseResponse：常量 */
 export const incidentResponseResponse: ResponseContent = {
   text: `## Incident Resolution Summary
 

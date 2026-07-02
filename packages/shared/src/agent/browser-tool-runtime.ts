@@ -1,3 +1,19 @@
+/**
+ * browser_tool 命令运行时
+ *
+ * 本模块实现 agent 使用的 `browser_tool` 工具的命令解析与执行。
+ * Agent 通过一种"字符串迷你 DSL"（如 `click @e1`、`fill @e5 hello`、
+ * `screenshot --annotated`）驱动浏览器；本文件负责：
+ *   1. 显示帮助（getBrowserToolHelp）
+ *   2. 词法/语法解析（tokenizeCommand / splitBatchCommands / decodeEscapes）
+ *   3. 通过注入的 BrowserPaneFns 调用实际浏览器面板能力并格式化输出
+ *
+ * 概念类比（给 Go 背景）：
+ * - `BrowserPaneFns` 类似一个接口/依赖注入，由上层浏览器面板实现，
+ *   这里只负责"调度 + 输出格式化"，不直接操作 DOM。
+ * - `executeSingleCommand` 是一个巨大的 switch，按命令名分发处理。
+ */
+
 import type {
   BrowserConsoleArgs,
   BrowserDownloadsArgs,
@@ -8,18 +24,24 @@ import type {
   BrowserWaitArgs,
 } from './browser-tools.ts';
 
+/** 浏览器命令返回的内嵌图片（base64 编码，附 MIME 与字节数） */
 export interface BrowserCommandImage {
   data: string;
   mimeType: 'image/png' | 'image/jpeg';
   sizeBytes: number;
 }
 
+/** 单条 browser_tool 命令的统一返回结构 */
 export interface BrowserCommandResult {
+  /** 文本输出（交给 LLM 阅读的结果摘要） */
   output: string;
+  /** 是否在输出末尾追加"释放控制"的提示给 LLM */
   appendReleaseHint: boolean;
+  /** 可选附带的截图图片 */
   image?: BrowserCommandImage;
 }
 
+/** 从浏览器页面采集的关键度量指标（URL/视口/滚动/聚焦元素等） */
 interface BrowserPageMetrics {
   url: string;
   title: string;
@@ -37,6 +59,10 @@ interface BrowserPageMetrics {
   activeElementName?: string;
 }
 
+/**
+ * 返回 `--help` 文本，列出所有支持的 browser_tool 子命令与示例。
+ * 类似 Go CLI 里 `cmd.Help()` 输出的字符串拼接。
+ */
 export function getBrowserToolHelp(): string {
   return [
     'browser_tool command help',
@@ -113,6 +139,7 @@ export function getBrowserToolHelp(): string {
   ].join('\n');
 }
 
+/** 将单个无障碍节点格式化为一行可读文本，包含 ref/role/name 及其状态标注 */
 function formatNodeLine(
   node: {
     ref: string;
@@ -137,6 +164,7 @@ function formatNodeLine(
   return line;
 }
 
+/** 字节数 → 人类可读字符串（如 "1.2 MB"） */
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB'];
@@ -149,17 +177,20 @@ function formatBytes(bytes: number): string {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 }
 
+/** 计算百分比字符串（分母非正或非有限数时返回 "0.0%"） */
 function formatPercent(numerator: number, denominator: number): string {
   if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return '0.0%';
   return `${((numerator / denominator) * 100).toFixed(1)}%`;
 }
 
+/** 折叠空白并截断到 max 长度（超出加省略号 …），用于简短展示 */
 function shortText(text: string, max = 160): string {
   const normalized = text.replace(/\s+/g, ' ').trim();
   if (normalized.length <= max) return normalized;
   return `${normalized.slice(0, max - 1)}…`;
 }
 
+/** 把 HTTP 状态码归类为状态码段（2xx/3xx/4xx/5xx/other） */
 function statusBucket(status: number): '2xx' | '3xx' | '4xx' | '5xx' | 'other' {
   if (status >= 200 && status < 300) return '2xx';
   if (status >= 300 && status < 400) return '3xx';
@@ -168,6 +199,7 @@ function statusBucket(status: number): '2xx' | '3xx' | '4xx' | '5xx' | 'other' {
   return 'other';
 }
 
+/** 安全地执行一段 JS 表达式；任何异常都被吞掉并返回 null（避免单点错误中断整条命令） */
 async function safeEvaluate<T>(fns: BrowserPaneFns, expression: string): Promise<T | null> {
   try {
     const value = await fns.evaluate(expression);
@@ -177,6 +209,7 @@ async function safeEvaluate<T>(fns: BrowserPaneFns, expression: string): Promise
   }
 }
 
+/** 在页面里执行一段 JS 采集 URL/标题/视口/滚动条/聚焦元素等度量信息 */
 async function getPageMetrics(fns: BrowserPaneFns): Promise<BrowserPageMetrics | null> {
   return safeEvaluate<BrowserPageMetrics>(
     fns,
@@ -210,6 +243,7 @@ async function getPageMetrics(fns: BrowserPaneFns): Promise<BrowserPageMetrics |
   );
 }
 
+/** 把当前聚焦元素描述为 "tag#id role=xxx \"name\"" 形式的字符串 */
 function describeActive(metrics: BrowserPageMetrics | null): string {
   if (!metrics) return 'unknown';
   const tag = metrics.activeElementTag || 'unknown';
@@ -219,6 +253,7 @@ function describeActive(metrics: BrowserPageMetrics | null): string {
   return `${tag}${id}${role}${name}`;
 }
 
+/** 视为"可交互"的无障碍角色集合（用于判断页面是否稀疏到接近无法操作） */
 const ACTIONABLE_AX_ROLES = new Set([
   'button',
   'link',
@@ -238,10 +273,12 @@ const ACTIONABLE_AX_ROLES = new Set([
   'listbox',
 ]);
 
+/** 统计节点列表里"可交互且未禁用"的节点数量 */
 function countActionableNodes(nodes: Array<{ role: string; disabled?: boolean }>): number {
   return nodes.filter((node) => ACTIONABLE_AX_ROLES.has((node.role || '').toLowerCase()) && !node.disabled).length;
 }
 
+/** 把窗口列表汇总成 "total=N, visible=N, locked=N, overlays=N" 的简短描述 */
 function summarizeWindows(windows: Awaited<ReturnType<BrowserPaneFns['listWindows']>>): string {
   const visible = windows.filter((w) => w.isVisible).length;
   const locked = windows.filter((w) => !!w.boundSessionId).length;
@@ -249,6 +286,7 @@ function summarizeWindows(windows: Awaited<ReturnType<BrowserPaneFns['listWindow
   return `total=${windows.length}, visible=${visible}, locked=${locked}, overlays=${withOverlay}`;
 }
 
+/** 解析 open 命令"等待可见"的超时（参数 > 环境变量 > 默认 1500ms），下限 100ms */
 function getOpenVisibilitySettleTimeoutMs(override?: number): number {
   if (typeof override === 'number' && Number.isFinite(override)) {
     return Math.max(100, override);
@@ -260,6 +298,7 @@ function getOpenVisibilitySettleTimeoutMs(override?: number): number {
   return 1500;
 }
 
+/** 解析 open 命令"等待可见"的轮询间隔（参数 > 环境变量 > 默认 100ms），下限 25ms */
 function getOpenVisibilitySettlePollMs(override?: number): number {
   if (typeof override === 'number' && Number.isFinite(override)) {
     return Math.max(25, override);
@@ -271,6 +310,10 @@ function getOpenVisibilitySettlePollMs(override?: number): number {
   return 100;
 }
 
+/**
+ * 前台 open 时轮询等待窗口变为可见。
+ * 超时后会尝试一次 focusWindow 兜底；返回值同时携带本次是否通过等待/兜底达成。
+ */
 async function waitForForegroundOpenVisibility(args: {
   fns: BrowserPaneFns;
   instanceId: string;
@@ -323,6 +366,7 @@ async function waitForForegroundOpenVisibility(args: {
   };
 }
 
+/** 把 release/close/hide 等生命周期动作的结果汇总成一行可读文本 */
 function formatLifecycleResultLine(result: BrowserLifecycleActionResult): string {
   if (result.action === 'noop') {
     return [
@@ -342,6 +386,7 @@ function formatLifecycleResultLine(result: BrowserLifecycleActionResult): string
   ].filter(Boolean).join(', ');
 }
 
+/** 会改变页面/导航的命令；批处理中遇到这些命令会在其后中止批次，避免后续命令作用于错误页面 */
 const NAVIGATION_COMMANDS = new Set([
   'navigate',
   'click',
@@ -349,6 +394,7 @@ const NAVIGATION_COMMANDS = new Set([
   'forward',
 ]);
 
+/** 把命令片段中的简单转义（\n \t \r \" \' \\）还原成对应字符 */
 function decodeEscapes(input: string): string {
   return input.replace(/\\(.)/g, (_match, ch: string) => {
     if (ch === 'n') return '\n';
@@ -361,6 +407,7 @@ function decodeEscapes(input: string): string {
   });
 }
 
+/** 按分号拆分批处理命令字符串；尊重单/双引号与反斜杠转义；未闭合引号会抛错 */
 function splitBatchCommands(input: string): string[] {
   const commands: string[] = [];
   let current = '';
@@ -418,6 +465,7 @@ function splitBatchCommands(input: string): string[] {
   return commands;
 }
 
+/** 把单条命令字符串按 shell 风格切成 token；尊重引号、转义，并在未闭合引号时报错 */
 function tokenizeCommand(input: string): string[] {
   const tokens: string[] = [];
   let current = '';
@@ -482,6 +530,7 @@ function tokenizeCommand(input: string): string[] {
   return tokens;
 }
 
+/** 解析后的 select 命令参数：ref + 值 + 可选断言 + 超时 */
 interface ParsedSelectCommand {
   ref: string;
   value: string;
@@ -490,6 +539,7 @@ interface ParsedSelectCommand {
   timeoutMs: number;
 }
 
+/** 解析 select 子命令的 token 列表，支持 --assert-text / --assert-value / --timeout 选项 */
 function parseSelectCommand(parts: string[]): ParsedSelectCommand {
   const ref = parts[1];
   if (!ref) throw new Error('select requires ref and value. Example: select @e3 optionValue');
@@ -534,6 +584,7 @@ function parseSelectCommand(parts: string[]): ParsedSelectCommand {
   return { ref, value, assertText, assertValue, timeoutMs };
 }
 
+/** 不区分大小写、首尾去空白地判断 haystack 是否包含 needle */
 function includesNormalized(haystack: string | undefined, needle: string): boolean {
   const h = (haystack ?? '').trim().toLowerCase();
   const n = needle.trim().toLowerCase();
@@ -541,6 +592,7 @@ function includesNormalized(haystack: string | undefined, needle: string): boole
   return h.includes(n);
 }
 
+/** 在 timeoutMs 内轮询 snapshot 验证 select 是否真的生效（支持 ref/文本/值断言） */
 async function verifySelectResult(args: {
   fns: BrowserPaneFns;
   ref: string;
@@ -619,6 +671,15 @@ async function verifySelectResult(args: {
 }
 
 
+/**
+ * browser_tool 工具入口：解析并执行命令。
+ *
+ * 支持两种输入：
+ * - 字符串模式：可含分号批处理（splitBatchCommands），遇到导航类命令会中止批次
+ * - 数组模式：JSON 数组直接作为单条命令的 token，不做切分与转义处理
+ *
+ * @returns 文本输出 + 可选图片 + 是否追加释放提示
+ */
 export async function executeBrowserToolCommand(args: {
   command: string | string[];
   fns: BrowserPaneFns;
@@ -647,6 +708,7 @@ export async function executeBrowserToolCommand(args: {
   return executeSingleCommand(args);
 }
 
+/** 顺序执行多条批处理命令；遇到导航命令会在执行完后中止后续批次 */
 async function executeBatchCommands(args: {
   commands: string[];
   fns: BrowserPaneFns;
@@ -679,6 +741,7 @@ async function executeBatchCommands(args: {
   };
 }
 
+/** 执行单条命令；按 cmd 名分发到对应处理器（open / navigate / snapshot / click / ...） */
 async function executeSingleCommand(args: {
   command: string | string[];
   fns: BrowserPaneFns;

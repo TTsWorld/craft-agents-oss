@@ -2,21 +2,28 @@ import type { ReactNode } from "react"
 import { cn } from "@/lib/utils"
 
 interface AddWorkspace_RadioOptionProps {
+  /** radio 组名，同一组内多个选项应使用相同 name */
   name: string
+  /** 当前是否被选中 */
   checked: boolean
+  /** 选中状态变化时的回调 */
   onChange: () => void
+  /** 是否禁用 */
   disabled?: boolean
+  /** 选项标题 */
   title: string
+  /** 选项副标题，支持字符串或 JSX */
   subtitle: string | ReactNode
+  /** 右侧附加操作，例如“浏览”按钮 */
   action?: ReactNode
 }
 
 /**
- * AddWorkspace_RadioOption - Shared radio button component for workspace creation flows
+ * AddWorkspace_RadioOption - 添加工作区流程的通用单选组件
  *
- * Used in:
- * - AddWorkspaceStep_OpenFolder: Browse/Create folder options + Location selection
- * - AddWorkspaceStep_CreateNew: Location selection
+ * 使用场景：
+ * - AddWorkspaceStep_OpenFolder：选择“浏览已有文件夹”或“在指定位置新建文件夹”
+ * - AddWorkspaceStep_CreateNew：选择默认位置或自定义位置
  */
 export function AddWorkspace_RadioOption({
   name,
@@ -37,6 +44,7 @@ export function AddWorkspace_RadioOption({
         : "hover:bg-foreground/5",
       disabled && "opacity-50 cursor-not-allowed"
     )}>
+      {/* 隐藏原生 radio，使用自定义圆圈样式 */}
       <input
         type="radio"
         name={name}

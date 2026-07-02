@@ -1,12 +1,14 @@
 /**
- * Electron platform factory — creates PlatformServices from Electron APIs.
+ * platform.ts —— Electron 平台服务工厂。
  *
- * Extracted from main/index.ts so it can be injected into bootstrapServer()
- * without duplicating construction logic.
+ * 用 Electron 原生 API 构造 PlatformServices，供 bootstrapServer() 注入。
+ * 这样 server-core 里与平台无关的代码可以通过 PlatformServices 接口调用系统能力，
+ * 类似 Go 里通过 interface 把平台差异抽象出去。
  */
 
 import type { PlatformServices } from '../runtime/platform'
 
+// 构造 PlatformServices 所需的 Electron 原生对象
 export interface ElectronPlatformOptions {
   app: Electron.App
   nativeImage: typeof import('electron').nativeImage
@@ -18,6 +20,12 @@ export interface ElectronPlatformOptions {
   captureError?: (error: Error) => void
 }
 
+/**
+ * 创建 Electron 平台服务实例。
+ *
+ * 返回的 PlatformServices 包含：打开外部链接、打开文件路径、显示文件、退出应用、
+ * 获取系统主题、处理图片、写日志等能力。
+ */
 export function createElectronPlatform(opts: ElectronPlatformOptions): PlatformServices {
   const { app, nativeImage, shell, nativeTheme, logger } = opts
 

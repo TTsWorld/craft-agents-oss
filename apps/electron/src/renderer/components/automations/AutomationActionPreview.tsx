@@ -1,11 +1,10 @@
 /**
  * AutomationActionPreview
  *
- * Compact action list for expanded rows in AutomationCard and AutomationsListPanel.
- * Shows MessageSquare/Webhook icon + truncated text.
+ * 用于 AutomationCard 和 AutomationsListPanel 展开行的紧凑动作列表。
+ * 显示 MessageSquare/Webhook 图标 + 截断后的文案。
  *
- * For the full-size info page with index numbering and @mention highlighting,
- * use AutomationActionRow instead.
+ * 如果需要带序号、@mention 高亮的完整展示，请改用 AutomationActionRow。
  */
 
 import { cn } from '@/lib/utils'

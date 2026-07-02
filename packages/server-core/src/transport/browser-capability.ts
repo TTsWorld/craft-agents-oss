@@ -1,21 +1,23 @@
 /**
- * Wire protocol for the `client:browser:invoke` capability.
+ * `client:browser:invoke` 能力的线协议定义。
  *
- * The remote `RemoteBrowserPaneManager` packages an `IBrowserPaneManager`
- * method call into a `BrowserCapabilityRequest` and the local dispatcher
- * (Electron main IPC) executes it on the real `BrowserPaneManager`.
+ * 当 Agent 在远程服务器上运行，而浏览器实例在本地 Electron 客户端时，
+ * RemoteBrowserPaneManager 把 IBrowserPaneManager 的方法调用打包成 BrowserCapabilityRequest，
+ * 通过 WS 发送给本地客户端，再由客户端的 BrowserPaneManager 真正执行。
  *
- * See docs/adr-transport-locality.md for the locality boundary definition.
+ * 这种"远程调用本地资源"的模式是 Craft Agent 支持 headless server + 本地浏览器自动化的关键。
  */
 
+/** 浏览器能力协议版本号，当前固定为 1 */
 export const BROWSER_CAPABILITY_VERSION = 1
 
 /**
- * Names map 1:1 to `IBrowserPaneManager` methods.
- * Positional `args` carry the method's arguments in declaration order.
+ * BrowserPaneManager 支持的方法名。
+ *
+ * args 按方法签名顺序传入位置参数。
  */
 export type BrowserCapabilityMethod =
-  // Lifecycle / instances
+  // 生命周期 / 实例管理
   | 'createForSession'
   | 'getOrCreateForSession'
   | 'focusBoundForSession'
@@ -31,11 +33,11 @@ export type BrowserCapabilityMethod =
   | 'clearVisualsForSession'
   | 'focus'
   | 'hide'
-  // Navigation
+  // 导航
   | 'navigate'
   | 'goBack'
   | 'goForward'
-  // Interaction
+  // 交互
   | 'getAccessibilitySnapshot'
   | 'clickElement'
   | 'clickAtCoordinates'
@@ -47,10 +49,10 @@ export type BrowserCapabilityMethod =
   | 'scroll'
   | 'waitFor'
   | 'evaluate'
-  // Clipboard
+  // 剪贴板
   | 'setClipboard'
   | 'getClipboard'
-  // Capture / introspection
+  // 截图 / 检查
   | 'screenshot'
   | 'screenshotRegion'
   | 'getConsoleLogs'
@@ -61,26 +63,28 @@ export type BrowserCapabilityMethod =
   | 'detectSecurityChallenge'
 
 export interface BrowserCapabilityRequest {
-  /** Protocol version. Always `1` for now; bumped on breaking shape changes. */
+  /** 协议版本，当前固定为 1 */
   v: 1
   method: BrowserCapabilityMethod
-  /** Positional args matching `IBrowserPaneManager[method]` signature. */
+  /** 位置参数，匹配 IBrowserPaneManager[method] 的签名 */
   args: unknown[]
-  /** Owning session — used for owner-key namespacing on the client dispatcher. */
+  /** 所属 session，客户端用它做 owner-key 命名空间 */
   sessionId: string
-  /** Owning workspace — combined with `sessionId` to form the owner-key prefix. */
+  /** 所属 workspace，和 sessionId 组合成 owner-key 前缀 */
   workspaceId: string
 }
 
 /**
- * Wire shape for `screenshot` / `screenshotRegion` results.
+ * screenshot / screenshotRegion 的线格式。
  *
- * The local `BrowserScreenshotResult` carries a Node `Buffer` for `imageBuffer`,
- * which doesn't survive structured cloning over WS. The dispatcher converts
- * `Buffer → Uint8Array` here, and `RemoteBrowserPaneManager` converts it back.
+ * 本地 BrowserScreenshotResult 里 imageBuffer 是 Node Buffer，不能通过 WS 结构化克隆传输，
+ * 所以分发器把 Buffer 转成 Uint8Array，RemoteBrowserPaneManager 再转回 Buffer。
  */
 export interface ScreenshotResultWire {
+  /** 图片格式：png 或 jpeg */
   imageFormat: 'png' | 'jpeg'
+  /** 图片原始字节（Uint8Array，已从 Node Buffer 转换） */
   imageBytes: Uint8Array
+  /** 可选元数据 */
   metadata?: Record<string, unknown>
 }

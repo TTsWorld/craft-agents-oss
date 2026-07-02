@@ -1,5 +1,18 @@
+/**
+ * 网络隔离（network isolation）
+ *
+ * 本模块负责把脚本子进程的网络访问能力关闭，避免沙箱内代码外联。
+ * 在 Agent 场景中，tool use 调用的脚本可能来自不可信来源，因此需要默认禁网。
+ */
+
 import { spawnSync } from 'node:child_process';
 
+/**
+ * 网络隔离方案
+ * status: 是否成功启用
+ * backend: 使用哪种后端实现
+ * command/args: 最终要执行的命令及其参数
+ */
 export interface NetworkIsolationPlan {
   status: 'enforced' | 'unavailable';
   backend: 'sandbox-exec' | 'unshare' | 'firejail' | 'none';
@@ -7,14 +20,24 @@ export interface NetworkIsolationPlan {
   args: string[];
 }
 
+/**
+ * 检查某个可执行文件是否在 PATH 中
+ * Windows 用 where，其他系统用 which
+ */
 function existsOnPath(binary: string): boolean {
   const checker = process.platform === 'win32' ? 'where' : 'which';
   const result = spawnSync(checker, [binary], { stdio: 'ignore' });
   return result.status === 0;
 }
 
+/**
+ * sandbox-exec 可用性缓存，避免重复探测
+ */
 let sandboxExecUsableCache: boolean | null = null;
 
+/**
+ * 探测当前系统是否可用 sandbox-exec
+ */
 function canUseSandboxExec(): boolean {
   if (sandboxExecUsableCache !== null) return sandboxExecUsableCache;
   if (!existsOnPath('sandbox-exec')) {
@@ -27,6 +50,9 @@ function canUseSandboxExec(): boolean {
   return sandboxExecUsableCache;
 }
 
+/**
+ * 探测当前系统是否可用 unshare -n（进入新 network namespace）
+ */
 function canUseUnshare(): boolean {
   if (!existsOnPath('unshare')) return false;
   const probe = spawnSync('unshare', ['-n', 'true'], { stdio: 'ignore' });
@@ -34,12 +60,12 @@ function canUseUnshare(): boolean {
 }
 
 /**
- * Wrap command execution to deny outbound network where supported.
+ * 把原始命令包装成“带网络隔离”的命令。
  *
- * Current support:
- * - macOS: sandbox-exec with deny network profile
- * - Linux: unshare -n (preferred) or firejail --net=none
- * - others: unavailable (fail-safe for script_sandbox)
+ * 当前支持的平台：
+ * - macOS: sandbox-exec 的 deny network profile
+ * - Linux: unshare -n（优先）或 firejail --net=none
+ * - 其他平台: 不可用（对 script_sandbox 采取 fail-safe）
  */
 export function applyNetworkIsolation(command: string, args: string[]): NetworkIsolationPlan {
   if (process.platform === 'darwin' && canUseSandboxExec()) {
@@ -72,6 +98,7 @@ export function applyNetworkIsolation(command: string, args: string[]): NetworkI
     }
   }
 
+  // 没有任何可用后端时回退
   return {
     status: 'unavailable',
     backend: 'none',

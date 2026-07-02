@@ -1,14 +1,17 @@
 /**
- * Event Processor Types
+ * 事件处理器类型定义
  *
- * Defines the state and event types for the centralized event processor.
- * All agent events flow through a single pure function for consistent state transitions.
+ * 定义集中式事件处理器所需的状态和事件类型。
+ * 所有 Agent 事件都通过同一个纯函数处理，以保证状态转换一致。
  */
 
+// import type 只导入类型，编译后不会生成真正的 import 语句，和 Go 的类型导入概念类似
 import type { Session, Message, PermissionRequest, CredentialRequest, TypedError, PermissionMode, SessionStatus, AuthRequest, ToolDisplayMeta } from '../../shared/types'
 
 /**
- * Streaming state for a session - replaces streamingTextRef
+ * 流式状态：替代旧的 streamingTextRef，用于暂存尚未完成的消息片段
+ *
+ * export interface 表示这是一个对外暴露的结构类型，类似 Go 里的 exported struct。
  */
 export interface StreamingState {
   content: string
@@ -17,7 +20,7 @@ export interface StreamingState {
 }
 
 /**
- * Complete state for a session - combines session + streaming
+ * 完整的会话状态：把持久化的 Session 和临时的流式状态组合在一起
  */
 export interface SessionState {
   session: Session
@@ -25,7 +28,7 @@ export interface SessionState {
 }
 
 /**
- * Text delta event - streaming text content
+ * 文本片段事件：服务端持续推送的流式文本内容
  */
 export interface TextDeltaEvent {
   type: 'text_delta'
@@ -35,7 +38,7 @@ export interface TextDeltaEvent {
 }
 
 /**
- * Text complete event - finalizes streaming text
+ * 文本完成事件：流式文本结束，把累积内容落盘为正式消息
  */
 export interface TextCompleteEvent {
   type: 'text_complete'
@@ -44,15 +47,15 @@ export interface TextCompleteEvent {
   turnId?: string
   isIntermediate?: boolean
   parentToolUseId?: string
-  /** Timestamp from main process for consistent ordering with session.jsonl */
+  /** 主进程提供的时间戳，用于与会话持久化文件 session.jsonl 保持顺序一致 */
   timestamp?: number
-  /** Authoritative message ID from main process for persistence/branching parity */
+  /** 主进程提供的权威消息 ID，保证持久化/分支一致性 */
   messageId?: string
 }
 
 /**
- * Tool start event - begins tool execution
- * Field names match SessionEvent from shared/types.ts
+ * 工具开始事件：标识某个工具开始执行
+ * 字段命名与 shared/types.ts 中的 SessionEvent 保持一致
  */
 export interface ToolStartEvent {
   type: 'tool_start'
@@ -60,18 +63,18 @@ export interface ToolStartEvent {
   toolUseId: string
   toolName: string
   toolInput?: Record<string, unknown>
-  /** Timestamp from main process for consistent ordering */
+  /** 主进程提供的时间戳，用于排序 */
   timestamp?: number
   turnId?: string
   parentToolUseId?: string
   toolIntent?: string
   toolDisplayName?: string
-  /** Tool display metadata with base64-encoded icon for viewer compatibility */
+  /** 工具的展示元数据，包含 base64 图标，保证 viewer 端兼容 */
   toolDisplayMeta?: ToolDisplayMeta
 }
 
 /**
- * Tool result event - completes tool execution
+ * 工具结果事件：标识某个工具执行完成并返回结果
  */
 export interface ToolResultEvent {
   type: 'tool_result'
@@ -82,18 +85,18 @@ export interface ToolResultEvent {
   isError?: boolean
   turnId?: string
   parentToolUseId?: string
-  /** Timestamp from main process for consistent ordering */
+  /** 主进程提供的时间戳，用于排序 */
   timestamp?: number
 }
 
 /**
- * Complete event - agent loop finished
+ * 完成事件：Agent 一轮循环结束
  */
 export interface CompleteEvent {
   type: 'complete'
   sessionId: string
   tokenUsage?: Session['tokenUsage']
-  /** Explicit unread flag - set by main process based on viewing state */
+  /** 是否未读：由主进程根据窗口是否处于活跃状态决定 */
   hasUnread?: boolean
   /**
    * WS2 keep-alive: true when the session's persistent query stays open across
@@ -105,7 +108,7 @@ export interface CompleteEvent {
 }
 
 /**
- * Error event - agent error occurred
+ * 错误事件：Agent 运行过程中出现普通错误
  */
 export interface ErrorEvent {
   type: 'error'
@@ -115,13 +118,13 @@ export interface ErrorEvent {
   title?: string
   details?: string
   original?: string
-  /** Timestamp from main process for consistent ordering */
+  /** 主进程提供的时间戳，用于排序 */
   timestamp?: number
 }
 
 /**
- * Permission request event
- * Matches SessionEvent shape from shared/types.ts
+ * 权限请求事件
+ * 形状与 shared/types.ts 中的 SessionEvent 保持一致
  */
 export interface PermissionRequestEvent {
   type: 'permission_request'
@@ -130,7 +133,7 @@ export interface PermissionRequestEvent {
 }
 
 /**
- * Sources changed event
+ * 来源变更事件：会话启用的知识源/工具源列表发生变化
  */
 export interface SourcesChangedEvent {
   type: 'sources_changed'
@@ -139,7 +142,7 @@ export interface SourcesChangedEvent {
 }
 
 /**
- * Labels changed event
+ * 标签变更事件
  */
 export interface LabelsChangedEvent {
   type: 'labels_changed'
@@ -148,7 +151,7 @@ export interface LabelsChangedEvent {
 }
 
 /**
- * Project id changed event (session bound/unbound to a workspace project)
+ * 项目 ID 变更事件：会话绑定/解绑到某个 workspace 项目
  */
 export interface ProjectIdChangedEvent {
   type: 'project_id_changed'
@@ -157,7 +160,7 @@ export interface ProjectIdChangedEvent {
 }
 
 /**
- * Todo state changed event (external metadata change or agent tool)
+ * 会话状态变更事件：外部元数据变更或 Agent 工具触发
  */
 export interface SessionStatusChangedEvent {
   type: 'session_status_changed'
@@ -166,8 +169,8 @@ export interface SessionStatusChangedEvent {
 }
 
 /**
- * Session metadata changed event — generic live push for programmatic metadata writes
- * (taskNodeCount, kanbanColumn) that don't ride the header-signature file-watch path.
+ * 会话元数据变更事件 —— 用于程序化元数据写入（taskNodeCount、kanbanColumn）的
+ * 通用实时推送，这些写入不走 header 签名文件监听路径。
  */
 export interface SessionMetadataChangedEvent {
   type: 'session_metadata_changed'
@@ -176,7 +179,7 @@ export interface SessionMetadataChangedEvent {
 }
 
 /**
- * Session flagged/unflagged events (external metadata change)
+ * 会话标星/取消标星事件：外部元数据变更
  */
 export interface SessionFlaggedEvent {
   type: 'session_flagged'
@@ -189,7 +192,7 @@ export interface SessionUnflaggedEvent {
 }
 
 /**
- * Session archived/unarchived events (external metadata change)
+ * 会话归档/取消归档事件：外部元数据变更
  */
 export interface SessionArchivedEvent {
   type: 'session_archived'
@@ -202,7 +205,7 @@ export interface SessionUnarchivedEvent {
 }
 
 /**
- * Session name changed event (external metadata change)
+ * 会话名称变更事件：外部元数据变更
  */
 export interface NameChangedEvent {
   type: 'name_changed'
@@ -211,7 +214,7 @@ export interface NameChangedEvent {
 }
 
 /**
- * Plan submitted event
+ * 计划提交事件：Agent 把思考计划以消息形式加入会话
  */
 export interface PlanSubmittedEvent {
   type: 'plan_submitted'
@@ -220,30 +223,30 @@ export interface PlanSubmittedEvent {
 }
 
 /**
- * Typed error event
+ * 结构化错误事件
  */
 export interface TypedErrorEvent {
   type: 'typed_error'
   sessionId: string
   error: TypedError
-  /** Timestamp from main process for consistent ordering */
+  /** 主进程提供的时间戳，用于排序 */
   timestamp?: number
 }
 
 /**
- * Status event
+ * 状态事件：用于显示“压缩中”等状态
  */
 export interface StatusEvent {
   type: 'status'
   sessionId: string
   message: string
   statusType?: 'compacting'
-  /** Timestamp from main process for consistent ordering */
+  /** 主进程提供的时间戳，用于排序 */
   timestamp?: number
 }
 
 /**
- * Info event
+ * 信息事件：普通提示信息
  */
 export interface InfoEvent {
   type: 'info'
@@ -251,35 +254,35 @@ export interface InfoEvent {
   message: string
   statusType?: 'compaction_complete'
   level?: 'info' | 'warning' | 'error' | 'success'
-  /** Timestamp from main process for consistent ordering */
+  /** 主进程提供的时间戳，用于排序 */
   timestamp?: number
 }
 
 /**
- * Interrupted event
+ * 中断事件：Agent 被中断
  */
 export interface InterruptedEvent {
   type: 'interrupted'
   sessionId: string
   message?: Message
-  /** Messages that were queued but not processed — should be restored to input field */
+  /** 已排队但尚未处理的消息文本：需要恢复到输入框中 */
   queuedMessages?: string[]
 }
 
 /**
- * Title generated event
+ * 标题生成完成事件
  */
 export interface TitleGeneratedEvent {
   type: 'title_generated'
   sessionId: string
   title: string
-  preview?: string  // First user message preview for sidebar fallback
+  preview?: string  // 第一条用户消息的预览，侧边栏标题回退用
 }
 
 /**
- * Title regenerating event - indicates title regeneration has started/finished
- * Used to show shimmer effect on title during regeneration
- * @deprecated Use AsyncOperationEvent instead
+ * 标题正在生成事件：表示标题重新生成开始/结束
+ * 用于在生成期间展示标题 shimmer 动画
+ * @deprecated 请改用 AsyncOperationEvent
  */
 export interface TitleRegeneratingEvent {
   type: 'title_regenerating'
@@ -288,8 +291,8 @@ export interface TitleRegeneratingEvent {
 }
 
 /**
- * Generic async operation state event
- * Used to show shimmer effect during any async operation (sharing, updating, revoking, title regeneration)
+ * 通用异步操作状态事件
+ * 用于分享、更新分享、撤销分享、标题重新生成等异步操作的 shimmer 动画
  */
 export interface AsyncOperationEvent {
   type: 'async_operation'
@@ -298,7 +301,7 @@ export interface AsyncOperationEvent {
 }
 
 /**
- * Working directory changed event (user-initiated via UI)
+ * 工作目录变更事件：用户通过 UI 主动切换
  */
 export interface WorkingDirectoryChangedEvent {
   type: 'working_directory_changed'
@@ -307,7 +310,7 @@ export interface WorkingDirectoryChangedEvent {
 }
 
 /**
- * Working directory error event - server rejected the path (cross-platform, not found, etc.)
+ * 工作目录错误事件：服务端拒绝该路径（跨平台、路径不存在等）
  */
 export interface WorkingDirectoryErrorEvent {
   type: 'working_directory_error'
@@ -316,7 +319,7 @@ export interface WorkingDirectoryErrorEvent {
 }
 
 /**
- * Permission mode changed event
+ * 权限模式变更事件
  */
 export interface PermissionModeChangedEvent {
   type: 'permission_mode_changed'
@@ -330,7 +333,7 @@ export interface PermissionModeChangedEvent {
 }
 
 /**
- * Session model changed event
+ * 会话模型变更事件
  */
 export interface SessionModelChangedEvent {
   type: 'session_model_changed'
@@ -339,7 +342,7 @@ export interface SessionModelChangedEvent {
 }
 
 /**
- * LLM connection changed event - syncs session.llmConnection to renderer
+ * LLM 连接变更事件：同步服务端会话的 llmConnection 到 renderer
  */
 export interface LLMConnectionChangedEvent {
   type: 'connection_changed'
@@ -349,7 +352,7 @@ export interface LLMConnectionChangedEvent {
 }
 
 /**
- * Credential request event - prompts user for credentials
+ * 凭据请求事件：提示用户输入凭据
  */
 export interface CredentialRequestEvent {
   type: 'credential_request'
@@ -358,7 +361,7 @@ export interface CredentialRequestEvent {
 }
 
 /**
- * Task backgrounded event - background agent started
+ * 任务进入后台事件：后台 Agent 已启动
  */
 export interface TaskBackgroundedEvent {
   type: 'task_backgrounded'
@@ -386,7 +389,7 @@ export interface WorkflowAgentCompletedEvent {
 }
 
 /**
- * Shell backgrounded event - background bash shell started
+ * Shell 进入后台事件：后台 Bash shell 已启动
  */
 export interface ShellBackgroundedEvent {
   type: 'shell_backgrounded'
@@ -398,7 +401,7 @@ export interface ShellBackgroundedEvent {
 }
 
 /**
- * Task progress event - live progress updates for background tasks
+ * 任务进度事件：后台任务的实时进度更新
  */
 export interface TaskProgressEvent {
   type: 'task_progress'
@@ -409,8 +412,8 @@ export interface TaskProgressEvent {
 }
 
 /**
- * Task completed event - background task finished execution
- * Updates the tool message status and result when a background task completes.
+ * 任务完成事件：后台任务执行结束
+ * 更新对应工具消息的状态和摘要结果。
  */
 export interface TaskCompletedEvent {
   type: 'task_completed'
@@ -423,21 +426,20 @@ export interface TaskCompletedEvent {
 }
 
 /**
- * User message event - backend confirmation of optimistic user message
- * Used for optimistic UI: frontend shows message immediately,
- * backend confirms/updates status via this event
+ * 用户消息事件：后端对乐观用户消息的确认
+ * 前端会先把用户消息立即显示出来，后端再通过这个事件确认/更新状态。
  */
 export interface UserMessageEvent {
   type: 'user_message'
   sessionId: string
   message: Message
   status: 'accepted' | 'queued' | 'processing'
-  /** Frontend's optimistic message ID for reliable matching */
+  /** 前端乐观消息 ID，用于可靠匹配 */
   optimisticMessageId?: string
 }
 
 /**
- * Message annotation update event
+ * 消息批注更新事件
  */
 export interface MessageAnnotationsUpdatedEvent {
   type: 'message_annotations_updated'
@@ -447,7 +449,7 @@ export interface MessageAnnotationsUpdatedEvent {
 }
 
 /**
- * Session shared event - session was shared to viewer
+ * 会话分享事件：会话已被分享到 viewer
  */
 export interface SessionSharedEvent {
   type: 'session_shared'
@@ -456,7 +458,7 @@ export interface SessionSharedEvent {
 }
 
 /**
- * Session unshared event - session share was revoked
+ * 会话取消分享事件：会话分享已被撤销
  */
 export interface SessionUnsharedEvent {
   type: 'session_unshared'
@@ -464,8 +466,8 @@ export interface SessionUnsharedEvent {
 }
 
 /**
- * Auth request event - unified auth flow (credential or OAuth)
- * Adds auth-request message to session and displays inline auth UI
+ * 认证请求事件：统一认证流程（凭据或 OAuth）
+ * 向会话中添加一条 auth-request 消息并显示内联认证 UI
  */
 export interface AuthRequestEvent {
   type: 'auth_request'
@@ -475,8 +477,8 @@ export interface AuthRequestEvent {
 }
 
 /**
- * Auth completed event - auth request was completed (success, failure, or cancelled)
- * Updates the auth-request message status
+ * 认证完成事件：认证请求已完成（成功、失败或取消）
+ * 更新 auth-request 消息的状态
  */
 export interface AuthCompletedEvent {
   type: 'auth_completed'
@@ -488,8 +490,8 @@ export interface AuthCompletedEvent {
 }
 
 /**
- * Source activated event - a source was auto-activated mid-turn.
- * The server owns the auto-retry; renderers should treat this as UI feedback only.
+ * 来源激活事件：某来源在回合中自动启用。
+ * 服务端拥有自动重试的主导权，renderer 端仅把它当作 UI 反馈处理。
  */
 export interface SourceActivatedEvent {
   type: 'source_activated'
@@ -499,8 +501,8 @@ export interface SourceActivatedEvent {
 }
 
 /**
- * Usage update event - real-time context usage during processing
- * Allows UI to show growing context as agent processes, not just on complete
+ * 用量更新事件：处理过程中实时更新上下文用量
+ * 让 UI 在 Agent 运行期间就能看到上下文增长，而不必等到 complete 事件。
  */
 export interface UsageUpdateEvent {
   type: 'usage_update'
@@ -512,7 +514,9 @@ export interface UsageUpdateEvent {
 }
 
 /**
- * Union of all agent events
+ * 所有 Agent 事件的联合类型（Union Type）
+ * 用 | 连接多个 interface，表示 AgentEvent 可以是其中任意一种。
+ * 类似 Go 的 interface{}，但 TS 会在编译期检查具体字段。
  */
 export type AgentEvent =
   | TextDeltaEvent
@@ -561,7 +565,8 @@ export type AgentEvent =
   | UsageUpdateEvent
 
 /**
- * Side effects that need to be handled outside the pure processor
+ * 需要在纯函数外部处理的副作用
+ * 例如权限弹窗、凭据弹窗、标题生成、toast 错误等。
  */
 export type Effect =
   | { type: 'permission_request'; request: PermissionRequest }
@@ -572,10 +577,10 @@ export type Effect =
   | { type: 'toast_error'; message: string }
 
 /**
- * Result of processing an event
+ * 处理单个事件后的结果
  */
 export interface ProcessResult {
   state: SessionState
-  /** Side effects to execute (permissions, etc.) */
+  /** 待执行的副作用（如权限请求等） */
   effects: Effect[]
 }

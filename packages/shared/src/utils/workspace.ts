@@ -2,13 +2,14 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
- * Read the SDK plugin name from .claude-plugin/plugin.json.
+ * 从 .claude-plugin/plugin.json 读取 SDK 插件名称。
  *
- * The Claude SDK identifies plugins by the `name` field in this manifest,
- * NOT by path.basename() of the plugin directory. All skill qualification
- * and system prompt references must use this name to match what the SDK expects.
+ * Claude SDK 使用这个 manifest 里的 `name` 字段来识别插件，
+ * 而不是用插件目录的 path.basename()。所有 skill 命中与系统提示引用
+ * 都必须使用这个名称，才能与 SDK 期望的一致。
  *
- * @returns The plugin name, or null if the manifest doesn't exist or is unreadable
+ * @param workspaceRootPath - workspace 根目录
+ * @returns 插件名；如果 manifest 不存在或无法读取则返回 null
  */
 export function readPluginName(workspaceRootPath: string): string | null {
   try {
@@ -21,24 +22,27 @@ export function readPluginName(workspaceRootPath: string): string | null {
   }
 }
 
-// Re-export browser-safe slug extraction for convenience
+// 为方便使用，从浏览器安全版本 re-export slug 提取函数
 export { extractWorkspaceSlugFromPath } from './workspace-slug.ts';
 
 /**
- * Extract workspace slug for SDK skill qualification.
+ * 提取用于 SDK skill 命中的 workspace slug。
  *
- * Reads the actual plugin name from .claude-plugin/plugin.json (which is what the SDK uses),
- * falling back to the last path component of the root path.
+ * 优先读取 .claude-plugin/plugin.json 中的真实插件名（SDK 实际使用的），
+ * 失败时回退到根路径的最后一段。
  *
- * NOTE: Requires Node.js (fs/path). For browser contexts, use extractWorkspaceSlugFromPath
- * from './workspace-slug.ts' instead.
+ * 注意：需要 Node.js（fs/path）。浏览器上下文请用 ./workspace-slug.ts 中的 extractWorkspaceSlugFromPath。
+ *
+ * @param rootPath - workspace 根路径
+ * @param fallbackId - 兜底 ID
+ * @returns workspace slug
  */
 export function extractWorkspaceSlug(rootPath: string, fallbackId: string): string {
-  // Read the actual SDK plugin name — this is what the SDK uses to resolve skills
+  // 读取 SDK 实际使用的插件名——它用于解析 skills
   const pluginName = readPluginName(rootPath);
   if (pluginName) return pluginName;
 
-  // Fallback to last path component (legacy behavior)
+  // 回退到路径最后一段（旧行为）
   const pathParts = rootPath.split(/[\\/]/).filter(Boolean);
   return pathParts[pathParts.length - 1] || fallbackId;
 }

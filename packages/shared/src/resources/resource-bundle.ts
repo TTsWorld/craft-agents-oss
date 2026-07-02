@@ -1,16 +1,16 @@
 /**
- * Resource Bundle — Export/Import Logic
+ * Resource Bundle — 导出/导入逻辑
  *
- * Exports workspace resources (sources, skills, automations) to a portable
- * ResourceBundle, and imports bundles into a target workspace.
+ * 把 workspace 资源（source、skill、automation）导出为便携的 ResourceBundle，
+ * 或将 bundle 导入到目标 workspace。
  *
- * Key behaviors:
- * - Source configs are sanitized (secrets stripped, auth state reset)
- * - All non-hidden files are included per resource (not just known file types)
- * - Import uses staging + atomic rename per resource (single watcher event)
- * - Source overwrite clears stored credentials
- * - Automations overwrite clears history + retry queue
- * - Relies on existing ConfigWatcher for change notifications (no manual events)
+ * 关键行为：
+ * - source 配置会脱敏（剥离密钥、重置认证状态）
+ * - 每个资源包含所有非隐藏文件，不只限于已知文件类型
+ * - 导入采用“暂存目录 + 原子重命名”，每个资源只触发一次 watcher 事件
+ * - source 覆盖会清除已存储的凭证
+ * - automation 覆盖会清除历史记录和重试队列
+ * - 变更通知依赖已有的 ConfigWatcher，不手动触发事件
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, rmSync } from 'fs'
@@ -49,29 +49,29 @@ import type {
 } from './types.ts'
 
 // ============================================================
-// Source Config Sanitization
+// Source 配置脱敏
 // ============================================================
 
 /**
- * Fields to strip from source configs on export.
+ * 导出时需要从 source 配置中剥离的字段。
  *
- * Runtime state fields are always removed.
- * Known secret-bearing fields are removed with warnings.
+ * 运行时状态字段始终移除；
+ * 已知的带密钥字段移除时会附加警告。
  */
 
-/** Strip runtime auth/status state from a source config */
+/** 对 source 配置做脱敏，返回脱敏后的配置和警告信息 */
 function sanitizeSourceConfig(config: FolderSourceConfig): { config: FolderSourceConfig; warnings: string[] } {
   const warnings: string[] = []
 
-  // Deep clone to avoid mutating the original
+  // 深拷贝，避免修改原始对象（JSON.parse(JSON.stringify(obj)) 是常见的浅深拷贝折中写法）
   const sanitized: FolderSourceConfig = JSON.parse(JSON.stringify(config))
 
-  // --- Runtime state: always remove ---
+  // --- 运行时状态：始终移除 ---
   sanitized.isAuthenticated = false
   delete sanitized.connectionError
   delete sanitized.lastTestedAt
 
-  // Determine if source requires auth
+  // 判断 source 是否需要认证
   const authType = sanitized.mcp?.authType || sanitized.api?.authType
   if (authType && authType !== 'none') {
     sanitized.connectionStatus = 'needs_auth'
@@ -79,19 +79,19 @@ function sanitizeSourceConfig(config: FolderSourceConfig): { config: FolderSourc
     sanitized.connectionStatus = undefined
   }
 
-  // --- Known secret fields: always remove ---
+  // --- 已知的密钥字段：始终移除 ---
   if (sanitized.api?.googleOAuthClientSecret) {
     delete sanitized.api.googleOAuthClientSecret
     warnings.push(`Source '${config.slug}': stripped googleOAuthClientSecret`)
   }
 
-  // --- MCP env vars: may contain tokens ---
+  // --- MCP 环境变量：可能包含 token ---
   if (sanitized.mcp?.env && Object.keys(sanitized.mcp.env).length > 0) {
     delete sanitized.mcp.env
     warnings.push(`Source '${config.slug}': stripped mcp.env (may contain secrets)`)
   }
 
-  // --- Headers: potentially secret, remove with warning ---
+  // --- Headers：可能包含密钥，移除并警告 ---
   if (sanitized.mcp?.headers && Object.keys(sanitized.mcp.headers).length > 0) {
     delete sanitized.mcp.headers
     warnings.push(`Source '${config.slug}': stripped mcp.headers (may contain auth tokens)`)
@@ -106,15 +106,15 @@ function sanitizeSourceConfig(config: FolderSourceConfig): { config: FolderSourc
 }
 
 // ============================================================
-// Export
+// 导出
 // ============================================================
 
 /**
- * Export workspace resources to a portable ResourceBundle.
+ * 把 workspace 资源导出为便携的 ResourceBundle。
  *
- * @param workspaceRootPath - Absolute path to workspace root
- * @param options - Which resources to export
- * @returns Bundle + export warnings
+ * @param workspaceRootPath - workspace 根目录的绝对路径
+ * @param options - 要导出哪些资源
+ * @returns bundle 和导出过程中的警告
  */
 export function exportResources(
   workspaceRootPath: string,
@@ -127,7 +127,7 @@ export function exportResources(
     resources: {},
   }
 
-  // Try to read workspace name for informational purposes
+  // 尝试读取 workspace 名称，仅用于信息展示
   try {
     const wsConfigPath = join(workspaceRootPath, 'config.json')
     if (existsSync(wsConfigPath)) {
@@ -137,27 +137,27 @@ export function exportResources(
       }
     }
   } catch {
-    // Non-fatal: sourceWorkspace is informational
+    // 非致命错误：sourceWorkspace 只是信息字段
   }
 
-  // --- Export sources ---
+  // --- 导出 sources ---
   if (options.sources) {
     bundle.resources.sources = exportSources(workspaceRootPath, options.sources, warnings)
   }
 
-  // --- Export skills ---
+  // --- 导出 skills ---
   if (options.skills) {
     bundle.resources.skills = exportSkills(workspaceRootPath, options.skills, warnings)
   }
 
-  // --- Export automations ---
-  // Normalize: true → 'all', false/undefined → skip
+  // --- 导出 automations ---
+  // 规范化：true 转 'all'，false/undefined 表示跳过
   const automationSelection = options.automations === true ? 'all' : options.automations
   if (automationSelection) {
     bundle.resources.automations = exportAutomations(workspaceRootPath, automationSelection, warnings)
   }
 
-  // Validate total size
+  // 校验总大小
   const bundleJson = JSON.stringify(bundle)
   if (Buffer.byteLength(bundleJson) > MAX_BUNDLE_SIZE_BYTES) {
     warnings.push(`Bundle exceeds ${MAX_BUNDLE_SIZE_BYTES / 1024 / 1024}MB size limit`)
@@ -166,6 +166,7 @@ export function exportResources(
   return { bundle, warnings }
 }
 
+/** 导出选定的 sources */
 function exportSources(
   workspaceRootPath: string,
   selection: string[] | 'all',
@@ -176,7 +177,7 @@ function exportSources(
 
   if (!existsSync(sourcesDir)) return entries
 
-  // Determine which slugs to export
+  // 确定要导出哪些 slug
   let slugs: string[]
   if (selection === 'all') {
     slugs = readdirSync(sourcesDir, { withFileTypes: true })
@@ -199,11 +200,11 @@ function exportSources(
       continue
     }
 
-    // Sanitize config
+    // 脱敏配置
     const { config: sanitizedConfig, warnings: sanitizeWarnings } = sanitizeSourceConfig(config)
     warnings.push(...sanitizeWarnings)
 
-    // Collect all files except config.json (which travels as structured data)
+    // 收集除 config.json 外的所有文件（config 作为结构化数据单独传输）
     const files = collectDirectoryFiles(sourcePath, {
       skipFiles: new Set(['config.json']),
     })
@@ -218,6 +219,7 @@ function exportSources(
   return entries
 }
 
+/** 导出选定的 skills */
 function exportSkills(
   workspaceRootPath: string,
   selection: string[] | 'all',
@@ -228,7 +230,7 @@ function exportSkills(
 
   if (!existsSync(skillsDir)) return entries
 
-  // Determine which slugs to export
+  // 确定要导出哪些 slug
   let slugs: string[]
   if (selection === 'all') {
     slugs = readdirSync(skillsDir, { withFileTypes: true })
@@ -245,10 +247,10 @@ function exportSkills(
       continue
     }
 
-    // Collect all files in the skill directory
+    // 收集 skill 目录下所有文件
     const files = collectDirectoryFiles(skillDir)
 
-    // Validate that SKILL.md is present
+    // 校验必须包含 SKILL.md
     const hasSkillMd = files.some(f => f.relativePath === 'SKILL.md')
     if (!hasSkillMd) {
       warnings.push(`Skill '${slug}' missing SKILL.md, skipping`)
@@ -262,35 +264,36 @@ function exportSkills(
 }
 
 // ============================================================
-// Export: Automations
+// 导出：Automations
 // ============================================================
 
-/** Header keys that are known to carry secrets (case-insensitive match) */
+/** 已知可能携带密钥的 header key，匹配不区分大小写 */
 const SECRET_HEADER_PATTERNS = [
   /^authorization$/i,
   /^proxy-authorization$/i,
   /api[-_]?key/i,
 ]
 
+/** 判断 header key 是否属于密钥类 */
 function isSecretHeader(key: string): boolean {
   return SECRET_HEADER_PATTERNS.some(p => p.test(key))
 }
 
-/** Returns true if the value references an env var template like $VAR_NAME or ${VAR} (safe to keep) */
+/** 若值引用环境变量模板如 $VAR_NAME 或 ${VAR}，则认为是安全的，可以保留 */
 function isTemplatedValue(value: string): boolean {
   return /\$[A-Z_]|\$\{/.test(value)
 }
 
 /**
- * Sanitize a single automation matcher for export.
- * Strips webhook auth credentials and known auth headers.
+ * 对单个 automation matcher 做导出脱敏。
+ * 剥离 webhook 的 auth 凭证和已知的认证 header。
  */
 function sanitizeAutomationMatcher(
   matcher: AutomationMatcher,
   label: string,
   warnings: string[],
 ): AutomationMatcher {
-  // Deep clone to avoid mutating the original
+  // 深拷贝，避免修改原始对象
   const sanitized: AutomationMatcher = JSON.parse(JSON.stringify(matcher))
 
   if (!sanitized.actions) return sanitized
@@ -298,13 +301,13 @@ function sanitizeAutomationMatcher(
   for (const action of sanitized.actions) {
     if (action.type !== 'webhook') continue
 
-    // Strip auth field entirely (bearer tokens, basic auth passwords)
+    // 完全剥离 auth 字段（bearer token、basic auth 密码等）
     if (action.auth) {
       delete (action as unknown as Record<string, unknown>).auth
       warnings.push(`Automation '${label}': stripped webhook auth credentials`)
     }
 
-    // Strip known auth headers (unless templated)
+    // 剥离已知的认证 header（模板化的安全值除外）
     if (action.headers) {
       const keysToStrip = Object.keys(action.headers).filter(
         key => isSecretHeader(key) && !isTemplatedValue(action.headers![key]!),
@@ -313,7 +316,7 @@ function sanitizeAutomationMatcher(
         delete action.headers[key]
         warnings.push(`Automation '${label}': stripped webhook header '${key}'`)
       }
-      // Clean up empty headers object
+      // 若 headers 为空则清理整个字段
       if (Object.keys(action.headers).length === 0) {
         delete (action as unknown as Record<string, unknown>).headers
       }
@@ -323,6 +326,7 @@ function sanitizeAutomationMatcher(
   return sanitized
 }
 
+/** 导出选定的 automations */
 function exportAutomations(
   workspaceRootPath: string,
   selection: string[] | 'all',
@@ -335,7 +339,7 @@ function exportAutomations(
     return []
   }
 
-  // Read and validate via the full validation pipeline
+  // 读取并走完整校验流程
   let raw: unknown
   try {
     raw = JSON.parse(readFileSync(automationsPath, 'utf-8'))
@@ -350,12 +354,12 @@ function exportAutomations(
     return []
   }
 
-  // Flatten { event: matchers[] } into individual entries
+  // 把 { event: matchers[] } 扁平化为独立条目
   const allEntries: AutomationBundleEntry[] = []
   for (const [event, matchers] of Object.entries(validation.config.automations)) {
     if (!matchers) continue
     for (const matcher of matchers) {
-      // Ensure every matcher has an ID (backfill if missing)
+      // 若 matcher 没有 id，则回填一个
       const id = matcher.id || generateShortId()
       allEntries.push({
         id,
@@ -366,7 +370,7 @@ function exportAutomations(
     }
   }
 
-  // Apply selection filter
+  // 应用选择器过滤
   let selected: AutomationBundleEntry[]
   if (selection === 'all') {
     selected = allEntries
@@ -380,7 +384,7 @@ function exportAutomations(
       if (matches.length === 0) {
         warnings.push(`Automation selector '${selector}' did not match any automation`)
       } else if (matches.length > 1 && matches.every(m => m.id !== selector)) {
-        // Name matched multiple — warn about ambiguity but include all
+        // 按名称匹配到多个，警告歧义但仍全部包含
         warnings.push(`Automation name '${selector}' matched ${matches.length} automations`)
       }
       for (const m of matches) {
@@ -392,7 +396,7 @@ function exportAutomations(
     }
   }
 
-  // Sanitize each entry
+  // 逐个脱敏
   return selected.map(entry => ({
     ...entry,
     matcher: sanitizeAutomationMatcher(
@@ -404,12 +408,12 @@ function exportAutomations(
 }
 
 // ============================================================
-// Validation
+// 校验
 // ============================================================
 
 /**
- * Validate a ResourceBundle structure.
- * Returns { valid, errors } rather than a type guard, so callers get diagnostics.
+ * 校验 ResourceBundle 结构。
+ * 返回 { valid, errors }，方便调用方获取诊断信息。
  */
 export function validateResourceBundle(bundle: unknown): { valid: boolean; errors: string[] } {
   const errors: string[] = []
@@ -418,6 +422,7 @@ export function validateResourceBundle(bundle: unknown): { valid: boolean; error
     return { valid: false, errors: ['Bundle is not an object'] }
   }
 
+  // as 是 TS 的类型断言：告诉编译器“我确信这个对象有 string 键”，类似 Go 的类型断言但只在编译期有效
   const b = bundle as Record<string, unknown>
 
   if (b.version !== 1) {
@@ -435,7 +440,7 @@ export function validateResourceBundle(bundle: unknown): { valid: boolean; error
 
   const res = b.resources as Record<string, unknown>
 
-  // Validate sources
+  // 校验 sources
   if (res.sources !== undefined) {
     if (!Array.isArray(res.sources)) {
       errors.push('resources.sources must be an array')
@@ -462,7 +467,7 @@ export function validateResourceBundle(bundle: unknown): { valid: boolean; error
         }
         slugs.add(e.slug as string)
 
-        // Check for builtin/reserved slugs
+        // 检查是否占用内置/保留 slug
         if (isBuiltinSource(e.slug as string)) {
           errors.push(`${prefix}: '${e.slug}' is a reserved builtin source slug`)
         }
@@ -485,7 +490,7 @@ export function validateResourceBundle(bundle: unknown): { valid: boolean; error
     }
   }
 
-  // Validate skills
+  // 校验 skills
   if (res.skills !== undefined) {
     if (!Array.isArray(res.skills)) {
       errors.push('resources.skills must be an array')
@@ -515,7 +520,7 @@ export function validateResourceBundle(bundle: unknown): { valid: boolean; error
         if (!Array.isArray(e.files)) {
           errors.push(`${prefix}: files must be an array`)
         } else {
-          // Validate SKILL.md is present
+          // 校验必须包含 SKILL.md
           const hasSkillMd = (e.files as BundleFile[]).some(f =>
             typeof f === 'object' && f && (f as BundleFile).relativePath === 'SKILL.md',
           )
@@ -528,7 +533,7 @@ export function validateResourceBundle(bundle: unknown): { valid: boolean; error
     }
   }
 
-  // Validate automations
+  // 校验 automations
   if (res.automations !== undefined) {
     if (!Array.isArray(res.automations)) {
       errors.push('resources.automations must be an array')
@@ -573,7 +578,7 @@ export function validateResourceBundle(bundle: unknown): { valid: boolean; error
     }
   }
 
-  // Validate total bundle size
+  // 校验 bundle 总大小
   try {
     const size = Buffer.byteLength(JSON.stringify(bundle))
     if (size > MAX_BUNDLE_SIZE_BYTES) {
@@ -586,6 +591,7 @@ export function validateResourceBundle(bundle: unknown): { valid: boolean; error
   return { valid: errors.length === 0, errors }
 }
 
+/** 校验 BundleFile 数组：检查重复路径和文件格式 */
 function validateFileEntries(files: BundleFile[], prefix: string, errors: string[]): void {
   const paths = new Set<string>()
 
@@ -596,7 +602,7 @@ function validateFileEntries(files: BundleFile[], prefix: string, errors: string
       continue
     }
 
-    // Check for duplicate paths
+    // 检查重复路径
     if (paths.has(file.relativePath)) {
       errors.push(`${prefix}.files[${j}]: duplicate path '${file.relativePath}'`)
     }
@@ -610,19 +616,19 @@ function validateFileEntries(files: BundleFile[], prefix: string, errors: string
 }
 
 // ============================================================
-// Import
+// 导入
 // ============================================================
 
 /**
- * Import a ResourceBundle into a target workspace.
+ * 把 ResourceBundle 导入到目标 workspace。
  *
- * Uses staging + atomic rename per resource to minimize watcher churn
- * and ensure true replacement on overwrite.
+ * 每个资源使用“暂存目录 + 原子重命名”，减少 watcher 抖动，
+ * 并确保覆盖时是真正的替换。
  *
- * @param workspaceRootPath - Absolute path to target workspace
- * @param bundle - The validated ResourceBundle to import
- * @param mode - 'skip' (keep existing) or 'overwrite' (replace)
- * @param deps - Injected dependencies for credential cleanup
+ * @param workspaceRootPath - 目标 workspace 根目录的绝对路径
+ * @param bundle - 已校验或待校验的 ResourceBundle
+ * @param mode - 'skip'（保留已有）或 'overwrite'（替换）
+ * @param deps - 注入的依赖，用于凭证清理
  */
 export async function importResources(
   workspaceRootPath: string,
@@ -630,7 +636,7 @@ export async function importResources(
   mode: ResourceImportMode,
   deps: ResourceImportDeps,
 ): Promise<ResourceImportResult> {
-  // Validate bundle first
+  // 先校验 bundle
   const validation = validateResourceBundle(bundle)
   if (!validation.valid) {
     const errorMsg = `Invalid bundle: ${validation.errors.join('; ')}`
@@ -642,9 +648,10 @@ export async function importResources(
     }
   }
 
+  // workspaceId 这里直接用目录名；调用方应保证路径唯一对应一个 workspace
   const workspaceId = basename(workspaceRootPath)
 
-  // Import each resource type
+  // 分别导入三类资源
   const sourcesResult = bundle.resources.sources
     ? await importSources(workspaceRootPath, workspaceId, bundle.resources.sources, mode, deps)
     : emptyBucketResult()
@@ -664,14 +671,16 @@ export async function importResources(
   }
 }
 
+/** 返回一个空的 ImportBucketResult */
 function emptyBucketResult(): ImportBucketResult {
   return { imported: [], skipped: [], failed: [], warnings: [] }
 }
 
 // ============================================================
-// Import: Sources
+// 导入：Sources
 // ============================================================
 
+/** 导入 source 列表 */
 async function importSources(
   workspaceRootPath: string,
   workspaceId: string,
@@ -688,7 +697,7 @@ async function importSources(
 
   for (const entry of entries) {
     try {
-      // Check for reserved slugs
+      // 保留 slug 不能与内置 source 冲突
       if (isBuiltinSource(entry.slug)) {
         result.failed.push({ id: entry.slug, error: 'Cannot import builtin source slug' })
         continue
@@ -702,18 +711,18 @@ async function importSources(
         continue
       }
 
-      // Stage: build in temp dir
+      // 暂存：在临时目录里构建完整目录
       const tmpDir = join(sourcesDir, `.tmp-${entry.slug}-${randomUUID().slice(0, 8)}`)
       mkdirSync(tmpDir, { recursive: true })
 
       try {
-        // Write sanitized config.json
+        // 写入脱敏后的 config.json
         writeFileSync(join(tmpDir, 'config.json'), JSON.stringify(entry.config, null, 2))
 
-        // Restore all other files
+        // 恢复其余文件
         restoreFiles(tmpDir, entry.files)
 
-        // Validate: config should load correctly
+        // 校验：配置应该能被正常加载
         const validation = validateSourceConfig(entry.config)
         if (!validation.valid) {
           const msgs = validation.errors.map(e => `${e.path}: ${e.message}`).join(', ')
@@ -722,9 +731,9 @@ async function importSources(
           continue
         }
 
-        // On overwrite: clear credentials + remove old dir
+        // 覆盖时：清除凭证 + 删除旧目录
         if (exists) {
-          // Clear all credential types for this slug
+          // 清除该 source 下的所有凭证类型
           try {
             await deps.clearSourceCredentials(workspaceId, entry.slug)
           } catch (err) {
@@ -733,11 +742,11 @@ async function importSources(
           rmSync(targetDir, { recursive: true })
         }
 
-        // Atomic replace: rename temp → target
+        // 原子替换：重命名临时目录为目标目录
         renameSync(tmpDir, targetDir)
         result.imported.push(entry.slug)
       } catch (err) {
-        // Clean up temp dir on failure
+        // 失败时清理临时目录
         if (existsSync(tmpDir)) {
           rmSync(tmpDir, { recursive: true })
         }
@@ -753,9 +762,10 @@ async function importSources(
 }
 
 // ============================================================
-// Import: Skills
+// 导入：Skills
 // ============================================================
 
+/** 导入 skill 列表 */
 function importSkills(
   workspaceRootPath: string,
   entries: SkillBundleEntry[],
@@ -778,31 +788,31 @@ function importSkills(
         continue
       }
 
-      // Stage: build in temp dir
+      // 暂存：在临时目录里构建完整目录
       const tmpDir = join(skillsDir, `.tmp-${entry.slug}-${randomUUID().slice(0, 8)}`)
       mkdirSync(tmpDir, { recursive: true })
 
       try {
-        // Restore all files
+        // 恢复所有文件
         restoreFiles(tmpDir, entry.files)
 
-        // Validate: SKILL.md should exist
+        // 校验：SKILL.md 必须存在
         if (!existsSync(join(tmpDir, 'SKILL.md'))) {
           result.failed.push({ id: entry.slug, error: 'SKILL.md missing after restore' })
           rmSync(tmpDir, { recursive: true })
           continue
         }
 
-        // On overwrite: remove old dir
+        // 覆盖时：删除旧目录
         if (exists) {
           rmSync(targetDir, { recursive: true })
         }
 
-        // Atomic replace: rename temp → target
+        // 原子替换：重命名临时目录为目标目录
         renameSync(tmpDir, targetDir)
         result.imported.push(entry.slug)
       } catch (err) {
-        // Clean up temp dir on failure
+        // 失败时清理临时目录
         if (existsSync(tmpDir)) {
           rmSync(tmpDir, { recursive: true })
         }
@@ -818,17 +828,17 @@ function importSkills(
 }
 
 // ============================================================
-// Import: Automations
+// 导入：Automations
 // ============================================================
 
-/** Display label for an automation entry (name if available, otherwise ID) */
+/** 获取 automation 条目的显示标签（优先 name，否则用 ID） */
 function automationLabel(entry: AutomationBundleEntry): string {
   return entry.name ?? entry.id
 }
 
 /**
- * Find a matcher by ID across all event arrays.
- * Returns { event, index } if found, undefined otherwise.
+ * 按 ID 在所有事件数组中查找 matcher。
+ * 找到返回 { event, index }，否则返回 undefined。
  */
 function findMatcherById(
   automations: Record<string, AutomationMatcher[]>,
@@ -836,6 +846,7 @@ function findMatcherById(
 ): { event: string; index: number } | undefined {
   for (const [event, matchers] of Object.entries(automations)) {
     for (let i = 0; i < matchers.length; i++) {
+      // 可选链 matchers[i]?.id：若 matchers[i] 为 undefined 则不会抛错
       if (matchers[i]?.id === id) return { event, index: i }
     }
   }
@@ -843,8 +854,8 @@ function findMatcherById(
 }
 
 /**
- * Filter JSONL file to remove entries matching a set of matcher IDs.
- * Used for selective history/retry-queue cleanup on overwrite.
+ * 过滤 JSONL 文件，移除 matcherId/automationId 命中待清除集合的记录。
+ * 用于覆盖时清理历史记录和重试队列。
  */
 function filterJsonlByMatcherIds(filePath: string, idsToRemove: Set<string>): void {
   if (!existsSync(filePath) || idsToRemove.size === 0) return
@@ -859,21 +870,22 @@ function filterJsonlByMatcherIds(filePath: string, idsToRemove: Set<string>): vo
       try {
         const entry = JSON.parse(line)
         if (entry.matcherId && idsToRemove.has(entry.matcherId)) continue
-        // History entries use automationId
+        // 历史记录条目使用 automationId
         if (entry.automationId && idsToRemove.has(entry.automationId)) continue
         kept.push(line)
       } catch {
-        // Keep unparseable lines (don't silently drop data)
+        // 无法解析的行保留，避免静默丢数据
         kept.push(line)
       }
     }
 
     writeFileSync(filePath, kept.length > 0 ? kept.join('\n') + '\n' : '', 'utf-8')
   } catch {
-    // Non-critical: cleanup failure doesn't block import
+    // 非关键：清理失败不应阻塞导入
   }
 }
 
+/** 导入 automation 列表 */
 function importAutomations(
   workspaceRootPath: string,
   entries: AutomationBundleEntry[],
@@ -882,7 +894,7 @@ function importAutomations(
   const result = emptyBucketResult()
   const configPath = join(workspaceRootPath, AUTOMATIONS_CONFIG_FILE)
 
-  // Read existing config (if present)
+  // 读取已有配置（若存在）
   let existingConfig: { version?: number; automations: Record<string, AutomationMatcher[]> }
 
   if (existsSync(configPath)) {
@@ -895,11 +907,11 @@ function importAutomations(
           automations: validation.config.automations as Record<string, AutomationMatcher[]>,
         }
       } else if (mode === 'overwrite') {
-        // Existing config is invalid but we're overwriting — start fresh
+        // 已有配置无效但处于覆盖模式，直接重建
         result.warnings.push('Existing automations.json is invalid, starting fresh in overwrite mode')
         existingConfig = { version: 2, automations: {} }
       } else {
-        // Skip mode + invalid existing config — can't safely merge
+        // 跳过模式 + 已有配置无效，无法安全合并
         const errorMsg = `Cannot merge into invalid existing automations.json: ${validation.errors.join('; ')}`
         for (const entry of entries) {
           result.failed.push({ id: automationLabel(entry), error: errorMsg })
@@ -919,20 +931,20 @@ function importAutomations(
       }
     }
   } else {
-    // No existing file — create new
+    // 没有已有文件，新建
     existingConfig = { version: 2, automations: {} }
   }
 
   const overwrittenIds = new Set<string>()
 
-  // Merge entries
+  // 合并条目
   for (const entry of entries) {
-    // Backfill ID if missing
+    // 若 ID 缺失则回填
     const id = entry.id || generateShortId()
     const matcher: AutomationMatcher = { ...entry.matcher, id }
     const label = entry.name ?? id
 
-    // Check if automation with this ID already exists
+    // 检查是否已存在同 ID 的 automation
     const existing = findMatcherById(existingConfig.automations, id)
 
     if (existing) {
@@ -940,16 +952,16 @@ function importAutomations(
         result.skipped.push(label)
         continue
       }
-      // Overwrite: remove old, insert new at same position
+      // 覆盖：在原位置删除旧 matcher，再插入新 matcher
       existingConfig.automations[existing.event]!.splice(existing.index, 1)
-      // Clean up empty event arrays
+      // 若该事件下已空，则清理空数组
       if (existingConfig.automations[existing.event]!.length === 0) {
         delete existingConfig.automations[existing.event]
       }
       overwrittenIds.add(id)
     }
 
-    // Insert into the target event's matcher array
+    // 插入到目标事件的 matcher 数组
     if (!existingConfig.automations[entry.event]) {
       existingConfig.automations[entry.event] = []
     }
@@ -957,14 +969,14 @@ function importAutomations(
     result.imported.push(label)
   }
 
-  // Validate the merged full config (schema + semantic: regex, cron, timezone, conditions)
+  // 校验合并后的完整配置（schema + 语义：正则、cron、时区、条件等）
   const mergedValidation = validateAutomationsConfig({
     version: existingConfig.version,
     automations: existingConfig.automations,
   })
 
   if (!mergedValidation.valid) {
-    // Reject the entire import — merged config is invalid
+    // 合并结果无效，拒绝整个导入
     const errorMsg = `Merged automations config is invalid: ${mergedValidation.errors.join('; ')}`
     result.imported = []
     result.skipped = []
@@ -974,7 +986,7 @@ function importAutomations(
     return result
   }
 
-  // Write atomically: temp file + rename
+  // 原子写入：临时文件 + 重命名
   try {
     const configObj = {
       version: existingConfig.version ?? 2,
@@ -992,12 +1004,13 @@ function importAutomations(
     return result
   }
 
-  // Selectively clear history + retry queue for overwritten matcher IDs
+  // 对覆盖的 matcher ID，清理历史记录和重试队列中的相关条目
   if (overwrittenIds.size > 0) {
     const historyPath = join(workspaceRootPath, AUTOMATIONS_HISTORY_FILE)
     const retryPath = join(workspaceRootPath, AUTOMATIONS_RETRY_QUEUE_FILE)
     filterJsonlByMatcherIds(historyPath, overwrittenIds)
     filterJsonlByMatcherIds(retryPath, overwrittenIds)
+
     result.warnings.push(`Cleared history/retry entries for ${overwrittenIds.size} overwritten automation(s)`)
   }
 

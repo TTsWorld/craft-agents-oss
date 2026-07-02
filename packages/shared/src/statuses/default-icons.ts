@@ -1,33 +1,36 @@
 /**
- * Default Status Icon SVGs
+ * 默认状态图标 SVG
  *
- * Embedded SVG strings for default status icons.
- * These are auto-created as files in statuses/icons/ when missing.
+ * 内置的 SVG 字符串，作为默认状态图标使用。
+ * 当 statuses/icons/ 目录缺少对应图标文件时，会自动创建这些 SVG 文件。
  */
 
 /**
- * Default icon SVGs mapped by filename (without .svg extension)
+ * 按文件名（不含 .svg 后缀）索引的默认图标 SVG 字符串。
+ *
+ * Record<string, string> 是 TS 的类型别名，类似 Go 里的 map[string]string，
+ * 表示“键和值都是字符串”的对象。
  */
 export const DEFAULT_ICON_SVGS: Record<string, string> = {
   /**
-   * Backlog - CircleDashed (larger gaps)
-   * Empty circle with widely-spaced dashed stroke for "not yet planned"
+   * Backlog - CircleDashed（间隔较大的虚线圆）
+   * 空圆，使用稀疏虚线描边，表示“尚未计划”。
    */
   'backlog': `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <circle cx="12" cy="12" r="9" stroke-dasharray="6 5" />
 </svg>`,
 
   /**
-   * Todo - Circle (solid outline)
-   * Empty circle with solid stroke for "ready to work on"
+   * Todo - Circle（实心描边的圆）
+   * 空圆，使用实线描边，表示“可以开始处理”。
    */
   'todo': `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <circle cx="12" cy="12" r="9" />
 </svg>`,
 
   /**
-   * In Progress - CircleProgress
-   * Half-filled circle (left side filled)
+   * In Progress - CircleProgress（左半边填充的圆）
+   * 半填充圆，表示“进行中”。
    */
   'in-progress': `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <circle cx="12" cy="12" r="9" />
@@ -35,8 +38,8 @@ export const DEFAULT_ICON_SVGS: Record<string, string> = {
 </svg>`,
 
   /**
-   * Needs Review - CircleEye
-   * Circle with dot in center
+   * Needs Review - CircleEye（中间带圆点的圆）
+   * 圆中带点，表示“需要 review”。
    */
   'needs-review': `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <circle cx="12" cy="12" r="9" />
@@ -44,8 +47,8 @@ export const DEFAULT_ICON_SVGS: Record<string, string> = {
 </svg>`,
 
   /**
-   * Done - CircleCheckFilled
-   * Filled circle with checkmark
+   * Done - CircleCheckFilled（填充圆加对勾）
+   * 实心圆加白色对勾，表示“已完成”。
    */
   'done': `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none">
   <circle cx="12" cy="12" r="10" />
@@ -53,8 +56,8 @@ export const DEFAULT_ICON_SVGS: Record<string, string> = {
 </svg>`,
 
   /**
-   * Cancelled - CircleXFilled
-   * Filled circle with X mark
+   * Cancelled - CircleXFilled（填充圆加叉）
+   * 实心圆加白色叉号，表示“已取消”。
    */
   'cancelled': `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none">
   <circle cx="12" cy="12" r="10" />
@@ -63,7 +66,10 @@ export const DEFAULT_ICON_SVGS: Record<string, string> = {
 };
 
 /**
- * Get default icon SVG by status ID
+ * 根据状态 ID 获取默认图标的 SVG 字符串。
+ *
+ * @param statusId 状态 ID
+ * @returns SVG 字符串；如果找不到则返回 undefined
  */
 export function getDefaultIconSvg(statusId: string): string | undefined {
   return DEFAULT_ICON_SVGS[statusId];

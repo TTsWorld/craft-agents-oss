@@ -1,5 +1,11 @@
+/**
+ * KeyboardShortcuts — React 组件
+ * 
+ * 所属目录：components
+ */
 import { actionsByCategory, useActionLabel, type ActionId } from '@/actions'
 
+/** KeyboardShortcuts：函数 */
 export function KeyboardShortcuts() {
   return (
     <div className="space-y-6">

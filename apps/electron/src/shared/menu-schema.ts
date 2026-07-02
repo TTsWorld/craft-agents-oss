@@ -1,77 +1,99 @@
 /**
- * Shared Menu Schema
+ * Shared Menu Schema —— 共享菜单结构定义。
  *
- * Defines menu structure consumed by both:
- * - Main process: transforms to Electron MenuItemConstructorOptions
- * - Renderer: transforms to React dropdown components
+ * 本文件同时被以下两者消费：
+ * - Main 进程：转换为 Electron 原生的 MenuItemConstructorOptions
+ * - Renderer 进程：转换为 React 下拉组件
  *
- * Single source of truth for labels, shortcuts, icons, and IPC channels.
+ * 标签、快捷键、图标、IPC 通道都在这里统一维护，避免两侧不一致。
  *
- * NOTE: All labels are i18n keys (e.g., "menu.edit"), NOT resolved strings.
- * Consumers must call t(item.labelKey) or i18n.t(item.labelKey) at render/build time.
- * This avoids stale translations from module-level i18n.t() calls.
+ * 注意：所有 labelKey 都是 i18n key（例如 "menu.edit"），不是已翻译的字符串。
+ * 消费方需要在渲染/构建时调用 t(item.labelKey) 或 i18n.t(item.labelKey) 解析。
+ * 这样可避免模块级 i18n.t() 调用带来的翻译过时问题。
  */
 
 import { RPC_CHANNELS } from './types'
 import { FEATURE_FLAGS } from '@craft-agent/shared/feature-flags'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Types
+// 类型定义
 // ─────────────────────────────────────────────────────────────────────────────
 
+// 普通动作菜单项：点击后通过 ipcChannel 向 main 进程发送命令
 export interface MenuItemAction {
   type: 'action'
   id: string
-  labelKey: string              // i18n key — resolve with t() at render time
-  /** Link to the action registry (e.g., 'view.toggleSidebar').
-   *  Enables future: derive display shortcuts from registry + propagate user overrides. */
+  // i18n key —— 渲染时通过 t() 解析成本地语言
+  labelKey: string
+  /**
+   * 与动作注册表（action registry）关联，例如 'view.toggleSidebar'。
+   * 未来可用于：从注册表推导显示快捷键、同步用户自定义快捷键覆盖。
+   */
   actionId?: string
-  shortcut: string              // Electron accelerator: 'CmdOrCtrl+B'
-  shortcutDisplayMac: string    // Display on macOS: '⌘B'
-  shortcutDisplayOther: string  // Display on Windows/Linux: 'Ctrl+B'
+  // Electron accelerator 快捷键，例如 'CmdOrCtrl+B'
+  shortcut: string
+  // macOS 上显示的快捷键，例如 '⌘B'
+  shortcutDisplayMac: string
+  // Windows/Linux 上显示的快捷键，例如 'Ctrl+B'
+  shortcutDisplayOther: string
+  // 点击时发送的 IPC 通道名
   ipcChannel: string
-  icon: string                  // Lucide icon name
+  // Lucide 图标名称
+  icon: string
 }
 
+// Electron 内置 role 菜单项，例如 undo/copy/paste
 export interface MenuItemRole {
   type: 'role'
-  role: string                  // Electron role: 'undo', 'copy', etc.
-  labelKey: string              // i18n key — resolve with t() at render time
+  // Electron 原生 role，例如 'undo'、'copy'
+  role: string
+  // i18n key —— 渲染时通过 t() 解析
+  labelKey: string
   shortcutDisplayMac?: string
   shortcutDisplayOther?: string
   icon: string
-  ipcChannel?: string           // Optional IPC for renderer to call
+  // renderer 可选调用的 IPC 通道
+  ipcChannel?: string
 }
 
+// 分隔线
 export interface MenuItemSeparator {
   type: 'separator'
 }
 
 /**
- * External-link menu item (e.g. "Help & Documentation").
+ * 外部链接菜单项，例如“帮助与文档”。
  *
- * Renderers turn this into `window.electronAPI.openUrl(url)`. Not consumed by the
- * Electron native menu builder — main process imports only EDIT/VIEW/WINDOW today.
+ * Renderer 会把它渲染成 `window.electronAPI.openUrl(url)`。
+ * Main 进程的 Electron 原生菜单构建器目前只消费 EDIT/VIEW/WINDOW，不会消费此项。
  */
 export interface MenuItemUrl {
   type: 'url'
   id: string
-  labelKey: string              // i18n key — resolve with t() at render time
-  url: string                   // Target URL passed to shell.openExternal
-  icon: string                  // Lucide icon name
+  // i18n key —— 渲染时通过 t() 解析
+  labelKey: string
+  // 目标 URL，最终交给 shell.openExternal 打开
+  url: string
+  // Lucide 图标名称
+  icon: string
 }
 
+// 菜单项联合类型：动作、内置 role、分隔线、外部链接四种
 export type MenuItem = MenuItemAction | MenuItemRole | MenuItemSeparator | MenuItemUrl
 
 export interface MenuSection {
+  // 分区唯一 ID
   id: string
-  labelKey: string              // i18n key — resolve with t() at render time
+  // i18n key —— 渲染时通过 t() 解析
+  labelKey: string
+  // Lucide 图标名称
   icon: string
+  // 该分区下的菜单项列表
   items: MenuItem[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Menu Definitions
+// 菜单定义
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const EDIT_MENU: MenuSection = {
@@ -220,23 +242,22 @@ export const WINDOW_MENU: MenuSection = {
   ],
 }
 
-// All menu sections in order (for renderer)
+// 按顺序排列的所有菜单分区（供 renderer 使用）
 export const MENU_SECTIONS: MenuSection[] = [EDIT_MENU, VIEW_MENU, WINDOW_MENU]
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Root menu items
+// 根菜单项
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Root-level leaf actions exposed in the Craft logo menu.
+ * Craft logo 菜单中的根级动作项。
  *
- * Both DesktopAppMenu (dropdown) and MobileAppMenu (full-screen sheet) read from
- * this collection. Desktop renders all four directly inline. Mobile filters out
- * `quit` (no-op in a browser tab) and inserts navigation rows for Settings/Help/Debug
- * between `newWindow` and `keyboardShortcuts`.
+ * DesktopAppMenu（下拉菜单）和 MobileAppMenu（全屏面板）都读取此集合。
+ * 桌面端直接渲染全部四项；移动端会过滤掉 quit（在浏览器标签中无意义），
+ * 并在 newWindow 与 keyboardShortcuts 之间插入 Settings/Help/Debug 导航行。
  *
- * Icons here are Lucide names. The `newChat` item maps to the local `SquarePenRounded`
- * component in the renderer; that's the one approved exception.
+ * 图标均为 Lucide 名称。newChat 在 renderer 里映射到本地组件 SquarePenRounded，
+ * 这是唯一允许的例外。
  */
 export const ROOT_MENU = {
   newChat: {
@@ -286,13 +307,13 @@ export const ROOT_MENU = {
 } as const satisfies Record<string, MenuItemAction>
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Help links
+// 帮助链接
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * External-link items rendered inside the Help submenu (desktop) and the Help
- * sub-page (mobile). Excludes `keyboardShortcuts`, which is a `MenuItemAction`
- * and lives in `ROOT_MENU` so mobile can hoist it to the root list.
+ * Help 子菜单（桌面端）与 Help 子页面（移动端）中渲染的外部链接项。
+ * 不包含 keyboardShortcuts，因为它是 MenuItemAction，且位于 ROOT_MENU 中，
+ * 以便移动端能把它提升到根列表。
  */
 export const HELP_LINKS: MenuItemUrl[] = [
   {
@@ -305,15 +326,14 @@ export const HELP_LINKS: MenuItemUrl[] = [
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Debug menu (dev-only)
+// Debug 菜单（仅开发环境）
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Debug submenu — only rendered when `window.electronAPI.isDebugMode()` resolves true.
+ * Debug 子菜单 —— 仅在 `window.electronAPI.isDebugMode()` 返回 true 时渲染。
  *
- * `checkForUpdates` and `installUpdate` invoke renderer-only electronAPI methods
- * (`checkForUpdates()` / `installUpdate()`) that bypass the menu IPC channels, so
- * their `ipcChannel` field is intentionally empty.
+ * checkForUpdates 与 installUpdate 调用的是 renderer 专属的 electronAPI 方法，
+ * 不走菜单 IPC 通道，因此它们的 ipcChannel 字段故意留空。
  */
 export const DEBUG_MENU: MenuSection = {
   id: 'debug',
@@ -358,25 +378,28 @@ export const DEBUG_MENU: MenuSection = {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Settings Menu Items
+// 设置菜单项
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Settings item definition
- * Used by both AppMenu (logo dropdown) and SettingsNavigator (sidebar panel)
+ * 设置项定义
+ * 同时被 AppMenu（logo 下拉菜单）与 SettingsNavigator（设置侧边栏面板）使用
  */
 import { SETTINGS_PAGES, type SettingsSubpage } from './settings-registry'
 
 export interface SettingsMenuItem {
   id: SettingsSubpage
-  labelKey: string    // i18n key - resolve with t() at render time
-  icon: string        // Lucide icon name for AppMenu
-  descriptionKey: string // i18n key - resolve with t() at render time
+  // i18n key —— 渲染时通过 t() 解析
+  labelKey: string
+  // Lucide 图标名称，供 AppMenu 使用
+  icon: string
+  // i18n key —— 渲染时通过 t() 解析
+  descriptionKey: string
 }
 
 /**
- * Icon mapping for settings pages (Lucide icon names)
- * Only icons need to be defined here - page data comes from settings-registry
+ * 设置页面的图标映射表（Lucide 图标名称）。
+ * 只有图标需要在这里定义，页面其他数据来自 settings-registry。
  */
 const SETTINGS_ICONS: Record<SettingsSubpage, string> = {
   app: 'ToggleRight',
@@ -393,8 +416,8 @@ const SETTINGS_ICONS: Record<SettingsSubpage, string> = {
 }
 
 /**
- * All settings pages - derived from settings-registry (single source of truth)
- * Order is determined by SETTINGS_PAGES in settings-registry.ts
+ * 所有设置页面 —— 从 settings-registry 派生（单一事实来源）。
+ * 顺序由 settings-registry.ts 中的 SETTINGS_PAGES 决定。
  */
 export const SETTINGS_ITEMS: SettingsMenuItem[] = SETTINGS_PAGES
   .filter(page => page.id !== 'server' || FEATURE_FLAGS.embeddedServer)
@@ -406,12 +429,10 @@ export const SETTINGS_ITEMS: SettingsMenuItem[] = SETTINGS_PAGES
   }))
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers
+// 辅助函数
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Get the display shortcut for the current platform
- */
+// 获取当前平台应显示的快捷键文本
 export function getShortcutDisplay(item: MenuItemAction | MenuItemRole, isMac: boolean): string {
   return isMac ? (item.shortcutDisplayMac ?? '') : (item.shortcutDisplayOther ?? '')
 }

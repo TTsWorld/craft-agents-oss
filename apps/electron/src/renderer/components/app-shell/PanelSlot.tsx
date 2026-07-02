@@ -1,16 +1,11 @@
 /**
- * PanelSlot
+ * PanelSlot - 在 PanelStackContainer 内渲染单个内容面板。
  *
- * Renders a single content panel within the PanelStackContainer.
+ * - 当只有一个面板时（isOnly），flex-grow 占满可用空间。
+ * - 多个面板时，按 proportion 分配权重，并用 min-width 限制不小于 PANEL_MIN_WIDTH。
  *
- * When a panel is the only one (isOnly), it flex-grows to fill available space.
- * When multiple panels exist, each uses flex-grow with its proportion as the weight,
- * combined with min-width to prevent shrinking below PANEL_MIN_WIDTH.
- *
- * Each PanelSlot overrides AppShellContext to inject a per-panel close button
- * into PanelHeader's rightSidebarButton slot. All panels are equal — closing
- * any panel removes it from the stack. A reactive effect handles window close
- * when the stack becomes empty.
+ * 每个 PanelSlot 会覆盖 AppShellContext，把当前面板的关闭按钮注入到 PanelHeader 的 rightSidebarButton 插槽。
+ * 所有面板平等，关闭任意一个都会从栈中移除；栈为空时会触发窗口关闭。
  */
 
 import { useCallback, useMemo } from 'react'
@@ -28,21 +23,22 @@ import { PANEL_MIN_WIDTH, RADIUS_EDGE, RADIUS_INNER } from './panel-constants'
 interface PanelSlotProps {
   entry: PanelStackEntry
   isOnly: boolean
-  /** Whether this panel is the focused panel in a multi-panel layout */
+  /** 当前面板是否为多面板布局中的焦点面板 */
   isFocusedPanel: boolean
   isSidebarAndNavigatorHidden: boolean
-  /** Whether this panel's left corners touch the window edge (no sidebar/navigator before it) */
+  /** 当前面板左侧是否贴到窗口边缘（前面没有侧边栏/导航器） */
   isAtLeftEdge: boolean
-  /** Whether this panel's right corners touch the window edge (no right sidebar after it) */
+  /** 当前面板右侧是否贴到窗口边缘（后面没有右侧边栏） */
   isAtRightEdge: boolean
-  /** Flex-grow weight for proportional sizing */
+  /** flex-grow 权重，用于按比例分配空间 */
   proportion: number
-  /** Optional sash element rendered before this panel */
+  /** 渲染在当前面板之前的可选 sash（拖拽分隔条） */
   sash?: React.ReactNode
-  /** Compact (mobile) mode — shows back button in panel header */
+  /** 紧凑/移动端模式：在标题栏显示返回按钮 */
   isCompact?: boolean
 }
 
+/** PanelSlot - 单个内容面板槽位 */
 export function PanelSlot({
   entry,
   isOnly,
@@ -64,7 +60,7 @@ export function PanelSlot({
     closePanel(entry.id)
   }, [closePanel, entry.id])
 
-  // Build close button for PanelHeader (via context override)
+  // 构造关闭按钮，通过 context 覆盖注入到 PanelHeader 的右侧插槽
   const closeButton = useMemo(() => {
     return (
       <PanelHeaderCenterButton
@@ -75,8 +71,8 @@ export function PanelSlot({
     )
   }, [handleClose])
 
-  // Build back button for compact mode — closes the panel to reveal the session list.
-  // Same PanelHeaderCenterButton style as X and share, just on the left side.
+  // 紧凑模式下的返回按钮：点击后关闭面板，回到会话列表。
+  // 和关闭按钮使用同样的 PanelHeaderCenterButton 样式，只是放在左侧。
   const backButton = useMemo(() => {
     if (!isCompact) return undefined
     return (
@@ -88,8 +84,8 @@ export function PanelSlot({
     )
   }, [isCompact, handleClose])
 
-  // Override AppShellContext so ChatPage/PanelHeader gets our per-panel close button,
-  // back button (compact mode), and isFocusedPanel for input field appearance
+  // 覆盖 AppShellContext，让 ChatPage/PanelHeader 拿到当前面板的关闭按钮、
+  // 返回按钮（紧凑模式）以及 isFocusedPanel 状态
   const contextOverride = useMemo(() => ({
     ...parentContext,
     rightSidebarButton: closeButton,
@@ -116,8 +112,7 @@ export function PanelSlot({
           'bg-foreground-2',
         )}
         style={{
-          // In multi-panel, unfocused panels override --background so all
-          // bg-background children render at the elevated (dimmed) background.
+          // 多面板中，非焦点面板覆盖 --background，让所有 bg-background 子元素渲染成暗色背景。
           ...(!isFocusedPanel && !isOnly
             ? {
                 '--background': 'var(--background-elevated)',
@@ -126,8 +121,8 @@ export function PanelSlot({
               } as React.CSSProperties
             : {}
           ),
-          // Corner radii: edge corners (touching window boundary) vs interior corners.
-          // Compact mode panels run flush to the viewport floor — no rounded bottom.
+          // 圆角：贴窗口边缘的角用 RADIUS_EDGE，内部相邻的角用 RADIUS_INNER。
+          // 紧凑模式下面板贴底，底部不要圆角。
           borderTopLeftRadius: RADIUS_INNER,
           borderBottomLeftRadius: isCompact ? 0 : (isAtLeftEdge ? RADIUS_EDGE : RADIUS_INNER),
           borderTopRightRadius: RADIUS_INNER,

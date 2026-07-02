@@ -1,42 +1,40 @@
 import { useRef, useCallback } from 'react'
 
 /**
- * useDynamicStack — Realtime dynamic stacking with equal visible strips.
+ * useDynamicStack — 实时动态堆叠徽章（badge），保持每个徽章露出等宽条带。
  *
- * Returns a callback ref that, when attached to a flex container, computes
- * per-badge marginLeft values via ResizeObserver. Two phases:
+ * 返回一个 callback ref，绑定到 flex 容器后，通过 ResizeObserver 计算每个徽章的 marginLeft。
+ * 分为两个阶段：
  *
- * 1. TRANSITION (gaps shrinking): uniform margins for even spacing.
- *    As container shrinks, all gaps decrease equally from `gap` toward 0.
- *    Used when V >= min(non-last badge widths) — prevents uneven positive
- *    margins that would appear with the per-badge formula.
+ * 1. TRANSITION（间隙收缩）：所有间隙均匀缩小。
+ *    容器变窄时，所有 gap 从设定的 gap 值等量减少到 0。
+ *    适用于 V >= 最窄非末尾徽章宽度时，避免按徽章公式产生的不均匀正边距。
  *
- * 2. STACKING (equal visible strips): per-badge margins so each badge
- *    exposes exactly V pixels regardless of natural width. Wider badges
- *    get more negative margins. All margins ≤ 0 in this phase.
- *    Used when V < min(non-last badge widths).
+ * 2. STACKING（等宽可见条带）：按徽章计算 marginLeft，使每个徽章恰好露出 V 像素。
+ *    越宽的徽章需要越大的负边距。此阶段所有 marginLeft ≤ 0。
+ *    适用于 V < 最窄非末尾徽章宽度时。
  *
- * A smooth blend over a short range at the crossover prevents discontinuity.
+ * 在临界点附近做短距离平滑过渡，避免视觉跳变。
  *
- * Key design decisions:
- * - Callback ref: observer attaches immediately on mount, before first paint
- * - No rAF: ResizeObserver fires between layout and paint (same-frame updates)
- * - Direct child style manipulation (no CSS variables, no React re-renders)
- * - MutationObserver: recomputes when children are added/removed
+ * 关键设计：
+ * - callback ref：在 mount 时立即挂接 observer，早于首次绘制
+ * - 不使用 rAF：ResizeObserver 在 layout 与 paint 之间触发（同帧更新）
+ * - 直接操作子元素 style（不用 CSS 变量，不触发 React re-render）
+ * - MutationObserver：子元素增删时重新计算
  *
- * @param options.gap - Gap between badges when space allows (default: 8)
- * @param options.minVisible - Minimum visible strip per badge in px (default: 20)
- * @param options.reservedStart - Optional visual reserve applied only in stacking
- *   math (capped to one gap) to keep fade behavior stable (default: 0)
+ * @param options.gap - 空间充足时徽章间距（默认 8）
+ * @param options.minVisible - 每个徽章最小可见条带宽度（默认 20）
+ * @param options.reservedStart - 仅在堆叠阶段生效的视觉预留宽度（上限为一个 gap），
+ *   用于稳定渐变淡出行为（默认 0）
  */
 export function useDynamicStack(options?: { gap?: number; minVisible?: number; reservedStart?: number }) {
   const { gap = 8, minVisible = 20, reservedStart = 0 } = options ?? {}
   const observerRef = useRef<ResizeObserver | null>(null)
   const mutationRef = useRef<MutationObserver | null>(null)
 
-  // Callback ref — fires synchronously during React commit phase on mount/unmount.
+  // callback ref：在 React commit 阶段同步触发，mount/unmount 时执行
   const callbackRef = useCallback((el: HTMLDivElement | null) => {
-    // Cleanup previous observers
+    // 清理之前的 observer
     if (observerRef.current) {
       observerRef.current.disconnect()
       observerRef.current = null
@@ -61,7 +59,7 @@ export function useDynamicStack(options?: { gap?: number; minVisible?: number; r
         return
       }
 
-      // Measure each child's natural width (offsetWidth excludes margins)
+      // 测量每个子元素的自然宽度（offsetWidth 不含 margin）
       const widths: number[] = []
       for (let i = 0; i < childCount; i++) {
         widths.push((children[i] as HTMLElement).offsetWidth)
@@ -70,49 +68,47 @@ export function useDynamicStack(options?: { gap?: number; minVisible?: number; r
       const totalWidth = widths.reduce((sum, w) => sum + w, 0)
       const availableWidth = el.clientWidth
 
-      // Phase 0: Enough real space — uniform gap, no stacking needed.
-      // Use the actual measured width here so stacking doesn't start prematurely
-      // when visual-reserve tuning is configured.
+      // 阶段 0：空间足够，均匀 gap，无需堆叠
+      // 使用实际测量宽度，避免视觉预留参数导致过早进入堆叠
       const totalWithGaps = totalWidth + (childCount - 1) * gap
       if (totalWithGaps <= availableWidth) {
         for (let i = 0; i < childCount; i++) {
           const child = children[i] as HTMLElement
           child.style.marginLeft = i === 0 ? '0px' : `${gap}px`
-          // No overlap in Phase 0 — clear any previously applied masks
+          // 无重叠时清除可能存在的遮罩
           child.style.maskImage = 'none'
           child.style.webkitMaskImage = 'none'
         }
         return
       }
 
-      // Optional tiny reserve for stacking phase only (capped to one gap).
-      // This keeps visual fade behavior stable without forcing premature overlap.
+      // 堆叠阶段可选的微小预留（上限为一个 gap）
+      // 让渐变淡出更稳定，但不会强制提前重叠
       const stackingWidth = Math.max(0, availableWidth - Math.min(reservedStart, gap))
 
-      // Target visible strip V (for the equal-strip formula)
+      // 等宽条带目标值 V
       const V = Math.max(minVisible, (stackingWidth - widths[childCount - 1]) / (childCount - 1))
 
-      // Narrowest non-last badge — the crossover threshold.
-      // When V < this, all per-badge margins are ≤ 0 (no uneven positive gaps).
+      // 最窄的非末尾徽章宽度，即阶段切换临界点
+      // 当 V 小于它时，所有按徽章计算的 marginLeft ≤ 0（无不均匀正 gap）
       const nonLastWidths = widths.slice(0, -1)
       const minNonLastWidth = Math.min(...nonLastWidths)
 
-      // Uniform margin: distributes the total deficit evenly across all gaps.
-      // Gives visually even spacing regardless of individual badge widths.
+      // 均匀边距：把总缺口平均分配到所有间隙
+      // 无论单个徽章多宽，视觉上间隙都是均匀的
       const uniformMargin = Math.min(gap, (stackingWidth - totalWidth) / (childCount - 1))
 
       if (V >= minNonLastWidth) {
-        // Phase 1: TRANSITION — V is larger than some badge widths.
-        // Per-badge formula would give positive margins for narrow badges (uneven).
-        // Use uniform margin for consistent even spacing.
+        // 阶段 1：TRANSITION — V 大于某些徽章宽度
+        // 按徽章公式会给窄徽章正边距（不均匀），改用均匀边距
         for (let i = 0; i < childCount; i++) {
           ;(children[i] as HTMLElement).style.marginLeft = i === 0 ? '0px' : `${uniformMargin}px`
         }
       } else {
-        // Phase 2: STACKING — V < all non-last badge widths.
-        // Per-badge margins are all ≤ 0, giving equal visible strips.
-        // Blend from uniform toward per-badge for smooth crossover.
-        // t=0 at crossover (V = minNonLastWidth), t=1 when deeply stacked.
+        // 阶段 2：STACKING — V 小于所有非末尾徽章宽度
+        // 按徽章计算的 marginLeft 都 ≤ 0，每个徽章露出等宽条带
+        // 在临界点附近从均匀边距混合到按徽章边距，实现平滑过渡
+        // t=0 在临界点（V = minNonLastWidth），t=1 在深度堆叠时
         const blendRange = minNonLastWidth * 0.5
         const t = Math.min(1, (minNonLastWidth - V) / blendRange)
 
@@ -120,7 +116,7 @@ export function useDynamicStack(options?: { gap?: number; minVisible?: number; r
           if (i === 0) {
             ;(children[i] as HTMLElement).style.marginLeft = '0px'
           } else {
-            // Lerp: uniform (even gaps) → per-badge (equal visible strips)
+            // 线性插值：uniform（均匀间隙）→ per-badge（等宽条带）
             const perBadge = V - widths[i - 1]
             const blended = uniformMargin * (1 - t) + perBadge * t
             ;(children[i] as HTMLElement).style.marginLeft = `${blended}px`
@@ -128,40 +124,37 @@ export function useDynamicStack(options?: { gap?: number; minVisible?: number; r
         }
       }
 
-      // Mask + z-index pass: fade out the right edge of each non-last badge,
-      // and stack later badges on top so their opaque backgrounds cover the
-      // clipped shadow areas of earlier badges.
+      // 遮罩 + z-index 遍历：给每个非末尾徽章右侧边缘做淡出，
+      // 并提升后面徽章的层级，使其不透明背景盖住前面徽章被裁剪后的阴影区域
       for (let i = 0; i < childCount; i++) {
         const child = children[i] as HTMLElement
-        // Ascending z-index: later badges paint on top, covering earlier badges'
-        // clipped shadows in the overlap zone
+        // 后面的徽章 paint 在上层，盖住前面徽章重叠区的裁剪阴影
         child.style.position = 'relative'
         child.style.zIndex = `${i}`
         if (i === childCount - 1) {
-          // Last badge sits on top — fully visible, no mask needed
+          // 最后一个徽章在最上层，完全可见，不需要遮罩
           child.style.maskImage = 'none'
           child.style.webkitMaskImage = 'none'
         } else {
-          // Check proximity to the next badge and apply gradual fade.
-          // Fade begins when the gap shrinks below 4px (before actual overlap),
-          // ramping transparency from 0→66% over 36px of proximity/overlap.
+          // 当与下一个徽章的间隙小于 4px 时开始渐变淡出，
+          // 在 36px 范围内把透明度从 0 提升到最大 66%
           const nextMargin = parseFloat((children[i + 1] as HTMLElement).style.marginLeft || '0')
-          const fadeStart = 4 // start fading when gap is this small
+          const fadeStart = 4 // 间隙小于此值时开始淡出
           if (nextMargin < fadeStart) {
-            const proximity = fadeStart - nextMargin // 0 at threshold, grows as badges get closer/overlap
+            const proximity = fadeStart - nextMargin // 0 在阈值，徽章越靠近/重叠越大
             const fadeZone = 36
             const t = Math.min(1, proximity / 36)
-            const endAlpha = 1 - t * 0.66 // max fade capped at 66% transparency
-            // Position gradient ahead of the overlap zone, shifted 24px right.
-            // gradientEnd = right edge of the fade; gradientStart = left edge (clamped to 12px from badge left).
+            const endAlpha = 1 - t * 0.66 // 最大淡出到 66% 透明
+            // 渐变终点放在重叠区右侧，向右偏移 24px
+            // gradientEnd = 淡出右边界；gradientStart = 左边界（距离徽章左侧至少 12px）
             const actualOverlap = Math.max(0, -nextMargin)
-            const gradientEnd = Math.max(0, actualOverlap - 24) // shifted 24px right
-            const gradientStart = Math.min(widths[i] - 12, gradientEnd + fadeZone) // left edge never past 12px from left
+            const gradientEnd = Math.max(0, actualOverlap - 24)
+            const gradientStart = Math.min(widths[i] - 12, gradientEnd + fadeZone)
             const mask = `linear-gradient(to right, black calc(100% - ${gradientStart}px), rgba(0,0,0,${endAlpha}) calc(100% - ${gradientEnd}px), rgba(0,0,0,${endAlpha}) 100%)`
             child.style.maskImage = mask
             child.style.webkitMaskImage = mask
           } else {
-            // Enough space — clear mask
+            // 空间足够，清除遮罩
             child.style.maskImage = 'none'
             child.style.webkitMaskImage = 'none'
           }
@@ -169,14 +162,14 @@ export function useDynamicStack(options?: { gap?: number; minVisible?: number; r
       }
     }
 
-    // Compute immediately on mount (before first paint)
+    // mount 后立即计算（首次绘制前）
     compute()
 
-    // ResizeObserver: fires between layout and paint — zero frame delay
+    // ResizeObserver 在 layout 与 paint 之间触发，零帧延迟
     observerRef.current = new ResizeObserver(compute)
     observerRef.current.observe(el)
 
-    // MutationObserver: recompute when badges are added/removed
+    // MutationObserver：徽章增删时重新计算
     mutationRef.current = new MutationObserver(compute)
     mutationRef.current.observe(el, { childList: true })
   }, [gap, minVisible, reservedStart])

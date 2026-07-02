@@ -1,7 +1,8 @@
 /**
  * SettingsSection, SettingsGroup, SettingsDivider
  *
- * Structural components for organizing settings pages.
+ * 设置页的结构组件，用于组织页面层级：
+ * SettingsGroup > SettingsSection > SettingsCard/SettingsRadioGroup。
  */
 
 import * as React from 'react'
@@ -12,22 +13,22 @@ import { cn } from '@/lib/utils'
 // ============================================
 
 export interface SettingsSectionProps {
-  /** Section title */
+  /** 区块标题 */
   title: string
-  /** Optional description below title (supports ReactNode for inline links) */
+  /** 标题下方的描述（支持 ReactNode，可放内联链接） */
   description?: React.ReactNode
-  /** Content - usually SettingsCard or SettingsRadioGroup */
+  /** 内容，通常是 SettingsCard 或 SettingsRadioGroup */
   children: React.ReactNode
-  /** Additional className */
+  /** 额外 className */
   className?: string
-  /** Variant for different visual treatments */
+  /** 视觉变体 */
   variant?: 'default' | 'danger'
-  /** Optional action element (e.g., Edit button) shown at the right of the header */
+  /** 标题右侧的操作元素（例如 Edit 按钮） */
   action?: React.ReactNode
 }
 
 /**
- * SettingsSection - A semantic section with title and description
+ * SettingsSection - 带标题和描述的语义化区块
  *
  * @example
  * <SettingsSection title="Billing" description="Choose how you pay">
@@ -70,16 +71,16 @@ export function SettingsSection({
 // ============================================
 
 export interface SettingsGroupProps {
-  /** Group title (displayed uppercase) */
+  /** 分组标题（会显示为大写） */
   title: string
-  /** Content - usually multiple SettingsSection components */
+  /** 内容，通常是多个 SettingsSection */
   children: React.ReactNode
-  /** Additional className */
+  /** 额外 className */
   className?: string
 }
 
 /**
- * SettingsGroup - Top-level divider for major sections (e.g., "App" vs "Workspace")
+ * SettingsGroup - 顶层分组，用于区分大模块（如 App / Workspace）
  *
  * @example
  * <SettingsGroup title="Workspace">
@@ -103,14 +104,14 @@ export function SettingsGroup({ title, children, className }: SettingsGroupProps
 // ============================================
 
 export interface SettingsDividerProps {
-  /** Additional className */
+  /** 额外 className */
   className?: string
 }
 
 /**
- * SettingsDivider - Horizontal separator between sections
+ * SettingsDivider - 区块之间的水平分隔线
  *
- * Use sparingly - vertical spacing is usually enough.
+ * 不建议频繁使用，通常垂直间距已经足够。
  */
 export function SettingsDivider({ className }: SettingsDividerProps) {
   return <div className={cn('h-px bg-border', className)} />

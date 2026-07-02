@@ -1,13 +1,13 @@
 /**
  * useOnboarding Hook
  *
- * Manages the state machine for the onboarding wizard.
- * Flow:
- * 1. Welcome
- * 2. Git Bash (Windows only, if not found)
- * 3. API Setup (API Key / Claude OAuth)
- * 4. Credentials (API Key or Claude OAuth)
- * 5. Complete
+ * 管理引导向导（onboarding wizard）的状态机。
+ * 流程：
+ * 1. 欢迎页
+ * 2. Git Bash（仅 Windows，未找到时）
+ * 3. 选择 API 提供方
+ * 4. 凭据（API Key 或 Claude OAuth）
+ * 5. 完成
  */
 import { useState, useCallback, useEffect } from 'react'
 import type {
@@ -22,75 +22,75 @@ import type { CustomEndpointConfig } from '@config/llm-connections'
 import type { SetupNeeds, LlmConnectionSetup, ClaudeOAuthIdentityDto } from '../../shared/types'
 
 interface UseOnboardingOptions {
-  /** Called when onboarding is complete */
+  /** 引导完成时调用 */
   onComplete: () => void
-  /** Initial setup needs from auth state check */
+  /** 认证状态检查返回的初始设置需求 */
   initialSetupNeeds?: SetupNeeds
-  /** Start the wizard at a specific step (default: 'welcome') */
+  /** 从指定步骤开始向导（默认 'welcome'） */
   initialStep?: OnboardingStep
-  /** Pre-select an API setup method (useful when editing an existing connection) */
+  /** 预选 API 设置方式（编辑已有连接时有用） */
   initialApiSetupMethod?: ApiSetupMethod
-  /** Called when user goes back from the initial step (dismisses the wizard) */
+  /** 用户在初始步骤点击返回时调用（关闭向导） */
   onDismiss?: () => void
-  /** Called immediately after config is saved to disk (before wizard closes).
-   *  Use this to propagate billing/model changes to the UI without waiting for onComplete. */
+  /** 配置保存到磁盘后立即调用（在向导关闭前）。
+   *  可用来立即把计费/模型变化同步到 UI，无需等待 onComplete。 */
   onConfigSaved?: () => void
-  /** Slug of existing connection being edited (null = creating new) */
+  /** 正在编辑的现有连接 slug（null 表示新建） */
   editingSlug?: string | null
-  /** Set of slugs already in use (for generating unique slugs when creating new) */
+  /** 已占用的 slug 集合（新建时用于生成唯一 slug） */
   existingSlugs?: Set<string>
 }
 
 interface UseOnboardingReturn {
-  // State
+  // 状态
   state: OnboardingState
 
-  // Wizard actions
+  // 向导动作
   handleContinue: () => void
   handleBack: () => void
 
-  // Provider select (new flow)
+  // 选择提供方（新流程）
   handleSelectProvider: (choice: ProviderChoice) => void
 
-  // API Setup (legacy — kept for direct edit)
+  // API 设置方式（旧版 —— 保留给直接编辑）
   handleSelectApiSetupMethod: (method: ApiSetupMethod) => void
 
-  // Credentials
+  // 凭据
   handleSubmitCredential: (data: ApiKeySubmitData) => void
 
-  // Local model
+  // 本地模型
   handleSubmitLocalModel: (data: LocalModelSubmitData) => void
   handleStartOAuth: (methodOverride?: ApiSetupMethod, connectionSlugOverride?: string) => void
 
-  // Claude OAuth (two-step flow)
+  // Claude OAuth（两步流程）
   isWaitingForCode: boolean
   handleSubmitAuthCode: (code: string) => void
   handleCancelOAuth: () => void
 
-  // Copilot device code (displayed during device flow)
+  // Copilot 设备码（设备流期间展示）
   copilotDeviceCode?: { userCode: string; verificationUri: string }
 
-  // Git Bash (Windows)
+  // Git Bash（Windows）
   handleBrowseGitBash: () => Promise<string | null>
   handleUseGitBashPath: (path: string) => void
   handleRecheckGitBash: () => void
   handleClearError: () => void
 
-  // Skip setup ("Setup later")
+  // 跳过设置（"稍后设置"）
   handleSkipSetup: () => void
 
-  // Completion
+  // 完成
   handleFinish: () => void
   handleCancel: () => void
 
-  // Direct edit (skip method selection, jump to credentials)
+  // 直接编辑（跳过方式选择，跳到凭据页）
   jumpToCredentials: (method: ApiSetupMethod) => void
 
-  // Reset
+  // 重置
   reset: () => void
 }
 
-// Base slug for each setup method (used as template key in ipc.ts)
+// 每种设置方式对应的基础 slug（ipc.ts 中用作模板键）
 export const BASE_SLUG_FOR_METHOD: Record<ApiSetupMethod, string> = {
   anthropic_api_key: 'anthropic-api',
   claude_oauth: 'claude-max',
@@ -100,16 +100,16 @@ export const BASE_SLUG_FOR_METHOD: Record<ApiSetupMethod, string> = {
 }
 
 /**
- * Generate a unique slug for a new connection.
- * If the base slug is taken, appends -2, -3, etc.
- * When editingSlug is provided, reuses that slug (editing existing connection).
+ * 为新连接生成唯一 slug。
+ * 若基础 slug 已被占用，则追加 -2、-3 等。
+ * 如果提供了 editingSlug，则复用该 slug（编辑现有连接）。
  */
 export function resolveSlugForMethod(
   method: ApiSetupMethod,
   editingSlug: string | null,
   existingSlugs: Set<string>,
 ): string {
-  // Editing an existing connection — reuse its slug
+  // 编辑现有连接 —— 复用其 slug
   if (editingSlug) return editingSlug
 
   const base = BASE_SLUG_FOR_METHOD[method]
@@ -120,7 +120,7 @@ export function resolveSlugForMethod(
   return `${base}-${i}`
 }
 
-// Map ApiSetupMethod to LlmConnectionSetup for the new unified connection system
+// 判断 baseUrl 是否是回环地址（localhost / 127.0.0.1 / ::1）
 function isLoopbackEndpoint(baseUrl?: string): boolean {
   if (!baseUrl?.trim()) return false
   try {
@@ -134,6 +134,7 @@ function isLoopbackEndpoint(baseUrl?: string): boolean {
   }
 }
 
+// 把 ApiSetupMethod 映射到新的统一连接系统 LlmConnectionSetup
 export function apiSetupMethodToConnectionSetup(
   method: ApiSetupMethod,
   options: {
@@ -203,7 +204,7 @@ export function useOnboarding({
   editingSlug = null,
   existingSlugs = new Set(),
 }: UseOnboardingOptions): UseOnboardingReturn {
-  // Main wizard state
+  // 向导主状态
   const [state, setState] = useState<OnboardingState>({
     step: initialStep,
     loginStatus: 'idle',
@@ -213,11 +214,11 @@ export function useOnboarding({
     isExistingUser: initialSetupNeeds?.needsBillingConfig ?? false,
     gitBashStatus: undefined,
     isRecheckingGitBash: false,
-    isCheckingGitBash: true, // Start as true until check completes
+    isCheckingGitBash: true, // 在检查完成前保持为 true
   })
 
-  // Check Git Bash on Windows at mount. If missing, redirect to git-bash step
-  // regardless of the initial step (provider-select skips the welcome gate).
+  // 在 mount 时检查 Windows 上的 Git Bash。若缺失，无论初始步骤是什么都重定向到 git-bash 步骤
+  //（provider-select 跳过了欢迎页门槛）。
   useEffect(() => {
     const checkGitBash = async () => {
       try {
@@ -226,22 +227,22 @@ export function useOnboarding({
           ...s,
           gitBashStatus: status,
           isCheckingGitBash: false,
-          // Redirect to git-bash step when missing on Windows
+          // Windows 上缺失 Git Bash 时重定向到 git-bash 步骤
           ...(status.platform === 'win32' && !status.found ? { step: 'git-bash' as const } : {}),
         }))
       } catch (error) {
         console.error('[Onboarding] Failed to check Git Bash:', error)
-        // Even on error, allow continuing (will skip git-bash step)
+        // 即使出错也允许继续（会跳过 git-bash 步骤）
         setState(s => ({ ...s, isCheckingGitBash: false }))
       }
     }
     checkGitBash()
   }, [])
 
-  // Save configuration using the new unified LLM connection API
-  // Returns true on success, false on failure (sets errorMessage on failure)
-  // `methodOverride` lets callers pass the method explicitly to avoid stale-closure issues
-  // (e.g. when called from an async OAuth flow whose closure predates the state update).
+  // 使用新的统一 LLM 连接 API 保存配置。
+  // 成功返回 true，失败返回 false（并在失败时设置 errorMessage）。
+  // `methodOverride` 允许调用方显式传入 method，避免闭包过期问题
+  //（例如从异步 OAuth 流程调用时，其闭包早于状态更新）。
   const handleSaveConfig = useCallback(async (
     credential?: string,
     options?: {
@@ -268,7 +269,7 @@ export function useOnboarding({
     setState(s => ({ ...s, completionStatus: 'saving' }))
 
     try {
-      // Build connection setup from UI state
+      // 根据 UI 状态构建连接配置
       const setup = apiSetupMethodToConnectionSetup(method, {
         credential,
         baseUrl: options?.baseUrl,
@@ -282,14 +283,14 @@ export function useOnboarding({
         bedrockAuthMethod: options?.bedrockAuthMethod,
         oauthIdentity: options?.oauthIdentity,
       }, connectionSlugOverride ?? editingSlug, existingSlugs)
-      // Use new unified API
+      // 使用新的统一 API
       const result = await window.electronAPI.setupLlmConnection(
         updateOnly ? { ...setup, updateOnly: true } : setup
       )
 
       if (result.success) {
         setState(s => ({ ...s, completionStatus: 'complete' }))
-        // Notify caller immediately so UI can reflect billing/model changes
+        // 立即通知调用方，使 UI 能反映计费/模型变化
         onConfigSaved?.()
         return true
       } else {
@@ -311,15 +312,15 @@ export function useOnboarding({
     }
   }, [state.apiSetupMethod, onConfigSaved, editingSlug, existingSlugs])
 
-  // Continue to next step
+  // 进入下一步
   const handleContinue = useCallback(async () => {
     switch (state.step) {
       case 'provider-select':
-        // Handled by handleSelectProvider (card click navigates directly)
+        // 由 handleSelectProvider 处理（卡片点击直接导航）
         break
 
       case 'welcome':
-        // On Windows, check if Git Bash is needed
+        // Windows 上若需要 Git Bash 则先进入该步骤
         if (state.gitBashStatus?.platform === 'win32' && !state.gitBashStatus?.found) {
           setState(s => ({ ...s, step: 'git-bash' }))
         } else {
@@ -332,11 +333,11 @@ export function useOnboarding({
         break
 
       case 'local-model':
-        // Handled by handleSubmitLocalModel
+        // 由 handleSubmitLocalModel 处理
         break
 
       case 'credentials':
-        // Handled by handleSubmitCredential
+        // 由 handleSubmitCredential 处理
         break
 
       case 'complete':
@@ -345,7 +346,7 @@ export function useOnboarding({
     }
   }, [state.step, state.gitBashStatus, state.apiSetupMethod, onComplete])
 
-  // Go back to previous step. If at the initial step, call onDismiss instead.
+  // 返回上一步。如果在初始步骤则调用 onDismiss。
   const handleBack = useCallback(() => {
     if (state.step === initialStep && onDismiss) {
       onDismiss()
@@ -358,7 +359,7 @@ export function useOnboarding({
         }
         break
       case 'provider-select':
-        // If on Windows and Git Bash was needed, go back to git-bash step
+        // Windows 上需要 Git Bash 时返回 git-bash 步骤
         if (state.gitBashStatus?.platform === 'win32' && state.gitBashStatus?.found === false) {
           setState(s => ({ ...s, step: 'git-bash' }))
         } else if (onDismiss) {
@@ -374,20 +375,20 @@ export function useOnboarding({
     }
   }, [state.step, state.gitBashStatus, initialStep, onDismiss])
 
-  // Select API setup method (legacy — kept for direct edit flows)
+  // 选择 API 设置方式（旧版 —— 保留给直接编辑流程）
   const handleSelectApiSetupMethod = useCallback((method: ApiSetupMethod) => {
     setState(s => ({ ...s, apiSetupMethod: method }))
   }, [])
 
-  // Submit credential (API key + optional endpoint config)
-  // Tests the connection first before saving to catch issues early
+  // 提交凭据（API key + 可选端点配置）
+  // 先测试连接再保存，便于提前发现问题
   const handleSubmitCredential = useCallback(async (data: ApiKeySubmitData) => {
     setState(s => ({ ...s, credentialStatus: 'validating', errorMessage: undefined }))
 
     const isPiApiKeyFlow = state.apiSetupMethod === 'pi_api_key'
 
     try {
-      // Bedrock (Pi+amazon-bedrock) — skip API key validation and connection test
+      // Bedrock（Pi+amazon-bedrock）跳过 API key 验证和连接测试
       if (data.bedrockAuthMethod) {
         const saved = await handleSaveConfig(undefined, {
           baseUrl: data.baseUrl,
@@ -407,7 +408,7 @@ export function useOnboarding({
         return
       }
 
-      // When editing an existing connection, API key is optional (empty = keep existing credential)
+      // 编辑现有连接时 API key 可为空（空 = 保留原凭据）
       if (!data.apiKey.trim() && editingSlug) {
         const saved = await handleSaveConfig(undefined, {
           baseUrl: data.baseUrl,
@@ -425,9 +426,9 @@ export function useOnboarding({
         return
       }
 
-      // API key validation differs by endpoint locality:
-      // - Local/loopback custom endpoints may be keyless (e.g. Ollama)
-      // - Non-local endpoints require an API key
+      // API key 验证规则按端点是否本地回环区分：
+      // - 本地/回环自定义端点可以无 key（如 Ollama）
+      // - 非本地端点必须提供 API key
       const isLoopbackCustomEndpoint = isLoopbackEndpoint(data.baseUrl)
       if (isPiApiKeyFlow) {
         if (!data.apiKey.trim() && !isLoopbackCustomEndpoint) {
@@ -449,8 +450,8 @@ export function useOnboarding({
         }
       }
 
-      // Validate connection by spawning a lightweight subprocess test.
-      // Custom endpoint protocol routes through PiAgent at runtime, so test with Pi too.
+      // 启动轻量级子进程测试连接。
+      // 自定义端点协议在运行时走 PiAgent，因此也用 Pi 测试。
       const setupTestProvider = data.customEndpoint ? 'pi' : (isPiApiKeyFlow ? 'pi' : 'anthropic')
       const testResult = await window.electronAPI.testLlmConnectionSetup({
         provider: setupTestProvider,
@@ -486,7 +487,7 @@ export function useOnboarding({
           step: 'complete',
         }))
       } else {
-        // Save failed — error is already set by handleSaveConfig, stay on credentials step
+        // 保存失败 —— handleSaveConfig 已设置错误，停留在凭据页
         setState(s => ({ ...s, credentialStatus: 'error' }))
       }
     } catch (error) {
@@ -498,11 +499,10 @@ export function useOnboarding({
     }
   }, [handleSaveConfig, state.apiSetupMethod])
 
-  // Save config, validate the connection, and update state accordingly.
-  // Shared by all OAuth flows after tokens are captured.
-  // `method` is passed explicitly to break the stale-closure chain — the OAuth
-  // await crosses renders, so handleSaveConfig's closure may have an outdated
-  // state.apiSetupMethod.
+  // 保存配置、验证连接并更新状态。
+  // 所有 OAuth 流程拿到 token 后共用。
+  // `method` 显式传入以打破闭包过期链 —— OAuth await 跨越多次渲染，
+  // handleSaveConfig 闭包里的 state.apiSetupMethod 可能已过期。
   const saveAndValidateConnection = useCallback(async (connectionSlug: string, method: ApiSetupMethod, credential?: string, updateOnly?: boolean, oauthIdentity?: ClaudeOAuthIdentityDto): Promise<boolean> => {
     const saved = await handleSaveConfig(credential, oauthIdentity ? { oauthIdentity } : undefined, method, connectionSlug, updateOnly)
     if (!saved) {
@@ -519,13 +519,13 @@ export function useOnboarding({
     }
   }, [handleSaveConfig])
 
-  // Two-step OAuth flow state
+  // 两步 OAuth 流程状态
   const [isWaitingForCode, setIsWaitingForCode] = useState(false)
 
-  // Copilot device code (displayed during device flow)
+  // Copilot 设备码（设备流期间展示）
   const [copilotDeviceCode, setCopilotDeviceCode] = useState<{ userCode: string; verificationUri: string } | undefined>()
 
-  // Start OAuth flow (Claude or ChatGPT depending on selected method)
+  // 启动 OAuth 流程（根据所选方式是 Claude 或 ChatGPT）
   const handleStartOAuth = useCallback(async (methodOverride?: ApiSetupMethod, connectionSlugOverride?: string) => {
     const effectiveMethod = methodOverride ?? state.apiSetupMethod
 
@@ -551,7 +551,7 @@ export function useOnboarding({
     }
 
     try {
-      // ChatGPT OAuth (single-step flow - opens browser, captures tokens automatically)
+      // ChatGPT OAuth（单步流程：打开浏览器，自动捕获 token）
       if (effectiveMethod === 'pi_chatgpt_oauth') {
         const effectiveEditingSlug = connectionSlugOverride ?? editingSlug
         const isReauth = !!effectiveEditingSlug
@@ -570,13 +570,13 @@ export function useOnboarding({
         return
       }
 
-      // Copilot OAuth (device flow — polls for token after user enters code on GitHub)
+      // Copilot OAuth（设备流：用户在 GitHub 输入设备码后，后端轮询 token）
       if (effectiveMethod === 'pi_copilot_oauth') {
         const effectiveEditingSlug = connectionSlugOverride ?? editingSlug
         const isReauth = !!effectiveEditingSlug
         const connectionSlug = apiSetupMethodToConnectionSetup(effectiveMethod, {}, effectiveEditingSlug, existingSlugs).slug
 
-        // Subscribe to device code event before starting the flow
+        // 启动流程前先订阅设备码事件
         const cleanup = window.electronAPI.onCopilotDeviceCode((data) => {
           setCopilotDeviceCode(data)
         })
@@ -600,8 +600,8 @@ export function useOnboarding({
         return
       }
 
-      // Claude OAuth (two-step flow - opens browser, user copies code)
-      // Remaining method must be claude_oauth
+      // Claude OAuth（两步流程：打开浏览器，用户复制 code 回来）
+      // 走到这里剩下的方法只能是 claude_oauth
       if (effectiveMethod !== 'claude_oauth') {
         setState(s => ({
           ...s,
@@ -614,7 +614,7 @@ export function useOnboarding({
       const result = await window.electronAPI.startClaudeOAuth()
 
       if (result.success) {
-        // Browser opened successfully, now waiting for user to copy the code
+        // 浏览器已成功打开，现在等待用户复制 code
         setIsWaitingForCode(true)
         setState(s => ({ ...s, credentialStatus: 'idle' }))
       } else {
@@ -633,7 +633,7 @@ export function useOnboarding({
     }
   }, [state.apiSetupMethod, saveAndValidateConnection, editingSlug, existingSlugs])
 
-  // Map ProviderChoice → ApiSetupMethod and navigate to the right step
+  // 把 ProviderChoice 映射为 ApiSetupMethod 并导航到对应步骤
   const handleSelectProvider = useCallback((choice: ProviderChoice) => {
     const CHOICE_TO_METHOD: Record<Exclude<ProviderChoice, 'local'>, ApiSetupMethod> = {
       claude: 'claude_oauth',
@@ -643,7 +643,7 @@ export function useOnboarding({
     }
 
     if (choice === 'local') {
-      // Local uses anthropic_api_key with custom endpoint (Ollama doesn't need an API key)
+      // 本地模型使用 anthropic_api_key + 自定义端点（Ollama 不需要 API key）
       setState(s => ({ ...s, step: 'local-model', apiSetupMethod: 'anthropic_api_key', credentialStatus: 'idle', errorMessage: undefined }))
       return
     }
@@ -657,14 +657,14 @@ export function useOnboarding({
       errorMessage: undefined,
     }))
 
-    // OAuth methods start immediately
+    // OAuth 方式立即启动
     if (choice === 'claude' || choice === 'chatgpt' || choice === 'copilot') {
-      // Defer to next tick so state is updated before handleStartOAuth reads it
+      // 推迟到下一 tick，让 state 更新后再被 handleStartOAuth 读到
       setTimeout(() => handleStartOAuth(method), 0)
     }
   }, [handleStartOAuth])
 
-  // Submit authorization code (second step of OAuth flow)
+  // 提交授权码（OAuth 第二步）
   const handleSubmitAuthCode = useCallback(async (code: string) => {
     if (!code.trim()) {
       setState(s => ({
@@ -700,12 +700,12 @@ export function useOnboarding({
     }
   }, [saveAndValidateConnection, editingSlug, existingSlugs])
 
-  // Submit local model configuration (Ollama or any OpenAI-compatible local server)
+  // 提交本地模型配置（Ollama 或任意 OpenAI 兼容本地服务）
   const handleSubmitLocalModel = useCallback(async (data: LocalModelSubmitData) => {
     setState(s => ({ ...s, credentialStatus: 'validating', errorMessage: undefined }))
 
     try {
-      // apiSetupMethod was set to 'anthropic_api_key' when entering local-model step
+      // 进入 local-model 步骤时 apiSetupMethod 已被设为 'anthropic_api_key'
       const saved = await handleSaveConfig(undefined, {
         baseUrl: data.baseUrl,
         connectionDefaultModel: data.model,
@@ -727,15 +727,15 @@ export function useOnboarding({
     }
   }, [handleSaveConfig])
 
-  // Cancel OAuth flow
+  // 取消 OAuth 流程
   const handleCancelOAuth = useCallback(async () => {
     setIsWaitingForCode(false)
     setState(s => ({ ...s, credentialStatus: 'idle', errorMessage: undefined }))
-    // Clear OAuth state on backend
+    // 清理后端的 OAuth 状态
     await window.electronAPI.clearClaudeOAuthState()
   }, [])
 
-  // Git Bash handlers (Windows only)
+  // Git Bash 相关处理（仅 Windows）
   const handleBrowseGitBash = useCallback(async () => {
     return window.electronAPI.browseForGitBash()
   }, [])
@@ -743,7 +743,7 @@ export function useOnboarding({
   const handleUseGitBashPath = useCallback(async (path: string) => {
     const result = await window.electronAPI.setGitBashPath(path)
     if (result.success) {
-      // Update state to mark Git Bash as found and continue
+      // 标记 Git Bash 已找到并继续
       setState(s => ({
         ...s,
         gitBashStatus: { ...s.gitBashStatus!, found: true, path },
@@ -765,7 +765,7 @@ export function useOnboarding({
         ...s,
         gitBashStatus: status,
         isRecheckingGitBash: false,
-        // If found, automatically continue to next step
+        // 若找到则自动进入下一步
         step: status.found ? 'provider-select' : s.step,
       }))
     } catch (error) {
@@ -778,7 +778,7 @@ export function useOnboarding({
     setState(s => ({ ...s, errorMessage: undefined }))
   }, [])
 
-  // Skip setup — user chose "Setup later"
+  // 跳过设置 —— 用户选择"稍后设置"
   const handleSkipSetup = useCallback(async () => {
     try {
       await window.electronAPI.deferSetup()
@@ -788,17 +788,17 @@ export function useOnboarding({
     onComplete()
   }, [onComplete])
 
-  // Finish onboarding
+  // 完成引导
   const handleFinish = useCallback(() => {
     onComplete()
   }, [onComplete])
 
-  // Cancel onboarding
+  // 取消引导
   const handleCancel = useCallback(() => {
     setState(s => ({ ...s, step: 'welcome' }))
   }, [])
 
-  // Jump directly to credentials step with a pre-set method (for editing existing connections)
+  // 直接跳到凭据步骤并预设方式（用于编辑已有连接）
   const jumpToCredentials = useCallback((method: ApiSetupMethod) => {
     setState(s => ({
       ...s,
@@ -809,7 +809,7 @@ export function useOnboarding({
     }))
   }, [])
 
-  // Reset onboarding to initial state (used after logout or modal close)
+  // 重置引导状态（登出或弹窗关闭后使用）
   const reset = useCallback(() => {
     setState({
       step: initialStep,
@@ -821,9 +821,9 @@ export function useOnboarding({
       errorMessage: undefined,
     })
     setIsWaitingForCode(false)
-    // Clean up any pending OAuth state
+    // 清理任何待定的 OAuth 状态
     window.electronAPI.clearClaudeOAuthState().catch(() => {
-      // Ignore errors - state may not exist
+      // 忽略错误 —— 状态可能不存在
     })
   }, [initialStep, initialApiSetupMethod])
 
@@ -836,13 +836,13 @@ export function useOnboarding({
     handleSubmitCredential,
     handleSubmitLocalModel,
     handleStartOAuth,
-    // Two-step OAuth flow
+    // 两步 OAuth 流程
     isWaitingForCode,
     handleSubmitAuthCode,
     handleCancelOAuth,
-    // Copilot device code
+    // Copilot 设备码
     copilotDeviceCode,
-    // Git Bash (Windows)
+    // Git Bash（Windows）
     handleBrowseGitBash,
     handleUseGitBashPath,
     handleRecheckGitBash,

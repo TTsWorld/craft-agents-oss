@@ -1,22 +1,27 @@
+/**
+ * ImageSupportWarningBanner - 图片支持警告横幅。
+ *
+ * 当用户已选择图片附件，但当前自定义端点模型被配置为仅文本时，
+ * 在输入框上方显示该警告，并提供一键开启图片支持的入口。
+ */
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle } from 'lucide-react'
 
+/** ImageSupportWarningBannerProps：组件 props 类型定义 */
 export interface ImageSupportWarningBannerProps {
-  /** Display name of the active model — interpolated into the message. */
+  /** 当前模型显示名称，用于插值到提示文案中 */
   modelName: string
-  /** Click-handler for the inline "Enable image support" action. */
+  /** 点击“启用图片支持”内联按钮的回调 */
   onEnable: () => void
 }
 
 /**
- * Pre-flight banner shown above the chat input when the user has staged image
- * attachments while the active custom-endpoint model is configured as text-only.
+ * ImageSupportWarningBanner - 输入框上方的预检横幅。
  *
- * Rendering conditions live in the parent (`FreeFormInput`); this component just
- * draws the warning and the inline action. The action calls the same
- * `setModelSupportsImages` flow used by the model picker's per-row toggle, so the
- * two surfaces always agree on the connection's state.
+ * 显示条件由父组件 FreeFormInput 控制；本组件只负责绘制警告和 inline 操作。
+ * 操作回调调用和模型选择器每行开关相同的 setModelSupportsImages 流程，
+ * 保证两种入口对连接状态的写入一致。
  */
 export function ImageSupportWarningBanner({
   modelName,

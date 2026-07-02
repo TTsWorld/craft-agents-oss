@@ -1,17 +1,20 @@
 /**
- * Headless PlatformServices — runs under Bun without Electron.
+ * Headless 模式下的 PlatformServices 实现。
  *
- * Uses sharp for image processing, console for logging.
- * GUI-only methods (openPath, openExternal, quit, etc.) are left undefined —
- * handlers guard them with optional chaining and capabilities handle client-side ops.
+ * 在 Bun 环境下运行，不使用 Electron：
+ * - 图像处理用 sharp
+ * - 日志用 console
+ * - GUI 相关方法（openPath、openExternal、quit 等）保持 undefined，
+ *   handler 用可选链或能力路由来处理
  */
 
 import { join } from 'path'
 import type { PlatformServices, Logger } from './platform'
 
 /**
- * Simple console-based logger matching the Logger interface.
- * Prefixes each line with ISO timestamp and level for structured grepping.
+ * 基于 console 的 Logger，符合 Logger 接口。
+ *
+ * 每行带 ISO 时间戳和日志级别，方便 grep。
  */
 function createConsoleLogger(): Logger {
   const fmt = (level: string, args: unknown[]) => {
@@ -32,14 +35,14 @@ function createConsoleLogger(): Logger {
 }
 
 /**
- * Create PlatformServices for headless (Bun) mode.
+ * 创建 headless（Bun）模式下的 PlatformServices。
  *
- * Environment variables:
- * - CRAFT_APP_ROOT — override appRootPath (default: cwd)
- * - CRAFT_RESOURCES_PATH — override resourcesPath (default: cwd/resources)
- * - CRAFT_IS_PACKAGED — 'true' for production (default: false)
- * - CRAFT_VERSION — app version string (default: '0.0.0-dev')
- * - CRAFT_DEBUG — 'true' to enable debug logging
+ * 环境变量：
+ * - CRAFT_APP_ROOT — 覆盖 appRootPath（默认 cwd）
+ * - CRAFT_RESOURCES_PATH — 覆盖 resourcesPath（默认 cwd/resources）
+ * - CRAFT_IS_PACKAGED — 'true' 表示生产环境（默认 false）
+ * - CRAFT_VERSION — 应用版本号（默认 '0.0.0-dev'）
+ * - CRAFT_DEBUG — 'true' 开启 debug 日志
  */
 export function createHeadlessPlatform(options?: { appVersion?: string }): PlatformServices {
   const logger = createConsoleLogger()
@@ -81,8 +84,6 @@ export function createHeadlessPlatform(options?: { appVersion?: string }): Platf
       logger.error('[captureError]', err.message, err.stack)
     },
 
-    // GUI methods intentionally undefined — headless mode.
-    // Handlers guard these with optional chaining (?.) or capability routing.
-    // openPath, openExternal, showItemInFolder, quit, systemDarkMode → undefined
+    // GUI 方法故意保持 undefined
   }
 }

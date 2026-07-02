@@ -1,3 +1,9 @@
+/**
+ * container-transitions 注册项
+ *
+ * 演示“Island”这种浮动容器的形态切换动画：从工具栏小按钮展开成确认弹窗，
+ * 并在不同视图（compact / follow-up / ask inline）之间保持统一的过渡曲线。
+ */
 import * as React from 'react'
 import { motion } from 'motion/react'
 import { Check, CornerDownRight, GripHorizontal, MessageCircleMore, RefreshCcw, Trash2, X } from 'lucide-react'
@@ -179,6 +185,7 @@ interface ToolbarToConfirmTransitionDemoProps {
   initialView?: IslandViewId
 }
 
+// 主演示组件：一个可交互的 Island，带导航栈、形态动画和参数调节面板。
 function ToolbarToConfirmTransitionDemo({ initialView = 'compact' }: ToolbarToConfirmTransitionDemoProps) {
   const navigation = useIslandNavigation<IslandViewId>(initialView)
   const [note, setNote] = React.useState('')
@@ -422,6 +429,7 @@ function ToolbarToConfirmTransitionDemo({ initialView = 'compact' }: ToolbarToCo
   )
 }
 
+/** container-transitions 组件注册列表。 */
 export const containerTransitionsComponents: ComponentEntry[] = [
   {
     id: 'container-transition-popover-confirm',

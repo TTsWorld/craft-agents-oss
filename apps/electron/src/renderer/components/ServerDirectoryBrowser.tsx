@@ -1,3 +1,8 @@
+/**
+ * ServerDirectoryBrowser — React 组件
+ * 
+ * 所属目录：components
+ */
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -38,6 +43,7 @@ interface ServerDirectoryBrowserProps {
   initialPath?: string
 }
 
+/** ServerDirectoryBrowser：函数 */
 export function ServerDirectoryBrowser({
   open,
   mode,

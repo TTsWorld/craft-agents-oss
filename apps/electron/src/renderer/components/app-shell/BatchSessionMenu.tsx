@@ -1,12 +1,10 @@
 /**
- * BatchSessionMenu - Context menu content for batch operations on multi-selected sessions.
+ * BatchSessionMenu - 多选会话的右键/批量操作菜单内容。
  *
- * Self-contained component that uses hooks to access selection state, session metadata,
- * and mutation callbacks. Renders polymorphic menu items via useMenuComponents() so it
- * works in both DropdownMenu and ContextMenu scenarios.
+ * 这是一个自包含组件：通过 hooks 读取选中状态、会话元数据和修改回调，
+ * 再通过 useMenuComponents() 渲染与具体菜单容器无关的菜单项，因此既能用于 DropdownMenu，也能用于 ContextMenu。
  *
- * Mirrors the actions from MultiSelectPanel (Status, Labels, Archive) with additions
- * for Flag and Delete that make sense in a context menu.
+ * 功能对齐 MultiSelectPanel（状态、标签、归档），并额外提供 Flag（标记）和 Delete（删除）。
  */
 
 import * as React from 'react'
@@ -24,11 +22,18 @@ import { getStateColor, getStateIcon, type SessionStatusId } from '@/config/sess
 import { extractLabelId } from '@craft-agent/shared/labels'
 import { LabelMenuItems, StatusMenuItems } from './SessionMenuParts'
 
+/** BatchSessionMenuProps：组件 props 类型定义 */
 export interface BatchSessionMenuProps {
-  /** Callback to open Send to Workspace dialog for the selected sessions */
+  /** 打开“发送到工作区”对话框的回调 */
   onSendToWorkspace?: () => void
 }
 
+/**
+ * 批量操作菜单。
+ *
+ * 自包含组件：通过 hooks 读取选中状态、会话元数据和修改回调，
+ * 再通过 useMenuComponents() 渲染与具体菜单容器无关的菜单项。
+ */
 export function BatchSessionMenu({ onSendToWorkspace }: BatchSessionMenuProps = {}) {
   const { t } = useTranslation()
   const { MenuItem, Separator, Sub, SubTrigger, SubContent } = useMenuComponents()
@@ -53,7 +58,7 @@ export function BatchSessionMenu({ onSendToWorkspace }: BatchSessionMenuProps = 
 
   const hasRemoteWorkspaces = workspaces?.some(w => w.remoteServer) ?? false
 
-  // Hydrate selected session metadata
+  // 根据选中的 ID 从全局 meta map 里取回完整元数据
   const selectedMetas = useMemo(() => {
     const metas: SessionMeta[] = []
     selectedIds.forEach((id) => {
@@ -63,7 +68,7 @@ export function BatchSessionMenu({ onSendToWorkspace }: BatchSessionMenuProps = 
     return metas
   }, [selectedIds, sessionMetaMap])
 
-  // Compute shared status (if all selected have the same status)
+  // 计算“共享状态”：只有当所有选中会话状态一致时才显示，否则显示空占位
   const activeStatusId = useMemo((): SessionStatusId | null => {
     if (selectedMetas.length === 0) return null
     const first = (selectedMetas[0].sessionStatus || 'todo') as SessionStatusId
@@ -71,7 +76,7 @@ export function BatchSessionMenu({ onSendToWorkspace }: BatchSessionMenuProps = 
     return allSame ? first : null
   }, [selectedMetas])
 
-  // Compute intersection of applied labels (only labels ALL selected sessions have)
+  // 计算已应用标签的交集：只有所有选中会话都有的标签才视为已选中
   const appliedLabelIds = useMemo(() => {
     if (selectedMetas.length === 0) return new Set<string>()
     const toLabelSet = (meta: SessionMeta) =>
@@ -86,20 +91,20 @@ export function BatchSessionMenu({ onSendToWorkspace }: BatchSessionMenuProps = 
     return intersection
   }, [selectedMetas])
 
-  // Check flag state: all flagged, or some/none flagged
+  // 标记状态：只有当所有选中会话都被标记时才显示“取消标记”
   const allFlagged = useMemo(
     () => selectedMetas.length > 0 && selectedMetas.every(m => m.isFlagged),
     [selectedMetas]
   )
 
-  // Batch status change
+  // 批量修改状态
   const handleBatchSetStatus = useCallback((status: SessionStatusId) => {
     selectedIds.forEach(sessionId => {
       onSessionStatusChange(sessionId, status)
     })
   }, [selectedIds, onSessionStatusChange])
 
-  // Batch label toggle (all-or-nothing semantics, same as MainContentPanel)
+  // 批量切换标签：采用“全有或全无”语义，和 MainContentPanel 保持一致
   const handleBatchToggleLabel = useCallback((labelId: string) => {
     if (!onSessionLabelsChange) return
     const allHaveLabel = selectedMetas.every(meta =>
@@ -116,7 +121,7 @@ export function BatchSessionMenu({ onSendToWorkspace }: BatchSessionMenuProps = 
     })
   }, [selectedMetas, onSessionLabelsChange])
 
-  // Batch flag/unflag
+  // 批量标记 / 取消标记
   const handleBatchFlag = useCallback(() => {
     selectedIds.forEach(id => onFlagSession(id))
     toast(`${selectedIds.size} ${selectedIds.size === 1 ? 'session' : 'sessions'} flagged`)
@@ -127,14 +132,14 @@ export function BatchSessionMenu({ onSendToWorkspace }: BatchSessionMenuProps = 
     toast(`${selectedIds.size} ${selectedIds.size === 1 ? 'session' : 'sessions'} unflagged`)
   }, [selectedIds, onUnflagSession])
 
-  // Batch archive
+  // 批量归档
   const handleBatchArchive = useCallback(() => {
     selectedIds.forEach(id => onArchiveSession(id))
     clearMultiSelect()
     toast(`${selectedIds.size} ${selectedIds.size === 1 ? 'session' : 'sessions'} archived`)
   }, [selectedIds, onArchiveSession, clearMultiSelect])
 
-  // Batch send to workspace
+  // 批量发送到工作区
   const handleSendToWorkspace = useCallback(() => {
     if (onSendToWorkspace) {
       onSendToWorkspace()
@@ -143,21 +148,20 @@ export function BatchSessionMenu({ onSendToWorkspace }: BatchSessionMenuProps = 
     }
   }, [onSendToWorkspace, selectedIds, setSendToWorkspace])
 
-  // Batch delete
+  // 批量删除：第一个弹出确认，确认后再跳过确认删除剩余
   const handleBatchDelete = useCallback(async () => {
     const count = selectedIds.size
     const ids = [...selectedIds]
-    // Delete one-by-one (first shows confirmation, rest skip if first is confirmed)
     const firstDeleted = await onDeleteSession(ids[0])
-    if (!firstDeleted) return // User cancelled
+    if (!firstDeleted) return // 用户取消
     for (let i = 1; i < ids.length; i++) {
-      await onDeleteSession(ids[i], true) // skip confirmation for remaining
+      await onDeleteSession(ids[i], true) // 剩余项跳过确认
     }
     clearMultiSelect()
     toast(`${count} ${count === 1 ? 'session' : 'sessions'} deleted`)
   }, [selectedIds, onDeleteSession, clearMultiSelect])
 
-  // Resolve current status icon for the submenu trigger
+  // 为状态子菜单触发器准备当前共享状态的图标
   const statusIcon = activeStatusId
     ? (() => {
         const icon = getStateIcon(activeStatusId, sessionStatuses)
@@ -171,13 +175,13 @@ export function BatchSessionMenu({ onSendToWorkspace }: BatchSessionMenuProps = 
 
   return (
     <>
-      {/* Header showing selection count */}
+      {/* 顶部显示选中数量 */}
       <div className="px-2 py-1.5 text-xs text-muted-foreground font-medium">
         {t('multiSelect.selected.session', { count })}
       </div>
       <Separator />
 
-      {/* Status submenu */}
+      {/* 状态子菜单 */}
       <Sub>
         <SubTrigger className="pr-2">
           {statusIcon ? (
@@ -199,7 +203,7 @@ export function BatchSessionMenu({ onSendToWorkspace }: BatchSessionMenuProps = 
         </SubContent>
       </Sub>
 
-      {/* Labels submenu */}
+      {/* 标签子菜单 */}
       {labels.length > 0 && (
         <Sub>
           <SubTrigger className="pr-2">
@@ -217,7 +221,7 @@ export function BatchSessionMenu({ onSendToWorkspace }: BatchSessionMenuProps = 
         </Sub>
       )}
 
-      {/* Flag/Unflag */}
+      {/* 标记 / 取消标记 */}
       {allFlagged ? (
         <MenuItem onClick={handleBatchUnflag}>
           <FlagOff className="h-3.5 w-3.5" />
@@ -230,13 +234,13 @@ export function BatchSessionMenu({ onSendToWorkspace }: BatchSessionMenuProps = 
         </MenuItem>
       )}
 
-      {/* Archive */}
+      {/* 归档 */}
       <MenuItem onClick={handleBatchArchive}>
         <Archive className="h-3.5 w-3.5" />
         <span className="flex-1">{t("sessionMenu.archive")}</span>
       </MenuItem>
 
-      {/* Send to Workspace */}
+      {/* 发送到工作区 */}
       {hasRemoteWorkspaces && (
         <MenuItem onClick={handleSendToWorkspace}>
           <Send className="h-3.5 w-3.5" />
@@ -246,7 +250,7 @@ export function BatchSessionMenu({ onSendToWorkspace }: BatchSessionMenuProps = 
 
       <Separator />
 
-      {/* Delete */}
+      {/* 删除 */}
       <MenuItem onClick={handleBatchDelete} variant="destructive">
         <Trash2 className="h-3.5 w-3.5" />
         <span className="flex-1">{t("common.delete")}</span>

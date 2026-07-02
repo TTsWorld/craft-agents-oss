@@ -2,6 +2,7 @@ import * as React from 'react'
 import { cn } from '@/lib/utils'
 import type { ComponentEntry, ComponentVariant, PropDefinition } from './registry'
 
+/** 右侧变体/属性面板 props */
 interface VariantsSidebarProps {
   component: ComponentEntry | null
   selectedVariant: string | null
@@ -11,6 +12,7 @@ interface VariantsSidebarProps {
   isOpen: boolean
 }
 
+/** 右侧边栏：展示当前组件的变体列表与可调试属性 */
 export function VariantsSidebar({
   component,
   selectedVariant,
@@ -30,7 +32,7 @@ export function VariantsSidebar({
 
   return (
     <div className="w-72 shrink-0 border-l border-border bg-background overflow-y-auto">
-      {/* Variants Section */}
+      {/* 变体区域 */}
       {hasVariants && (
         <div className="p-4 border-b border-border">
           <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
@@ -60,7 +62,7 @@ export function VariantsSidebar({
         </div>
       )}
 
-      {/* Props Section */}
+      {/* 属性调试区域 */}
       {hasProps && (
         <div className="p-4">
           <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
@@ -79,7 +81,7 @@ export function VariantsSidebar({
         </div>
       )}
 
-      {/* Empty state */}
+      {/* 空状态 */}
       {!hasVariants && !hasProps && (
         <div className="p-4">
           <p className="text-sm text-muted-foreground italic">
@@ -92,7 +94,7 @@ export function VariantsSidebar({
 }
 
 // ============================================================================
-// PropControl Component
+// PropControl 组件：根据 PropDefinition.control 渲染不同类型的控件
 // ============================================================================
 
 interface PropControlProps {
@@ -101,6 +103,7 @@ interface PropControlProps {
   onChange: (value: unknown) => void
 }
 
+/** 单个属性的表单控件（布尔、字符串、数字、下拉等） */
 function PropControl({ definition, value, onChange }: PropControlProps) {
   const { name, description, control } = definition
 
