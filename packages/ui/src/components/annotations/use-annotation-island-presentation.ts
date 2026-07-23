@@ -28,8 +28,8 @@ export interface DecidePresentationInput {
   closeGraceMs: number
 }
 
-// Pure decision logic for the presentation effect.
-// Exposed for unit testing without a React renderer.
+// 展示 effect 的纯决策逻辑。
+// 导出以便在无 React 渲染器的情况下进行单元测试。
 export function decideAnnotationIslandPresentation(
   input: DecidePresentationInput,
 ): AnnotationIslandPresentationDecision {
@@ -69,8 +69,8 @@ export function useAnnotationIslandPresentation({
     }
 
     if (decision.kind === 'defer-close') {
-      // Defer the close so transient anchor-null blips mid-enter-animation
-      // don't snap-close the island. Cleanup cancels if anchor comes back.
+      // 延迟关闭，避免进入动画过程中 anchor 短暂为 null 导致 island 瞬间关闭。
+      // 如果 anchor 恢复，清理函数会取消该定时器。
       const timer = setTimeout(() => setIsVisible(false), decision.afterMs)
       return () => clearTimeout(timer)
     }

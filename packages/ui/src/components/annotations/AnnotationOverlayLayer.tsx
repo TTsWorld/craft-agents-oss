@@ -12,7 +12,7 @@ export interface AnnotationOverlayLayerProps {
   chips: AnnotationOverlayChip[]
   annotations?: AnnotationV1[]
   getTooltipText?: (annotation: AnnotationV1, index: number) => string
-  /** Whether clicking a chip should open the annotation island/details view. */
+  /** 点击徽章时是否打开批注 island/详情视图。 */
   allowChipOpen?: boolean
   onChipOpen: (params: { annotationId: string; index: number; anchorX: number; anchorY: number; mode: 'view' }) => void
 }

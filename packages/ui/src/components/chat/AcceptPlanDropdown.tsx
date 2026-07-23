@@ -10,29 +10,27 @@ import {
 } from '../ui/StyledDropdown'
 
 /**
- * AcceptPlanDropdown — Accept-Plan trigger with two options.
+ * AcceptPlanDropdown — 带两个选项的接受计划触发器。
  *
- * Uses Radix `DropdownMenu` so positioning is handled by Floating UI (correct
- * under `@container/*` ancestors, transformed parents, and inside scroll
- * containers — issues that bit a previous hand-rolled `position: fixed` portal
- * in WebUI mobile / auto-compact).
+ * 使用 Radix `DropdownMenu`，定位由 Floating UI 处理（在 `@container/*`
+ * 祖先、transform 父元素和滚动容器内均能正确显示 —— 这些是此前在
+ * WebUI 移动端 / 自动 compact 中手写 `position: fixed` portal 踩过的坑）。
  *
- * Options:
- *  - "Accept" — execute the plan immediately
- *  - "Accept & Compact" — summarize conversation first, then execute (useful
- *    when context is running low after a long planning session)
+ * 选项：
+ *  - "接受" — 立即执行计划
+ *  - "接受并 Compact" — 先压缩对话再执行（在长规划会话导致上下文即将耗尽时很有用）
  */
 
 interface AcceptPlanDropdownProps {
-  /** Callback when user selects "Accept" (execute immediately) */
+  /** 用户选择"接受"时的回调（立即执行） */
   onAccept: () => void
-  /** Callback when user selects "Accept & Compact" (compact first, then execute) */
+  /** 用户选择"接受并 Compact"时的回调（先 compact 再执行） */
   onAcceptWithCompact: () => void
-  /** Trigger label */
+  /** 触发按钮标签 */
   acceptLabel?: string
-  /** Primary dropdown option label */
+  /** 下拉菜单主选项标签 */
   acceptOptionLabel?: string
-  /** Additional className for the trigger button */
+  /** 触发按钮的额外 className */
   className?: string
 }
 

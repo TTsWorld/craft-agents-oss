@@ -1,13 +1,13 @@
 /**
- * LarkAdapter — Lark / Feishu in-process adapter.
+ * index.ts — LarkAdapter：Lark / 飞书进程内适配器。
  *
- * Transport: long-polling via `@larksuiteoapi/node-sdk`'s `WSClient`. No public
- * webhook URL needed (correct fit for desktop / electron). Same lifecycle
- * shape as the Telegram adapter, just a different SDK underneath.
+ * 传输方式：通过 `@larksuiteoapi/node-sdk` 的 `WSClient` 做长轮询。无需公网
+ * webhook URL（适合桌面 / electron 场景）。生命周期形状与 Telegram 适配器一致，
+ * 只是底层 SDK 不同。
  *
- * Phase 1 scope (text only): receive text in DMs and group @mentions, send
- * text replies, support `/pair`-style commands. Phase 2 layers on edits,
- * interactive cards, attachments, and Markdown→post rich-text formatting.
+ * Phase 1 范围（仅文本）：接收 DM 和群 @提及里的文本、发送文本回复、支持
+ * `/pair` 风格命令。Phase 2 在此之上叠加消息编辑、交互卡片、附件，以及
+ * Markdown→post 富文本格式化。
  */
 
 import { writeFileSync } from 'node:fs'
@@ -40,9 +40,9 @@ import {
 } from './card'
 
 /**
- * Hard cap for downloaded attachment size. Matches Telegram's MAX_ATTACHMENT_BYTES
- * — files larger than this would be rejected by `readFileAttachment` anyway, so
- * we fail fast in the adapter with a user-visible reply.
+ * 下载附件的硬上限。与 Telegram 的 MAX_ATTACHMENT_BYTES 一致——
+ * 超过这个大小的文件反正也会被 `readFileAttachment` 拒绝，所以我们在适配器里
+ * 快速失败并给用户一条可见回复。
  */
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 
@@ -54,27 +54,26 @@ const NOOP_LOGGER: MessagingLogger = {
 }
 
 /**
- * Credential payload for a Lark/Feishu bot.
+ * Lark/飞书机器人的凭据载荷。
  *
- * Stored as a JSON string in the `messaging_bearer` credential row (one row
- * per workspace+platform). Single existing schema, no migrations.
+ * 以 JSON 字符串形式存储在 `messaging_bearer` 凭据行里（每个 workspace+platform 一行）。
+ * 只有这一套现有 schema，没有迁移。
  */
 export interface LarkCredentials {
   appId: string
   appSecret: string
   /**
-   * Which Open Platform domain to talk to. Lark and Feishu are separate
-   * ecosystems — a Lark bot only works against open.larksuite.com,
-   * a Feishu bot only against open.feishu.cn.
+   * 对接哪个开放平台域名。Lark 和飞书是两套独立生态——
+   * Lark 机器人只能对接 open.larksuite.com，飞书机器人只能对接 open.feishu.cn。
    */
   domain: 'lark' | 'feishu'
 }
 
 /**
- * Parse the JSON-encoded credentials from `PlatformConfig.token`.
+ * 从 `PlatformConfig.token` 解析 JSON 编码的凭据。
  *
- * Throws with a clear message if the input is malformed — surfaces as
- * `state: 'error'` with a user-readable `lastError` in the registry.
+ * 输入格式错误时抛出明确的消息——在 registry 里体现为
+ * `state: 'error'` 且带用户可读的 `lastError`。
  */
 export function parseLarkCredentials(token: string | undefined): LarkCredentials {
   if (!token) throw new Error('Lark credentials are missing')
@@ -101,26 +100,24 @@ export function parseLarkCredentials(token: string | undefined): LarkCredentials
 }
 
 /**
- * Map our `'lark' | 'feishu'` selector to the SDK's `Domain` enum.
+ * 把我们的 `'lark' | 'feishu'` 选择器映射为 SDK 的 `Domain` 枚举。
  */
 function resolveLarkDomain(domain: 'lark' | 'feishu'): lark.Domain {
   return domain === 'feishu' ? lark.Domain.Feishu : lark.Domain.Lark
 }
 
 /**
- * Strip a leading `<at user_id="...">…</at> ` prefix from a Lark text message
- * content. Lark prepends the @mention as a literal in the content, but the
- * agent only cares about what comes after.
+ * 去掉 Lark 文本消息内容开头的 `<at user_id="...">…</at> ` 前缀。
+ * Lark 会把 @提及作为字面量前置到内容里，但 agent 只关心 @之后的部分。
  */
 function stripMentionPrefix(text: string): string {
   return text.replace(/^<at[^>]*>[^<]*<\/at>\s*/, '').trim()
 }
 
 /**
- * Narrow projection over the SDK's `Client` for the methods we actually call.
- * The SDK's full type union is enormous (~250k lines) and changes shape between
- * minor versions; pinning a hand-rolled interface keeps our adapter loosely
- * coupled and the ts-checker happy.
+ * 对 SDK `Client` 中我们实际调用的方法做窄投影。
+ * SDK 的完整类型联合体极其庞大（约 25 万行），且在小版本间形状会变；
+ * 手写一个固定接口能让适配器保持松耦合，也让 ts 类型检查器满意。
  */
 interface LarkClient {
   im: {
@@ -152,10 +149,9 @@ interface LarkClient {
 }
 
 /**
- * Flat shape after the SDK's `EventDispatcher.parse()` unwraps the v2 envelope.
- * The dispatcher merges `{schema, header, event}` into a single object before
- * invoking handlers, so payload fields land at the top level — there is no
- * outer `.event` accessor.
+ * SDK 的 `EventDispatcher.parse()` 解开 v2 信封后的扁平形状。
+ * dispatcher 在调用 handler 前把 `{schema, header, event}` 合并成单个对象，
+ * 所以 payload 字段落在顶层——没有外层的 `.event` 访问器。
  */
 interface LarkMessageEvent {
   sender: {
@@ -173,16 +169,15 @@ interface LarkMessageEvent {
 }
 
 /**
- * Card-action press event after the SDK's `EventDispatcher.parse()` flattens
- * the v2 envelope. Schema 2.0 nests the chat id under `context` instead of
- * at the top level — handle both shapes so the same code path works for v1
- * and v2 cards.
+ * SDK 的 `EventDispatcher.parse()` 拍平 v2 信封后的卡片动作点击事件。
+ * Schema 2.0 把 chat id 嵌在 `context` 下而非顶层——同时处理两种形状，
+ * 使同一套代码路径对 v1 和 v2 卡片都生效。
  */
 interface LarkCardActionEvent {
   operator?: { user_id?: string; open_id?: string; union_id?: string }
-  /** Schema 1.0 location for the chat id. */
+  /** Schema 1.0 中 chat id 的位置。 */
   open_chat_id?: string
-  /** Schema 2.0 location — `context.open_chat_id` and friends. */
+  /** Schema 2.0 的位置 —— `context.open_chat_id` 等。 */
   context?: {
     open_chat_id?: string
     open_message_id?: string
@@ -211,18 +206,18 @@ export class LarkAdapter implements PlatformAdapter {
   private connected = false
   private log: MessagingLogger = NOOP_LOGGER
   /**
-   * Track each outbound message's wire `msg_type` so `editMessage` can dispatch
-   * to `update` (text/post) vs `patch` (interactive card) correctly. Lark
-   * requires the new `msg_type` to match the original.
+   * 跟踪每条出站消息的线上 `msg_type`，以便 `editMessage` 能正确分派到
+   * `update`（text/post）还是 `patch`（交互卡片）。Lark 要求新的 `msg_type`
+   * 与原消息一致。
    */
   private sentMsgTypes = new Map<string, 'text' | 'post' | 'interactive'>()
 
-  /** Fetch bot profile for UI hints. */
+  /** 获取机器人资料，用于 UI 提示。 */
   async getBotInfo(): Promise<{ name?: string } | null> {
     if (!this.client) return null
     try {
-      // The SDK's `bot.v3.info.get` (no args) returns `{ data: { bot: { app_name } } }`.
-      // Unsafe-cast through unknown — the bot namespace isn't in our narrow projection.
+      // SDK 的 `bot.v3.info.get`（无参）返回 `{ data: { bot: { app_name } } }`。
+      // 通过 unknown 做不安全转换 —— bot 命名空间不在我们的窄投影里。
       const c = this.client as unknown as {
         bot: { v3: { info: { get: () => Promise<{ data?: { bot?: { app_name?: string } } }> } } }
       }
@@ -239,7 +234,7 @@ export class LarkAdapter implements PlatformAdapter {
     const creds = parseLarkCredentials(config.token)
     const sdkDomain = resolveLarkDomain(creds.domain)
 
-    // Construct REST client (sends + lookups go through this).
+    // 构造 REST client（发送 + 查询都走它）。
     this.client = new lark.Client({
       appId: creds.appId,
       appSecret: creds.appSecret,
@@ -247,12 +242,11 @@ export class LarkAdapter implements PlatformAdapter {
       loggerLevel: lark.LoggerLevel.warn,
     }) as unknown as LarkClient
 
-    // Long-connection WS client + event dispatcher.
+    // 长连接 WS client + 事件分发器。
     //
-    // Lifecycle hooks log explicitly so we can distinguish "socket never
-    // opened" from "socket open but no events firing" — the second one
-    // usually means the app's scopes or event subscriptions are misconfigured
-    // on the Open Platform side, which is invisible from our side otherwise.
+    // 生命周期钩子显式打日志，便于区分「socket 从未打开」与
+    // 「socket 打开了但没有事件」——后者通常意味着 App 的权限范围或事件订阅
+    // 在开放平台侧配置错了，否则我们这边看不到。
     this.wsClient = new lark.WSClient({
       appId: creds.appId,
       appSecret: creds.appSecret,
@@ -275,18 +269,17 @@ export class LarkAdapter implements PlatformAdapter {
       },
     } as unknown as ConstructorParameters<typeof lark.WSClient>[0])
 
-    // The SDK's `register` typing is a wide-open union over hundreds of event
-    // names. Cast the handler block once via `unknown` to keep the adapter
-    // readable; the per-handler payload casts above handle the actual shape.
+    // SDK 的 `register` 类型是一个覆盖数百个事件名的宽泛联合。
+    // 通过 `unknown` 对 handler 块做一次转换以保持适配器可读性；
+    // 真正的 payload 形状由上面每个 handler 内部的转换处理。
     const eventDispatcher = new lark.EventDispatcher({}).register({
       'im.message.receive_v1': async (data: unknown) => {
         await this.handleIncomingMessage(data as LarkMessageEvent)
       },
       'card.action.trigger': async (data: unknown) => {
         await this.handleCardAction(data as LarkCardActionEvent)
-        // Lark expects a synchronous return that may patch the card; we
-        // return an empty object (no patch) and let `clearButtons` do the
-        // visual cleanup async via the binding's existing post-press flow.
+        // Lark 期望一个同步返回，可能用于补丁卡片；我们返回空对象（不做补丁），
+        // 让 `clearButtons` 通过 binding 现有的点击后流程异步做视觉清理。
         return {}
       },
     } as unknown as Parameters<lark.EventDispatcher['register']>[0])
@@ -300,9 +293,9 @@ export class LarkAdapter implements PlatformAdapter {
   }
 
   async destroy(): Promise<void> {
-    // The SDK's WSClient doesn't currently expose a `.stop()` method in its
-    // public types — it tears down on process exit. We null out our refs so
-    // re-init works; the underlying socket gets garbage-collected.
+    // SDK 的 WSClient 目前在公开类型里没有暴露 `.stop()` 方法——
+    // 它在进程退出时自行拆解。我们把引用置空以便能重新初始化；
+    // 底层 socket 会被垃圾回收。
     this.wsClient = null
     this.client = null
     this.connected = false
@@ -322,7 +315,7 @@ export class LarkAdapter implements PlatformAdapter {
   }
 
   // -------------------------------------------------------------------------
-  // Outbound — sends, edits, files, cards
+  // 出站 —— 发送、编辑、文件、卡片
   // -------------------------------------------------------------------------
 
   async sendText(channelId: string, text: string, _opts?: SendOptions): Promise<SentMessage> {
@@ -351,12 +344,11 @@ export class LarkAdapter implements PlatformAdapter {
     if (!this.client) throw new Error('Lark adapter is not connected')
     const originalType = this.sentMsgTypes.get(messageId) ?? 'text'
 
-    // Cards are patched, not updated — different API.
+    // 卡片走 patch，不走 update——API 不同。
     if (originalType === 'interactive') {
-      // Editing an active card replaces its text body but keeps the buttons.
-      // For the text-only edit path the renderer takes, we fall back to a
-      // cleared-card patch (text without buttons), matching the Telegram
-      // behaviour where a final-text edit removes the button row.
+      // 编辑一张活动卡片会替换其文本正文但保留按钮。
+      // 对于 renderer 走的纯文本编辑路径，我们回退到一个清空卡片的 patch
+      //（有文本无按钮），与 Telegram 上「最终文本编辑移除按钮行」的行为一致。
       try {
         await this.client.im.message.patch({
           path: { message_id: messageId },
@@ -369,12 +361,12 @@ export class LarkAdapter implements PlatformAdapter {
       return
     }
 
-    // text or post — match the original type so Lark accepts the update.
+    // text 或 post —— 匹配原类型，这样 Lark 才会接受 update。
     let content: string
     let msgType: 'text' | 'post'
     if (originalType === 'post') {
-      // If the new content has formatting, format it; otherwise wrap as
-      // a trivial post so the msg_type still matches the original.
+      // 如果新内容带格式，就格式化它；否则包装成最简 post，
+      // 让 msg_type 仍与原消息一致。
       const formatted = formatForLarkPost(text)
       const post: LarkPost = formatted.kind === 'post' ? formatted.post : wrapAsTrivialPost(text)
       content = JSON.stringify(post)
@@ -410,21 +402,18 @@ export class LarkAdapter implements PlatformAdapter {
       })
     }
 
-    // Send the card without the messageId in the buttons' value — we don't
-    // know the messageId until after the create. Fix this up in two stages:
-    // 1) post the card with a placeholder; 2) extract the returned message_id
-    //    and patch the card with the real value. Phase 2 acceptance is good
-    //    enough — the press handler can look up the binding from chat_id alone
-    //    if needed, but storing the id keeps gated routing simple.
+    // 发送卡片时按钮 value 里先不带 messageId——create 之后才知道 messageId。
+    // 分两步修正：
+    // 1) 用占位符发卡片；2) 取回返回的 message_id，用真实值 patch 卡片。
+    // Phase 2 的可用度已经够用——点击 handler 必要时可以只靠 chat_id 查 binding，
+    // 但存上 id 能让门控路由更简单。
     const placeholderCard = buildLarkCard(text, buttons, { messageId: 'pending' })
     const cardJson = JSON.stringify(placeholderCard)
 
-    // Wrap the API call so any payload-shape / scope / quota issues surface
-    // in our logs with a structured `lark_send_card_failed` event instead of
-    // bubbling up unannotated through the renderer's outer catch. We also
-    // post a plain-text fallback so the user always sees *something* in the
-    // chat when the rich card path breaks, then re-throw so the renderer
-    // can record the failure.
+    // 包裹这个 API 调用，让任何 payload 形状 / 权限 / 配额问题都以结构化的
+    // `lark_send_card_failed` 事件出现在我们的日志里，而不是无标注地冒泡到
+    // renderer 的外层 catch。同时在富卡片路径失败时发一条纯文本兜底，
+    // 保证用户在聊天里至少看到*点什么*，然后再 re-throw 让 renderer 记录失败。
     let messageId = ''
     try {
       const result = await this.client.im.message.create({
@@ -443,9 +432,9 @@ export class LarkAdapter implements PlatformAdapter {
         buttonCount: Math.min(buttons.length, LARK_MAX_BUTTONS),
       })
     } catch (err: unknown) {
-      // The SDK wraps every error in axios's `AxiosError`. The actual
-      // Lark-side reason (code + msg) lives at `err.response.data`, NOT at
-      // the top level — extract it so the log line is actually useful.
+      // SDK 把每个错误都包成 axios 的 `AxiosError`。真正的 Lark 侧原因
+      //（code + msg）在 `err.response.data` 里，不在顶层——提取出来，
+      // 日志才有用。
       const errObj = (err ?? {}) as {
         code?: unknown
         msg?: unknown
@@ -477,8 +466,8 @@ export class LarkAdapter implements PlatformAdapter {
         payloadPreview: cardJson.slice(0, 500),
         buttonCount: buttons.length,
       })
-      // Best-effort plain-text fallback so the user knows something happened.
-      // Failures here are non-fatal — we still re-throw the original card error.
+      // 尽力发一条纯文本兜底，让用户知道发生了什么。
+      // 这里的失败是非致命的——我们仍然会重新抛出原始的卡片错误。
       try {
         await this.sendText(
           channelId,
@@ -486,15 +475,15 @@ export class LarkAdapter implements PlatformAdapter {
           _opts,
         )
       } catch {
-        // Swallowed — the renderer's outer handler will see the original throw.
+        // 吞掉 —— renderer 的外层 handler 会看到原始的 throw。
       }
       throw err
     }
 
     if (messageId) {
       this.sentMsgTypes.set(messageId, 'interactive')
-      // Patch with the real message_id baked into each button's value so card
-      // press events carry the correct correlation.
+      // 用真实的 message_id 烤进每个按钮的 value 再 patch，
+      // 让卡片点击事件带上正确的关联 id。
       try {
         const realCard = buildLarkCard(text, buttons, { messageId })
         await this.client.im.message.patch({
@@ -502,8 +491,7 @@ export class LarkAdapter implements PlatformAdapter {
           data: { content: JSON.stringify(realCard) },
         })
       } catch (err: unknown) {
-        // Non-fatal — the card already exists with placeholder ids; press
-        // routing will fall back to looking up by chat_id.
+        // 非致命 —— 卡片已带占位 id 存在；点击路由会回退到按 chat_id 查找。
         if (!isLarkEditExpiredError(err)) {
           this.log.warn('[lark] failed to patch card with real messageId', {
             event: 'lark_card_patch_failed',
@@ -535,7 +523,7 @@ export class LarkAdapter implements PlatformAdapter {
   }
 
   async sendTyping(_channelId: string, _opts?: SendOptions): Promise<void> {
-    // Lark has no typing-indicator API. No-op.
+    // Lark 没有「正在输入」指示器 API。空操作。
   }
 
   async sendFile(
@@ -575,8 +563,8 @@ export class LarkAdapter implements PlatformAdapter {
     })
     const messageId = result?.data?.message_id ?? ''
 
-    // Lark can't combine caption + file in one message. If the caller wants a
-    // caption, send it as a follow-up text message (best-effort).
+    // Lark 无法在一条消息里同时带 caption + 文件。如果调用方要 caption，
+    // 就作为后续文本消息发送（尽力而为）。
     if (caption) {
       this.sendText(channelId, caption).catch((err) => {
         this.log.warn('[lark] caption follow-up failed', {
@@ -591,16 +579,15 @@ export class LarkAdapter implements PlatformAdapter {
   }
 
   // -------------------------------------------------------------------------
-  // Inbound — message + card events
+  // 入站 —— 消息 + 卡片事件
   // -------------------------------------------------------------------------
 
   private async handleIncomingMessage(data: LarkMessageEvent): Promise<void> {
     if (!this.messageHandler) return
     const { sender, message } = data
 
-    // Visibility log: if this never fires, the bot isn't getting the event
-    // from Lark. Most common causes: missing `im:message` scope, missing
-    // event subscription, or app not published.
+    // 可见性日志：如果这条从不触发，说明机器人没从 Lark 收到事件。
+    // 最常见原因：缺少 `im:message` 权限、缺少事件订阅、或 App 未发布。
     this.log.info('[lark] event received', {
       event: 'lark_event_received',
       messageType: message.message_type,
@@ -612,9 +599,8 @@ export class LarkAdapter implements PlatformAdapter {
     const senderId =
       sender.sender_id?.user_id ?? sender.sender_id?.open_id ?? sender.sender_id?.union_id ?? ''
 
-    // Phase 2: support text + image + file. Other types (audio/video/sticker/etc.)
-    // are dropped with an info log so users can see the bot received the event
-    // but can't process it.
+    // Phase 2：支持 text + image + file。其他类型（音频/视频/贴纸等）
+    // 会被丢弃并打一条 info 日志，让用户知道机器人收到了事件但无法处理。
     if (message.message_type === 'text') {
       let text: string
       try {
@@ -642,7 +628,7 @@ export class LarkAdapter implements PlatformAdapter {
       return
     }
 
-    // Unhandled type — log and drop.
+    // 未处理的类型 —— 记日志并丢弃。
     this.log.info('[lark] dropped unsupported message type', {
       event: 'lark_unsupported_msg_type',
       messageType: message.message_type,
@@ -709,11 +695,10 @@ export class LarkAdapter implements PlatformAdapter {
   }
 
   /**
-   * Download a Lark resource (image or file) to a local temp path.
+   * 把一个 Lark 资源（图片或文件）下载到本地临时路径。
    *
-   * Lark resource URLs require bearer-token auth; we can't hand a URL to the
-   * router. Instead we stream the binary to a temp file and emit `localPath`,
-   * matching the Telegram pattern.
+   * Lark 资源 URL 需要 bearer-token 鉴权；我们没法把 URL 直接交给 router。
+   * 改为把二进制流到临时文件，输出 `localPath`，与 Telegram 的做法一致。
    */
   private async downloadResource(args: {
     messageId: string
@@ -723,8 +708,8 @@ export class LarkAdapter implements PlatformAdapter {
   }): Promise<string | null> {
     if (!this.client) return null
     try {
-      // The SDK's `im.message.resource.get` returns a Node stream-like object
-      // with a `writeFile` helper for the common case. We use that for size+brevity.
+      // SDK 的 `im.message.resource.get` 返回一个类 Node stream 对象，
+      // 常见情况下带 `writeFile` 辅助方法。我们用它，省代码也省体积。
       const sdkResource = await (
         (this.client as unknown as {
           im: {
@@ -745,8 +730,8 @@ export class LarkAdapter implements PlatformAdapter {
 
       const ext = extname(args.filename) || (args.isImage ? '.jpg' : '.bin')
       const localPath = join(tmpdir(), `lark-${randomBytes(8).toString('hex')}${ext}`)
-      // Different SDK versions expose either `writeFile`, `file` (Buffer), or
-      // a plain Node Readable. Handle the common shapes.
+      // 不同 SDK 版本会暴露 `writeFile`、`file`（Buffer）或纯 Node Readable。
+      // 处理常见几种形状。
       if (typeof sdkResource.writeFile === 'function') {
         await sdkResource.writeFile(localPath)
       } else if (sdkResource.file instanceof Buffer) {
@@ -771,11 +756,10 @@ export class LarkAdapter implements PlatformAdapter {
   }
 
   private async handleCardAction(data: LarkCardActionEvent): Promise<void> {
-    // Visibility log: if this never fires when the user presses a button,
-    // the missing piece is on the Lark Open Platform side — schema-2.0
-    // cards only emit `card.action.trigger` events when the app has the
-    // **Card Callback Communication** subscription enabled under
-    // Events & Callbacks (separate from `im.message.receive_v1`).
+    // 可见性日志：如果用户点按钮时这条从不触发，缺失的在 Lark 开放平台侧——
+    // schema 2.0 卡片只有在 App 于「事件与回调」下开启了
+    // **Card Callback Communication** 订阅时才会发出 `card.action.trigger` 事件
+    //（与 `im.message.receive_v1` 是分开的）。
     const channelId = data.context?.open_chat_id ?? data.open_chat_id ?? ''
     this.log.info('[lark] card action received', {
       event: 'lark_card_action_received',

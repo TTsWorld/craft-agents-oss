@@ -24,7 +24,7 @@ export interface ComputeAnnotationOverlayGeometryOptions {
   root: HTMLElement
   renderedAnnotations: AnnotationV1[]
   persistedAnnotations?: AnnotationV1[]
-  /** Override per-message indices with session-level indices (e.g. for pending follow-ups) */
+  /** 用会话级索引覆盖单消息索引（例如用于 pending 的 follow-up） */
   annotationIndexOverrides?: Map<string, number>
 }
 

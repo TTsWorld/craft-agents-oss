@@ -5,22 +5,22 @@ import { SimpleDropdown, SimpleDropdownItem } from '../ui/SimpleDropdown'
 import { cn } from '../../lib/utils'
 
 export interface TurnCardActionsMenuProps {
-  /** Callback to open turn details in a new window */
+  /** 在新窗口中打开 turn 详情的回调 */
   onOpenDetails?: () => void
-  /** Callback to open all edits/writes in multi-file diff view */
+  /** 在多文件 diff 视图中打开所有编辑/写入操作的回调 */
   onOpenMultiFileDiff?: () => void
-  /** Whether this turn has any Edit or Write activities */
+  /** 本 turn 是否包含 Edit 或 Write 活动 */
   hasEditOrWriteActivities?: boolean
-  /** Additional className for the trigger button */
+  /** 触发按钮的额外 className */
   className?: string
 }
 
 /**
- * TurnCardActionsMenu - Dropdown menu for TurnCard header actions
+ * TurnCardActionsMenu - TurnCard 头部操作的下拉菜单
  *
- * Shows:
- * - "View file changes" when turn has Edit/Write activities
- * - "View turn details" always
+ * 展示：
+ * - 当 turn 包含 Edit/Write 活动时显示"查看文件改动"
+ * - 始终显示"查看 turn 详情"
  */
 export function TurnCardActionsMenu({
   onOpenDetails,
@@ -31,7 +31,7 @@ export function TurnCardActionsMenu({
   const { t } = useTranslation()
   const [isOpen, setIsOpen] = React.useState(false)
 
-  // Don't render if no actions available
+  // 没有可用操作时不渲染
   if (!onOpenDetails && !onOpenMultiFileDiff) {
     return null
   }

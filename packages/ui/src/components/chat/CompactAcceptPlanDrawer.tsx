@@ -12,28 +12,26 @@ import {
 import { cn } from '../../lib/utils'
 
 /**
- * CompactAcceptPlanDrawer — drawer-based Accept-Plan picker for compact /
- * mobile contexts.
+ * CompactAcceptPlanDrawer — 用于 compact / 移动端场景的抽屉式接受计划选择器。
  *
- * Same UX shape as `CompactPermissionModeSelector` / `CompactModelSelector` in
- * apps/electron: a slim trigger button opens a bottom-sheet (`vaul` drawer)
- * with the two acceptance options as full-width tap targets. Used by
- * `TurnCard`'s compact footer (WebUI mobile / auto-compact / EditPopover).
+ * 与 apps/electron 中的 `CompactPermissionModeSelector` / `CompactModelSelector`
+ * 形态一致：一个细长的触发按钮打开底部抽屉（`vaul` drawer），两个接受选项作为
+ * 全宽可点击区域。由 `TurnCard` 的 compact footer 使用（WebUI 移动端 /
+ * 自动 compact / EditPopover）。
  *
- * Desktop and non-compact contexts keep using `AcceptPlanDropdown`
- * (Radix dropdown menu).
+ * 桌面端及非 compact 场景继续使用 `AcceptPlanDropdown`（Radix 下拉菜单）。
  */
 
 interface CompactAcceptPlanDrawerProps {
-  /** Callback when user selects "Accept" (execute immediately) */
+  /** 用户选择"接受"时的回调（立即执行） */
   onAccept: () => void
-  /** Callback when user selects "Accept & Compact" (compact first, then execute) */
+  /** 用户选择"接受并 Compact"时的回调（先 compact 再执行） */
   onAcceptWithCompact: () => void
-  /** Trigger label */
+  /** 触发按钮标签 */
   acceptLabel?: string
-  /** Primary drawer option label */
+  /** 抽屉主选项标签 */
   acceptOptionLabel?: string
-  /** Additional className for the trigger button */
+  /** 触发按钮的额外 className */
   className?: string
 }
 

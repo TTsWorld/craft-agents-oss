@@ -1,10 +1,10 @@
 /**
- * SessionViewer - Read-only session transcript viewer
+ * SessionViewer - 只读会话记录查看器
  *
- * Platform-agnostic component for viewing session transcripts.
- * Used by the web viewer app. For interactive chat, Electron uses ChatDisplay.
+ * 平台无关的会话记录查看组件。
+ * 由 web viewer 应用使用；交互式聊天由 Electron 的 ChatDisplay 承载。
  *
- * Renders a session's messages as turn cards with gradient fade at top/bottom.
+ * 将会话消息渲染为 turn card，顶部和底部带渐变遮罩。
  */
 
 import type { ReactNode } from 'react'
@@ -26,30 +26,30 @@ import {
 export type SessionViewerMode = 'interactive' | 'readonly'
 
 export interface SessionViewerProps {
-  /** Session data to display */
+  /** 待展示的会话数据 */
   session: StoredSession
-  /** View mode - 'readonly' for web viewer, 'interactive' for Electron */
+  /** 查看模式 - 'readonly' 用于 web viewer，'interactive' 用于 Electron */
   mode?: SessionViewerMode
-  /** Platform-specific actions (file opening, URL handling, etc.) */
+  /** 平台相关操作（打开文件、处理 URL 等） */
   platformActions?: PlatformActions
-  /** Additional className for the container */
+  /** 容器的额外 className */
   className?: string
-  /** Callback when a turn is clicked */
+  /** 点击 turn 时的回调 */
   onTurnClick?: (turnId: string) => void
-  /** Callback when an activity is clicked */
+  /** 点击活动时的回调 */
   onActivityClick?: (activity: ActivityItem) => void
-  /** Default expanded state for turns (true for readonly, false for interactive) */
+  /** turn 的默认展开状态（readonly 为 true，interactive 为 false） */
   defaultExpanded?: boolean
-  /** Custom header content */
+  /** 自定义头部内容 */
   header?: ReactNode
-  /** Custom footer content (input area for interactive mode) */
+  /** 自定义底部内容（交互模式下的输入区） */
   footer?: ReactNode
-  /** Optional session folder path for stripping from file paths in tool display */
+  /** 可选的会话文件夹路径，用于在工具展示中从文件路径里剔除该前缀 */
   sessionFolderPath?: string
 }
 
 /**
- * CraftAgentLogo - The Craft Agent "C" logo for branding
+ * CraftAgentLogo - 用于品牌展示的 Craft Agent "C" logo
  */
 function CraftAgentLogo({ className }: { className?: string }) {
   return (
@@ -70,7 +70,7 @@ function CraftAgentLogo({ className }: { className?: string }) {
 }
 
 /**
- * SessionViewer - Read-only session transcript viewer component
+ * SessionViewer - 只读会话记录查看组件
  */
 export function SessionViewer({
   session,
@@ -84,17 +84,17 @@ export function SessionViewer({
   footer,
   sessionFolderPath,
 }: SessionViewerProps) {
-  // Convert StoredMessage[] to Message[] and group into turns.
-  // Viewer is always a snapshot of a finished session, so we mark it as not processing
-  // to force the open turn (if any) to flush with the intermediate-text fallback applied.
+  // 将 StoredMessage[] 转换为 Message[] 并按 turn 分组。
+  // 查看器始终是一个已完成会话的快照，因此标记为非 processing 状态，
+  // 以强制将（可能存在的）开放 turn 以中间文本兜底方式刷出。
   const turns = useMemo(
     () => groupMessagesByTurn(session.messages.map(storedToMessage), { isSessionProcessing: false }),
     [session.messages]
   )
 
-  // Track expanded turns (for controlled state)
+  // 跟踪展开的 turn（受控状态）
   const [expandedTurns, setExpandedTurns] = useState<Set<string>>(() => {
-    // Default: all turns collapsed, can override with defaultExpanded prop
+    // 默认：所有 turn 折叠，可通过 defaultExpanded prop 覆盖
     if (defaultExpanded) {
       return new Set(
         turns
@@ -105,7 +105,7 @@ export function SessionViewer({
     return new Set()
   })
 
-  // Track expanded activity groups
+  // 跟踪展开的活动分组
   const [expandedActivityGroups, setExpandedActivityGroups] = useState<Set<string>>(new Set())
 
   const handleExpandedChange = useCallback((turnId: string, expanded: boolean) => {
@@ -143,14 +143,14 @@ export function SessionViewer({
   return (
     <PlatformProvider actions={platformActions}>
       <div className={cn("flex flex-col h-full", className)}>
-        {/* Header */}
+        {/* 头部 */}
         {header && (
           <div className="shrink-0 border-b">
             {header}
           </div>
         )}
 
-        {/* Messages area with gradient fade mask at top/bottom */}
+        {/* 消息区域，顶部和底部带渐变遮罩 */}
         <div
           className="flex-1 min-h-0"
           style={{
@@ -225,7 +225,7 @@ export function SessionViewer({
               return null
             })}
 
-            {/* Bottom branding */}
+            {/* 底部品牌标识 */}
             <div className={CHAT_CLASSES.brandingContainer}>
               <CraftAgentLogo className="w-8 h-8 text-[#9570BE]/40" />
             </div>
@@ -233,7 +233,7 @@ export function SessionViewer({
           </div>
         </div>
 
-        {/* Footer (input area) */}
+        {/* 底部（输入区） */}
         {footer && (
           <div className="shrink-0 border-t">
             {footer}

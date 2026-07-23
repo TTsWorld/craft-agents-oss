@@ -1,19 +1,16 @@
 /**
- * Markdown → Lark `post` converter.
+ * format.ts — Markdown → Lark `post` 转换器。
  *
- * Lark/Feishu's `post` rich-text type is a structured JSON format with a
- * subset of formatting (bold, italic, strikethrough, links, code blocks).
- * Headers, lists, and tables have no native equivalents — those fall through
- * as plain text within `text` elements.
+ * Lark/飞书的 `post` 富文本类型是一个结构化 JSON 格式，支持一部分格式
+ * （粗体、斜体、删除线、链接、代码块）。标题、列表、表格没有原生对应——
+ * 这些会以纯文本形式落入 `text` 元素。
  *
- * Returns `{ kind: 'text', text }` when the input has no formatting cues so
- * the adapter can dispatch the lighter `text` message type. Returns
- * `{ kind: 'post', post }` otherwise.
+ * 当输入没有任何格式提示时返回 `{ kind: 'text', text }`，让适配器改用更轻量的
+ * `text` 消息类型；否则返回 `{ kind: 'post', post }`。
  *
- * The parser handles only the inline subset described above. Nested styles
- * (bold-inside-italic) work via a state machine; deeper nesting and obscure
- * Markdown edge-cases are intentionally not supported — keeping scope narrow
- * limits the bug surface that haunts richer Markdown converters.
+ * 解析器只处理上述行内子集。嵌套样式（斜体里套粗体）通过状态机实现；
+ * 更深的嵌套和生僻的 Markdown 边界情况有意不做支持——把范围收窄可以缩小
+ * 富 Markdown 转换器常见的 bug 面。
  */
 
 export type LarkPostStyle = 'bold' | 'italic' | 'underline' | 'strikethrough'
@@ -36,20 +33,20 @@ export type LarkFormatted =
   | { kind: 'post'; post: LarkPost }
 
 /**
- * Convert agent Markdown output to a Lark wire payload.
+ * 把 agent 的 Markdown 输出转换为 Lark 线上报文。
  *
- * Coverage:
- *   - `**bold**`              → `text` with `style: ['bold']`
- *   - `*italic*` / `_italic_` → `text` with `style: ['italic']`
- *   - `~~strike~~`            → `text` with `style: ['strikethrough']`
- *   - `[label](url)`          → `a` element
- *   - ` ```lang\ncode``` `    → `code_block` element
- *   - `` `inline` ``          → `text` with `style: ['bold']` (Lark has no
- *                              inline-code element; bold is the closest visual cue)
- *   - `\n\n`                  → new top-level paragraph entry
- *   - `\n` (within paragraph) → handled by Lark's word-wrapping
+ * 覆盖范围：
+ *   - `**bold**`              → 带 `style: ['bold']` 的 `text`
+ *   - `*italic*` / `_italic_` → 带 `style: ['italic']` 的 `text`
+ *   - `~~strike~~`            → 带 `style: ['strikethrough']` 的 `text`
+ *   - `[label](url)`          → `a` 元素
+ *   - ` ```lang\ncode``` `    → `code_block` 元素
+ *   - `` `inline` ``          → 带 `style: ['bold']` 的 `text`（Lark 没有
+ *                              inline-code 元素；粗体是最接近的视觉提示）
+ *   - `\n\n`                  → 新的顶层段落条目
+ *   - `\n`（段落内）         → 由 Lark 的自动换行处理
  *
- * Out of scope (rendered as literal text): headers, lists, tables, images.
+ * 不支持（按字面文本渲染）：标题、列表、表格、图片。
  */
 export function formatForLarkPost(markdown: string): LarkFormatted {
   const trimmed = markdown.replace(/\r\n/g, '\n')
@@ -75,8 +72,8 @@ export function formatForLarkPost(markdown: string): LarkFormatted {
     content.push(elements)
   }
 
-  // No styled elements anywhere → plain text path. Reconstruct from elements
-  // is unnecessary; the original input was plain.
+  // 任何地方都没有带样式的元素 → 走纯文本路径。
+  // 没必要从 elements 重新拼接；原始输入就是纯文本。
   if (!anyStyled) {
     return { kind: 'text', text: trimmed }
   }
@@ -88,9 +85,8 @@ export function formatForLarkPost(markdown: string): LarkFormatted {
 }
 
 /**
- * Wrap arbitrary text as a trivial post message. Used by `editMessage` when
- * the original send was a `post` and the edit content is plain — Lark
- * requires the new `msg_type` to match the original.
+ * 把任意文本包装成一个最简 post 消息。当原发送是 `post`、而编辑内容是纯文本时，
+ * `editMessage` 会用到它——Lark 要求新的 `msg_type` 与原消息一致。
  */
 export function wrapAsTrivialPost(text: string): LarkPost {
   return {
@@ -103,20 +99,19 @@ export function wrapAsTrivialPost(text: string): LarkPost {
 }
 
 // ---------------------------------------------------------------------------
-// Internals
+// 内部实现
 // ---------------------------------------------------------------------------
 
 function splitParagraphs(input: string): string[] {
-  // Paragraph break = two or more newlines. Trim trailing whitespace per
-  // paragraph but keep internal single-newlines (Lark wraps within a `text`).
+  // 段落分隔 = 两个或更多换行。每段去掉尾部空白，但保留段内的单个换行
+  //（Lark 会在 `text` 内自动换行）。
   const raw = input.split(/\n{2,}/)
   return raw.map((p) => p.trimEnd()).filter((p) => p.length > 0)
 }
 
 function matchCodeBlock(para: string): { language: string | undefined; text: string } | null {
-  // Match a paragraph that's a single fenced code block: starts with ```,
-  // optional language, content until closing ```. We accept the whole
-  // paragraph as a code block only if the fences delimit the entire content.
+  // 匹配整段就是一个围栏代码块的情况：以 ``` 开头，可选语言，内容直到闭合 ```。
+  // 只有当围栏框住整段内容时，才把整段当作代码块。
   const m = para.match(/^```([a-zA-Z0-9_+-]*)\n([\s\S]*?)\n```$/)
   if (!m) return null
   const lang = m[1]?.trim() || undefined
@@ -132,21 +127,20 @@ function isStyled(el: LarkPostElement): boolean {
 
 interface InlineToken {
   type: 'text' | 'open' | 'close' | 'link'
-  /** For `text`: the literal characters. For `open`/`close`: the style. For `link`: text. */
+  /** 对 `text`：字面字符。对 `open`/`close`：样式。对 `link`：文本。 */
   value: string
-  /** Only on `link` tokens. */
+  /** 仅 `link` token 有。 */
   href?: string
-  /** Only on `open`/`close` tokens. */
+  /** 仅 `open`/`close` token 有。 */
   style?: LarkPostStyle
 }
 
 /**
- * Tokenize + assemble an inline span into Lark `text`/`a` elements.
+ * 对一个行内片段做分词，再拼装成 Lark 的 `text`/`a` 元素。
  *
- * Algorithm: scan the string, recognize formatting markers (`**`, `*`, `_`,
- * `~~`, backtick, `[label](url)`), build a list of tokens, then walk tokens
- * with a style stack to produce elements. Escape characters (`\*` etc.) are
- * preserved as literal text.
+ * 算法：扫描字符串，识别格式标记（`**`、`*`、`_`、`~~`、反引号、`[label](url)`），
+ * 构建一个 token 列表，然后用样式栈遍历 token 生成元素。
+ * 转义字符（`\*` 等）作为字面文本保留。
  */
 function parseInline(input: string): LarkPostElement[] {
   const tokens = tokenizeInline(input)
@@ -169,8 +163,8 @@ function parseInline(input: string): LarkPostElement[] {
     } else if (tok.type === 'open' && tok.style) {
       styleStack.push(tok.style)
     } else if (tok.type === 'close' && tok.style) {
-      // Pop the most-recent matching style. If the stack is malformed
-      // (close without open), treat as a literal — degrade gracefully.
+      // 弹出最近的匹配样式。如果栈状态不一致（close 没有对应 open），
+      // 当作字面文本处理——优雅降级。
       const idx = styleStack.lastIndexOf(tok.style)
       if (idx >= 0) styleStack.splice(idx, 1)
       else pushText(tok.value)
@@ -227,8 +221,7 @@ function tokenizeInline(input: string): InlineToken[] {
     }
   }
 
-  // Track which inline styles are currently open so we know whether the next
-  // marker should open or close.
+  // 跟踪当前有哪些行内样式处于开启状态，以判断下一个标记应当开启还是闭合。
   const openStyles = new Set<LarkPostStyle>()
 
   let i = 0
@@ -237,14 +230,14 @@ function tokenizeInline(input: string): InlineToken[] {
     const next = input[i + 1]
     const next2 = input[i + 2]
 
-    // Escape: keep next char as literal
+    // 转义：把下一个字符当字面量保留
     if (ch === '\\' && next) {
       buf += next
       i += 2
       continue
     }
 
-    // Link: [label](url) — non-greedy on label, parens may contain query strings
+    // 链接：[label](url) —— label 非贪婪，括号里可能含 query string
     if (ch === '[') {
       const linkMatch = input.slice(i).match(/^\[([^\]]+)\]\((https?:[^)\s]+)\)/)
       if (linkMatch) {
@@ -255,7 +248,7 @@ function tokenizeInline(input: string): InlineToken[] {
       }
     }
 
-    // Bold (**) — consume two markers
+    // 粗体（**）——消耗两个标记
     if (ch === '*' && next === '*') {
       flushBuf()
       const open = !openStyles.has('bold')
@@ -266,14 +259,14 @@ function tokenizeInline(input: string): InlineToken[] {
       continue
     }
 
-    // Italic — `*single*` or `_single_`. Standard Markdown rules:
-    //   - Open marker: next char must be non-whitespace
-    //   - Close marker: previous char must be non-whitespace
-    // We track italic with a single open-flag (no marker pairing across mixed
-    // `*`/`_`) since Lark `post` doesn't differentiate.
+    // 斜体 —— `*single*` 或 `_single_`。标准 Markdown 规则：
+    //   - 开启标记：下一个字符必须非空白
+    //   - 闭合标记：上一个字符必须非空白
+    // 我们用单个开启标志跟踪斜体（不对混用的 `*`/`_` 做标记配对），
+    // 因为 Lark `post` 不区分二者。
     if ((ch === '*' || ch === '_') && next !== ch) {
       if (openStyles.has('italic')) {
-        // Closing case — previous char must be non-whitespace.
+        // 闭合情形 —— 上一个字符必须非空白。
         const prevChar = buf.length > 0 ? buf[buf.length - 1] : input[i - 1]
         if (prevChar && prevChar !== ' ' && prevChar !== '\n') {
           flushBuf()
@@ -283,7 +276,7 @@ function tokenizeInline(input: string): InlineToken[] {
           continue
         }
       } else if (next && next !== ' ' && next !== '\n') {
-        // Opening case — must have a corresponding close later.
+        // 开启情形 —— 后面必须有对应的闭合标记。
         const closeIdx = findClosingMarker(input, i + 1, ch)
         if (closeIdx > 0) {
           flushBuf()
@@ -295,7 +288,7 @@ function tokenizeInline(input: string): InlineToken[] {
       }
     }
 
-    // Strikethrough (~~)
+    // 删除线（~~）
     if (ch === '~' && next === '~') {
       flushBuf()
       const open = !openStyles.has('strikethrough')
@@ -306,7 +299,7 @@ function tokenizeInline(input: string): InlineToken[] {
       continue
     }
 
-    // Inline code — backtick delimited; map to bold per documented fallback
+    // 行内代码 —— 反引号界定；按文档约定的回退映射为粗体
     if (ch === '`' && next !== '`') {
       const closeIdx = input.indexOf('`', i + 1)
       if (closeIdx > i) {
@@ -319,7 +312,7 @@ function tokenizeInline(input: string): InlineToken[] {
       }
     }
 
-    // Suppress unused-var warning from the lookahead variable
+    // 抑制 lookahead 变量的未使用告警
     void next2
 
     buf += ch
@@ -331,9 +324,8 @@ function tokenizeInline(input: string): InlineToken[] {
 }
 
 /**
- * Find the index of the next single-char marker (`*` or `_`) that's a valid
- * closing position. Closing position = char before the marker is non-space
- * AND the marker isn't immediately followed by another marker of the same kind.
+ * 找到下一个合法闭合位置的单字符标记（`*` 或 `_`）的索引。
+ * 合法闭合位置 = 标记前一个字符非空格，且标记后面没有紧跟同类标记。
  */
 function findClosingMarker(input: string, from: number, marker: string): number {
   for (let j = from; j < input.length; j++) {

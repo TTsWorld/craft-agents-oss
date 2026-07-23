@@ -120,7 +120,7 @@ export function collectTextSegments(root: HTMLElement): Array<{ node: Text; star
     const node = current as Text
     const parent = node.parentElement
 
-    // Ignore synthetic annotation overlay/index content in text/offset math.
+    // 在文本/偏移计算中忽略合成的批注覆盖层/索引内容。
     if (parent?.closest('[data-ca-annotation-overlay]') || parent?.closest('[data-ca-annotation-index]')) {
       current = walker.nextNode()
       continue
@@ -149,9 +149,9 @@ export function resolveNodeOffset(root: HTMLElement, targetNode: Node, nodeOffse
     }
   }
 
-  // Fallback: range boundaries may land on element nodes (common with reverse drags).
-  // In that case, derive character offset by measuring canonical text length
-  // from root start to the boundary, excluding synthetic annotation index badges.
+  // 兜底：range 边界可能落在元素节点上（反向拖选时常见）。
+  // 此时通过测量从根节点起点到边界的规范文本长度来推导字符偏移，
+  // 排除合成的批注索引徽章。
   try {
     const probe = document.createRange()
     probe.selectNodeContents(root)

@@ -1,12 +1,11 @@
 /**
- * SystemMessage - Displays system/info/error/warning messages
+ * SystemMessage - 展示 system/info/error/warning 消息
  *
- * Used for displaying non-conversational messages like errors, warnings,
- * info notices, and general system messages. Supports different visual
- * styles based on the message type.
+ * 用于展示非对话类消息，例如错误、警告、提示通知以及一般系统消息。
+ * 根据消息类型支持不同的视觉样式。
  *
- * Error and warning types use shadow-tinted for a softer, more polished appearance.
- * System and info types use a simple bordered style.
+ * error 和 warning 类型使用 shadow-tinted 以获得更柔和、精致的观感；
+ * system 和 info 类型使用简单的带边框样式。
  */
 
 import type { CSSProperties } from 'react'
@@ -16,16 +15,16 @@ import { Markdown } from '../markdown'
 export type SystemMessageType = 'error' | 'info' | 'warning' | 'system'
 
 export interface SystemMessageProps {
-  /** Message content (markdown supported) */
+  /** 消息内容（支持 markdown） */
   content: string
-  /** Message type determining visual style */
+  /** 决定视觉样式的消息类型 */
   type: SystemMessageType
-  /** Additional className for the outer container */
+  /** 外层容器的额外 className */
   className?: string
 }
 
-// Style configuration for each message type
-// Error and warning use shadow-tinted with subtle bg, others use bordered style
+// 每种消息类型的样式配置
+// error 和 warning 使用 shadow-tinted 配淡背景，其余使用带边框样式
 const MESSAGE_STYLES: Record<SystemMessageType, {
   className: string
   useTintedShadow: boolean
@@ -33,14 +32,14 @@ const MESSAGE_STYLES: Record<SystemMessageType, {
   bgStyle?: CSSProperties
 }> = {
   error: {
-    // Uses -text variant (mixed with foreground) for better text contrast
+    // 使用 -text 变体（与前景色混合）以获得更好的文字对比度
     className: 'text-[var(--destructive-text)] shadow-tinted',
     useTintedShadow: true,
     shadowColor: 'var(--destructive-rgb)',
     bgStyle: { backgroundColor: 'oklch(from var(--destructive) l c h / 0.03)' },
   },
   warning: {
-    // Uses -text variant (mixed with foreground) for better text contrast
+    // 使用 -text 变体（与前景色混合）以获得更好的文字对比度
     className: 'text-[var(--info-text)] shadow-tinted',
     useTintedShadow: true,
     shadowColor: 'var(--info-rgb)',
@@ -57,7 +56,7 @@ const MESSAGE_STYLES: Record<SystemMessageType, {
 }
 
 /**
- * SystemMessage - Renders a styled message bubble based on type
+ * SystemMessage - 根据类型渲染带样式的消息气泡
  */
 export function SystemMessage({
   content,

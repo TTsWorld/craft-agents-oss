@@ -1,11 +1,8 @@
 /**
- * Access-control evaluator — single source of truth for "may this sender
- * route to this binding / run this pre-binding command?"
+ * access-control.ts — 权限评估器：判断发件人能否路由到某个 binding 或执行 pre-binding 命令的唯一事实来源。
  *
- * Lives as a pure function so router and commands can call it identically
- * and so unit tests can exhaustively cover the permission matrix without
- * standing up a full gateway. Returns a discriminated verdict the caller
- * uses to decide between routing, replying, and recording a pending sender.
+ * 设计为纯函数，这样 Router 和 Commands 可以一致调用，单测也无需启动完整网关即可覆盖权限矩阵。
+ * 返回可区分的 verdict（allow/reason），由调用方决定是放行、回复，还是记录为 pending sender。
  */
 
 import type { PendingSendersStore } from './pending-senders'
@@ -21,10 +18,8 @@ import type {
 } from './types'
 
 /**
- * Cooldown window for friendly rejection replies. A non-owner who pings
- * the bot every second shouldn't get a reply every second — the reply
- * itself becomes spam, and a malicious sender can use it to wedge the
- * bot's own outgoing pipeline.
+ * 友好拒绝回复的冷却窗口。非 owner 每秒都 ping 机器人不应该每秒都收到回复——
+ * 回复本身会变成 spam，恶意发件人还可能利用它堵塞机器人自己的出站队列。
  */
 export const REJECT_REPLY_COOLDOWN_MS = 60 * 60 * 1000
 
@@ -33,28 +28,28 @@ export type AccessDecision =
   | { allow: false; reason: AccessRejectReason }
 
 export type AccessRejectReason =
-  /** The sender is a bot (Telegram `from.is_bot`). Always silent-drop. */
+  /** 发件人是机器人（Telegram `from.is_bot`）。始终静默丢弃。 */
   | 'bot-sender'
-  /** Workspace mode is `'owner-only'` and sender is not on the owners list. */
+  /** Workspace 模式为 `'owner-only'` 且发件人不在 owners 列表中。 */
   | 'not-owner'
-  /** Binding mode is `'allow-list'` and sender is not on `allowedSenderIds`. */
+  /** Binding 模式为 `'allow-list'` 且发件人不在 `allowedSenderIds` 中。 */
   | 'not-on-binding-allowlist'
 
 export interface PreBindingAccessInput {
-  /** The inbound message about to be handled by Commands. */
+  /** 即将由 Commands 处理的入站消息。 */
   msg: IncomingMessage
-  /** Workspace messaging config (for `accessMode` + `owners`). */
+  /** Workspace 的消息配置（用于 `accessMode` 与 `owners`）。 */
   workspaceConfig: MessagingConfig
 }
 
 /**
- * Decide whether `msg` may run a pre-binding command (`/new`, `/bind`, etc.)
- * — i.e. one that operates on the workspace before any binding exists.
+ * 判断 `msg` 能否执行 pre-binding 命令（`/new`、`/bind` 等），
+ * 即在尚无 binding 时对 workspace 进行操作的命令。
  *
- * Rules:
- *  - Bot senders are always rejected (silent-drop expected upstream).
- *  - When the platform's `accessMode` is missing or `'open'`, allow.
- *  - When `'owner-only'`, allow iff the sender is on `owners`.
+ * 规则：
+ *  - 机器人发件人一律拒绝（上游会静默丢弃）。
+ *  - 平台 `accessMode` 缺失或为 `'open'` 时放行。
+ *  - 为 `'owner-only'` 时，仅当发件人在 `owners` 中才放行。
  */
 export function evaluatePreBindingAccess(
   input: PreBindingAccessInput,
@@ -77,19 +72,17 @@ export interface BindingAccessInput {
 }
 
 /**
- * Decide whether `msg` may route to an existing binding.
+ * 判断 `msg` 能否路由到已存在的 binding。
  *
- * Resolution order:
- *  1. Bot sender → reject.
- *  2. Binding `accessMode === 'open'` → allow.
- *  3. Binding `accessMode === 'allow-list'` → allow iff sender is in
- *     `allowedSenderIds`.
- *  4. Binding `accessMode === 'inherit'` → defer to workspace policy:
- *     `'open'` allows; `'owner-only'` requires sender on `owners`.
+ * 判定顺序：
+ *  1. 机器人发件人 → 拒绝。
+ *  2. Binding `accessMode === 'open'` → 放行。
+ *  3. Binding `accessMode === 'allow-list'` → 仅当发件人在 `allowedSenderIds` 中才放行。
+ *  4. Binding `accessMode === 'inherit'` → 交给 workspace 策略：
+ *     `'open'` 放行；`'owner-only'` 要求发件人在 `owners` 中。
  *
- * Note: a `'open'` workspace + `'inherit'` binding is the legacy/migration
- * path. It deliberately allows traffic so existing prod workspaces don't
- * silently break the day this code ships.
+ * 注意：`'open'` workspace + `'inherit'` binding 是遗留/迁移路径。
+ * 它刻意放行流量，避免这段代码上线当天导致现有线上 workspace 静默失效。
  */
 export function evaluateBindingAccess(input: BindingAccessInput): AccessDecision {
   const { msg, workspaceConfig, binding } = input
@@ -114,8 +107,7 @@ export function evaluateBindingAccess(input: BindingAccessInput): AccessDecision
 }
 
 /**
- * Read the workspace's platform-level access mode, defaulting to `'open'`
- * for back-compat with configs that predate this field.
+ * 读取 workspace 的平台级访问模式，对早于该字段出现的配置默认返回 `'open'`，保持向后兼容。
  */
 export function readPlatformAccessMode(
   config: MessagingConfig,
@@ -125,7 +117,7 @@ export function readPlatformAccessMode(
   return config.platforms.telegram?.accessMode ?? 'open'
 }
 
-/** Read the platform's owners list (empty when not configured). */
+/** 读取平台的 owners 列表（未配置时为空）。 */
 export function readPlatformOwners(
   config: MessagingConfig,
   platform: PlatformType,
@@ -135,9 +127,9 @@ export function readPlatformOwners(
 }
 
 /**
- * Inbound stimulus identity. Subset of `IncomingMessage` / `ButtonPress`
- * that the rejection helper needs — extracting the common shape avoids a
- * "fake an IncomingMessage" pattern at the button callsite.
+ * 入站触发物的身份信息。是 `IncomingMessage` / `ButtonPress` 的子集，
+ * 恰好是拒绝辅助函数所需的字段——抽出公共形状，避免在按钮调用处出现
+ * 「伪造一个 IncomingMessage」的写法。
  */
 export interface RejectableSender {
   platform: PlatformType
@@ -149,18 +141,16 @@ export interface RejectableSender {
 }
 
 export interface RejectionExecutionContext {
-  /** Per-(platform, senderId) cooldown map. Mutated. */
+  /** 按 (platform, senderId) 维度的冷却映射表。会被原地修改。 */
   recentRejectReplies: Map<string, number>
-  /** Optional pending-senders store. Records non-bot rejections. */
+  /** 可选的 pending-senders 存储区，用于记录非机器人发件人的拒绝事件。 */
   pendingStore?: PendingSendersStore
 }
 
 /**
- * Shared rejection path: log, record in pending store, send the friendly
- * reply with cooldown. Used by `Router.handleReject` (text path),
- * `Commands.sendRejection` (pre-binding text path), and
- * `MessagingGateway.handleButtonPress` (callback button path) so all
- * three entry points behave identically.
+ * 公共拒绝路径：记录日志、写入 pending store、在冷却期内发送友好回复。
+ * 被 `Router.handleReject`（文本路径）、`Commands.sendRejection`（pre-binding 文本路径）、
+ * 以及 `MessagingGateway.handleButtonPress`（回调按钮路径）共用，使三个入口行为一致。
  */
 export async function executeRejection(
   adapter: PlatformAdapter,
@@ -183,9 +173,9 @@ export async function executeRejection(
   })
 
   if (reason !== 'bot-sender') {
-    // Map the access verdict reason into the pending-store reason. The
-    // store only cares about the two "user-facing" reasons (workspace vs.
-    // binding) — bot-sender is silent-dropped before reaching here.
+    // 将访问判定的 reason 映射为 pending-store 的 reason。
+    // store 只关心两种「面向用户」的原因（workspace 级 vs. binding 级）——
+    // bot-sender 在到达这里之前已被静默丢弃。
     const pendingReason =
       reason === 'not-on-binding-allowlist' ? 'not-on-binding-allowlist' : 'not-owner'
     ctx.pendingStore?.recordRejection({
@@ -224,8 +214,8 @@ export async function executeRejection(
 }
 
 /**
- * Friendly reply text for a rejected sender. Returns null when the verdict
- * was `bot-sender` (no reply — bot loops are a hazard).
+ * 为被拒绝的发件人生成友好回复文本。当判定原因为 `bot-sender` 时返回 null
+ * （不回复——机器人循环是个隐患）。
  */
 export function buildRejectionReply(reason: AccessRejectReason): string | null {
   switch (reason) {

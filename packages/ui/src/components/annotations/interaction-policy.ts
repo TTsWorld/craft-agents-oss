@@ -9,9 +9,9 @@ export type AnnotationChipInteraction = {
 }
 
 /**
- * Unified annotation chip behavior:
- * - sent follow-up chips are tooltip-only (no island open on click)
- * - pending/unsent chips open annotation detail in view mode
+ * 统一的批注徽章交互行为：
+ * - 已发送 follow-up 的徽章仅展示 tooltip（点击不打开 island）
+ * - pending/未发送的徽章以查看模式打开批注详情
  */
 export function getAnnotationChipInteraction(annotation?: AnnotationV1 | null): AnnotationChipInteraction {
   const state = annotation ? getAnnotationFollowUpState(annotation) : 'none'
@@ -34,9 +34,8 @@ export function getAnnotationChipOpenMode(): 'view' {
 }
 
 /**
- * Mouse-up events that originate from annotation index badges must not trigger
- * text-selection follow-up flows. This keeps chip clicks and text selection
- * behavior consistent across inline and fullscreen renderers.
+ * 来自批注索引徽章的 mouseup 事件不应触发文本选区的 follow-up 流程。
+ * 这样可保证徽章点击与文本选区行为在内联和全屏渲染器中保持一致。
  */
 export function shouldIgnoreSelectionMouseUpTarget(target: EventTarget | null): boolean {
   const targetElement = target instanceof Element ? target : null

@@ -19,7 +19,7 @@ export interface AnnotationIslandMenuProps {
   sourceKey: string
   replayNonce: number
   isVisible: boolean
-  /** Render via React portal to document.body (default). Disable inside modal/dialog contexts. */
+  /** 通过 React portal 渲染到 document.body（默认）。在模态/对话框上下文中禁用。 */
   usePortal?: boolean
   activeView: AnnotationIslandView
   mode: AnnotationIslandMode
@@ -66,8 +66,8 @@ export function AnnotationIslandMenu({
   const menuRef = React.useRef<HTMLDivElement>(null)
   const [activeViewSize, setActiveViewSize] = React.useState<{ width: number; height: number } | null>(null)
 
-  // Keep blocker behind the island menu when consumers pass a custom numeric zIndex
-  // (for example TurnCard uses zIndex=50). Otherwise fall back to the semantic island token.
+  // 当消费者传入自定义数值 zIndex 时（例如 TurnCard 使用 zIndex=50），
+  // 保持遮罩层位于 island 菜单之下。否则回退到语义化的 island token。
   const resolvedOverlayZIndex = React.useMemo<React.CSSProperties['zIndex']>(() => {
     if (overlayZIndex != null) return overlayZIndex
     if (typeof zIndex === 'number') return zIndex - 1
