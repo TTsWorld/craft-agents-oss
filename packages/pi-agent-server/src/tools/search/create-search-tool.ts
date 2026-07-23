@@ -1,8 +1,8 @@
 /**
- * Creates a `web_search` ToolDefinition backed by the given search provider.
+ * 创建一个由指定搜索 provider 支撑的 `web_search` 工具定义。
  *
- * The tool name is always `web_search` regardless of the underlying provider,
- * so the model doesn't need to know which backend is used.
+ * 工具名始终是 `web_search`，与底层 provider 无关，
+ * 这样模型不必知道后端用的是哪一个。
  */
 
 import { Type } from '@sinclair/typebox';

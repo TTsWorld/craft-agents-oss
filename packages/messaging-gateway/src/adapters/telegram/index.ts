@@ -1,7 +1,7 @@
 /**
- * TelegramAdapter — in-process adapter using grammY.
+ * index.ts — TelegramAdapter：基于 grammY 的进程内适配器。
  *
- * Phase 1: polling mode, text-only, DM-only.
+ * Phase 1：轮询模式、仅文本、仅 DM。
  */
 
 import { writeFileSync } from 'node:fs'
@@ -24,26 +24,23 @@ import type {
 import { formatForTelegram } from './format'
 
 /**
- * Discriminated chat metadata returned by `getChatInfo`. Phase A's supergroup
- * pairing flow uses this to validate that the user typed `/pair` in an
- * actual forum supergroup before binding it as the workspace's supergroup.
+ * `getChatInfo` 返回的可区分聊天元数据。Phase A 的超级群配对流程用它校验
+ * 用户确实在一个论坛超级群里输入了 `/pair`，然后才把它绑定为 workspace 的超级群。
  */
 export type TelegramChatInfo =
   | { type: 'supergroup'; isForum: boolean; title: string }
   | { type: 'group' | 'channel' | 'private'; title?: string }
 
 /**
- * Hard cap for downloaded attachment size. Matches `MAX_FILE_SIZE` in
- * `@craft-agent/shared/utils/files` — files larger than this would be
- * rejected by `readFileAttachment` anyway, so we fail fast in the adapter
- * with a user-visible reply instead of silently dropping.
+ * 下载附件的硬上限。与 `@craft-agent/shared/utils/files` 里的 `MAX_FILE_SIZE` 一致——
+ * 超过这个大小的文件反正也会被 `readFileAttachment` 拒绝，所以我们在适配器里
+ * 快速失败并给用户一条可见回复，而不是静默丢弃。
  */
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 
 /**
- * Minimal mime → extension fallback used when Telegram's `file_path` is
- * missing or extension-less. Kept intentionally small — anything unknown
- * becomes `.bin` and `readFileAttachment` will classify it as 'unknown'.
+ * 当 Telegram 的 `file_path` 缺失或没有扩展名时使用的 mime → 扩展名最小回退表。
+ * 有意保持很小——未知的一律变成 `.bin`，`readFileAttachment` 会归类为 'unknown'。
  */
 const MIME_EXT_FALLBACK: Record<string, string> = {
   'image/jpeg': '.jpg',
@@ -67,9 +64,9 @@ const NOOP_LOGGER: MessagingLogger = {
 }
 
 /**
- * Race a promise against a timeout. If `ms` elapses before `p` settles, reject
- * with a labelled error. Used to surface grammY's silent-retry hangs on
- * `bot.init()` / `deleteWebhook()` as real, actionable errors.
+ * 让一个 promise 与超时赛跑。如果在 `p` 落定前过了 `ms` 毫秒，就以带标签的错误 reject。
+ * 用于把 grammY 在 `bot.init()` / `deleteWebhook()` 上静默重试导致的卡死，
+ * 变成真正可操作的错误。
  */
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -85,10 +82,9 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 }
 
 /**
- * Unwrap an error for structured logging. grammY's HttpError wraps the real
- * fetch/undici cause in an `.error` field; electron-log's JSON serializer
- * otherwise sees an empty object because Error's own fields are non-enumerable.
- * Walks up to 3 levels of wrapping (HttpError -> cause -> cause).
+ * 为结构化日志解开错误。grammY 的 HttpError 把真正的 fetch/undici 原因包在
+ * `.error` 字段里；否则 electron-log 的 JSON 序列化器会看到一个空对象，
+ * 因为 Error 自身字段不可枚举。最多向上回溯 3 层包裹（HttpError -> cause -> cause）。
  */
 function describeError(err: unknown, depth = 0): Record<string, unknown> {
   if (depth > 3) return { truncated: true }
@@ -111,27 +107,23 @@ function describeError(err: unknown, depth = 0): Record<string, unknown> {
 }
 
 /**
- * DM-only guard. Retained because tests use it directly; new code paths
- * should call `isAcceptedChat()` which also accepts the workspace's
- * configured supergroup chat (forum).
+ * 仅 DM 的守卫。保留是因为测试直接用到它；新代码路径应调用
+ * `isAcceptedChat()`，后者还接受 workspace 配置的超级群（论坛）。
  */
 export function isPrivateChat(ctx: Context): boolean {
   return ctx.chat?.type === 'private'
 }
 
 /**
- * Decide whether an inbound update should be processed.
+ * 判断一条入站 update 是否应被处理。
  *
- * - DMs (`private` chats) are always accepted — same as Phase 1.
- * - When the workspace has a paired supergroup, that exact `chat.id` is
- *   also accepted (forum topics live inside it).
- * - Everything else (other groups, channels, basic groups the bot was
- *   added to without explicit configuration) is dropped.
+ * - DM（`private` 聊天）始终接受 —— 与 Phase 1 一致。
+ * - 当 workspace 配对了一个超级群时，那个确切的 `chat.id` 也被接受
+ *  （论坛话题就在它里面）。
+ * - 其他一切（其他群、频道、未显式配置就被加入的基础群）一律丢弃。
  *
- * Sender-level authorization for groups/topics is intentionally NOT enforced
- * here — pairing the supergroup in Settings is the per-workspace consent
- * boundary, and topic-scoped bindings determine which session each topic
- * routes to.
+ * 这里有意不在群/话题层面做发送方级鉴权 —— 在 Settings 里配对超级群就是
+ * 每个 workspace 的同意边界，而话题级 binding 决定每个话题路由到哪个 session。
  */
 export function isAcceptedChat(ctx: Context, supergroupChatId?: string): boolean {
   const chat = ctx.chat
@@ -149,14 +141,13 @@ export class TelegramAdapter implements PlatformAdapter {
     maxButtons: 10,
     maxMessageLength: 4096,
     markdown: 'v2',
-    // This adapter uses polling (grammY Bot#start). A webhook path is not
-    // wired through the Electron main process, so advertising webhookSupport
-    // would mislead the headless server bootstrap. Keep false until a proper
-    // webhook handler exists.
+    // 本适配器用轮询（grammY Bot#start）。webhook 路径没有接入 Electron 主进程，
+    // 所以声明 webhookSupport 会误导无头服务器的 bootstrap。在有正式 webhook handler
+    // 之前保持 false。
     webhookSupport: false,
   }
 
-  /** Fetch bot profile (username, display name). Used for UI hints. */
+  /** 获取机器人资料（用户名、显示名），用于 UI 提示。 */
   async getBotInfo(): Promise<{ id: number; username?: string; firstName?: string } | null> {
     if (!this.bot) return null
     try {
@@ -176,17 +167,15 @@ export class TelegramAdapter implements PlatformAdapter {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private log: MessagingLogger = NOOP_LOGGER
   /**
-   * The supergroup chatId this adapter accepts non-DM messages from.
-   * Updated at runtime via `setAcceptedSupergroupChatId()` after the user
-   * pairs/unpairs a supergroup in Settings, so polling doesn't need to
-   * restart on reconfigure.
+   * 本适配器接受非 DM 消息的超级群 chatId。在用户于 Settings 里配对/取消配对
+   * 超级群后，通过 `setAcceptedSupergroupChatId()` 在运行时更新，这样重新配置时
+   * 无需重启轮询。
    */
   private supergroupChatId: string | undefined
 
   /**
-   * Emit one structured log line per dropped non-accepted update. Deliberately
-   * `info` (not `debug`) so a user who notices "bot isn't responding in my
-   * group" can confirm via logs without toggling levels.
+   * 每丢弃一条非接受的 update 就输出一条结构化日志。刻意用 `info`（不是 `debug`），
+   * 这样一个察觉「机器人在我的群里没反应」的用户可以不用切日志级别就能从日志确认。
    */
   private logRejectedChat(handler: string, ctx: Context): void {
     this.log.info('[telegram] ignored non-accepted chat update', {
@@ -197,7 +186,7 @@ export class TelegramAdapter implements PlatformAdapter {
     })
   }
 
-  /** Idempotent runtime reconfigure for the accepted supergroup chatId. */
+  /** 对接受的超级群 chatId 做幂等的运行时重配置。 */
   setAcceptedSupergroupChatId(chatId: string | undefined): void {
     this.supergroupChatId = chatId
     this.log.info('[telegram] accepted supergroup updated', {
@@ -207,14 +196,11 @@ export class TelegramAdapter implements PlatformAdapter {
   }
 
   /**
-   * Resolve a chat's metadata via Bot API. Returns `null` on any failure
-   * (network, "chat not found", missing permissions, etc.). The caller is
-   * expected to handle the null case explicitly — for the supergroup-pairing
-   * flow that means refusing to bind, rather than guessing defaults.
+   * 通过 Bot API 解析聊天元数据。任何失败（网络、「找不到聊天」、缺权限等）都返回 `null`。
+   * 调用方需显式处理 null —— 对超级群配对流程而言，这意味着拒绝绑定，而不是猜默认值。
    *
-   * Forum supergroups are the only chat type that can host topics. The
-   * `isForum` flag distinguishes a regular supergroup from one with topics
-   * enabled, which is required for Phase B's `createForumTopic` to work.
+   * 论坛超级群是唯一能承载话题的聊天类型。`isForum` 标志区分普通超级群与开启了话题的超级群，
+   * Phase B 的 `createForumTopic` 依赖它。
    */
   async getChatInfo(chatId: string): Promise<TelegramChatInfo | null> {
     if (!this.bot) return null
@@ -237,9 +223,8 @@ export class TelegramAdapter implements PlatformAdapter {
   }
 
   /**
-   * Telegram-specific helper: extract the optional `message_thread_id` from
-   * an inbound update. Returns undefined for DMs and for the General topic
-   * (Telegram omits the field there).
+   * Telegram 专用辅助：从入站 update 中提取可选的 `message_thread_id`。
+   * 对 DM 和 General 话题返回 undefined（Telegram 在这两种情况会省略该字段）。
    */
   private extractThreadId(ctx: Context): number | undefined {
     const tid = ctx.message?.message_thread_id
@@ -257,14 +242,12 @@ export class TelegramAdapter implements PlatformAdapter {
       this.supergroupChatId = config.acceptedSupergroupChatId
     }
 
-    // Handle incoming text messages.
+    // 处理入站文本消息。
     //
-    // Narrow exception to `isAcceptedChat`: `/pair <code>` is allowed from
-    // *any* chat, even if the workspace hasn't paired this chat yet. This is
-    // the bootstrap mechanism that registers a supergroup — without this
-    // exception, `/pair` typed in a fresh supergroup is silently dropped
-    // (chicken-and-egg). Codes are workspace-scoped, single-use, 5-min TTL,
-    // and rate-limited per-sender, so the exception is bounded.
+    // 对 `isAcceptedChat` 做了一条例外：`/pair <code>` 从*任何*聊天都允许，
+    // 即使 workspace 还没配对这个聊天。这是注册超级群的引导机制——没有这个例外，
+    // 在一个全新超级群里输入 `/pair` 会被静默丢弃（鸡生蛋蛋生鸡）。
+    // 配对码是 workspace 作用域、一次性、5 分钟 TTL、且按发送方限速，所以这个例外是有界的。
     this.bot.on('message:text', async (ctx: Context) => {
       if (!this.messageHandler || !ctx.message || !ctx.chat) return
       const text = ctx.message.text ?? ''
@@ -292,25 +275,24 @@ export class TelegramAdapter implements PlatformAdapter {
       await this.messageHandler(msg)
     })
 
-    // Attachment handlers — photos, documents, voice, video, audio.
-    // Each maps Telegram's source field onto a single helper that
-    // downloads the blob to a temp file, then emits one IncomingMessage
-    // with `attachments[0].localPath` set. The router resolves the path
-    // via readFileAttachment() and forwards a FileAttachment to the session.
+    // 附件 handler —— 图片、文档、语音、视频、音频。
+    // 每个都把 Telegram 的源字段映射到一个公共 helper，把二进制下载到临时文件，
+    // 然后发出一条 `attachments[0].localPath` 已设置的 IncomingMessage。
+    // router 通过 readFileAttachment() 解析该路径，并把 FileAttachment 转发给 session。
     this.bot.on('message:photo', async (ctx: Context) => {
       if (!isAcceptedChat(ctx, this.supergroupChatId)) {
         this.logRejectedChat('message:photo', ctx)
         return
       }
       const photos = ctx.message?.photo
-      // Telegram returns multiple sizes; last one is the largest original.
+      // Telegram 返回多种尺寸；最后一个是最大的原图。
       const largest = photos?.[photos.length - 1]
       if (!largest) return
       await this.emitAttachmentMessage(ctx, {
         type: 'photo',
         fileId: largest.file_id,
         fileSize: largest.file_size,
-        mimeType: 'image/jpeg', // Telegram re-encodes photos to JPEG
+        mimeType: 'image/jpeg', // Telegram 会把图片重新编码为 JPEG
       })
     })
 
@@ -377,22 +359,21 @@ export class TelegramAdapter implements PlatformAdapter {
       })
     })
 
-    // Handle callback queries (button presses)
+    // 处理回调查询（按钮点击）
     this.bot.on('callback_query:data', async (ctx: Context) => {
       if (!this.buttonHandler || !ctx.callbackQuery) return
       if (!isAcceptedChat(ctx, this.supergroupChatId)) {
         this.logRejectedChat('callback_query:data', ctx)
-        // Answer the callback so Telegram stops showing the spinner, but
-        // don't route it — same rationale as message handlers.
+        // 应答这个 callback 让 Telegram 停止转圈，但不路由它——
+        // 与消息 handler 同理。
         await ctx.answerCallbackQuery().catch(() => {})
         return
       }
 
       await ctx.answerCallbackQuery().catch(() => {})
 
-      // The button is attached to a message; reading the message's thread id
-      // ensures responses (allow/deny acks, plan accept confirmations) post
-      // back into the same topic the prompt came from.
+      // 按钮依附于某条消息；读取该消息的 thread id，确保后续回复
+      //（允许/拒绝 ack、计划接受确认）发回到 prompt 原来的话题里。
       const threadId = typeof ctx.callbackQuery.message?.message_thread_id === 'number'
         ? ctx.callbackQuery.message.message_thread_id
         : undefined
@@ -410,9 +391,8 @@ export class TelegramAdapter implements PlatformAdapter {
         data: ctx.callbackQuery.data ?? undefined,
       }
 
-      // Diagnostic for #726: timestamp callback receipt vs. handler return so
-      // we can tell from logs whether the gateway is slow or grammY's
-      // sequential polling is stalling on a previous update.
+      // 针对 #726 的诊断：记录 callback 到达时间与 handler 返回时间，
+      // 这样从日志就能判断是 gateway 慢，还是 grammY 的顺序轮询卡在了前一个 update 上。
       const receivedAt = Date.now()
       this.log.info('[telegram] callback_query received', {
         event: 'telegram_callback_received',
@@ -433,13 +413,12 @@ export class TelegramAdapter implements PlatformAdapter {
 
     this.log.info('[telegram] initializing')
 
-    // Clear any pre-existing webhook BEFORE bot.init(). grammY's Api client
-    // works without init() (which only caches getMe), and if a webhook is set
-    // (by a previous app run, another app, or BotFather), getUpdates returns
-    // nothing and polling silently receives no messages. Doing this first
-    // means even a slow/stuck init() can't prevent webhook cleanup.
-    // drop_pending_updates=false preserves messages queued before the user
-    // saved the token.
+    // 在 bot.init() 之前先清掉可能已存在的 webhook。grammY 的 Api client 不依赖
+    // init() 就能工作（init() 只是缓存 getMe），而如果有 webhook 存在
+    //（之前某次 app 运行、另一个 app、或 BotFather 设置的），getUpdates 会返回空，
+    // 轮询会静默地收不到任何消息。先做这一步，意味着即使 init() 很慢或卡住，
+    // 也不会阻塞 webhook 的清理。
+    // drop_pending_updates=false 会保留用户保存 token 之前就入队的消息。
     try {
       await withTimeout(
         this.bot.api.deleteWebhook({ drop_pending_updates: false }),
@@ -451,9 +430,8 @@ export class TelegramAdapter implements PlatformAdapter {
       this.log.warn('[telegram] deleteWebhook failed (non-fatal):', describeError(err))
     }
 
-    // Surface token/network errors up-front (getMe). Without the timeout,
-    // grammY retries transient errors indefinitely with no logs, which looks
-    // identical to a deadlock from the outside.
+    // 提前暴露 token/网络错误（getMe）。没有这个超时的话，grammY 会无限重试
+    // 瞬时错误且不打日志，从外部看与死锁无异。
     try {
       await withTimeout(this.bot.init(), 10_000, 'bot.init')
       this.log.info('[telegram] bot.init ok', {
@@ -467,17 +445,15 @@ export class TelegramAdapter implements PlatformAdapter {
     this.destroyed = false
     this.reconnectAttempts = 0
     this.startPolling()
-    // Do NOT set this.connected = true here — wait for onStart.
+    // 不要在这里设置 this.connected = true —— 等到 onStart 回调。
   }
 
   /**
-   * Download a Telegram file to a temp path and invoke the message handler
-   * with the resulting IncomingMessage. Centralised here so the five
-   * `bot.on(...)` handlers only need to pick the right source fields.
+   * 把一个 Telegram 文件下载到临时路径，然后用得到的 IncomingMessage 调用消息 handler。
+   * 集中在这里实现，这样五个 `bot.on(...)` handler 只需挑出正确的源字段即可。
    *
-   * Failures (oversize, 404, network) are reported back to the sender via
-   * `ctx.reply()` and logged. The message is NOT forwarded in that case —
-   * the session should not be woken for an attachment we couldn't deliver.
+   * 失败（超尺寸、404、网络）会通过 `ctx.reply()` 回报给发送方并记日志。
+   * 这种情况下消息不会被转发 —— session 不该因为我们交付不了的附件而被唤醒。
    */
   private async emitAttachmentMessage(
     ctx: Context,
@@ -491,8 +467,8 @@ export class TelegramAdapter implements PlatformAdapter {
   ): Promise<void> {
     if (!this.messageHandler || !ctx.message || !ctx.chat || !this.bot) return
 
-    // Size guard BEFORE hitting the file API — avoids the round-trip when
-    // Telegram already told us the size up-front.
+    // 在请求 file API 之前先做尺寸守卫 —— 当 Telegram 已经提前告诉我们大小时，
+    // 可以省掉这次往返。
     if (meta.fileSize !== undefined && meta.fileSize > MAX_ATTACHMENT_BYTES) {
       this.log.warn('[telegram] attachment too large, dropping', {
         type: meta.type,
@@ -548,10 +524,9 @@ export class TelegramAdapter implements PlatformAdapter {
   }
 
   /**
-   * Resolve a Telegram `file_id` to a local path by calling `getFile()` to
-   * obtain the remote path, then fetching the blob from the Bot API file
-   * host and writing it to the OS temp dir. Enforces `MAX_ATTACHMENT_BYTES`
-   * against the actual downloaded size in case `getFile` reported no size.
+   * 把一个 Telegram `file_id` 解析成本地路径：先调 `getFile()` 拿到远端路径，
+   * 再从 Bot API file host 取回二进制，写到 OS 的 temp 目录。对实际下载大小
+   * 强制执行 `MAX_ATTACHMENT_BYTES` 检查，以防 `getFile` 没有上报尺寸。
    */
   private async downloadToTemp(
     fileId: string,
@@ -568,16 +543,16 @@ export class TelegramAdapter implements PlatformAdapter {
       throw new Error(`file too large: ${file.file_size} bytes`)
     }
 
-    // Extension: prefer whatever Telegram's file_path carries (it's normally
-    // `photos/file_123.jpg` or similar), fall back to mime map, else `.bin`.
+    // 扩展名：优先用 Telegram file_path 里带的扩展名（通常是
+    // `photos/file_123.jpg` 之类），其次回退到 mime 映射表，最后才用 `.bin`。
     let ext = extname(file.file_path)
     if (!ext && mimeType && MIME_EXT_FALLBACK[mimeType]) {
       ext = MIME_EXT_FALLBACK[mimeType]
     }
     if (!ext) ext = '.bin'
 
-    // Normalise fileName — ensure it has the resolved extension so
-    // readFileAttachment's extension-based type detection works.
+    // 规范化 fileName —— 确保它带上解析出的扩展名，这样 readFileAttachment
+    // 基于扩展名的类型检测才能生效。
     let fileName = fallbackName
     if (!extname(fileName)) fileName = `${fileName}${ext}`
 
@@ -600,13 +575,12 @@ export class TelegramAdapter implements PlatformAdapter {
   }
 
   /**
-   * Launch polling. grammY's bot.start() runs until stop() is called or a
-   * fatal error occurs. On unexpected failure we schedule a reconnect with
-   * exponential backoff so transient issues (network blip, 409 from a
-   * competing instance that quickly exits) self-heal without user action.
+   * 启动轮询。grammY 的 bot.start() 会一直跑到 stop() 被调用或发生致命错误。
+   * 遇到意外失败时，我们用指数退避调度一次重连，让瞬时问题
+   *（网络抖动、来自一个很快退出的竞争实例的 409）无需用户介入就能自愈。
    *
-   * 409 Conflict means another poller is active — we wait longer on the first
-   * attempt to give the other instance time to exit before we retry.
+   * 409 Conflict 表示有另一个轮询者活跃 —— 我们在第一次重试前等久一点，
+   * 给那个实例留出退出的时间。
    */
   private startPolling(): void {
     if (this.destroyed || !this.bot) return
@@ -637,8 +611,8 @@ export class TelegramAdapter implements PlatformAdapter {
     if (this.destroyed || !this.bot) return
 
     this.reconnectAttempts++
-    // 409 = another poller is competing; wait 30 s before first retry so the
-    // other process has a chance to exit. Other errors start at 5 s.
+    // 409 = 有另一个轮询者在竞争；首次重试前等 30 秒，给对方进程留出退出的机会。
+    // 其他错误从 5 秒开始。
     const is409 = err instanceof Error && err.message.includes('409')
     const baseDelay = is409 ? 30_000 : 5_000
     const delay = Math.min(baseDelay * Math.pow(2, this.reconnectAttempts - 1), 5 * 60_000)
@@ -704,9 +678,8 @@ export class TelegramAdapter implements PlatformAdapter {
   async editMessage(channelId: string, messageId: string, text: string, _opts?: SendOptions): Promise<void> {
     if (!this.bot) throw new Error('Telegram adapter not initialized')
     const formatted = formatForTelegram(text)
-    // editMessageText is keyed by (chat_id, message_id) — Telegram does not
-    // accept message_thread_id here. We accept the option for caller
-    // uniformity but ignore it.
+    // editMessageText 以 (chat_id, message_id) 为键 —— Telegram 在这里不接受
+    // message_thread_id。我们接受这个选项是为了调用方的统一性，但忽略它。
     await this.bot.api.editMessageText(Number(channelId), Number(messageId), formatted)
   }
 
@@ -759,26 +732,25 @@ export class TelegramAdapter implements PlatformAdapter {
   async clearButtons(channelId: string, messageId: string, _opts?: SendOptions): Promise<void> {
     if (!this.bot) return
     try {
-      // editMessageReplyMarkup is also keyed by (chat_id, message_id) only.
+      // editMessageReplyMarkup 也只以 (chat_id, message_id) 为键。
       await this.bot.api.editMessageReplyMarkup(Number(channelId), Number(messageId), {
         reply_markup: { inline_keyboard: [] },
       })
     } catch {
-      // Non-fatal: message may have been deleted by the user or already cleared.
+      // 非致命：消息可能已被用户删除或已经清空过。
     }
   }
 
   /**
-   * Phase B prep: create a new forum topic in a supergroup. Telegram returns
-   * `{ message_thread_id, name, ... }`; we surface a normalised shape.
+   * Phase B 预备：在超级群里创建一个新的论坛话题。Telegram 返回
+   * `{ message_thread_id, name, ... }`；我们对外暴露一个规范化的形状。
    *
-   * Requires the bot to have "Manage Topics" admin permission in the
-   * supergroup. If the call fails (privilege missing, chat is not a forum,
-   * etc.), the error propagates so the caller can surface it.
+   * 要求机器人在超级群里拥有「Manage Topics」管理员权限。如果调用失败
+   *（缺权限、聊天不是论坛等），错误会向上冒泡，让调用方能够呈现出来。
    *
-   * `iconColor` is intentionally omitted from this stub — grammY's typing
-   * accepts only the six Telegram-defined palette ints. We'll plumb it
-   * properly in Phase B when the automation feature actually picks colours.
+   * `iconColor` 在这个 stub 里有意省略 —— grammY 的类型只接受六个
+   * Telegram 定义的调色板整数。Phase B 在自动化功能真正要选颜色时，
+   * 我们会把它正确地接上。
    */
   async createForumTopic(
     chatId: string,
@@ -791,10 +763,9 @@ export class TelegramAdapter implements PlatformAdapter {
 }
 
 /**
- * Build the `{ message_thread_id }` fragment passed to grammY API calls.
- * Returns an empty object when no thread is requested so the spread is a
- * no-op and Telegram receives no `message_thread_id` (which is what the
- * General topic / DM shapes expect).
+ * 构造传给 grammY API 调用的 `{ message_thread_id }` 片段。
+ * 当没有请求 thread 时返回空对象，这样展开操作是个 no-op，
+ * Telegram 也就收不到 `message_thread_id`（正是 General 话题 / DM 场景所期望的）。
  */
 function threadParams(opts?: SendOptions): { message_thread_id?: number } {
   if (opts?.threadId === undefined) return {}

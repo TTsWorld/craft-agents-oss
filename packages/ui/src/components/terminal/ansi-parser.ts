@@ -1,40 +1,40 @@
 /**
- * ANSI escape code parsing utilities for terminal output.
+ * 终端输出的 ANSI 转义码解析工具。
  */
 
 /**
- * ANSI color code to CSS color mapping
- * Supports both foreground (30-37, 90-97) and background (40-47, 100-107) colors
+ * ANSI 颜色码到 CSS 颜色的映射
+ * 同时支持前景色（30-37、90-97）和背景色（40-47、100-107）
  */
 export const ANSI_COLORS: Record<number, string> = {
-  // Standard foreground colors (30-37)
-  30: '#1a1a1a', // Black
-  31: '#ef4444', // Red
-  32: '#22c55e', // Green
-  33: '#eab308', // Yellow
-  34: '#3b82f6', // Blue
-  35: '#a855f7', // Magenta
-  36: '#06b6d4', // Cyan
-  37: '#e4e4e4', // White
-  // Bright foreground colors (90-97)
-  90: '#666666', // Bright Black (Gray)
-  91: '#f87171', // Bright Red
-  92: '#4ade80', // Bright Green
-  93: '#facc15', // Bright Yellow
-  94: '#60a5fa', // Bright Blue
-  95: '#c084fc', // Bright Magenta
-  96: '#22d3ee', // Bright Cyan
-  97: '#ffffff', // Bright White
-  // Standard background colors (40-47)
-  40: '#1a1a1a', // Black
-  41: '#ef4444', // Red
-  42: '#22c55e', // Green
-  43: '#eab308', // Yellow
-  44: '#3b82f6', // Blue
-  45: '#a855f7', // Magenta
-  46: '#06b6d4', // Cyan
-  47: '#e4e4e4', // White
-  // Bright background colors (100-107)
+  // 标准前景色（30-37）
+  30: '#1a1a1a', // 黑色
+  31: '#ef4444', // 红色
+  32: '#22c55e', // 绿色
+  33: '#eab308', // 黄色
+  34: '#3b82f6', // 蓝色
+  35: '#a855f7', // 品红
+  36: '#06b6d4', // 青色
+  37: '#e4e4e4', // 白色
+  // 亮色前景色（90-97）
+  90: '#666666', // 亮黑（灰色）
+  91: '#f87171', // 亮红
+  92: '#4ade80', // 亮绿
+  93: '#facc15', // 亮黄
+  94: '#60a5fa', // 亮蓝
+  95: '#c084fc', // 亮品红
+  96: '#22d3ee', // 亮青
+  97: '#ffffff', // 亮白
+  // 标准背景色（40-47）
+  40: '#1a1a1a', // 黑色
+  41: '#ef4444', // 红色
+  42: '#22c55e', // 绿色
+  43: '#eab308', // 黄色
+  44: '#3b82f6', // 蓝色
+  45: '#a855f7', // 品红
+  46: '#06b6d4', // 青色
+  47: '#e4e4e4', // 白色
+  // 亮色背景色（100-107）
   100: '#666666',
   101: '#f87171',
   102: '#4ade80',
@@ -53,11 +53,11 @@ export interface AnsiSpan {
 }
 
 /**
- * Parse ANSI escape codes and convert to styled spans
+ * 解析 ANSI 转义码并转换为带样式的 span
  */
 export function parseAnsi(input: string): AnsiSpan[] {
   const result: AnsiSpan[] = []
-  // Match ANSI escape sequences: ESC[...m
+  // 匹配 ANSI 转义序列：ESC[...m
   const regex = /\x1b\[([0-9;]*)m/g
   let lastIndex = 0
   let currentFg: string | undefined
@@ -66,7 +66,7 @@ export function parseAnsi(input: string): AnsiSpan[] {
 
   let match
   while ((match = regex.exec(input)) !== null) {
-    // Add text before this escape sequence
+    // 添加该转义序列之前的文本
     if (match.index > lastIndex) {
       const text = input.slice(lastIndex, match.index)
       if (text) {
@@ -74,28 +74,28 @@ export function parseAnsi(input: string): AnsiSpan[] {
       }
     }
 
-    // Parse the SGR codes
+    // 解析 SGR 码
     const codes = (match[1] || '').split(';').map(c => parseInt(c, 10) || 0)
     for (const code of codes) {
       if (code === 0) {
-        // Reset
+        // 重置
         currentFg = undefined
         currentBg = undefined
         currentBold = false
       } else if (code === 1) {
-        // Bold
+        // 加粗
         currentBold = true
       } else if (code === 39) {
-        // Default foreground
+        // 默认前景色
         currentFg = undefined
       } else if (code === 49) {
-        // Default background
+        // 默认背景色
         currentBg = undefined
       } else if ((code >= 30 && code <= 37) || (code >= 90 && code <= 97)) {
-        // Foreground color
+        // 前景色
         currentFg = ANSI_COLORS[code]
       } else if ((code >= 40 && code <= 47) || (code >= 100 && code <= 107)) {
-        // Background color
+        // 背景色
         currentBg = ANSI_COLORS[code]
       }
     }
@@ -103,7 +103,7 @@ export function parseAnsi(input: string): AnsiSpan[] {
     lastIndex = match.index + match[0].length
   }
 
-  // Add remaining text
+  // 添加剩余文本
   if (lastIndex < input.length) {
     const text = input.slice(lastIndex)
     if (text) {
@@ -115,18 +115,18 @@ export function parseAnsi(input: string): AnsiSpan[] {
 }
 
 /**
- * Strip ANSI escape codes from text (for copying)
+ * 从文本中去除 ANSI 转义码（用于复制）
  */
 export function stripAnsi(input: string): string {
   return input.replace(/\x1b\[[0-9;]*m/g, '')
 }
 
 /**
- * Check if output looks like grep content output (with line numbers)
- * Pattern: starts with lines like "123:" (match) or "123-" (context)
+ * 判断输出是否疑似 grep 内容输出（带行号）
+ * 模式：以 "123:"（匹配行）或 "123-"（上下文行）开头的行
  */
 export function isGrepContentOutput(output: string): boolean {
-  const lines = output.split('\n').slice(0, 5) // Check first 5 lines
+  const lines = output.split('\n').slice(0, 5) // 检查前 5 行
   return lines.some(line => /^\d+[:\-]/.test(line))
 }
 
@@ -137,7 +137,7 @@ export interface GrepLine {
 }
 
 /**
- * Parse grep content output into structured lines
+ * 将 grep 内容输出解析为结构化行
  */
 export function parseGrepOutput(output: string): GrepLine[] {
   return output.split('\n').map(line => {

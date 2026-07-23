@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react'
 import { cn } from '../../lib/utils'
 
 /**
- * Simple animated collapsible content wrapper.
+ * 简单的带动画的可折叠内容包裹组件。
  */
 function AnimatedCollapsibleContent({ isOpen, children }: { isOpen: boolean; children: React.ReactNode }) {
   return (
@@ -35,11 +35,11 @@ interface CollapsibleSectionProps {
 /**
  * CollapsibleSection
  *
- * Renders a markdown section with a collapsible heading.
- * - First child is the heading (rendered as trigger)
- * - Remaining children are the content (collapsible)
- * - Chevron appears on hover, rotates when expanded
- * - Only H1-H4 are collapsible; H5-H6 render normally
+ * 渲染一个带可折叠标题的 markdown section。
+ * - 第一个子元素为标题(作为折叠触发器渲染)
+ * - 其余子元素为内容(可折叠)
+ * - 箭头在 hover 时出现,展开时旋转
+ * - 仅 H1-H4 可折叠;H5-H6 正常渲染
  */
 export function CollapsibleSection({
   sectionId,
@@ -48,12 +48,12 @@ export function CollapsibleSection({
   onToggle,
   children,
 }: CollapsibleSectionProps) {
-  // Extract heading (first child) and content (rest)
+  // 提取标题(第一个子元素)和内容(其余部分)
   const childArray = React.Children.toArray(children)
   const heading = childArray[0]
   const content = childArray.slice(1)
 
-  // Only make H1-H4 collapsible
+  // 仅 H1-H4 支持折叠
   if (headingLevel > 4) {
     return <>{children}</>
   }
@@ -63,7 +63,7 @@ export function CollapsibleSection({
 
   return (
     <div className="markdown-collapsible-section" data-section-id={sectionId}>
-      {/* Heading with toggle trigger */}
+      {/* 标题 + 折叠触发器 */}
       <div
         className={cn(
           'relative group',
@@ -71,7 +71,7 @@ export function CollapsibleSection({
         )}
         onClick={() => hasContent && onToggle(sectionId)}
       >
-        {/* Chevron - always visible when collapsed, hover-only when expanded */}
+        {/* 箭头 - 折叠时始终可见,展开时仅在 hover 时可见 */}
         <motion.div
           initial={false}
           animate={{ rotate: isExpanded ? 90 : 0 }}
@@ -86,11 +86,11 @@ export function CollapsibleSection({
           <ChevronRight className="h-3 w-3 text-muted-foreground" />
         </motion.div>
 
-        {/* Heading content */}
+        {/* 标题内容 */}
         {heading}
       </div>
 
-      {/* Collapsible content */}
+      {/* 可折叠内容 */}
       {hasContent && (
         <AnimatedCollapsibleContent isOpen={isExpanded}>
           <div className="collapsible-section-content">

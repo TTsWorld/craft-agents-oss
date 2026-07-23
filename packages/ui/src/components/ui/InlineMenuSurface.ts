@@ -6,13 +6,13 @@ export interface InlineMenuSurfaceOptions<T> {
 }
 
 /**
- * Headless inline menu surface for caret-anchored menus (slash, mention, label, etc.).
+ * 用于光标锚点菜单（斜杠、@提及、标签等）的无头内联菜单面板。
  *
- * Provides:
- * - delegated click selection via data-index
- * - keyboard selection helpers
- * - scroll-follow for selected row
- * - manual positioning
+ * 提供：
+ * - 基于 data-index 的委托式点击选择
+ * - 键盘选择辅助方法
+ * - 选中行的滚动跟随
+ * - 手动定位
  */
 export class InlineMenuSurface<T> {
   readonly element: HTMLElement

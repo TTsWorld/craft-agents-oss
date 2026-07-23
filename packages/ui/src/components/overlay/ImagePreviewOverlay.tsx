@@ -1,5 +1,5 @@
 /**
- * ImagePreviewOverlay - In-app image preview for the link interceptor and markdown blocks.
+ * ImagePreviewOverlay - 用于链接拦截器和 markdown 块的应用内图片预览。
  */
 
 import * as React from 'react'

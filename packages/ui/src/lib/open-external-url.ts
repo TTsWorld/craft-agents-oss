@@ -1,16 +1,14 @@
 /**
- * Browser-side external URL opener for WebUI and Viewer.
+ * 供 WebUI 和 Viewer 使用的浏览器端外部 URL 打开器。
  *
- * `window.open(url, '_blank', 'noopener,noreferrer')` is unreliable for
- * non-http schemes in cross-origin HTTPS contexts: Chrome opens a
- * detached tab that never hits the external-protocol dispatcher, and
- * the URL ends up rewritten relative to the current origin (e.g.
- * `https://<host>/obsidian://foo` → 404).
+ * 在跨源 HTTPS 上下文中，`window.open(url, '_blank', 'noopener,noreferrer')`
+ * 对非 http 协议不可靠：Chrome 会打开一个分离标签页，永远无法触达
+ * 外部协议分发器，且 URL 最终会被改写为相对于当前源的形式
+ * （例如 `https://<host>/obsidian://foo` → 404）。
  *
- * An ordinary anchor click on a real `<a>` in the DOM does go through
- * the link-navigation path, which triggers the OS protocol handler
- * prompt. We keep `window.open` for http/https so the new-tab UX is
- * identical to today.
+ * 而对 DOM 中真实 `<a>` 的普通锚点点击会走链接导航路径，
+ * 从而触发操作系统协议处理器的提示。我们对 http/https 仍保留
+ * `window.open`，以使新标签页的体验与当前保持一致。
  */
 
 import {

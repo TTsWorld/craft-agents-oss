@@ -1,28 +1,25 @@
 /**
- * Renderer — converts SessionManager events into chat messages.
+ * Renderer —— 把 SessionManager 事件转换成聊天消息。
  *
- * Three modes selected per binding via `BindingConfig.responseMode`:
+ * 通过每个 binding 的 `BindingConfig.responseMode` 选择三种模式：
  *
- *   - `streaming` (legacy): on Telegram, posts on first `text_delta` and
- *     edits every ~editIntervalMs as tokens arrive; each `text_complete`
- *     finalises the current message, so one agent run with multiple turns
- *     produces multiple messages. On platforms without editing, accumulates
- *     per turn and sends on each `text_complete`.
+ *   - `streaming`（legacy）：在 Telegram 上，首个 `text_delta` 时发消息，
+ *     之后每 ~editIntervalMs 随 token 到达编辑一次；每次 `text_complete`
+ *     终结当前消息，所以一次有多个 turn 的 agent 运行会产出多条消息。
+ *     在不支持编辑的平台上，按 turn 累积并在每次 `text_complete` 时发送。
  *
- *   - `progress` (default): one evolving message per run. Posts
- *     "💭 thinking…" on first activity, edits to "🔧 <tool>…" on each
- *     `tool_start`, back to "💭 thinking…" on `tool_result`, and replaces
- *     the whole bubble with the final text on `complete`. Intermediate
- *     assistant text (`text_complete` with `isIntermediate`) is dropped.
- *     On adapters without `messageEditing`, degrades to a single
- *     send-on-complete (identical to `final_only`).
+ *   - `progress`（默认）：每次运行一条不断演进的消息。首次活动时发
+ *     「💭 thinking…」，每次 `tool_start` 编辑为「🔧 <tool>…」，
+ *     `tool_result` 时回到「💭 thinking…」，`complete` 时用最终文本替换
+ *     整个气泡。中间态的 assistant 文本（`isIntermediate` 的 `text_complete`）
+ *     被丢弃。在没有 `messageEditing` 的 adapter 上，退化为
+ *     complete 时单次发送（与 `final_only` 相同）。
  *
- *   - `final_only`: silent until `complete`, then sends one message with
- *     the accumulated final text. Nothing is sent for empty completions.
+ *   - `final_only`：直到 `complete` 才发声，然后发送一条带累积最终文本的消息。
+ *     空完成不发任何东西。
  *
- * Permissions and errors are orthogonal: when the session requests a
- * permission or an error fires, the renderer flushes current mode state
- * and emits the prompt/error as a distinct message regardless of mode.
+ * 权限和错误与模式正交：当 session 请求权限或触发错误时，renderer 会
+ * 冲刷当前模式状态，无论处于哪种模式都把提示/错误作为独立消息发出。
  */
 
 import type {
@@ -35,24 +32,23 @@ import type {
 } from './types'
 
 /**
- * Build the per-call options bag from a binding. Currently only `threadId`
- * (Telegram supergroup forum topic) flows through. WhatsApp and DMs leave
- * `threadId` undefined, which the adapters' `threadParams()` helper turns
- * into a no-op spread.
+ * 从 binding 构造每次调用的 options 包。目前只有 `threadId`
+ *（Telegram 超级群论坛话题）会透传。WhatsApp 和 DM 让 `threadId` 保持 undefined，
+ * adapter 的 `threadParams()` helper 会把它变成一个 no-op 展开。
  */
 function bindingOpts(binding: ChannelBinding): SendOptions {
   return binding.threadId !== undefined ? { threadId: binding.threadId } : {}
 }
 import type { PlanTokenRegistry } from './plan-tokens'
 
-/** Session event shape (subset of the full SessionEvent from server-core). */
+/** Session 事件形状（server-core 完整 SessionEvent 的子集）。 */
 export interface SessionEvent {
   type: string
   sessionId: string
   [key: string]: unknown
 }
 
-/** PermissionRequest shape from @craft-agent/core. */
+/** 来自 @craft-agent/core 的 PermissionRequest 形状。 */
 interface PermissionRequest {
   requestId: string
   toolName: string
@@ -62,34 +58,33 @@ interface PermissionRequest {
 }
 
 interface RenderState {
-  // --- streaming mode ---------------------------------------------------
-  /** Accumulated text for the current response (streaming mode). */
+  // --- streaming 模式 ---------------------------------------------------
+  /** 当前响应累积的文本（streaming 模式）。 */
   textBuffer: string
-  /** Whether the agent is currently processing. */
+  /** agent 是否正在处理。 */
   processing: boolean
-  /** Streaming: the message ID being edited (Telegram only). */
+  /** streaming：正在编辑的消息 id（仅 Telegram）。 */
   streamingMessageId: string | null
-  /** Streaming: timer for next edit. */
+  /** streaming：下次编辑的定时器。 */
   editTimer: ReturnType<typeof setTimeout> | null
-  /** Streaming: length of text at last edit (to detect new content). */
+  /** streaming：上次编辑时的文本长度（用于检测新内容）。 */
   lastEditedLength: number
-  /** Current effective edit interval (may increase on 429). */
+  /** 当前生效的编辑间隔（遇到 429 时会增大）。 */
   currentEditIntervalMs: number
 
-  // --- progress / final_only modes -------------------------------------
-  /** Progress/final_only: non-intermediate assistant text accumulated this run. */
+  // --- progress / final_only 模式 -------------------------------------
+  /** progress/final_only：本次运行累积的非中间态 assistant 文本。 */
   finalBuffer: string
   /**
-   * Progress/final_only: the most recent non-empty assistant text seen this
-   * run, regardless of `isIntermediate`. Used as a fallback on `complete`
-   * when the run never produced a clean non-intermediate final turn (common
-   * for automations whose last action is a tool call) so we still deliver
-   * the agent's message instead of stranding the user on "thinking…".
+   * progress/final_only：本次运行见到的最近一条非空 assistant 文本，
+   * 不论 `isIntermediate`。用作 `complete` 时的兜底 —— 当本次运行从未产出
+   * 干净的非中间态最终 turn（常见于最后动作是工具调用的 automation），
+   * 我们仍要交付 agent 的消息，而不是把用户晾在「thinking…」上。
    */
   lastAssistantText: string
-  /** Progress: id of the single evolving message for this run (null before first activity). */
+  /** progress：本次运行那条不断演进消息的 id（首次活动前为 null）。 */
   progressMessageId: string | null
-  /** Progress: last status label written to the bubble, to avoid redundant edits. */
+  /** progress：上次写入气泡的状态标签，避免冗余编辑。 */
   progressStatus: string | null
 }
 
@@ -99,17 +94,15 @@ const BACKOFF_RESET_MS = 30_000
 const THINKING_LABEL = '💭 thinking…'
 
 /**
- * Max characters rendered inline with the buttons before we spill the full
- * plan into an attached file. Telegram's hard cap is 4096 — leaving margin
- * for the header, buttons, and formatting.
+ * 与按钮一起内联渲染的最大字符数，超过就把完整计划溢出到附件文件。
+ * Telegram 硬上限是 4096 —— 为头部、按钮和格式留出余量。
  */
 const PLAN_INLINE_LIMIT = 3500
 
 /**
- * Hook the renderer calls when it wants to remember a plan message id.
- * Passes the full `ChannelBinding` so callers can attribute the message
- * to the exact chat that rendered it — not just the session, which may
- * have multiple Telegram bindings.
+ * renderer 想记住 plan 消息 id 时调用的 hook。
+ * 传入完整的 `ChannelBinding`，让调用方能把消息归因到渲染它的确切聊天 ——
+ * 而不只是 session（一个 session 可能有多个 Telegram binding）。
  */
 export type PlanMessageRecorder = (
   binding: ChannelBinding,
@@ -118,11 +111,10 @@ export type PlanMessageRecorder = (
 ) => void
 
 /**
- * Hook the renderer calls when a permission prompt with inline buttons has
- * just been posted. Mirrors {@link PlanMessageRecorder}; the gateway uses
- * this to track live prompts so it can (a) idempotently claim the prompt on
- * tap, and (b) clear the inline keyboard when the agent moves on (resolved
- * from any channel — desktop, MCP, etc.).
+ * renderer 在发出一个带内联按钮的权限提示后调用的 hook。
+ * 与 {@link PlanMessageRecorder} 对称；gateway 用它跟踪存活中的提示，
+ * 以便 (a) 在点击时幂等地认领提示，(b) 当 agent 已越过该权限
+ *（无论从哪个渠道解决 —— desktop、MCP 等）时清掉 inline keyboard。
  */
 export type PermissionMessageRecorder = (
   binding: ChannelBinding,
@@ -131,7 +123,7 @@ export type PermissionMessageRecorder = (
 ) => void
 
 export class Renderer {
-  /** Per-binding render state. Keyed by binding.id */
+  /** 每个 binding 的 render 状态。以 binding.id 为键。 */
   private states = new Map<string, RenderState>()
   private readonly planTokens: PlanTokenRegistry | undefined
   private readonly recordPlanMessage: PlanMessageRecorder | undefined
@@ -167,14 +159,13 @@ export class Renderer {
     return state
   }
 
-  /** Handle an outbound session event for a specific binding. */
+  /** 处理某个 binding 的出站 session 事件。 */
   async handle(
     event: SessionEvent,
     binding: ChannelBinding,
     adapter: PlatformAdapter,
   ): Promise<void> {
-    // Permission / error prompts are mode-agnostic — handle first so they
-    // can't be swallowed by mode state.
+    // 权限/错误提示与模式无关 —— 先处理，避免被模式状态吞掉。
     if (event.type === 'permission_request') {
       await this.handlePermissionRequest(event, binding, adapter, this.getState(binding.id))
       return
@@ -204,7 +195,7 @@ export class Renderer {
   }
 
   // ---------------------------------------------------------------------------
-  // Mode: streaming (legacy behaviour — unchanged)
+  // 模式：streaming（legacy 行为 —— 保持不变）
   // ---------------------------------------------------------------------------
 
   private async handleStreaming(
@@ -293,11 +284,11 @@ export class Renderer {
         state.lastEditedLength = state.textBuffer.length
         this.scheduleEdit(state, binding, adapter)
       } catch {
-        // If posting fails, accumulate and try on complete
+        // 发送失败就继续累积，等 complete 再试
       }
       return
     }
-    // Subsequent chunks: edit timer handles batched updates
+    // 后续片段：由编辑定时器处理批量更新
   }
 
   private scheduleEdit(
@@ -326,7 +317,7 @@ export class Renderer {
   }
 
   // ---------------------------------------------------------------------------
-  // Mode: progress (new default — single evolving message per run)
+  // 模式：progress（新默认 —— 每次运行一条不断演进的消息）
   // ---------------------------------------------------------------------------
 
   private async handleProgress(
@@ -338,7 +329,7 @@ export class Renderer {
 
     switch (event.type) {
       case 'text_delta':
-        // Tokens are not shown in progress mode — we wait for text_complete.
+        // progress 模式下不展示 token —— 我们等 text_complete。
         return
 
       case 'text_complete': {
@@ -346,15 +337,15 @@ export class Renderer {
         const text = typeof event.text === 'string' ? event.text : ''
         if (text.trim()) {
           if (!isIntermediate) {
-            // Last assistant text of the run — keep it for the final edit.
+            // 本次运行最后一条 assistant 文本 —— 留给最终编辑用。
             state.finalBuffer = appendFinal(state.finalBuffer, text)
           }
-          // Always remember the latest assistant text so `complete` can fall
-          // back to it if the run never produces a non-intermediate final.
+          // 始终记住最新的 assistant 文本，这样 `complete` 在本次运行
+          // 从未产出非中间态最终 turn 时可以回退到它。
           state.lastAssistantText = text
         }
-        // Intermediate text is dropped from the bubble. Make sure it exists and shows
-        // thinking status so the user knows the run is alive.
+        // 中间态文本从气泡里丢弃。确保气泡存在并显示 thinking 状态，
+        // 让用户知道本次运行还活着。
         await this.ensureProgressBubble(state, binding, adapter, THINKING_LABEL)
         return
       }
@@ -370,8 +361,8 @@ export class Renderer {
       }
 
       case 'tool_result': {
-        // Tool finished — revert the indicator to thinking until the next
-        // tool_start or text_complete. Skip if we haven't posted yet (unlikely).
+        // 工具结束 —— 把指示器恢复为 thinking，直到下一个 tool_start
+        // 或 text_complete。还没发过气泡就跳过（不太可能）。
         if (state.progressMessageId) {
           await this.ensureProgressBubble(state, binding, adapter, THINKING_LABEL)
         }
@@ -379,9 +370,8 @@ export class Renderer {
       }
 
       case 'complete': {
-        // Prefer the clean non-intermediate final; fall back to the last
-        // assistant text so a tool-terminated run still delivers a message
-        // instead of freezing the bubble on "thinking…".
+        // 优先用干净的非中间态最终文本；否则回退到最后一条 assistant 文本，
+        // 这样以工具调用收尾的运行仍能交付消息，而不是把气泡冻在「thinking…」上。
         const finalText = (state.finalBuffer.trim() || state.lastAssistantText.trim())
         if (state.progressMessageId && adapter.capabilities.messageEditing) {
           if (finalText) {
@@ -393,11 +383,11 @@ export class Renderer {
               state,
             )
           }
-          // If the run produced no assistant text at all, leave the last
-          // status in place rather than editing to an empty string — avoids
-          // Telegram "message is not modified" errors and keeps a trace.
+          // 如果本次运行一条 assistant 文本都没产出，就保留最后的状态，
+          // 而不是编辑成空字符串 —— 避免 Telegram「message is not modified」
+          // 错误，也留下痕迹。
         } else if (finalText) {
-          // Adapter can't edit (WhatsApp) — send one message at the end.
+          // adapter 不能编辑（WhatsApp）—— 在结尾发一条消息。
           await this.sendText(adapter, binding, finalText)
         }
         this.resetRun(state)
@@ -407,9 +397,8 @@ export class Renderer {
   }
 
   /**
-   * Post the progress bubble if needed, and edit it to `status` if the
-   * status has changed since the last write. Collapses redundant edits so
-   * we stay under Telegram's per-chat edit budget.
+   * 按需发送 progress 气泡，并在状态自上次写入后变化时编辑为 `status`。
+   * 合并冗余编辑，保持在 Telegram 每聊天编辑预算之内。
    */
   private async ensureProgressBubble(
     state: RenderState,
@@ -423,7 +412,7 @@ export class Renderer {
         state.progressMessageId = sent.messageId
         state.progressStatus = status
       } catch {
-        // If posting fails, we'll try again on the next event.
+        // 发送失败的话，会在下一个事件时再试。
       }
       return
     }
@@ -434,7 +423,7 @@ export class Renderer {
   }
 
   // ---------------------------------------------------------------------------
-  // Mode: final_only (silent → single send on complete)
+  // 模式：final_only（静默 → complete 时单次发送）
   // ---------------------------------------------------------------------------
 
   private async handleFinalOnly(
@@ -446,25 +435,24 @@ export class Renderer {
 
     switch (event.type) {
       case 'text_complete': {
-        // Only keep non-intermediate text. `isIntermediate` is a hint; when
-        // absent (older events or non-Claude backends), we include the text
-        // because it's the only thing we might ever see.
+        // 只保留非中间态文本。`isIntermediate` 是个提示；缺失时
+        //（旧事件或非 Claude 后端），我们把文本也算进去，
+        // 因为那可能是我们唯一能见到的东西。
         const isIntermediate = Boolean(event.isIntermediate)
         const text = typeof event.text === 'string' ? event.text : ''
         if (text.trim()) {
           if (!isIntermediate) {
             state.finalBuffer = appendFinal(state.finalBuffer, text)
           }
-          // Fallback for runs that never emit a non-intermediate final turn.
+          // 为从未产出非中间态最终 turn 的运行做兜底。
           state.lastAssistantText = text
         }
         return
       }
 
       case 'complete': {
-        // Prefer the clean non-intermediate final; fall back to the last
-        // assistant text so final_only still delivers something rather than
-        // staying silent when the run ends on a tool call.
+        // 优先用干净的非中间态最终文本；否则回退到最后一条 assistant 文本，
+        // 这样 final_only 在运行以工具调用收尾时仍能交付点什么，而不是保持静默。
         const finalText = (state.finalBuffer.trim() || state.lastAssistantText.trim())
         if (finalText) {
           await this.sendText(adapter, binding, finalText)
@@ -473,11 +461,11 @@ export class Renderer {
         return
       }
     }
-    // text_delta, tool_start, tool_result — all deliberately ignored.
+    // text_delta、tool_start、tool_result —— 全部有意忽略。
   }
 
   // ---------------------------------------------------------------------------
-  // Permissions / errors (shared across modes)
+  // 权限 / 错误（各模式共用）
   // ---------------------------------------------------------------------------
 
   private async handlePermissionRequest(
@@ -489,8 +477,8 @@ export class Renderer {
     const request = event.request as PermissionRequest | undefined
     if (!request?.requestId) return
 
-    // Flush any streaming state first so the prompt lands as a distinct
-    // message (progress-mode bubble stays in place as a separate message).
+    // 先冲刷任何 streaming 状态，让提示作为独立消息落地
+    //（progress 模式的气泡作为单独消息保留）。
     if (state.streamingMessageId && state.textBuffer.trim()) {
       this.cancelEditTimer(state)
       await this.tryEditMessage(
@@ -550,7 +538,7 @@ Approve in the desktop app to continue.`,
     binding: ChannelBinding,
     adapter: PlatformAdapter,
   ): Promise<void> {
-    // WhatsApp: no interactive buttons yet — keep the generic pointer.
+    // WhatsApp：还没有交互按钮 —— 保留通用指引。
     if (binding.platform === 'whatsapp') {
       await adapter.sendText(
         binding.channelId,
@@ -560,13 +548,12 @@ Approve in the desktop app to continue.`,
       return
     }
 
-    // Telegram + Lark both support inline buttons through the same
-    // `sendButtons` contract; either gets the rich plan card. Anything else
-    // is treated like WhatsApp above and gated out earlier.
+    // Telegram + Lark 都通过相同的 `sendButtons` 契约支持内联按钮；
+    // 两者都能拿到富计划卡片。其他平台按上面 WhatsApp 的方式处理，更早就被挡住了。
     if (binding.platform !== 'telegram' && binding.platform !== 'lark') return
 
-    // Token registry is optional for backwards compatibility; without it we
-    // degrade to the generic pointer so the bot still sees *something*.
+    // token registry 为向后兼容是可选的；没有它就退化为通用指引，
+    // 这样 bot 至少能看到*点什么*。
     if (!this.planTokens) {
       await adapter.sendText(
         binding.channelId,
@@ -611,7 +598,7 @@ Approve in the desktop app to continue.`,
         )
       }
     } catch (err) {
-      // Fall back to a plain text notice so the user at least knows.
+      // 回退到一条纯文本通知，让用户至少知道有事。
       await adapter.sendText(
         binding.channelId,
         `📝 A plan is ready for review (couldn't render inline: ${
@@ -635,7 +622,7 @@ Approve in the desktop app to continue.`,
   }
 
   // ---------------------------------------------------------------------------
-  // Adapter helpers
+  // adapter 辅助函数
   // ---------------------------------------------------------------------------
 
   private async tryEditMessage(
@@ -648,8 +635,8 @@ Approve in the desktop app to continue.`,
     const truncated = truncateForAdapter(text, adapter)
 
     try {
-      // editMessage on Telegram is keyed by (chat_id, message_id) and ignores
-      // message_thread_id, but we pass it for caller uniformity.
+      // Telegram 的 editMessage 以 (chat_id, message_id) 为键，忽略
+      // message_thread_id，但为调用方统一性我们仍然传它。
       await adapter.editMessage(binding.channelId, messageId, truncated, bindingOpts(binding))
       state.currentEditIntervalMs = DEFAULT_EDIT_INTERVAL_MS
     } catch (err: unknown) {
@@ -662,7 +649,7 @@ Approve in the desktop app to continue.`,
           state.currentEditIntervalMs = DEFAULT_EDIT_INTERVAL_MS
         }, BACKOFF_RESET_MS)
       }
-      // Other errors: silently skip — text_complete / complete will retry.
+      // 其他错误：静默跳过 —— text_complete / complete 会重试。
     }
   }
 
@@ -673,7 +660,7 @@ Approve in the desktop app to continue.`,
     }
   }
 
-  /** Reset per-run state (called on `complete`, `error`, etc.). */
+  /** 重置本次运行的状态（`complete`、`error` 等时调用）。 */
   private resetRun(state: RenderState): void {
     this.cancelEditTimer(state)
     state.textBuffer = ''
@@ -686,7 +673,7 @@ Approve in the desktop app to continue.`,
     state.progressStatus = null
   }
 
-  /** Send text, splitting if it exceeds platform limits. */
+  /** 发送文本，超过平台限制时拆分。 */
   private async sendText(
     adapter: PlatformAdapter,
     binding: ChannelBinding,
@@ -706,7 +693,7 @@ Approve in the desktop app to continue.`,
     return last
   }
 
-  /** Clean up state for a removed binding. */
+  /** 清理已移除 binding 的状态。 */
   removeBinding(bindingId: string): void {
     const state = this.states.get(bindingId)
     if (state) {
@@ -717,7 +704,7 @@ Approve in the desktop app to continue.`,
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助函数
 // ---------------------------------------------------------------------------
 
 function resolveResponseMode(
@@ -725,7 +712,7 @@ function resolveResponseMode(
   streamResponses: boolean | undefined,
 ): ResponseMode {
   if (responseMode) return responseMode
-  // Legacy configs (pre-responseMode field): honour explicit streamResponses.
+  // 旧配置（responseMode 字段出现之前）：遵从显式的 streamResponses。
   return streamResponses === false ? 'final_only' : 'streaming'
 }
 

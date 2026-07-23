@@ -1,7 +1,7 @@
 /**
  * @craft-agent/messaging-gateway
  *
- * Messaging gateway for Craft Agent — Telegram & WhatsApp.
+ * Craft Agent 的消息网关 —— Telegram & WhatsApp。
  */
 
 export { MessagingGateway, type GatewayOptions } from './gateway'

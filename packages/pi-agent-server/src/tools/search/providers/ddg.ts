@@ -1,10 +1,10 @@
 /**
- * DuckDuckGo search provider — universal fallback requiring no API key.
+ * DuckDuckGo 搜索 provider——无需 API key 的通用兜底。
  *
- * Uses three endpoints with cascading fallback:
- *   1. duck-duck-scrape library (JS API)
- *   2. html.duckduckgo.com (HTML endpoint)
- *   3. lite.duckduckgo.com (Lite endpoint)
+ * 使用三个 endpoint 做级联回退：
+ *   1. duck-duck-scrape 库（JS API）
+ *   2. html.duckduckgo.com（HTML endpoint）
+ *   3. lite.duckduckgo.com（Lite endpoint）
  */
 
 import * as DDG from 'duck-duck-scrape';

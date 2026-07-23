@@ -9,26 +9,26 @@ export interface CodeBlockProps {
   language?: string
   className?: string
   /**
-   * Render mode affects code block styling:
-   * - 'terminal': Minimal, keeps control chars visible
-   * - 'minimal': Clean code, basic styling
-   * - 'full': Rich styling with background, copy button, etc.
+   * 渲染模式,影响代码块的样式:
+   * - 'terminal':极简风格,保留控制字符可见
+   * - 'minimal':干净的代码,基础样式
+   * - 'full':富样式,带背景、复制按钮等
    */
   mode?: 'terminal' | 'minimal' | 'full'
   /**
-   * Force a specific theme. If not provided, detects from document.documentElement.classList
+   * 强制指定主题。若未提供,则从 document.documentElement.classList 检测
    */
   forcedTheme?: 'light' | 'dark'
 }
 
-// Languages to pre-load (most common in chat contexts)
+// 预加载的语言(聊天场景中最常见)
 const PRELOADED_LANGUAGES = [
   'javascript', 'typescript', 'python', 'json', 'bash', 'shell',
   'markdown', 'html', 'css', 'sql', 'yaml', 'go', 'rust', 'java',
   'c', 'cpp', 'tsx', 'jsx', 'swift', 'kotlin', 'ruby', 'php'
 ] as const
 
-// Map common aliases to Shiki language names
+// 将常见别名映射到 Shiki 语言名
 const LANGUAGE_ALIASES: Record<string, BundledLanguage> = {
   'js': 'javascript',
   'ts': 'typescript',
@@ -43,7 +43,7 @@ const LANGUAGE_ALIASES: Record<string, BundledLanguage> = {
   'objc': 'objc',
 }
 
-// Simple LRU cache for highlighted code
+// 高亮结果的简易 LRU 缓存
 const highlightCache = new Map<string, string>()
 const CACHE_MAX_SIZE = 200
 
@@ -57,10 +57,10 @@ function isValidLanguage(lang: string): lang is BundledLanguage {
 }
 
 /**
- * CodeBlock - Syntax highlighted code block using Shiki
+ * CodeBlock - 基于 Shiki 的语法高亮代码块
  *
- * Uses VS Code's syntax highlighting engine for accurate highlighting.
- * Lazy-loads highlighting and caches results for performance.
+ * 使用 VS Code 的语法高亮引擎,提供准确的高亮效果。
+ * 懒加载高亮逻辑并缓存结果,以提升性能。
  */
 export function CodeBlock({ code, language = 'text', className, mode = 'full', forcedTheme }: CodeBlockProps) {
   const { t } = useTranslation()
@@ -68,11 +68,11 @@ export function CodeBlock({ code, language = 'text', className, mode = 'full', f
   const [isLoading, setIsLoading] = React.useState(true)
   const [copied, setCopied] = React.useState(false)
 
-  // Get shiki theme from context (set by ShikiThemeProvider in the app).
-  // This correctly handles edge cases like dark-only themes in light system mode.
+  // 从 context 获取 shiki 主题(由应用中的 ShikiThemeProvider 设置)。
+  // 可正确处理诸如"系统浅色模式下使用纯暗色主题"这类边界情况。
   const contextShikiTheme = useShikiTheme()
 
-  // Resolve language alias - keep as string to allow 'text' fallback
+  // 解析语言别名 - 保留为 string 以允许回退到 'text'
   const langLower = language.toLowerCase()
   const resolvedLang: string = LANGUAGE_ALIASES[langLower] || langLower
 
@@ -80,10 +80,10 @@ export function CodeBlock({ code, language = 'text', className, mode = 'full', f
     let cancelled = false
 
     async function highlight() {
-      // Theme priority:
-      // 1. Context theme (from ShikiThemeProvider) - handles supportedModes correctly
-      // 2. forcedTheme prop - explicit override for specific use cases
-      // 3. DOM detection fallback - backwards compatible default
+      // 主题优先级:
+      // 1. Context 主题(来自 ShikiThemeProvider) - 正确处理 supportedModes
+      // 2. forcedTheme prop - 针对特定场景的显式覆盖
+      // 3. DOM 检测回退 - 向后兼容的默认值
       let theme: string
       if (contextShikiTheme) {
         theme = contextShikiTheme
@@ -105,7 +105,7 @@ export function CodeBlock({ code, language = 'text', className, mode = 'full', f
       }
 
       try {
-        // Use valid language or fallback to plaintext
+        // 使用合法语言,否则回退到纯文本
         const lang = isValidLanguage(resolvedLang) ? resolvedLang : 'text'
 
         const html = await codeToHtml(code, {
@@ -113,7 +113,7 @@ export function CodeBlock({ code, language = 'text', className, mode = 'full', f
           theme,
         })
 
-        // Cache the result
+        // 缓存结果
         if (highlightCache.size >= CACHE_MAX_SIZE) {
           const firstKey = highlightCache.keys().next().value
           if (firstKey) highlightCache.delete(firstKey)
@@ -125,7 +125,7 @@ export function CodeBlock({ code, language = 'text', className, mode = 'full', f
           setIsLoading(false)
         }
       } catch (error) {
-        // Fallback to plain text on error
+        // 出错时回退到纯文本
         console.warn(`Shiki highlighting failed for language "${resolvedLang}":`, error)
         if (!cancelled) {
           setHighlighted(null)
@@ -151,7 +151,7 @@ export function CodeBlock({ code, language = 'text', className, mode = 'full', f
     }
   }, [code])
 
-  // Terminal mode: raw monospace with minimal styling
+  // terminal 模式:原始等宽字体,极简样式
   if (mode === 'terminal') {
     return (
       <pre className={cn('font-mono text-sm whitespace-pre-wrap', className)}>
@@ -160,7 +160,7 @@ export function CodeBlock({ code, language = 'text', className, mode = 'full', f
     )
   }
 
-  // Minimal mode: just syntax highlighting, no chrome
+  // minimal 模式:仅语法高亮,无额外装饰
   if (mode === 'minimal') {
     if (isLoading || !highlighted) {
       return (
@@ -178,10 +178,10 @@ export function CodeBlock({ code, language = 'text', className, mode = 'full', f
     )
   }
 
-  // Full mode: rich styling with header and copy button
+  // full 模式:带头部和复制按钮的富样式
   return (
     <div className={cn('relative group rounded-[8px] overflow-hidden border bg-muted/30', className)}>
-      {/* Language label + copy button */}
+      {/* 语言标签 + 复制按钮 */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-muted/50 border-b text-xs">
         <span className="text-muted-foreground font-medium uppercase tracking-wide">
           {resolvedLang !== 'text' ? resolvedLang : 'plain text'}
@@ -203,7 +203,7 @@ export function CodeBlock({ code, language = 'text', className, mode = 'full', f
         </button>
       </div>
 
-      {/* Code content */}
+      {/* 代码内容 */}
       <div className="p-3 overflow-x-auto">
         {isLoading || !highlighted ? (
           <pre className="font-mono text-sm whitespace-pre-wrap break-all">
@@ -221,8 +221,8 @@ export function CodeBlock({ code, language = 'text', className, mode = 'full', f
 }
 
 /**
- * InlineCode - Styled inline code span
- * Features: subtle background (3%), no border, 75% opacity text
+ * InlineCode - 带样式的行内代码片段
+ * 特点:淡淡的背景(3%)、无边框、文字 75% 不透明度
  */
 export function InlineCode({ children, className }: { children: React.ReactNode; className?: string }) {
   return (

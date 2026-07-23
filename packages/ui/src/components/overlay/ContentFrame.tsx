@@ -1,27 +1,25 @@
 /**
- * ContentFrame - Shared terminal-style card frame for all preview overlays
+ * ContentFrame - 所有预览浮层共享的终端风格卡片框架
  *
- * Provides the "app window" look: rounded card with a centered title bar,
- * centered on a bg-foreground-3 background. Supports optional left and right sidebars
- * rendered outside the card (e.g., file navigation in MultiDiffPreviewOverlay).
+ * 提供"应用窗口"外观：圆角卡片带居中标题栏，
+ * 在 bg-foreground-3 背景上居中。支持可选的左右边栏，
+ * 渲染在卡片外部（例如 MultiDiffPreviewOverlay 中的文件导航）。
  *
- * The card is always centered in the viewport. Sidebars are positioned absolutely
- * so they hang off the card edges without shifting its center position.
+ * 卡片始终在视口中居中。边栏使用绝对定位，
+ * 挂在卡片边缘外侧，不影响卡片的居中位置。
  *
- * The card grows to fit its content — no internal scrolling. When the card is taller
- * than the viewport, the parent scroll container (provided by FullscreenOverlayBase or
- * PreviewOverlay's contentArea) scrolls the entire card ("paper scrolling").
- * Uses margin:auto for centering which gracefully handles overflow (unlike items-center
- * which can clip the top of overflowing content).
+ * 卡片会随内容自适应高度——没有内部滚动。当卡片高度超过视口时，
+ * 由父级滚动容器（FullscreenOverlayBase 或 PreviewOverlay 的 contentArea 提供）
+ * 滚动整个卡片（"纸张滚动"）。
+ * 使用 margin:auto 居心，能优雅处理溢出（不像 items-center 会裁剪溢出内容的顶部）。
  *
- * Width modes:
- *   - Default: card fills available width up to maxWidth (numeric, default 850px).
- *   - fitContent: card uses CSS `width: max-content` to grow to its content width.
- *     Useful for overlays with variable-width content (e.g., diff tables). Capped at
- *     100% of the outer container, floored at minWidth. More reliable than JS measurement
- *     because it works with async-rendered content (Shiki syntax highlighting).
+ * 宽度模式：
+ *   - 默认：卡片填充可用宽度，上限为 maxWidth（数值，默认 850px）。
+ *   - fitContent：卡片使用 CSS `width: max-content` 随内容宽度增长。
+ *     适用于可变宽度内容的浮层（如 diff 表格）。上限为外层容器的 100%，
+ *     下限为 minWidth。比 JS 测量更可靠，因为对异步渲染内容（Shiki 语法高亮）同样有效。
  *
- * Layout (flow-based — lives inside the parent's scroll container):
+ * 布局（基于流式布局——位于父级的滚动容器内）：
  *   flex, px-6, min-h-full
  *     └── relative wrapper (max-w constrained, m-auto centered, grows to content)
  *          ├── leftSidebar?  (absolute, right-full — hangs left of card)
@@ -30,30 +28,29 @@
  *          │    └── children (grows naturally)
  *          └── rightSidebar? (absolute, left-full — hangs right of card)
  *
- * Used by: TerminalPreviewOverlay, CodePreviewOverlay, GenericOverlay,
- *          JSONPreviewOverlay, MultiDiffPreviewOverlay
+ * 使用方：TerminalPreviewOverlay, CodePreviewOverlay, GenericOverlay,
+ *         JSONPreviewOverlay, MultiDiffPreviewOverlay
  */
 
 import type { ReactNode } from 'react'
 
 export interface ContentFrameProps {
-  /** Title bar label displayed centered in the title bar */
+  /** 标题栏标签，居中显示在标题栏中 */
   title: string
-  /** Max width of the card (default: 850). Sidebars are outside this constraint.
-   *  Ignored when fitContent is true (card uses max-content width instead). */
+  /** 卡片最大宽度（默认：850）。边栏不受此限制。
+   *  fitContent 为 true 时忽略此项（卡片使用 max-content 宽度）。 */
   maxWidth?: number
-  /** Minimum width of the card. Only used when fitContent is true. */
+  /** 卡片最小宽度。仅在 fitContent 为 true 时生效。 */
   minWidth?: number
-  /** When true, the card uses CSS `width: max-content` to naturally grow to fit
-   *  its content width (e.g., wide diff tables). The card is capped at 100% of
-   *  the viewport (minus padding) and floored at minWidth. This is more reliable
-   *  than JS-based measurement because it works with async-rendered content (Shiki). */
+  /** 为 true 时，卡片使用 CSS `width: max-content` 自然撑开至内容宽度
+   *  （如宽 diff 表格）。卡片上限为视口的 100%（减去内边距），下限为 minWidth。
+   *  比 JS 测量更可靠，因为对异步渲染内容（Shiki）同样有效。 */
   fitContent?: boolean
-  /** Optional content rendered to the left of the card (e.g., sidebar navigation) */
+  /** 渲染在卡片左侧的可选内容（如侧边导航） */
   leftSidebar?: ReactNode
-  /** Optional content rendered to the right of the card */
+  /** 渲染在卡片右侧的可选内容 */
   rightSidebar?: ReactNode
-  /** Content rendered inside the card, below the title bar */
+  /** 渲染在卡片内部、标题栏下方的内容 */
   children: ReactNode
 }
 
@@ -66,44 +63,44 @@ export function ContentFrame({
   rightSidebar,
   children,
 }: ContentFrameProps) {
-  // fitContent mode: card uses CSS max-content width to grow to its content (e.g., wide diffs).
-  // Capped at 100% of the outer container so it never exceeds the viewport.
-  // Fallback mode: card fills available width up to maxWidth (fixed/numeric).
+  // fitContent 模式：卡片使用 CSS max-content 宽度撑开至内容宽度（如宽 diff）。
+  // 上限为外层容器的 100%，确保永不超过视口。
+  // 默认模式：卡片填充可用宽度，上限为 maxWidth（固定/数值）。
   const wrapperStyle = fitContent
     ? { width: 'max-content' as const, maxWidth: '100%', minWidth }
     : { maxWidth }
 
   return (
     <div className="flex px-6">
-      {/* Relative wrapper — horizontally centered via mx-auto. Vertical centering is handled
-          by parent (FullscreenOverlayBase's centering wrapper). Card grows to fit content. */}
+      {/* 相对定位包裹层——通过 mx-auto 水平居中。垂直居中由父级处理
+          （FullscreenOverlayBase 的居中包裹层）。卡片随内容自适应高度。 */}
       <div
         className={`relative mx-auto ${fitContent ? '' : 'w-full'}`}
         style={wrapperStyle}
       >
-        {/* Left sidebar — absolutely positioned to the left of the card */}
+        {/* 左侧边栏——绝对定位在卡片左侧 */}
         {leftSidebar && (
           <div className="absolute right-full top-0 h-full mr-4 overflow-y-auto">
             {leftSidebar}
           </div>
         )}
 
-        {/* Main card — grows to fit content, no internal scrolling */}
+        {/* 主卡片——随内容自适应高度，无内部滚动 */}
         <div className="flex flex-col rounded-2xl overflow-hidden backdrop-blur-sm shadow-strong bg-background min-h-[320px]">
-          {/* Title bar */}
+          {/* 标题栏 */}
           <div className="flex justify-center items-center px-4 py-3 border-b border-foreground/7 select-none shrink-0">
             <div className="text-xs font-semibold tracking-wider text-foreground/30">
               {title}
             </div>
           </div>
 
-          {/* Content area — grows naturally with content, no scroll constraint */}
+          {/* 内容区——随内容自然增长，无滚动约束 */}
           <div>
             {children}
           </div>
         </div>
 
-        {/* Right sidebar — absolutely positioned to the right of the card */}
+        {/* 右侧边栏——绝对定位在卡片右侧 */}
         {rightSidebar && (
           <div className="absolute left-full top-0 h-full ml-4 overflow-y-auto">
             {rightSidebar}

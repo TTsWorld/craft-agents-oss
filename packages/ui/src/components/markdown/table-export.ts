@@ -1,13 +1,13 @@
 /**
- * table-export.ts - Export utilities for datatable/spreadsheet blocks
+ * table-export.ts - 数据表/电子表格块的导出工具
  *
- * Converts column/row data to Markdown, CSV, and XLSX formats.
- * XLSX uses fflate for ZIP compression — no heavyweight spreadsheet library needed.
+ * 将列/行数据转换为 Markdown、CSV 和 XLSX 格式。
+ * XLSX 使用 fflate 进行 ZIP 压缩——无需重量级电子表格库。
  */
 
 import { zipSync } from 'fflate'
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// ── 类型 ────────────────────────────────────────────────────────────────────
 
 export interface ExportColumn {
   key: string
@@ -98,21 +98,21 @@ const WORKBOOK_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>`
 
-// ── XLSX Styles ──────────────────────────────────────────────────────────────
+// ── XLSX 样式 ────────────────────────────────────────────────────────────────
 //
-// cellXfs index map (the `s` attribute on <c> elements):
-//   0 = default
-//   1 = currency    ($#,##0)
-//   2 = percent +   (green 0.0%)
-//   3 = percent -   (red   0.0%)
-//   4 = percent 0   (0.0%)
-//   5 = number      (#,##0)
-//   6 = bold header
-//   7 = boolean yes (green)
-//   8 = boolean no  (muted gray)
-//   9 = badge success (green)
-//  10 = badge error   (red)
-//  11 = badge default (gray)
+// cellXfs 索引映射（<c> 元素的 `s` 属性）：
+//   0 = 默认
+//   1 = 货币       ($#,##0)
+//   2 = 百分比 正   (绿色 0.0%)
+//   3 = 百分比 负   (红色 0.0%)
+//   4 = 百分比 零   (0.0%)
+//   5 = 数字        (#,##0)
+//   6 = 粗体表头
+//   7 = 布尔值 是   (绿色)
+//   8 = 布尔值 否   (灰色)
+//   9 = 徽章 成功   (绿色)
+//  10 = 徽章 错误    (红色)
+//  11 = 徽章 默认    (灰色)
 
 const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
@@ -154,7 +154,7 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   </cellXfs>
 </styleSheet>`
 
-/** Style index constants matching cellXfs order in STYLES */
+/** 与 STYLES 中 cellXfs 顺序匹配的样式索引常量 */
 const S = {
   DEFAULT: 0,
   CURRENCY: 1,
@@ -200,7 +200,7 @@ function buildSheetXml(columns: ExportColumn[], rows: Record<string, unknown>[])
   xml += '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
   xml += '<sheetData>'
 
-  // Header row (bold)
+  // 表头行（粗体）
   xml += '<row r="1">'
   columns.forEach((col, ci) => {
     const ref = `${colIndexToLetter(ci)}1`
@@ -208,7 +208,7 @@ function buildSheetXml(columns: ExportColumn[], rows: Record<string, unknown>[])
   })
   xml += '</row>'
 
-  // Data rows
+  // 数据行
   rows.forEach((row, ri) => {
     const rowNum = ri + 2
     xml += `<row r="${rowNum}">`
@@ -222,7 +222,7 @@ function buildSheetXml(columns: ExportColumn[], rows: Record<string, unknown>[])
       if (typeof val === 'number' && isFinite(val)) {
         xml += `<c r="${ref}"${sAttr} t="n"><v>${val}</v></c>`
       } else if (col.type === 'boolean') {
-        // Write as string "Yes"/"No" with color
+        // 写为带颜色的字符串 "Yes"/"No"
         const label = val ? 'Yes' : 'No'
         xml += `<c r="${ref}"${sAttr} t="inlineStr"><is><t>${label}</t></is></c>`
       } else {

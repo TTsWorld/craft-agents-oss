@@ -1,9 +1,9 @@
 /**
- * GenericOverlay - Fallback overlay for unknown tool content
+ * GenericOverlay - 未知工具内容的兜底浮层
  *
- * Uses PreviewOverlay for presentation and CodeBlock for syntax highlighting.
- * Auto-detects language from content patterns or file path.
- * Supports optional diff mode for side-by-side comparison.
+ * 使用 PreviewOverlay 进行展示，CodeBlock 提供语法高亮。
+ * 根据内容特征或文件路径自动检测语言。
+ * 支持可选的 diff 模式进行并排对比。
  */
 
 import * as React from 'react'
@@ -15,55 +15,55 @@ import { ContentFrame } from './ContentFrame'
 import { CodeBlock } from '../markdown/CodeBlock'
 
 export interface GenericOverlayProps {
-  /** Content to display (used when not in diff mode) */
+  /** 要显示的内容（非 diff 模式时使用） */
   content: string
-  /** Language for syntax highlighting (auto-detected if not provided) */
+  /** 语法高亮使用的语言（未提供时自动检测） */
   language?: string
-  /** Whether the overlay is visible */
+  /** 浮层是否可见 */
   isOpen: boolean
-  /** Callback when the overlay should close */
+  /** 浮层关闭时的回调 */
   onClose: () => void
-  /** Optional title to display in the header */
+  /** 头部显示的可选标题 */
   title?: string
-  /** Theme mode for dark/light styling (defaults to 'light') */
+  /** 暗色/亮色主题模式（默认 'light'） */
   theme?: 'light' | 'dark'
-  /** Enable diff mode for side-by-side comparison */
+  /** 启用 diff 模式进行并排对比 */
   diffMode?: boolean
-  /** Original content (left side) for diff mode */
+  /** diff 模式的原始内容（左侧） */
   originalContent?: string
-  /** Modified content (right side) for diff mode */
+  /** diff 模式的修改内容（右侧） */
   modifiedContent?: string
-  /** Render inline without dialog (for playground) */
+  /** 内联渲染，不使用对话框（用于 playground） */
   embedded?: boolean
-  /** Error message if the tool failed */
+  /** 工具执行失败时的错误信息 */
   error?: string
 }
 
 /**
- * Auto-detect language from content patterns.
- * Checks for JSON, code blocks, then defaults to markdown.
+ * 根据内容特征自动检测语言。
+ * 依次检查 JSON、代码块标记，最后回退到 markdown。
  */
 export function detectLanguage(content: string): string {
   const trimmed = content.trim()
 
-  // Check for JSON - starts with { or [ and looks like valid JSON structure
+  // 检查 JSON——以 { 或 [ 开头，看起来像有效的 JSON 结构
   if ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
       (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
     return 'json'
   }
 
-  // Check for code block markers at the start
+  // 检查开头的代码块标记
   const codeBlockMatch = content.match(/^```(\w+)/)
   if (codeBlockMatch && codeBlockMatch[1]) {
     return codeBlockMatch[1]
   }
 
-  // Default to markdown for GenericOverlay content (commentary, thinking, etc.)
+  // GenericOverlay 内容默认为 markdown（评论、思考过程等）
   return 'markdown'
 }
 
 /**
- * Detect language from file path extension.
+ * 根据文件路径扩展名检测语言。
  */
 export function detectLanguageFromPath(filePath: string): string {
   const ext = filePath.split('.').pop()?.toLowerCase()
@@ -128,10 +128,10 @@ export function GenericOverlay({
   const { t } = useTranslation()
   const resolvedTitle = title ?? t('overlay.preview')
 
-  // Auto-detect language if not provided
+  // 未提供时自动检测语言
   const detectedLanguage = useMemo(() => {
     if (language) return language
-    // Try to detect from title (file path)
+    // 尝试从标题（文件路径）检测
     if (resolvedTitle.includes('/') || resolvedTitle.includes('.')) {
       const pathLang = detectLanguageFromPath(resolvedTitle)
       if (pathLang !== 'text') return pathLang
@@ -157,7 +157,7 @@ export function GenericOverlay({
       <ContentFrame title={t('overlay.preview')}>
         <div className="flex-1 overflow-y-auto min-h-0">
           {diffMode ? (
-            // Side-by-side diff view
+            // 并排 diff 视图
             <div className="flex gap-4 h-full p-4">
               <div className="flex-1 flex flex-col min-w-0">
                 <div className="text-xs text-muted-foreground mb-2 font-medium">Original</div>
@@ -173,7 +173,7 @@ export function GenericOverlay({
               </div>
             </div>
           ) : (
-            // Single content view
+            // 单内容视图
             <div className="p-4">
               <CodeBlock code={content} language={detectedLanguage} mode="minimal" forcedTheme={theme} />
             </div>

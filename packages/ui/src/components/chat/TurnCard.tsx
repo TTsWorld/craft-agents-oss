@@ -91,51 +91,50 @@ import {
 } from '../ui/StyledDropdown'
 
 // ============================================================================
-// Utilities
+// 工具函数
 // ============================================================================
 
 /**
- * Simple markdown stripping for preview text.
- * Removes markdown syntax to show plain text preview.
- * Code block content is preserved as plain text.
+ * 把 Markdown 文本剥离成纯文本预览。
+ * 去掉 Markdown 语法，但保留代码块中的内容。
  */
 function stripMarkdown(text: string): string {
   return text
-    // Extract content from fenced code blocks (remove ``` and optional language)
+    // 提取围栏代码块内容（去掉 ``` 和可选语言标识）
     .replace(/```(?:\w+)?\n?([\s\S]*?)```/g, '$1')
-    // Extract content from inline code
+    // 提取行内代码内容
     .replace(/`([^`]+)`/g, '$1')
-    // Remove headers
+    // 去掉标题
     .replace(/^#{1,6}\s+/gm, '')
-    // Remove bold/italic
+    // 去掉粗体/斜体
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/\*([^*]+)\*/g, '$1')
     .replace(/__([^_]+)__/g, '$1')
     .replace(/_([^_]+)_/g, '$1')
-    // Remove links
+    // 去掉链接，只保留文本
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    // Remove images
+    // 去掉图片
     .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-    // Remove blockquotes
+    // 去掉引用
     .replace(/^>\s+/gm, '')
-    // Remove horizontal rules
+    // 去掉水平分隔线
     .replace(/^---+$/gm, '')
-    // Collapse whitespace
+    // 合并空白
     .replace(/\s+/g, ' ')
     .trim()
 }
 
 /**
- * Compute diff stats for Edit/Write tool inputs.
- * Uses @pierre/diffs for accurate line-by-line diff calculation.
+ * 计算 Edit/Write 工具的 diff 统计。
+ * 使用 @pierre/diffs 做逐行 diff 计算。
  *
- * Supports both:
- * - Claude Code format: { file_path, old_string, new_string }
- * - Codex format: { changes: Array<{ path, kind, diff }> }
+ * 支持两种格式：
+ * - Claude Code 格式：{ file_path, old_string, new_string }
+ * - Codex 格式：{ changes: Array<{ path, kind, diff }> }
  *
- * @param toolName - 'Edit' or 'Write'
- * @param toolInput - The tool input containing old_string/new_string (Edit) or content (Write)
- * @returns { additions, deletions } or null if not applicable
+ * @param toolName - 'Edit' 或 'Write'
+ * @param toolInput - 包含 old_string/new_string（Edit）或 content（Write）的工具输入
+ * @returns { additions, deletions } 或 null（不适用时）
  */
 function computeEditWriteDiffStats(
   toolName: string | undefined,
@@ -144,7 +143,7 @@ function computeEditWriteDiffStats(
   if (!toolInput) return null
 
   if (toolName === 'Edit') {
-    // Check for Codex format: { changes: Array<{ path, kind, diff }> }
+    // 检查 Codex 格式：{ changes: Array<{ path, kind, diff }> }
     if (toolInput.changes && Array.isArray(toolInput.changes)) {
       let totalAdditions = 0
       let totalDeletions = 0
@@ -161,7 +160,7 @@ function computeEditWriteDiffStats(
       return { additions: totalAdditions, deletions: totalDeletions }
     }
 
-    // Claude Code format: { file_path, old_string, new_string }
+    // Claude Code 格式：{ file_path, old_string, new_string }
     const oldString = (toolInput.old_string as string) ?? ''
     const newString = (toolInput.new_string as string) ?? ''
     if (!oldString && !newString) return null
@@ -176,7 +175,7 @@ function computeEditWriteDiffStats(
     const content = (toolInput.content as string) ?? ''
     if (!content) return null
 
-    // For Write, everything is an addition (new file content)
+    // Write 工具：所有内容都是新增（新文件内容）
     const oldFile: FileContents = { name: 'file', contents: '', lang: 'text' }
     const newFile: FileContents = { name: 'file', contents: content, lang: 'text' }
     const fileDiff = parseDiffFromFile(oldFile, newFile)
@@ -187,33 +186,33 @@ function computeEditWriteDiffStats(
 }
 
 // ============================================================================
-// Size Configuration
+// 尺寸配置
 // ============================================================================
 
 /**
- * Global size configuration for TurnCard components.
- * Adjust these values to scale the entire component uniformly.
+ * TurnCard 组件的全局尺寸配置。
+ * 调整这些值可统一缩放整个组件。
  */
-/** Shared size configuration for activity UI - exported for reuse in inline execution */
+/** Activity UI 的共享尺寸配置，导出供 InlineExecution 复用 */
 export const SIZE_CONFIG = {
-  /** Base font size class for all text */
+  /** 所有文本的基础字号类名 */
   fontSize: 'text-[13px]',
-  /** Icon size class (width and height) */
+  /** 图标尺寸类名（宽高） */
   iconSize: 'w-3 h-3',
-  /** Spinner text size class */
+  /** Spinner 文本字号类名 */
   spinnerSize: 'text-[10px]',
-  /** Small spinner for header */
+  /** 头部用的小 spinner */
   spinnerSizeSmall: 'text-[8px]',
-  /** Activity row height in pixels (approx for calculation) */
+  /** Activity 行高度（像素，用于计算） */
   activityRowHeight: 24,
-  /** Max visible activities before scrolling (show ~15 items) */
+  /** 滚动前最多可见 activity 数（约 15 个） */
   maxVisibleActivities: 15,
-  /** Number of items before which we apply staggered animation */
+  /** 应用交错动画前的条目数阈值 */
   staggeredAnimationLimit: 10,
 } as const
 
 // ============================================================================
-// Types
+// 类型
 // ============================================================================
 
 export type ActivityStatus = 'pending' | 'running' | 'completed' | 'error' | 'backgrounded'
@@ -221,17 +220,17 @@ export type ActivityType = 'tool' | 'thinking' | 'intermediate' | 'status' | 'pl
 export type AnnotationInteractionMode = 'interactive' | 'tooltip-only'
 
 // ============================================================================
-// Todo Types (for TodoWrite tool visualization)
+// Todo 类型（用于 TodoWrite 工具可视化）
 // ============================================================================
 
 export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'interrupted'
 
 export interface TodoItem {
-  /** Task content/description */
+  /** 任务内容/描述 */
   content: string
-  /** Current status */
+  /** 当前状态 */
   status: TodoStatus
-  /** Present continuous form shown when in_progress (e.g., "Running tests") */
+  /** in_progress 时显示的现在进行时文案（例如"Running tests"） */
   activeForm?: string
 }
 
@@ -240,39 +239,39 @@ export interface ActivityItem {
   type: ActivityType
   status: ActivityStatus
   toolName?: string
-  toolUseId?: string  // For matching parent-child relationships
+  toolUseId?: string  // 用于匹配父子关系
   toolInput?: Record<string, unknown>
   content?: string
   intent?: string
-  /** Optional backing message id (used by plan activities for branching/annotations) */
+  /** 关联的底层消息 ID（plan activity 用于分支/批注） */
   messageId?: string
-  /** Optional persisted annotations (used by plan activities) */
+  /** 持久化批注（plan activity 使用） */
   annotations?: AnnotationV1[]
-  displayName?: string  // LLM-generated human-friendly tool name (for MCP tools)
-  toolDisplayMeta?: ToolDisplayMeta  // Embedded metadata with base64 icon (for viewer compatibility)
+  displayName?: string  // LLM 生成的人类友好工具名（用于 MCP 工具）
+  toolDisplayMeta?: ToolDisplayMeta  // 嵌入的元数据，含 base64 图标（兼容 viewer）
   timestamp: number
   error?: string
-  // Parent-child nesting for Task subagents
-  parentId?: string  // Parent activity's toolUseId
-  depth?: number     // Nesting level (0 = root, 1 = child, etc.)
-  // Status activities (e.g., compacting)
-  statusType?: string  // e.g., 'compacting'
-  // Background task fields
-  taskId?: string         // For background Task tools
-  shellId?: string        // For background Bash shells
-  elapsedSeconds?: number // Live progress updates
-  isBackground?: boolean  // Flag for UI differentiation
+  // Task 子代理的父子嵌套
+  parentId?: string  // 父 activity 的 toolUseId
+  depth?: number     // 嵌套层级（0=根，1=子，依此类推）
+  // 状态类型 activity（例如 compacting）
+  statusType?: string  // 例如 'compacting'
+  // 后台任务字段
+  taskId?: string         // 后台 Task 工具使用
+  shellId?: string        // 后台 Bash shell 使用
+  elapsedSeconds?: number // 实时进度更新
+  isBackground?: boolean  // 用于 UI 区分的标志
 }
 
 export interface ResponseContent {
   text: string
   isStreaming: boolean
   streamStartTime?: number
-  /** Whether this response is a plan (renders with plan variant) */
+  /** 该响应是否为 plan（使用 plan 变体渲染） */
   isPlan?: boolean
-  /** ID of the underlying message (for branching + annotations) */
+  /** 底层消息 ID（用于分支与批注） */
   messageId?: string
-  /** Persisted annotations attached to the response message */
+  /** 附加在响应消息上的持久化批注 */
   annotations?: AnnotationV1[]
 }
 
@@ -290,103 +289,103 @@ export type OpenAnnotationRequest = {
 }
 
 export interface TurnCardProps {
-  /** Session ID for state persistence (optional in shared context) */
+  /** 会话 ID，用于状态持久化（共享上下文中可选） */
   sessionId?: string
-  /** Turn ID for state persistence */
+  /** Turn ID，用于状态持久化 */
   turnId: string
-  /** All activities in this turn (tools, thinking, intermediate text) */
+  /** 该 turn 的所有 activity（工具调用、思考过程、中间文本） */
   activities: ActivityItem[]
-  /** Final response content (may be streaming) */
+  /** 最终响应内容（可能正在流式输出） */
   response?: ResponseContent
-  /** Primary intent/goal for this turn (shown in collapsed preview) */
+  /** 该 turn 的主要意图/目标（折叠预览中展示） */
   intent?: string
-  /** Whether content is still being received */
+  /** 是否仍在接收内容 */
   isStreaming: boolean
-  /** Whether this turn is fully complete */
+  /** 该 turn 是否已完全完成 */
   isComplete: boolean
-  /** Start in expanded state */
+  /** 初始展开状态 */
   defaultExpanded?: boolean
-  /** Controlled expansion state (overrides internal state) */
+  /** 受控展开状态（覆盖内部状态） */
   isExpanded?: boolean
-  /** Callback when expansion state changes */
+  /** 展开状态变化时的回调 */
   onExpandedChange?: (expanded: boolean) => void
-  /** Controlled expansion state for activity groups */
+  /** activity 分组的受控展开状态 */
   expandedActivityGroups?: Set<string>
-  /** Callback when activity group expansion changes */
+  /** activity 分组展开状态变化时的回调 */
   onExpandedActivityGroupsChange?: (groups: Set<string>) => void
-  /** Callback when file path is clicked */
+  /** 点击文件路径时的回调 */
   onOpenFile?: (path: string) => void
-  /** Callback when URL is clicked */
+  /** 点击 URL 时的回调 */
   onOpenUrl?: (url: string) => void
-  /** Callback to open response in Monaco editor */
+  /** 在 Monaco 编辑器中打开响应的回调 */
   onPopOut?: (text: string) => void
-  /** Callback to open turn details in a new window */
+  /** 在新窗口打开 turn 详情的回调 */
   onOpenDetails?: () => void
-  /** Callback to open individual activity details in Monaco */
+  /** 在 Monaco 中打开单个 activity 详情的回调 */
   onOpenActivityDetails?: (activity: ActivityItem) => void
-  /** Callback to open all edits/writes in multi-file diff view */
+  /** 在多文件 diff 视图中打开所有编辑/写入的回调 */
   onOpenMultiFileDiff?: () => void
-  /** Whether this turn has any Edit or Write activities */
+  /** 该 turn 是否包含任何 Edit 或 Write activity */
   hasEditOrWriteActivities?: boolean
-  /** TodoWrite tool state - shown at bottom of turn */
+  /** TodoWrite 工具状态，展示在 turn 底部 */
   todos?: TodoItem[]
-  /** Optional render prop for actions menu (Electron provides dropdown) */
+  /** 可选的操作菜单渲染函数（Electron 提供下拉菜单） */
   renderActionsMenu?: () => React.ReactNode
-  /** Callback when user accepts the plan (plan responses only) */
+  /** 用户接受计划时的回调（仅 plan 响应） */
   onAcceptPlan?: () => void
-  /** Callback when user accepts the plan with compaction (compact conversation first, then execute) */
+  /** 用户"接受并 Compact"时的回调（先 compact 对话再执行） */
   onAcceptPlanWithCompact?: () => void
-  /** Whether this is the last response in the session (shows Accept Plan button only for last response) */
+  /** 是否为会话中最后一条响应（仅最后一条响应展示 Accept Plan 按钮） */
   isLastResponse?: boolean
-  /** Session folder path for stripping from file paths in tool display */
+  /** 会话文件夹路径，用于在工具展示中从文件路径里剔除该前缀 */
   sessionFolderPath?: string
-  /** Display mode: 'detailed' shows all info, 'informative' hides MCP/API names and params */
+  /** 展示模式：'detailed' 展示全部信息，'informative' 隐藏 MCP/API 名称和参数 */
   displayMode?: 'informative' | 'detailed'
-  /** Animate response appearance (for playground demos) */
+  /** 响应出现时是否带动画（用于 playground 演示） */
   animateResponse?: boolean
-  /** Compact-footer layout. Used by EditPopover (popover embedding) and ChatPage in
-   *  auto-compact / WebUI mobile. Hides Copy / Markdown / Branch actions; keeps the
-   *  Accept Plan dropdown when a plan is the last response. */
+  /** compact 页脚布局。用于 EditPopover（内嵌 popover）和自动 compact / WebUI 移动端的
+   *  ChatPage。隐藏 Copy / Markdown / Branch 操作；当 plan 是最后一条响应时保留
+   *  Accept Plan 下拉菜单。 */
   compactMode?: boolean
-  /** Callback to branch the session from a specific message */
+  /** 从指定消息开始分支会话的回调 */
   onBranch?: (messageId: string, options?: { newPanel?: boolean }) => void
-  /** Callback to add an annotation to a response message */
+  /** 为响应消息添加批注的回调 */
   onAddAnnotation?: (messageId: string, annotation: AnnotationV1) => void
-  /** Callback to remove a persisted annotation from a response message */
+  /** 从响应消息移除持久化批注的回调 */
   onRemoveAnnotation?: (messageId: string, annotationId: string) => void
-  /** Callback to update a persisted annotation */
+  /** 更新持久化批注的回调 */
   onUpdateAnnotation?: (messageId: string, annotationId: string, patch: Partial<AnnotationV1>) => void
-  /** Input send key behavior used by follow-up editor */
+  /** follow-up 编辑器使用的发送键行为 */
   sendMessageKey?: 'enter' | 'cmd-enter'
-  /** Callback when follow-up is saved via "Save & Send" action */
+  /** 通过"Save & Send"保存 follow-up 时的回调 */
   onSaveAndSendFollowUp?: (target: { messageId: string; annotationId: string; note: string; selectedText: string }) => void
-  /** Whether there are active pending follow-up annotations in the session */
+  /** 会话中是否存在活跃的 pending follow-up 批注 */
   hasActiveFollowUpAnnotations?: boolean
-  /** External request to open a specific annotation in the follow-up island */
+  /** 在 follow-up island 中打开指定批注的外部请求 */
   openAnnotationRequest?: OpenAnnotationRequest | null
-  /** Annotation interaction mode (viewer uses tooltip-only to suppress the island) */
+  /** 批注交互模式（viewer 使用 tooltip-only 以抑制 island） */
   annotationInteractionMode?: AnnotationInteractionMode
 }
 
 // ============================================================================
-// Buffering Constants & Utilities
+// 缓冲常量与工具函数
 // ============================================================================
 
 /**
- * Aggressive buffering configuration.
- * Waits until content is suspected to be meaningful "commentary" before showing.
+ * 激进的缓冲配置。
+ * 等到内容疑似为有意义的"评论"时才展示。
  */
 const BUFFER_CONFIG = {
-  MIN_WORDS_STANDARD: 40,      // Base threshold for showing content
-  MIN_WORDS_CODE: 15,          // Code blocks show faster
-  MIN_WORDS_LIST: 20,          // Lists show faster
-  MIN_WORDS_QUESTION: 8,       // Questions from AI show faster
-  MIN_WORDS_HEADER: 12,        // Headers indicate structure
-  MIN_BUFFER_MS: 500,          // Always wait at least 500ms
-  MAX_BUFFER_MS: 2500,         // Never buffer longer than 2.5s
-  TIMEOUT_MIN_WORDS: 5,        // Show on timeout if at least this many words
-  HIGH_WORD_COUNT: 60,         // Show regardless of structure at this count
-  CONTENT_THROTTLE_MS: 300,    // Throttle content updates during streaming (perf optimization)
+  MIN_WORDS_STANDARD: 40,      // 展示内容的基础阈值
+  MIN_WORDS_CODE: 15,          // 代码块更快展示
+  MIN_WORDS_LIST: 20,          // 列表更快展示
+  MIN_WORDS_QUESTION: 8,       // AI 提问更快展示
+  MIN_WORDS_HEADER: 12,        // 标题表示结构
+  MIN_BUFFER_MS: 500,          // 至少等待 500ms
+  MAX_BUFFER_MS: 2500,         // 缓冲不超过 2.5s
+  TIMEOUT_MIN_WORDS: 5,        // 超时后至少有这么多词才展示
+  HIGH_WORD_COUNT: 60,         // 达到该词数时无论结构如何都展示
+  CONTENT_THROTTLE_MS: 300,    // 流式输出时内容更新节流（性能优化）
 } as const
 
 type BufferReason =
@@ -401,52 +400,52 @@ type BufferReason =
   | 'high_word_count'
   | 'buffering'
 
-/** Count words in text */
+/** 统计文本中的词数 */
 function countWords(text: string): number {
   return text.trim().split(/\s+/).filter(w => w.length > 0).length
 }
 
-/** Detect code blocks (fenced) */
+/** 检测（围栏）代码块 */
 function hasCodeBlock(text: string): boolean {
   return /```/.test(text)
 }
 
-/** Detect markdown lists (bullet or numbered) */
+/** 检测 markdown 列表（无序或有序） */
 function hasList(text: string): boolean {
   return /^\s*[-*•]\s/m.test(text) || /^\s*\d+\.\s/m.test(text)
 }
 
-/** Detect markdown headers */
+/** 检测 markdown 标题 */
 function hasHeader(text: string): boolean {
   return /^#{1,4}\s/m.test(text)
 }
 
-/** Detect structural content (sentences, paragraphs, etc) */
+/** 检测结构性内容（句子、段落等） */
 function hasStructure(text: string): boolean {
-  // Sentence ending (period, exclamation, question mark, colon)
+  // 句末标点（句号、感叹号、问号、冒号）
   if (/[.!?:]\s*$/.test(text.trimEnd())) return true
-  // Paragraph breaks
+  // 段落换行
   if (/\n\s*\n/.test(text)) return true
-  // Headers anywhere
+  // 任意位置的标题
   if (/\n\s*#{1,4}\s/.test(text)) return true
-  // Code blocks
+  // 代码块
   if (hasCodeBlock(text)) return true
   return false
 }
 
-/** Detect if text ends with a question (AI asking for clarification) */
+/** 检测文本是否以问号结尾（AI 寻求澄清） */
 function isQuestion(text: string): boolean {
   return /\?\s*$/.test(text.trim())
 }
 
 /**
- * Determine if buffered content should be shown.
- * This is the core buffering decision function.
+ * 判断缓冲内容是否应该展示。
+ * 这是核心的缓冲决策函数。
  *
- * @param text - The accumulated response text
- * @param isStreaming - Whether the response is still streaming
- * @param streamStartTime - When streaming started (for timeout calculation)
- * @returns Decision with reason for debugging
+ * @param text - 累积的响应文本
+ * @param isStreaming - 响应是否仍在流式输出
+ * @param streamStartTime - 流式输出开始时间（用于超时计算）
+ * @returns 决策结果及原因（便于调试）
  */
 function shouldShowContent(
   text: string,
@@ -455,51 +454,51 @@ function shouldShowContent(
 ): { shouldShow: boolean; reason: BufferReason; wordCount: number } {
   const wordCount = countWords(text)
 
-  // Always show complete content immediately
+  // 完整内容立即展示
   if (!isStreaming) {
     return { shouldShow: true, reason: 'complete', wordCount }
   }
 
   const elapsed = streamStartTime ? Date.now() - streamStartTime : 0
 
-  // Minimum buffer time - always wait at least 500ms
+  // 最小缓冲时间——至少等待 500ms
   if (elapsed < BUFFER_CONFIG.MIN_BUFFER_MS) {
     return { shouldShow: false, reason: 'min_time', wordCount }
   }
 
-  // Maximum buffer time - force show after 2.5s if we have some content
+  // 最大缓冲时间——2.5s 后若有内容则强制展示
   if (elapsed > BUFFER_CONFIG.MAX_BUFFER_MS && wordCount >= BUFFER_CONFIG.TIMEOUT_MIN_WORDS) {
     return { shouldShow: true, reason: 'timeout', wordCount }
   }
 
-  // High-confidence patterns get expedited treatment
+  // 高置信度模式获得加速处理
 
-  // Code blocks - developers want to see code early
+  // 代码块——开发者希望尽早看到代码
   if (hasCodeBlock(text) && wordCount >= BUFFER_CONFIG.MIN_WORDS_CODE) {
     return { shouldShow: true, reason: 'code_block', wordCount }
   }
 
-  // Headers indicate structured content
+  // 标题表示结构化内容
   if (hasHeader(text) && wordCount >= BUFFER_CONFIG.MIN_WORDS_HEADER) {
     return { shouldShow: true, reason: 'header', wordCount }
   }
 
-  // Lists indicate structured content
+  // 列表表示结构化内容
   if (hasList(text) && wordCount >= BUFFER_CONFIG.MIN_WORDS_LIST) {
     return { shouldShow: true, reason: 'list', wordCount }
   }
 
-  // Questions from AI (clarification) - show quickly
+  // AI 的提问（澄清）——快速展示
   if (isQuestion(text) && wordCount >= BUFFER_CONFIG.MIN_WORDS_QUESTION) {
     return { shouldShow: true, reason: 'question', wordCount }
   }
 
-  // Standard threshold - 40 words with some structure
+  // 标准阈值——40 词且有一定结构
   if (wordCount >= BUFFER_CONFIG.MIN_WORDS_STANDARD && hasStructure(text)) {
     return { shouldShow: true, reason: 'threshold_met', wordCount }
   }
 
-  // High word count - show regardless of structure
+  // 高词数——无论结构如何都展示
   if (wordCount >= BUFFER_CONFIG.HIGH_WORD_COUNT) {
     return { shouldShow: true, reason: 'high_word_count', wordCount }
   }
@@ -508,8 +507,8 @@ function shouldShowContent(
 }
 
 /**
- * Check if a response is currently in buffering state
- * Used by TurnCard to show subtle indicator instead of big card
+ * 检查响应当前是否处于缓冲状态。
+ * TurnCard 用此函数展示轻微提示而非大卡片。
  */
 function isResponseBuffering(response: ResponseContent | undefined): boolean {
   if (!response) return false
@@ -519,14 +518,14 @@ function isResponseBuffering(response: ResponseContent | undefined): boolean {
 }
 
 // ============================================================================
-// Helper Functions
+// 辅助函数
 // ============================================================================
 
-/** Get display name for a tool (strip MCP prefixes, apply friendly names) */
+/** 获取工具的展示名（去掉 MCP 前缀，应用友好名称） */
 function getToolDisplayName(name: string): string {
   const stripped = name.replace(/^mcp__[^_]+__/, '')
 
-  // Friendly display names for specific tools
+  // 特定工具的友好展示名
   const displayNames: Record<string, string> = {
     'TodoWrite': 'Todo List Updated',
     'set_session_labels': 'Set Session Labels',
@@ -539,23 +538,23 @@ function getToolDisplayName(name: string): string {
 }
 
 /**
- * Strip session/workspace folder paths from file paths for cleaner display.
- * Only strips paths that match the current session folder path.
- * Example: /path/to/sessions/260121-foo/plans/file.md → plans/file.md
+ * 从文件路径中剥离会话/工作区文件夹路径，以便更干净地展示。
+ * 仅剥离与当前会话文件夹路径匹配的前缀。
+ * 示例：/path/to/sessions/260121-foo/plans/file.md → plans/file.md
  */
 function stripSessionFolderPath(filePath: string, sessionFolderPath?: string): string {
   if (!sessionFolderPath) return filePath
 
-  // Get workspace path (parent of sessions folder)
+  // 获取工作区路径（sessions 文件夹的父级）
   // sessionFolderPath: /path/workspaces/{uuid}/sessions/{sessionId}
   const workspacePath = normalizePath(sessionFolderPath).replace(/\/sessions\/[^/]+$/, '')
 
-  // Try session folder first (more specific)
+  // 优先尝试会话文件夹（更具体）
   if (pathStartsWith(filePath, sessionFolderPath)) {
     return stripPathPrefix(filePath, sessionFolderPath)
   }
 
-  // Then try workspace folder
+  // 再尝试工作区文件夹
   if (pathStartsWith(filePath, workspacePath)) {
     return stripPathPrefix(filePath, workspacePath)
   }
@@ -563,7 +562,7 @@ function stripSessionFolderPath(filePath: string, sessionFolderPath?: string): s
   return filePath
 }
 
-/** Format tool input as a concise summary - CSS truncate handles overflow */
+/** 将工具输入格式化为简短摘要，溢出由 CSS truncate 处理 */
 function formatToolInput(
   input?: Record<string, unknown>,
   toolName?: string,
@@ -571,16 +570,16 @@ function formatToolInput(
 ): string {
   if (!input || Object.keys(input).length === 0) return ''
 
-  // For call_llm: model shown as badge, prompt duplicates intent
+  // 对于 call_llm：model 以徽章展示，prompt 与 intent 重复
   if (toolName === 'mcp__session__call_llm') return ''
 
   const parts: string[] = []
 
-  // For Edit/Write tools, only show file_path (skip old_string, new_string, replace_all, content)
+  // 对于 Edit/Write 工具，只展示 file_path（跳过 old_string、new_string、replace_all、content）
   const isEditOrWrite = toolName === 'Edit' || toolName === 'Write'
 
-  // Handle Codex format: { changes: Array<{ path, kind, diff }> }
-  // Extract path from first change if present
+  // 处理 Codex 格式：{ changes: Array<{ path, kind, diff }> }
+  // 若存在则从第一个 change 中提取 path
   if (isEditOrWrite && input.changes && Array.isArray(input.changes)) {
     const firstChange = input.changes[0] as { path?: string } | undefined
     if (firstChange?.path) {
@@ -591,63 +590,62 @@ function formatToolInput(
   }
 
   for (const [key, value] of Object.entries(input)) {
-    // Skip meta fields and description (shown separately)
+    // 跳过 meta 字段和 description（单独展示）
     if (key === '_intent' || key === 'description' || value === undefined || value === null) continue
 
-    // For Edit/Write tools, only include file_path
+    // 对于 Edit/Write 工具，只包含 file_path
     if (isEditOrWrite && key !== 'file_path') continue
 
     let valStr = typeof value === 'string'
       ? value.replace(/\s+/g, ' ').trim()
       : JSON.stringify(value)
 
-    // Strip session/workspace paths from file_path for Edit/Write tools
+    // 对 Edit/Write 工具的 file_path 剥离会话/工作区路径前缀
     if (isEditOrWrite && key === 'file_path' && typeof value === 'string') {
       valStr = stripSessionFolderPath(valStr, sessionFolderPath)
     }
 
     parts.push(valStr)
-    if (parts.length >= 2) break // Max 2 values
+    if (parts.length >= 2) break // 最多 2 个值
   }
   return parts.join(' ')
 }
 
 /**
- * Extract the action portion from an LLM-provided displayName by stripping
- * a matching icon/tool prefix.
+ * 从 LLM 提供的 displayName 中提取动作部分，剥离匹配的图标/工具前缀。
  *
- * Examples:
+ * 示例：
  *   extractActionFromDisplayName("Git", "Git Status")  → "Status"
  *   extractActionFromDisplayName("npm", "Install Deps") → "Install Deps"
  *   extractActionFromDisplayName("Git", "Check Branch")  → "Check Branch"
  */
 function extractActionFromDisplayName(iconName: string, llmName: string): string {
-  // If LLM name starts with the icon name, strip the prefix to get the action
-  // "Git Status" with icon "Git" → "Status"
+  // 若 LLM 名称以图标名开头，则剥离前缀得到动作
+  // "Git Status" 配图标 "Git" → "Status"
   if (llmName.toLowerCase().startsWith(iconName.toLowerCase() + ' ')) {
     return llmName.slice(iconName.length + 1).trim()
   }
-  // Otherwise use the full LLM name as the action
-  // "Install Dependencies" with icon "npm" → "Install Dependencies"
+  // 否则使用完整 LLM 名称作为动作
+  // "Install Dependencies" 配图标 "npm" → "Install Dependencies"
   return llmName
 }
 
 /**
- * Format tool display using embedded toolDisplayMeta.
- * toolDisplayMeta is set at storage time in the main process and includes:
- * - displayName: Human-readable name
- * - iconDataUrl: Base64-encoded icon (for skills/sources)
- * - description: Brief description
- * - category: 'skill' | 'source' | 'native' | 'mcp'
+ * 使用嵌入的 toolDisplayMeta 格式化工具展示。
+ * toolDisplayMeta 在主进程存储时写入，包含：
+ * - displayName：人类可读名称
+ * - iconDataUrl：base64 编码的图标（用于 skills/sources）
+ * - description：简短描述
+ * - category：'skill' | 'source' | 'native' | 'mcp'
  */
 function formatToolDisplay(
   activity: ActivityItem
 ): { name: string; icon?: string; description?: string } {
   const { toolName, displayName, toolInput, toolDisplayMeta } = activity
 
-  // Primary: Use embedded toolDisplayMeta (works in both Electron and viewer)
+  // 优先：使用嵌入的 toolDisplayMeta（Electron 和 viewer 都适用）
   if (toolDisplayMeta) {
-    // For MCP tools, append the tool slug to the source name
+    // 对于 MCP 工具，将 tool slug 追加到 source 名称后
     if (toolName?.startsWith('mcp__') && toolDisplayMeta.category === 'source') {
       const parts = toolName.match(/^mcp__([^_]+)__(.+)$/)
       if (parts) {
@@ -660,11 +658,11 @@ function formatToolDisplay(
       }
     }
 
-    // For Bash commands with LLM-provided displayName: merge icon name + action
-    // e.g., icon "Git" + LLM "Git Status" → "Git: Status"
-    // e.g., icon "npm" + LLM "Install Dependencies" → "npm: Install Dependencies"
-    // Special case: for generic "Terminal", show only the action
-    // e.g., icon "Terminal" + LLM "Install Dependencies" → "Install Dependencies"
+    // 对于带 LLM displayName 的 Bash 命令：合并图标名 + 动作
+    // 例如 图标 "Git" + LLM "Git Status" → "Git: Status"
+    // 例如 图标 "npm" + LLM "Install Dependencies" → "npm: Install Dependencies"
+    // 特例：对于通用 "Terminal"，只展示动作
+    // 例如 图标 "Terminal" + LLM "Install Dependencies" → "Install Dependencies"
     if (toolName === 'Bash' && displayName) {
       const iconName = toolDisplayMeta.displayName
       const action = extractActionFromDisplayName(iconName, displayName)
@@ -675,8 +673,8 @@ function formatToolDisplay(
       }
     }
 
-    // For native tools with LLM-provided displayName: use the LLM's name
-    // This gives semantic names like "Read Config" instead of generic "Read"
+    // 对于带 LLM displayName 的原生工具：使用 LLM 的名称
+    // 这样能得到语义化名称，例如 "Read Config" 而非通用 "Read"
     if (displayName && toolDisplayMeta.category === 'native') {
       return {
         name: displayName,
@@ -692,21 +690,21 @@ function formatToolDisplay(
     }
   }
 
-  // Fallback for Skill tool without toolDisplayMeta (legacy sessions)
+  // 没有 toolDisplayMeta 的 Skill 工具的兜底（旧会话）
   if (toolName === 'Skill' && toolInput?.skill) {
     const skillId = String(toolInput.skill)
-    // Extract slug from qualified name (workspaceId:slug) for display
+    // 从限定名（workspaceId:slug）中提取 slug 用于展示
     const colonIdx = skillId.indexOf(':')
     const slug = colonIdx > 0 ? skillId.slice(colonIdx + 1) : skillId
     return { name: slug }
   }
 
-  // Final fallback: Use LLM-generated displayName or tool name
+  // 最终兜底：使用 LLM 生成的 displayName 或工具名
   const name = displayName || (toolName ? getToolDisplayName(toolName) : i18n.t('turnCard.processing'))
   return { name }
 }
 
-/** Get the primary preview text for collapsed state */
+/** 获取折叠状态下使用的主要预览文本 */
 function getPreviewText(
   activities: ActivityItem[],
   intent?: string,
@@ -714,24 +712,24 @@ function getPreviewText(
   hasResponse?: boolean,
   isComplete?: boolean
 ): string {
-  // If we have an explicit intent, use it
+  // 若有显式 intent，直接使用
   if (intent) return intent
 
-  // Find the most relevant activity intent
+  // 查找最相关的 activity intent
   const activityWithIntent = activities.find(a => a.intent)
   if (activityWithIntent?.intent) return activityWithIntent.intent
 
-  // Check if we're in responding state
+  // 检查是否处于响应状态
   if (isStreaming && hasResponse) return i18n.t('turnCard.responding')
 
-  // Find running Task tools and show their description
+  // 查找运行中的 Task 工具并展示其描述
   const runningTask = activities.find(a => isParentTaskTool(a.toolName ?? '') && a.status === 'running')
   if (runningTask?.toolInput?.description) {
     return runningTask.toolInput.description as string
   }
 
-  // While still streaming, show the latest intermediate message content
-  // This gives visibility into what the LLM is "thinking"
+  // 仍在流式输出时，展示最新的中间消息内容
+  // 这让用户能看到 LLM 正在"思考"什么
   if (isStreaming && !isComplete) {
     const latestIntermediate = [...activities]
       .reverse()
@@ -741,19 +739,19 @@ function getPreviewText(
     }
   }
 
-  // Get running and completed tools (not intermediate messages)
+  // 获取运行中和已完成的工具（不含中间消息）
   const runningTools = activities.filter(a => a.status === 'running' && a.toolName)
   const errorCount = activities.filter(a => a.status === 'error').length
 
-  // Show running tool names
+  // 展示运行中的工具名
   if (runningTools.length > 0) {
     const toolNames = runningTools
       .map(a => getToolDisplayName(a.toolName!))
-      .slice(0, 3) // Max 3 names
+      .slice(0, 3) // 最多 3 个
     return `${toolNames.join(', ')}...`
   }
 
-  // When complete, show first Task's description if available
+  // 完成时，若可用则展示第一个 Task 的描述
   const firstTask = activities.find(a => isParentTaskTool(a.toolName ?? ''))
   if (firstTask?.toolInput?.description) {
     const errorSuffix = errorCount > 0
@@ -762,7 +760,7 @@ function getPreviewText(
     return `${firstTask.toolInput.description as string}${errorSuffix}`
   }
 
-  // When complete, show summary (badge already shows count)
+  // 完成时，展示摘要（徽章已展示数量）
   if (isComplete || (!isStreaming && activities.length > 0)) {
     const errorSuffix = errorCount > 0
       ? i18n.t('turnCard.errorCount', { count: errorCount })
@@ -775,13 +773,13 @@ function getPreviewText(
 
 
 // ============================================================================
-// Sub-Components
+// 子组件
 // ============================================================================
 
 /**
- * Status icon for an activity - exported for reuse in inline execution.
- * Supports custom icons from skill/source metadata when completed.
- * Edit/Write tools show tool-specific icons; others show checkmark or custom icon.
+ * activity 的状态图标——导出供 InlineExecution 复用。
+ * 完成时支持来自 skill/source 元数据的自定义图标。
+ * Edit/Write 工具展示工具专属图标；其余展示勾选或自定义图标。
  */
 export function ActivityStatusIcon({
   status,
@@ -790,15 +788,15 @@ export function ActivityStatusIcon({
 }: {
   status: ActivityStatus
   toolName?: string
-  /** Custom icon from tool metadata - emoji or data URL (base64) */
+  /** 来自工具元数据的自定义图标——emoji 或 data URL（base64） */
   customIcon?: string
 }) {
-  // Render the appropriate icon based on status
+  // 根据状态渲染对应图标
   const renderIcon = () => {
-    // For completed status with custom icon, use it instead of checkmark
+    // 完成状态且有自定义图标时，用它替代勾选
     if (status === 'completed' && customIcon) {
-      // Check if it's an emoji (short string, not a URL or data URL)
-      // Emojis can be 1-4+ characters due to ZWJ sequences
+      // 检查是否为 emoji（短字符串，非 URL 或 data URL）
+      // emoji 因 ZWJ 序列可能有 1-4 个以上字符
       const isLikelyEmoji = customIcon.length <= 8 && !/^(https?:\/\/|data:)/.test(customIcon)
       if (isLikelyEmoji) {
         return (
@@ -807,7 +805,7 @@ export function ActivityStatusIcon({
           </span>
         )
       }
-      // Otherwise it's a data URL (base64) or HTTP URL
+      // 否则是 data URL（base64）或 HTTP URL
       return (
         <img
           src={customIcon}
@@ -817,7 +815,7 @@ export function ActivityStatusIcon({
       )
     }
 
-    // Default icon logic
+    // 默认图标逻辑
     switch (status) {
       case 'pending':
         return <Circle className={cn(SIZE_CONFIG.iconSize, "shrink-0 text-muted-foreground/50")} />
@@ -834,7 +832,7 @@ export function ActivityStatusIcon({
           </div>
         )
       case 'completed':
-        // Edit and Write tools get their own icons with accent color instead of green checkmark
+        // Edit 和 Write 工具使用各自带 accent 色的图标，而非绿色勾选
         if (toolName === 'Edit') {
           return <Pencil className={cn(SIZE_CONFIG.iconSize, "shrink-0 text-accent")} />
         }
@@ -847,7 +845,7 @@ export function ActivityStatusIcon({
     }
   }
 
-  // Wrap in AnimatePresence for crossfade between states
+  // 用 AnimatePresence 包裹实现状态间淡入淡出
   return (
     <AnimatePresence mode="wait" initial={false}>
       <motion.div
@@ -866,25 +864,24 @@ export function ActivityStatusIcon({
 
 interface ActivityRowProps {
   activity: ActivityItem
-  /** Callback to open activity details in Monaco */
+  /** 在 Monaco 中打开 activity 详情的回调 */
   onOpenDetails?: () => void
-  /** Whether this is the last child at its depth level (for └ corner in tree view) */
+  /** 是否为其深度层级的最后一个子项（用于树状视图中的 └ 拐角） */
   isLastChild?: boolean
-  /** Session folder path for stripping from file paths in tool display */
+  /** 会话文件夹路径，用于在工具展示中从文件路径里剔除该前缀 */
   sessionFolderPath?: string
-  /** Display mode: 'detailed' shows all info, 'informative' hides MCP/API names and params */
+  /** 展示模式：'detailed' 展示全部信息，'informative' 隐藏 MCP/API 名称和参数 */
   displayMode?: 'informative' | 'detailed'
 }
 
 /**
- * TreeViewConnector is no longer used - the vertical line from the expanded section
- * already provides visual hierarchy. Keeping this as a no-op for now in case
- * we need depth indentation in the future.
+ * TreeViewConnector 已不再使用——展开区域的竖线已提供视觉层级。
+ * 暂时保留为 no-op，以备将来可能需要按深度缩进。
  */
 function TreeViewConnector({ depth }: { depth: number; isLastChild?: boolean }) {
   if (depth === 0) return null
 
-  // Just add indentation based on depth, no connectors
+  // 仅按深度添加缩进，不画连接线
   return (
     <div className="flex self-stretch">
       {Array.from({ length: depth }).map((_, i) => (
@@ -894,12 +891,12 @@ function TreeViewConnector({ depth }: { depth: number; isLastChild?: boolean }) 
   )
 }
 
-/** Single activity row in expanded view */
+/** 展开视图中的单个 activity 行 */
 function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, displayMode = 'detailed' }: ActivityRowProps) {
   const depth = activity.depth || 0
 
-  // Intermediate messages (LLM commentary) - render with dashed circle icon
-  // Show "Thinking" while streaming, stripped markdown content when complete
+  // 中间消息（LLM 评论）——使用虚线圆圈图标渲染
+  // 流式输出时展示 "Thinking"，完成时展示剥离 markdown 后的内容
   if (activity.type === 'intermediate') {
     const isThinking = activity.status === 'running'
     const displayContent = isThinking ? 'Thinking...' : stripMarkdown(activity.content || '')
@@ -922,7 +919,7 @@ function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, 
             <MessageCircleDashed className={cn(SIZE_CONFIG.iconSize, "shrink-0")} />
           )}
           <span className={cn("truncate flex-1", onOpenDetails && isComplete && "group-hover/row:underline")}>{displayContent}</span>
-          {/* Open details button */}
+          {/* 打开详情按钮 */}
           {onOpenDetails && isComplete && (
             <div
               role="button"
@@ -950,7 +947,7 @@ function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, 
     )
   }
 
-  // Status activities (e.g., compacting) - system-level with distinct styling
+  // 状态 activity（例如 compacting）——系统级，使用独特样式
   if (activity.type === 'status') {
     const isRunning = activity.status === 'running'
     return (
@@ -975,20 +972,20 @@ function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, 
     )
   }
 
-  // Tool activities - show with status icon
-  // Format: "[DisplayName] · [Intent/Description] [Params]"
-  // - DisplayName: From toolDisplayMeta (embedded in message) or LLM-generated or fallback
-  // - Intent: For MCP tools (activity.intent), for Bash (toolInput.description)
-  // - Params: Remaining tool input summary
+  // 工具 activity——展示状态图标
+  // 格式："[展示名] · [Intent/Description] [参数]"
+  // - 展示名：来自 toolDisplayMeta（嵌入消息中）、LLM 生成或兜底
+  // - Intent：MCP 工具用 activity.intent，Bash 用 toolInput.description
+  // - 参数：剩余工具输入摘要
   const toolDisplay = formatToolDisplay(activity)
   const fullDisplayName = toolDisplay.name
     || (activity.type === 'thinking' ? 'Thinking' : 'Processing')
 
-  // Detect MCP/API tools (toolName starts with "mcp__")
+  // 检测 MCP/API 工具（toolName 以 "mcp__" 开头）
   const isMcpOrApiTool = activity.toolName?.startsWith('mcp__') ?? false
 
-  // For MCP/API tools, extract source name and tool slug
-  // e.g., "ClickUp: clickup_search" -> sourceName="ClickUp", toolSlug="clickup_search"
+  // 对于 MCP/API 工具，提取 source 名称和 tool slug
+  // 例如 "ClickUp: clickup_search" -> sourceName="ClickUp", toolSlug="clickup_search"
   let sourceName = fullDisplayName
   let toolSlug: string | undefined = undefined
   if (isMcpOrApiTool) {
@@ -999,17 +996,17 @@ function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, 
     }
   }
 
-  // For non-MCP tools or informative mode, use the appropriate display name
+  // 对于非 MCP 工具或 informative 模式，使用对应的展示名
   const displayedName: string = isMcpOrApiTool ? sourceName : fullDisplayName
 
-  // Intent for MCP tools, description for Bash commands
+  // MCP 工具用 intent，Bash 命令用 description
   const intentOrDescription = activity.intent || (activity.toolInput?.description as string | undefined)
   const inputSummary = formatToolInput(activity.toolInput, activity.toolName, sessionFolderPath)
   const diffStats = computeEditWriteDiffStats(activity.toolName, activity.toolInput)
   const isComplete = activity.status === 'completed' || activity.status === 'error'
   const isBackgrounded = activity.status === 'backgrounded'
 
-  // For backgrounded tasks, show task/shell ID and elapsed time
+  // 后台任务展示 task/shell ID 和已用时间
   const backgroundInfo = isBackgrounded
     ? activity.taskId
       ? `Task ID: ${activity.taskId}${activity.elapsedSeconds ? `, ${formatDuration(activity.elapsedSeconds * 1000)} elapsed` : ''}`
@@ -1029,11 +1026,11 @@ function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, 
         onClick={onOpenDetails && isComplete ? onOpenDetails : undefined}
       >
         <ActivityStatusIcon status={activity.status} toolName={activity.toolName} customIcon={toolDisplay.icon} />
-        {/* MCP/API tools: Source name (shrink-0) then error badge (if any) then compound label (flex-1) */}
+        {/* MCP/API 工具：Source 名称（shrink-0）→ 错误徽章（若有）→ 复合标签（flex-1） */}
         {isMcpOrApiTool && !isBackgrounded && (
           <>
             <span className="shrink-0">{sourceName}</span>
-            {/* Error badge for MCP/API tools */}
+            {/* MCP/API 工具的错误徽章 */}
             {activity.status === 'error' && activity.error && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -1049,7 +1046,7 @@ function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, 
                 </TooltipContent>
               </Tooltip>
             )}
-            {/* Model badge for LLM Query */}
+            {/* LLM Query 的 model 徽章 */}
             {activity.toolName === 'mcp__session__call_llm' && activity.toolInput?.model && (
               <span className="px-1.5 py-0.5 bg-background shadow-minimal rounded-[4px] text-[10px] text-foreground/60 shrink-0">
                 {String(activity.toolInput.model)}
@@ -1079,11 +1076,11 @@ function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, 
             )}
           </>
         )}
-        {/* Native tools: Tool name (shrink-0) */}
+        {/* 原生工具：工具名（shrink-0） */}
         {!isMcpOrApiTool && (
           <span className={cn("shrink-0", onOpenDetails && isComplete && "group-hover/row:underline")}>{displayedName}</span>
         )}
-        {/* Diff stats and filename badges - after tool name */}
+        {/* diff 统计和文件名徽章——位于工具名之后 */}
         {!isMcpOrApiTool && !isBackgrounded && diffStats && (
           <span className="flex items-center gap-1.5 text-[10px] shrink-0">
             {diffStats.deletions > 0 && (
@@ -1098,9 +1095,9 @@ function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, 
                 style={{ '--shadow-color': 'var(--success-rgb)' } as React.CSSProperties}
               >{diffStats.additions}</span>
             )}
-            {/* Filename badge - supports both Claude Code and Codex formats */}
+            {/* 文件名徽章——兼容 Claude Code 和 Codex 两种格式 */}
             {(() => {
-              // Claude Code format: file_path
+              // Claude Code 格式：file_path
               if (typeof activity.toolInput?.file_path === 'string') {
                 return (
                   <span className="px-1.5 py-0.5 bg-background shadow-minimal rounded-[4px] text-[11px] text-foreground/70">
@@ -1108,7 +1105,7 @@ function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, 
                   </span>
                 )
               }
-              // Codex format: changes[0].path
+              // Codex 格式：changes[0].path
               if (Array.isArray(activity.toolInput?.changes)) {
                 const firstChange = activity.toolInput.changes[0] as { path?: string } | undefined
                 if (firstChange?.path) {
@@ -1123,7 +1120,7 @@ function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, 
             })()}
           </span>
         )}
-        {/* Filename badge for Read tool (no diff stats) */}
+        {/* Read 工具的文件名徽章（无 diff 统计） */}
         {!isMcpOrApiTool && !isBackgrounded && !diffStats && activity.toolName === 'Read' && typeof activity.toolInput?.file_path === 'string' && (
           <span className="flex items-center gap-1.5 text-[10px] shrink-0">
             <span className="px-1.5 py-0.5 bg-background shadow-minimal rounded-[4px] text-[11px] text-foreground/70">
@@ -1131,7 +1128,7 @@ function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, 
             </span>
           </span>
         )}
-        {/* Error badge for native tools */}
+        {/* 原生工具的错误徽章 */}
         {!isMcpOrApiTool && activity.status === 'error' && activity.error && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -1147,8 +1144,8 @@ function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, 
             </TooltipContent>
           </Tooltip>
         )}
-        {/* Native tools: Compound label with description + params (flex-1) */}
-        {/* In informative mode, hide inputSummary (command details) - only show description */}
+        {/* 原生工具：带 description + params 的复合标签（flex-1） */}
+        {/* informative 模式下隐藏 inputSummary（命令详情），只展示 description */}
         {!isMcpOrApiTool && !isBackgrounded && (intentOrDescription || (displayMode === 'detailed' && inputSummary)) && (
           <span className={cn("truncate flex-1 min-w-0", onOpenDetails && isComplete && "group-hover/row:underline")}>
             {intentOrDescription && (
@@ -1165,15 +1162,15 @@ function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, 
             )}
           </span>
         )}
-        {/* Background task info (task/shell ID + elapsed time) */}
+        {/* 后台任务信息（task/shell ID + 已用时间） */}
         {backgroundInfo && (
           <>
             <span className="opacity-60 shrink-0">·</span>
             <span className="truncate min-w-0 max-w-[300px] text-accent">{backgroundInfo}</span>
           </>
         )}
-        {/* No spacer needed - both MCP/API and native tools now have flex-1 on their compound spans */}
-        {/* Open details button */}
+        {/* 无需 spacer——MCP/API 和原生工具的复合 span 都已有 flex-1 */}
+        {/* 打开详情按钮 */}
         {onOpenDetails && isComplete && (
           <div
             role="button"
@@ -1202,31 +1199,31 @@ function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, 
 }
 
 // ============================================================================
-// Activity Group Component (for Task subagents)
+// Activity Group 组件（用于 Task 子代理）
 // ============================================================================
 
 interface ActivityGroupRowProps {
   group: ActivityGroup
-  /** Controlled expansion state for activity groups */
+  /** activity 分组的受控展开状态 */
   expandedGroups?: Set<string>
-  /** Callback when expansion changes */
+  /** 展开状态变化时的回调 */
   onExpandedGroupsChange?: (groups: Set<string>) => void
-  /** Callback to open activity details in Monaco */
+  /** 在 Monaco 中打开 activity 详情的回调 */
   onOpenActivityDetails?: (activity: ActivityItem) => void
-  /** Animation index for staggered animation */
+  /** 交错动画的索引 */
   animationIndex?: number
-  /** Session folder path for stripping from file paths in tool display */
+  /** 会话文件夹路径，用于在工具展示中从文件路径里剔除该前缀 */
   sessionFolderPath?: string
-  /** Display mode: 'detailed' shows all info, 'informative' hides MCP/API names and params */
+  /** 展示模式：'detailed' 展示全部信息，'informative' 隐藏 MCP/API 名称和参数 */
   displayMode?: 'informative' | 'detailed'
 }
 
 /**
- * Renders a Task subagent with its child activities grouped together.
- * Provides visual containment and collapsible children.
+ * 渲染一个 Task 子代理及其子 activity 分组。
+ * 提供视觉上的包含关系和可折叠子项。
  */
 function ActivityGroupRow({ group, expandedGroups: externalExpandedGroups, onExpandedGroupsChange, onOpenActivityDetails, animationIndex = 0, sessionFolderPath, displayMode = 'detailed' }: ActivityGroupRowProps) {
-  // Use local state if no controlled state provided
+  // 若未提供受控状态则使用本地状态
   const [localExpandedGroups, setLocalExpandedGroups] = useState<Set<string>>(new Set())
   const expandedGroups = externalExpandedGroups ?? localExpandedGroups
   const setExpandedGroups = onExpandedGroupsChange ?? setLocalExpandedGroups
@@ -1256,7 +1253,7 @@ function ActivityGroupRow({ group, expandedGroups: externalExpandedGroups, onExp
       transition={{ delay: animationIndex < SIZE_CONFIG.staggeredAnimationLimit ? animationIndex * 0.03 : 0.3 }}
       className="space-y-0.5"
     >
-      {/* Task header row - no left padding, chevron aligned with activity row icons */}
+      {/* Task 头部行——无左内边距，chevron 与 activity 行图标对齐 */}
       <div
         className={cn(
           "group/row flex items-center gap-2 py-0.5 rounded-md cursor-pointer text-muted-foreground",
@@ -1265,7 +1262,7 @@ function ActivityGroupRow({ group, expandedGroups: externalExpandedGroups, onExp
         )}
         onClick={toggleExpanded}
       >
-        {/* Chevron for expand/collapse - aligned with activity row icons */}
+        {/* 展开/折叠 chevron——与 activity 行图标对齐 */}
         <motion.div
           initial={false}
           animate={{ rotate: isExpanded ? 90 : 0 }}
@@ -1275,15 +1272,15 @@ function ActivityGroupRow({ group, expandedGroups: externalExpandedGroups, onExp
           <ChevronRight className={SIZE_CONFIG.iconSize} />
         </motion.div>
 
-        {/* Status icon - aligned with tool call icons */}
+        {/* 状态图标——与工具调用图标对齐 */}
         <ActivityStatusIcon status={group.parent.status} toolName={group.parent.toolName} />
 
-        {/* Subagent type badge */}
+        {/* 子代理类型徽章 */}
         <span className="shrink-0 px-1.5 py-0.5 rounded-[4px] bg-background shadow-minimal text-[10px] font-medium">
           {subagentType || 'Task'}
         </span>
 
-        {/* Task description or fallback */}
+        {/* Task 描述或兜底文案 */}
         <span className={cn(
           "truncate",
           hasError && "text-destructive"
@@ -1291,7 +1288,7 @@ function ActivityGroupRow({ group, expandedGroups: externalExpandedGroups, onExp
           {description || 'Task'}
         </span>
 
-        {/* Duration and token stats from TaskOutput (only when complete) */}
+        {/* 来自 TaskOutput 的耗时和 token 统计（仅完成时展示） */}
         {isComplete && group.taskOutputData && (
           <span className="shrink-0 text-muted-foreground/60 tabular-nums">
             {group.taskOutputData.durationMs !== undefined && (
@@ -1309,10 +1306,10 @@ function ActivityGroupRow({ group, expandedGroups: externalExpandedGroups, onExp
           </span>
         )}
 
-        {/* Spacer to push details button to right */}
+        {/* spacer，将详情按钮推到右侧 */}
         <span className="flex-1" />
 
-        {/* Open details button for the Task itself */}
+        {/* Task 本身的打开详情按钮 */}
         {onOpenActivityDetails && isComplete && (
           <div
             role="button"
@@ -1337,7 +1334,7 @@ function ActivityGroupRow({ group, expandedGroups: externalExpandedGroups, onExp
         )}
       </div>
 
-      {/* Children with indentation */}
+      {/* 带缩进的子项 */}
       <AnimatePresence initial={false}>
         {isExpanded && group.children.length > 0 && (
           <motion.div
@@ -1377,58 +1374,58 @@ function ActivityGroupRow({ group, expandedGroups: externalExpandedGroups, onExp
 }
 
 // ============================================================================
-// Streaming Response Preview Component
+// 流式响应预览组件
 // ============================================================================
 
 export interface ResponseCardProps {
-  /** The content to display (markdown) */
+  /** 要展示的内容（markdown） */
   text: string
-  /** Whether the content is still streaming */
+  /** 内容是否仍在流式输出 */
   isStreaming: boolean
-  /** When streaming started - used for buffering timeout calculation */
+  /** 流式输出开始时间——用于缓冲超时计算 */
   streamStartTime?: number
-  /** Callback to open file in editor */
+  /** 在编辑器中打开文件的回调 */
   onOpenFile?: (path: string) => void
-  /** Callback to open URL */
+  /** 打开 URL 的回调 */
   onOpenUrl?: (url: string) => void
-  /** Callback to open response in Monaco editor */
+  /** 在 Monaco 编辑器中打开响应的回调 */
   onPopOut?: () => void
-  /** Card variant - 'response' for AI messages, 'plan' for plan messages */
+  /** 卡片变体——'response' 用于 AI 消息，'plan' 用于 plan 消息 */
   variant?: 'response' | 'plan'
-  /** Parent session ID (used to reset local annotation/island UI state on session switches) */
+  /** 父会话 ID（用于会话切换时重置本地批注/island UI 状态） */
   sessionId?: string
-  /** Underlying message ID for annotation actions */
+  /** 批注操作使用的底层消息 ID */
   messageId?: string
-  /** Persisted annotations for this response */
+  /** 该响应的持久化批注 */
   annotations?: AnnotationV1[]
-  /** Callback when user accepts the plan (plan variant only) */
+  /** 用户接受计划时的回调（仅 plan 变体） */
   onAccept?: () => void
-  /** Callback when user accepts the plan with compaction (compact first, then execute) */
+  /** 用户"接受并 Compact"时的回调（先 compact 再执行） */
   onAcceptWithCompact?: () => void
-  /** Whether this is the last response in the session (shows Accept Plan button only for last response) */
+  /** 是否为会话中最后一条响应（仅最后一条响应展示 Accept Plan 按钮） */
   isLastResponse?: boolean
-  /** Whether to show the Accept Plan button (default: true) */
+  /** 是否展示 Accept Plan 按钮（默认 true） */
   showAcceptPlan?: boolean
-  /** Compact-footer layout. Hides Copy / Markdown / Branch in the response footer;
-   *  keeps the Accept Plan dropdown when a plan is the last response. */
+  /** compact 页脚布局。隐藏响应页脚中的 Copy / Markdown / Branch；
+   *  当 plan 是最后一条响应时保留 Accept Plan 下拉菜单。 */
   compactMode?: boolean
-  /** Callback to branch the session from this response */
+  /** 从该响应分支会话的回调 */
   onBranch?: (options?: { newPanel?: boolean }) => void
-  /** Callback to add annotation from selected text */
+  /** 从选中文本添加批注的回调 */
   onAddAnnotation?: (messageId: string, annotation: AnnotationV1) => void
-  /** Callback to remove persisted annotation */
+  /** 移除持久化批注的回调 */
   onRemoveAnnotation?: (messageId: string, annotationId: string) => void
-  /** Callback to update persisted annotation */
+  /** 更新持久化批注的回调 */
   onUpdateAnnotation?: (messageId: string, annotationId: string, patch: Partial<AnnotationV1>) => void
-  /** Input send key behavior used by follow-up editor */
+  /** follow-up 编辑器使用的发送键行为 */
   sendMessageKey?: 'enter' | 'cmd-enter'
-  /** Callback when follow-up is saved via "Save & Send" action */
+  /** 通过"Save & Send"保存 follow-up 时的回调 */
   onSaveAndSendFollowUp?: (target: { messageId: string; annotationId: string; note: string; selectedText: string }) => void
-  /** Whether there are active pending follow-up annotations in the session */
+  /** 会话中是否存在活跃的 pending follow-up 批注 */
   hasActiveFollowUpAnnotations?: boolean
-  /** External request to open a specific annotation in this response */
+  /** 在该响应中打开指定批注的外部请求 */
   openAnnotationRequest?: OpenAnnotationRequest | null
-  /** Annotation interaction mode (viewer uses tooltip-only to suppress the island) */
+  /** 批注交互模式（viewer 使用 tooltip-only 以抑制 island） */
   annotationInteractionMode?: AnnotationInteractionMode
 }
 
@@ -1529,8 +1526,8 @@ function applyTextHighlightRange(
 ): void {
   if (range.end <= range.start) return
 
-  // Avoid visually highlighting trailing/leading hard newlines.
-  // Those can produce extra apparent blank lines at line boundaries.
+  // 避免对行首/行尾的硬换行做视觉高亮。
+  // 这些换行可能产生额外的视觉空行。
   const fullText = getCanonicalText(root)
   let displayStart = range.start
   let displayEnd = range.end
@@ -1570,7 +1567,7 @@ function applyTextHighlightRange(
     mark.appendChild(selected)
     createdMarks.push(mark)
 
-    // Keep reference alive for TS and clarity
+    // 保留引用，供 TS 检查与清晰性
     void after
   }
 
@@ -1602,8 +1599,8 @@ function applyTextHighlightRange(
   }
 
   if (annotationIndex != null && createdMarks.length > 0) {
-    // Prefer placing the index badge on non-code marks, then choose the top-right-most
-    // mark on the first visible row for stable placement.
+    // 优先将索引徽章放在非代码 mark 上，然后选择首个可见行上最靠右的 mark
+    // 以获得稳定的放置位置。
     const nonCodeMarks = createdMarks.filter(mark => !mark.closest('code'))
     const badgePool = nonCodeMarks.length > 0 ? nonCodeMarks : createdMarks
 
@@ -1630,20 +1627,19 @@ function applyTextHighlightRange(
 }
 
 /**
- * ResponseCard - Unified card component for AI responses and plans
+ * ResponseCard - AI 响应和 plan 的统一卡片组件
  *
- * Variants:
- * - 'response': Buffered streaming response with smart content gating
- * - 'plan': Plan message with header and Accept Plan button
+ * 变体：
+ * - 'response'：带智能内容门控的缓冲流式响应
+ * - 'plan'：带头部和 Accept Plan 按钮的 plan 消息
  *
- * Response variant implements smart buffering:
- * - Waits for 40+ words with structure OR
- * - High-confidence patterns (code blocks, headers, lists) with lower threshold OR
- * - Timeout after 2.5 seconds
+ * response 变体实现智能缓冲：
+ * - 等待 40+ 词且有结构，或
+ * - 高置信度模式（代码块、标题、列表）以更低阈值，或
+ * - 2.5 秒后超时
  *
- * Performance optimization: Uses throttled static snapshots instead of re-rendering
- * on every character. Content updates every 300ms during streaming, avoiding
- * expensive markdown parsing on every delta.
+ * 性能优化：使用节流的静态快照而非每个字符都重渲染。
+ * 流式输出时内容每 300ms 更新一次，避免对每个 delta 做昂贵的 markdown 解析。
  */
 export function ResponseCard({
   text,
@@ -1672,16 +1668,16 @@ export function ResponseCard({
   annotationInteractionMode = 'interactive',
 }: ResponseCardProps) {
   const { t } = useTranslation()
-  // Throttled content for display - updates every CONTENT_THROTTLE_MS during streaming
+  // 节流后的展示内容——流式输出时每 CONTENT_THROTTLE_MS 更新一次
   const [displayedText, setDisplayedText] = useState(text)
   const lastUpdateRef = useRef(Date.now())
-  // Copy to clipboard state
+  // 复制到剪贴板状态
   const [copied, setCopied] = useState(false)
-  // Fullscreen state
+  // 全屏状态
   const [isFullscreen, setIsFullscreen] = useState(false)
-  // Dark mode detection - scroll fade only shown in dark mode
+  // 暗色模式检测——滚动渐变仅在暗色模式下展示
   const [isDarkMode, setIsDarkMode] = useState(false)
-  // Pending text selection waiting for explicit follow-up action
+  // 等待显式 follow-up 操作的 pending 文本选区
   const interaction = useAnnotationInteractionController()
   const {
     state: interactionState,
@@ -1721,14 +1717,14 @@ export function ResponseCard({
   })
   const allowAnnotationIsland = annotationInteractionMode === 'interactive'
 
-  // Detect dark mode from document class and listen for changes
+  // 从 document class 检测暗色模式并监听变化
   useEffect(() => {
     const checkDarkMode = () => {
       setIsDarkMode(document.documentElement.classList.contains('dark'))
     }
     checkDarkMode()
 
-    // Observe class changes on documentElement for theme switches
+    // 监听 documentElement 的 class 变化以响应主题切换
     const observer = new MutationObserver(checkDarkMode)
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
     return () => observer.disconnect()
@@ -1833,7 +1829,7 @@ export function ResponseCard({
       return { rects: geometry.rects, chips: geometry.chips }
     }
 
-    // Full recompute: rewrites block-marker DOM. Used for content/annotation changes.
+    // 完整重算：重写 block-marker DOM。用于内容/批注变化。
     const recomputeOverlay = () => {
       clearAnnotationMarks(root)
       clearBlockAnnotationMarkers(root)
@@ -1850,7 +1846,7 @@ export function ResponseCard({
       setAnnotationOverlay(next)
     }
 
-    // Fast path: coordinates only, no DOM mutation. Used by scroll/resize.
+    // 快速路径：仅更新坐标，不修改 DOM。用于 scroll/resize。
     const recomputeOverlayCoords = () => {
       if (!renderedAnnotations.length) return
       setAnnotationOverlay(computeGeometry())
@@ -1867,9 +1863,9 @@ export function ResponseCard({
 
     recomputeOverlay()
     window.addEventListener('resize', scheduleCoordsRecompute)
-    // Capture-phase: scroll events don't bubble, but capture-phase listeners on
-    // ancestors fire for descendant scrolls — so this catches the overflow-auto
-    // viewport inside MarkdownDocBlock (and any future nested scroll surface).
+    // capture 阶段：scroll 事件不冒泡，但 capture 阶段的监听器在祖先节点上
+    // 会对后代滚动触发——因此这能捕获 MarkdownDocBlock 内部的 overflow-auto
+    // 视口（以及将来任何嵌套的滚动面）。
     root.addEventListener('scroll', scheduleCoordsRecompute, { capture: true, passive: true })
     return () => {
       if (rafId != null) cancelAnimationFrame(rafId)
@@ -1885,8 +1881,8 @@ export function ResponseCard({
   }, [canAnnotate, closeSelectionMenu])
 
   useEffect(() => {
-    // Session switches should fully reset local island UI state to avoid stale
-    // "hot" instances suppressing entry animations in the newly focused session.
+    // 会话切换时应完全重置本地 island UI 状态，避免旧的"热"实例
+    // 抑制新聚焦会话中的进入动画。
     closeSelectionMenu()
     resetPresentation()
     dragStartPointerRef.current = null
@@ -1908,8 +1904,8 @@ export function ResponseCard({
       }
 
       const selection = window.getSelection()
-      // Keep the island open if selection was programmatically cleared by a render update.
-      // This happens during streaming/DOM reconciliation and should not dismiss follow-up UI.
+      // 如果选区是渲染更新过程中被程序清空的，保持 island 打开。
+      // 这发生在流式输出/DOM 协调期间，不应导致 follow-up UI 被关闭。
       if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
         return
       }
@@ -1920,7 +1916,7 @@ export function ResponseCard({
         ? common as Element
         : common.parentElement
 
-      // Selecting text inside the island (e.g. follow-up textarea) should not close it.
+      // 在 island 内部选中文本（例如 follow-up textarea）不应关闭它。
       if (commonElement && isTargetInsideAnnotationIsland(commonElement)) {
         return
       }
@@ -1939,8 +1935,8 @@ export function ResponseCard({
   const handleOpenFollowUpView = useCallback(() => {
     if (!pendingSelection) return
 
-    // Native browser selection steals typing focus from the follow-up textarea.
-    // Keep semantic selection in pendingSelection and clear only the DOM selection.
+    // 浏览器原生选区会抢占 follow-up textarea 的输入焦点。
+    // 在 pendingSelection 中保留语义选区，仅清除 DOM 选区。
     clearDomSelection()
     openFollowUpFromSelection()
   }, [pendingSelection, openFollowUpFromSelection])
@@ -2168,8 +2164,8 @@ export function ResponseCard({
       const prefix = fullText.slice(Math.max(0, start - ANNOTATION_PREFIX_SUFFIX_WINDOW), start)
       const suffix = fullText.slice(end, end + ANNOTATION_PREFIX_SUFFIX_WINDOW)
 
-      // Prefer fragmented client rects over union bounds for wrapped selections.
-      // The union rect often produces an x-axis anchor that feels detached.
+      // 优先使用分散的 client rects 而非 union bounds 来处理换行选区。
+      // union rect 经常产生脱节的 x 轴锚点。
       const rects = Array.from(range.getClientRects()).filter(rect => rect.width > 0 && rect.height > 0)
       const pointer = lastPointerRef.current
       const hasRecentPointer = Boolean(pointer && (Date.now() - pointer.ts) <= SELECTION_POINTER_MAX_AGE_MS)
@@ -2218,8 +2214,8 @@ export function ResponseCard({
       const selectionMinX = Math.min(...clampRects.map(rect => rect.left))
       const selectionMaxX = Math.max(...clampRects.map(rect => rect.right))
 
-      // Prefer mouse-release position, but clamp to the chosen anchor row so
-      // multiline selections stay attached to actual text on that line.
+      // 优先使用鼠标释放位置，但限制在所选锚点行内，
+      // 使多行选区仍附着在该行的实际文本上。
       const anchorX = pointerX != null
         ? clamp(pointerX, selectionMinX, selectionMaxX)
         : (anchorRect.left + (anchorRect.width / 2))
@@ -2252,14 +2248,14 @@ export function ResponseCard({
       return
     }
 
-    // Mouseup location reflects the user's final intent for popup anchoring.
+    // mouseup 位置反映用户对弹出框锚定的最终意图。
     lastPointerRef.current = {
       x: event.clientX,
       y: event.clientY,
       ts: Date.now(),
     }
 
-    // Block annotation gesture: Shift+click on a block wrapper
+    // 块级批注手势：Shift+点击 block wrapper
     if (event.shiftKey) {
       const targetElement = event.target instanceof Element ? event.target : null
       const blockElement = targetElement?.closest<HTMLElement>('[data-ca-block-path]')
@@ -2322,7 +2318,7 @@ export function ResponseCard({
       if (!selectionStartedInContentRef.current) return
       selectionStartedInContentRef.current = false
 
-      // Mouseup location reflects the user's final intent for popup anchoring.
+      // mouseup 位置反映用户对弹出框锚定的最终意图。
       lastPointerRef.current = {
         x: event.clientX,
         y: event.clientY,
@@ -2334,7 +2330,7 @@ export function ResponseCard({
 
       const target = event.target as Node | null
       if (target && root.contains(target)) {
-        // In-bounds mouseup is already handled by onMouseUp on the content container.
+        // 范围内的 mouseup 已由内容容器的 onMouseUp 处理。
         return
       }
 
@@ -2402,11 +2398,11 @@ export function ResponseCard({
     />
   )
 
-  // Throttle content updates during streaming for performance
-  // Updates immediately when streaming ends to show final content
+  // 流式输出时节流内容更新以提升性能
+  // 流式结束时立即更新以展示最终内容
   useEffect(() => {
     if (!isStreaming) {
-      // Streaming ended - show final content immediately
+      // 流式结束——立即展示最终内容
       setDisplayedText(text)
       return
     }
@@ -2415,11 +2411,11 @@ export function ResponseCard({
     const elapsed = now - lastUpdateRef.current
 
     if (elapsed >= BUFFER_CONFIG.CONTENT_THROTTLE_MS) {
-      // Enough time passed - update immediately
+      // 已过足够时间——立即更新
       setDisplayedText(text)
       lastUpdateRef.current = now
     } else {
-      // Schedule update for remaining time
+      // 为剩余时间安排更新
       const timeout = setTimeout(() => {
         setDisplayedText(text)
         lastUpdateRef.current = Date.now()
@@ -2428,7 +2424,7 @@ export function ResponseCard({
     }
   }, [text, isStreaming])
 
-  // Calculate buffering decision based on current text (not displayed text)
+  // 基于当前文本（非展示文本）计算缓冲决策
   const bufferDecision = useMemo(() => {
     return shouldShowContent(text, isStreaming, streamStartTime)
   }, [text, isStreaming, streamStartTime])
@@ -2436,19 +2432,19 @@ export function ResponseCard({
   const isCompleted = !isStreaming
   const isBuffering = isStreaming && !bufferDecision.shouldShow
 
-  // While buffering, return null - TurnCard will show a subtle indicator instead
+  // 缓冲期间返回 null——TurnCard 会展示轻微提示
   if (isBuffering) {
     return null
   }
 
-  // Completed response or plan - show with max height and footer
+  // 已完成的响应或 plan——展示最大高度和页脚
   if (isCompleted || variant === 'plan') {
     const isPlan = variant === 'plan'
 
     return (
       <>
         <div className="bg-background shadow-minimal rounded-[8px] overflow-hidden relative group">
-          {/* Fullscreen button - desktop only; compact mode keeps message chrome minimal */}
+          {/* 全屏按钮——仅桌面端；compact 模式保持消息外壳最小化 */}
           {!compactMode && (
           <button
             onClick={() => setIsFullscreen(true)}
@@ -2465,7 +2461,7 @@ export function ResponseCard({
           </button>
           )}
 
-          {/* Plan header - only shown for plan variant */}
+          {/* plan 头部——仅 plan 变体展示 */}
           {isPlan && (
             <div
               className={cn(
@@ -2478,7 +2474,7 @@ export function ResponseCard({
             </div>
           )}
 
-          {/* Scrollable content area with subtle fade at edges (dark mode only) */}
+          {/* 可滚动内容区，边缘带轻微渐变（仅暗色模式） */}
           <div
             ref={contentRef}
             data-search-root="response"
@@ -2487,7 +2483,7 @@ export function ResponseCard({
             className="pl-[22px] pr-[16px] py-3 text-sm overflow-y-auto scrollbar-hover"
             style={{
               maxHeight: MAX_HEIGHT,
-              // Subtle fade at top and bottom edges (16px) - only in dark mode for better contrast
+              // 顶/底边缘的轻微渐变（16px）——仅暗色模式以获得更好对比度
               ...(isDarkMode && {
                 maskImage: 'linear-gradient(to bottom, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%)',
                 WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%)',
@@ -2506,14 +2502,14 @@ export function ResponseCard({
             </div>
           </div>
 
-          {/* Desktop footer with actions (Copy / Markdown / Accept Plan / Branch).
-              Compact mode falls through to the slim Accept-Plan-only footer below. */}
+          {/* 桌面端页脚，含操作按钮（Copy / Markdown / Accept Plan / Branch）。
+              compact 模式走下方仅 Accept Plan 的精简页脚。 */}
           {!compactMode && (
             <div className={cn(
               "pl-4 pr-2.5 py-2 border-t border-border/30 flex items-center justify-between bg-muted/20",
               SIZE_CONFIG.fontSize
             )}>
-              {/* Left side - Copy, View as Markdown, Annotation hint */}
+              {/* 左侧——Copy、View as Markdown、批注提示 */}
               <div className="flex items-center gap-3">
                 <button
                   onClick={handleCopy}
@@ -2550,9 +2546,9 @@ export function ResponseCard({
                 )}
               </div>
 
-              {/* Right side */}
+              {/* 右侧 */}
               <div className="flex items-center gap-3">
-                {/* Accept Plan dropdown (plan variant only, last response) */}
+                {/* Accept Plan 下拉菜单（仅 plan 变体，最后一条响应） */}
                 {isPlan && showAcceptPlan && onAccept && onAcceptWithCompact && (
                   <div
                     className={cn(
@@ -2575,10 +2571,10 @@ export function ResponseCard({
             </div>
           )}
 
-          {/* Compact footer — Accept Plan only (mobile / auto-compact / popover).
-              Uses a bottom-sheet drawer to match the CompactPermissionModeSelector
-              / CompactModelSelector pattern. Guarded by isLastResponse so older
-              plans don't render an empty strip with a hidden-but-focusable button. */}
+          {/* compact 页脚——仅 Accept Plan（移动端 / 自动 compact / popover）。
+              使用 bottom-sheet drawer 以匹配 CompactPermissionModeSelector
+              / CompactModelSelector 模式。用 isLastResponse 守卫，使旧的
+              plan 不会渲染出带隐藏但可聚焦按钮的空条。 */}
           {compactMode && isPlan && showAcceptPlan && isLastResponse && onAccept && onAcceptWithCompact && (
             <div
               className={cn(
@@ -2596,7 +2592,7 @@ export function ResponseCard({
           )}
         </div>
 
-        {/* Fullscreen overlay for reading/annotating response and plan content. */}
+        {/* 用于阅读/批注响应和 plan 内容的全屏遮罩。 */}
         <DocumentFormattedMarkdownOverlay
           content={text}
           isOpen={isFullscreen}
@@ -2619,12 +2615,12 @@ export function ResponseCard({
     )
   }
 
-  // Streaming response - show throttled content with spinner
+  // 流式响应——展示节流后的内容并带 spinner
   return (
     <>
       <div className="bg-background shadow-minimal rounded-[8px] overflow-hidden group">
-        {/* Content area - uses displayedText (throttled) for performance */}
-        {/* Subtle fade at top and bottom edges (dark mode only) */}
+        {/* 内容区——使用 displayedText（节流后）以提升性能 */}
+        {/* 顶/底边缘的轻微渐变（仅暗色模式） */}
         <div
           ref={contentRef}
           data-search-root="response"
@@ -2633,7 +2629,7 @@ export function ResponseCard({
           className="pl-[22px] pr-4 py-3 text-sm overflow-y-auto scrollbar-hover"
           style={{
             maxHeight: MAX_HEIGHT,
-            // Subtle fade at top and bottom edges (16px) - only in dark mode for better contrast
+            // 顶/底边缘的轻微渐变（16px）——仅暗色模式以获得更好对比度
             ...(isDarkMode && {
               maskImage: 'linear-gradient(to bottom, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%)',
               WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%)',
@@ -2652,8 +2648,8 @@ export function ResponseCard({
           </div>
         </div>
 
-        {/* Desktop streaming footer; compact mode renders nothing here
-            (the Accept-Plan footer only applies to completed plans). */}
+        {/* 桌面端流式页脚；compact 模式此处不渲染
+            （Accept-Plan 页脚仅适用于已完成的 plan）。 */}
         {!compactMode && (
           <div className={cn("px-4 py-2 border-t border-border/30 flex items-center bg-muted/20", SIZE_CONFIG.fontSize)}>
             <div className="flex items-center gap-2 text-muted-foreground">
@@ -2669,10 +2665,10 @@ export function ResponseCard({
 }
 
 // ============================================================================
-// TodoList Component (for TodoWrite tool visualization)
+// TodoList 组件（用于 TodoWrite 工具可视化）
 // ============================================================================
 
-/** Status icon for a todo item - uses purple filled icon for completed */
+/** todo 项的状态图标——完成时使用紫色实心图标 */
 function TodoStatusIcon({ status }: { status: TodoStatus }) {
   switch (status) {
     case 'pending':
@@ -2690,7 +2686,7 @@ function TodoStatusIcon({ status }: { status: TodoStatus }) {
   }
 }
 
-/** Single todo row - styled like ActivityRow */
+/** 单个 todo 行——样式类似 ActivityRow */
 function TodoRow({ todo }: { todo: TodoItem }) {
   const displayText = todo.status === 'in_progress' && todo.activeForm
     ? todo.activeForm
@@ -2718,19 +2714,19 @@ interface TodoListProps {
 }
 
 /**
- * TodoList - Displays the current state of TodoWrite tool
- * Styled to blend with TurnCard activities
+ * TodoList - 展示 TodoWrite 工具的当前状态
+ * 样式与 TurnCard activity 融合
  */
 function TodoList({ todos }: TodoListProps) {
   if (todos.length === 0) return null
 
   return (
     <div className="pl-4 pr-2 pt-2.5 pb-1.5 space-y-0.5 border-l-2 border-muted ml-[13px]">
-      {/* Header */}
+      {/* 头部 */}
       <div className={cn("text-muted-foreground pb-1", SIZE_CONFIG.fontSize)}>
         Todo List
       </div>
-      {/* Todo items */}
+      {/* Todo 项 */}
       {todos.map((todo, index) => (
         <motion.div
           key={`${todo.content}-${index}`}
@@ -2746,17 +2742,17 @@ function TodoList({ todos }: TodoListProps) {
 }
 
 // ============================================================================
-// Main Component
+// 主组件
 // ============================================================================
 
 /**
- * TurnCard - Email-like display for one assistant turn
+ * TurnCard - 类邮件的单个助手 turn 展示
  *
- * Batches all activities (tools, thinking) into a collapsible section
- * with the final response displayed separately below.
+ * 将所有 activity（工具、思考）批量收纳到可折叠区域，
+ * 最终响应单独展示在下方。
  *
- * Memoized to prevent re-renders of completed turns during session switches.
- * Only complete, non-streaming turns are memoized - active turns always re-render.
+ * 使用 memo 避免会话切换时已完成 turn 重渲染。
+ * 仅对完成且非流式的 turn 做 memo——活跃 turn 始终重渲染。
  */
 export const TurnCard = React.memo(function TurnCard({
   sessionId,
@@ -2797,11 +2793,11 @@ export const TurnCard = React.memo(function TurnCard({
   openAnnotationRequest,
   annotationInteractionMode = 'interactive',
 }: TurnCardProps) {
-  // Derive the turn phase from props using the state machine.
-  // This provides a single source of truth for lifecycle state,
-  // replacing the old ad-hoc boolean combinations.
+  // 使用状态机从 props 推导 turn 阶段。
+  // 这为生命周期状态提供单一真相来源，
+  // 替代旧的临时布尔组合。
   const turnPhase = useMemo(() => {
-    // Construct a minimal turn-like object for deriveTurnPhase
+    // 为 deriveTurnPhase 构造最小化的 turn-like 对象
     const turnData: Pick<AssistantTurn, 'isComplete' | 'response' | 'activities'> = {
       isComplete,
       response,
@@ -2810,17 +2806,17 @@ export const TurnCard = React.memo(function TurnCard({
     return deriveTurnPhase(turnData as AssistantTurn)
   }, [isComplete, response, activities])
 
-  // Use local state if no controlled state provided
+  // 若未提供受控状态则使用本地状态
   const [localExpandedTurns, setLocalExpandedTurns] = useState<Set<string>>(() => defaultExpanded ? new Set([turnId]) : new Set())
   const isExpanded = externalIsExpanded ?? localExpandedTurns.has(turnId)
 
-  // Track if user has toggled expansion (skip animation on initial mount)
+  // 跟踪用户是否手动切换过展开（初始挂载时跳过动画）
   const hasUserToggled = useRef(false)
 
-  // Ref for scrollable activities container (to scroll to bottom on expand)
+  // 可滚动 activity 容器的 ref（展开时滚动到底部）
   const activitiesContainerRef = useRef<HTMLDivElement>(null)
 
-  // Track if component has mounted (enable fade-in for new activities after mount)
+  // 跟踪组件是否已挂载（挂载后为新 activity 启用淡入动画）
   const hasMounted = useRef(false)
   useEffect(() => {
     hasMounted.current = true
@@ -2844,11 +2840,11 @@ export const TurnCard = React.memo(function TurnCard({
     }
   }, [turnId, isExpanded, onExpandedChange])
 
-  // Scroll to bottom of activities list when user manually expands
-  // This shows the most recent step instead of the oldest
+  // 用户手动展开时滚动到 activity 列表底部
+  // 这样展示最新的步骤而非最旧的
   useEffect(() => {
     if (isExpanded && hasUserToggled.current && activitiesContainerRef.current) {
-      // Wait for expansion animation to complete (250ms) before scrolling
+      // 等待展开动画完成（250ms）再滚动
       const timer = setTimeout(() => {
         activitiesContainerRef.current?.scrollTo({
           top: activitiesContainerRef.current.scrollHeight,
@@ -2859,34 +2855,34 @@ export const TurnCard = React.memo(function TurnCard({
     }
   }, [isExpanded])
 
-  // Use local state for activity groups if no controlled state provided
+  // 若未提供受控状态则使用本地状态管理 activity 分组
   const [localExpandedActivityGroups, setLocalExpandedActivityGroups] = useState<Set<string>>(new Set())
   const expandedActivityGroups = externalExpandedActivityGroups ?? localExpandedActivityGroups
   const handleExpandedActivityGroupsChange = onExpandedActivityGroupsChange ?? setLocalExpandedActivityGroups
 
-  // Check if response is in buffering state
-  // No polling needed - parent updates trigger re-evaluation naturally
+  // 检查响应是否处于缓冲状态
+  // 无需轮询——父组件更新会自然触发重新评估
   const isBuffering = useMemo(
     () => isResponseBuffering(response),
     [response]
   )
 
 
-  // Compute preview text with cross-fade animation
+  // 计算预览文本，带交叉淡入动画
   const previewText = useMemo(
     () => getPreviewText(activities, intent, isStreaming, !!response, isComplete),
     [activities, intent, isStreaming, response, isComplete]
   )
 
-  // Sort activities by timestamp for correct chronological order
-  // This handles the live streaming case (turn-utils sorts on flush for completed turns)
+  // 按时间戳排序 activity 以获得正确的时序
+  // 这处理实时流式场景（turn-utils 在 flush 时对已完成 turn 排序）
   const allSortedActivities = useMemo(
     () => [...activities].sort((a, b) => a.timestamp - b.timestamp),
     [activities]
   )
 
-  // Separate plan activities from regular activities
-  // Plans are rendered as full ResponseCards, not in the collapsible activities section
+  // 将 plan activity 与普通 activity 分离
+  // plan 渲染为完整 ResponseCard，而非放在可折叠 activity 区域
   const planActivities = useMemo(
     () => allSortedActivities.filter(a => a.type === 'plan'),
     [allSortedActivities]
@@ -2896,47 +2892,47 @@ export const TurnCard = React.memo(function TurnCard({
     [allSortedActivities]
   )
 
-  // Check if we have any Task subagents - if so, use grouped view
+  // 检查是否有 Task 子代理——有则使用分组视图
   const hasTaskSubagents = useMemo(
     () => sortedActivities.some(a => isParentTaskTool(a.toolName ?? '')),
     [sortedActivities]
   )
 
-  // Group activities by parent Task for better visualization
-  // Only group if there are Task subagents, otherwise keep flat for simpler view
+  // 按父级 Task 分组 activity 以获得更好的可视化
+  // 仅当存在 Task 子代理时分组，否则保持扁平以简化视图
   const groupedActivities = useMemo(
     () => hasTaskSubagents ? groupActivitiesByParent(sortedActivities) : null,
     [sortedActivities, hasTaskSubagents]
   )
 
-  // Pre-compute which activities are last children - O(n) instead of O(n²) per-render check
-  // Only used for flat view (non-grouped)
+  // 预计算哪些 activity 是末位子项——O(n) 替代每次渲染 O(n²) 检查
+  // 仅用于扁平视图（非分组）
   const lastChildSet = useMemo(
     () => !hasTaskSubagents ? computeLastChildSet(sortedActivities) : new Set<string>(),
     [sortedActivities, hasTaskSubagents]
   )
 
-  // Don't render if nothing to show and turn is complete
+  // 没有内容可展示且 turn 已完成时不渲染
   if (activities.length === 0 && !response && isComplete) {
     return null
   }
 
-  // Don't render turns that were interrupted before any meaningful work happened.
-  // Hide the turn if:
-  // - All tool activities are errors (nothing completed successfully)
-  // - Any intermediate activities have no meaningful content (empty or just whitespace)
-  // - No response text to show
-  // - No plan activities
-  // The "Response interrupted" info banner alone is sufficient feedback.
+  // 不渲染在任何有意义工作之前就被中断的 turn。
+  // 满足以下条件时隐藏 turn：
+  // - 所有工具 activity 都是错误（没有成功完成的）
+  // - 所有中间 activity 都没有有意义内容（空或仅有空白）
+  // - 没有响应文本可展示
+  // - 没有 plan activity
+  // 仅"Response interrupted"提示横幅已足够反馈。
   const hasNoMeaningfulWork = activities.length > 0
     && activities.every(a => {
-      // Tool activities must be errors (interrupted/failed)
+      // 工具 activity 必须是错误（中断/失败）
       if (a.type === 'tool') return a.status === 'error'
-      // Intermediate activities must have no meaningful content
+      // 中间 activity 必须没有有意义内容
       if (a.type === 'intermediate') return !a.content?.trim()
-      // Plan activities are meaningful work
+      // plan activity 视为有意义工作
       if (a.type === 'plan') return false
-      // Other activity types - consider as no meaningful work
+      // 其他 activity 类型——视为无有意义工作
       return true
     })
     && !response
@@ -2944,20 +2940,20 @@ export const TurnCard = React.memo(function TurnCard({
     return null
   }
 
-  // Only count non-plan activities for the collapsible section
+  // 仅统计非 plan activity 用于可折叠区域
   const hasActivities = sortedActivities.length > 0
 
-  // Determine if thinking indicator should show using the phase-based state machine.
-  // This properly handles the "gap" state (awaiting) between tool completion and next action,
-  // which was previously causing the turn card to "disappear".
+  // 使用基于阶段的状态机判断是否应展示思考指示器。
+  // 这正确处理了工具完成到下一个动作之间的"间隙"状态（awaiting），
+  // 此前该状态曾导致 turn 卡片"消失"。
   const isThinking = shouldShowThinkingIndicator(turnPhase, isBuffering)
 
   return (
     <div className="space-y-1">
-      {/* Activity Section - excluded from search highlighting (matches ripgrep behavior) */}
+      {/* Activity 区域——排除搜索高亮（与 ripgrep 行为一致） */}
       {hasActivities && (
         <div className="group select-none" data-search-exclude="true">
-          {/* Collapsed Header / Toggle */}
+          {/* 折叠头部 / 切换 */}
           <button
             onClick={toggleExpanded}
             className={cn(
@@ -2968,7 +2964,7 @@ export const TurnCard = React.memo(function TurnCard({
               "focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             )}
           >
-            {/* Chevron with rotation animation - aligned with activity row icons */}
+            {/* 带旋转动画的 chevron——与 activity 行图标对齐 */}
             <motion.div
               initial={false}
               animate={{ rotate: isExpanded ? 90 : 0 }}
@@ -2978,12 +2974,12 @@ export const TurnCard = React.memo(function TurnCard({
               <ChevronRight className={SIZE_CONFIG.iconSize} />
             </motion.div>
 
-            {/* Step count badge */}
+            {/* 步骤计数徽章 */}
             <span className="-ml-0.5 shrink-0 px-1.5 py-0.5 rounded-[4px] bg-background shadow-minimal text-[10px] font-medium tabular-nums">
               {activities.length}
             </span>
 
-            {/* Preview text with crossfade + inline failure count */}
+            {/* 带交叉淡入的预览文本 + 行内失败计数 */}
             <span className="relative flex-1 min-w-0 h-5 flex items-center">
               <AnimatePresence initial={false}>
                 <motion.span
@@ -2999,7 +2995,7 @@ export const TurnCard = React.memo(function TurnCard({
               </AnimatePresence>
             </span>
 
-            {/* Turn actions menu - use platform override or default */}
+            {/* turn 操作菜单——使用平台覆盖或默认 */}
             {renderActionsMenu ? renderActionsMenu() : (
               <TurnCardActionsMenu
                 onOpenDetails={onOpenDetails}
@@ -3009,7 +3005,7 @@ export const TurnCard = React.memo(function TurnCard({
             )}
           </button>
 
-          {/* Expanded Activity List */}
+          {/* 展开 activity 列表 */}
           <AnimatePresence initial={false}>
             {isExpanded && (
               <motion.div
@@ -3022,8 +3018,8 @@ export const TurnCard = React.memo(function TurnCard({
                 }}
                 className="overflow-hidden"
               >
-                {/* Scrollable container when many activities - subtle background for scroll context */}
-                {/* ml-[15px] positions the border-l under the chevron */}
+                {/* activity 较多时的可滚动容器——带轻微背景以提供滚动上下文 */}
+                {/* ml-[15px] 将 border-l 定位到 chevron 下方 */}
                 <div
                   ref={activitiesContainerRef}
                   className={cn(
@@ -3037,7 +3033,7 @@ export const TurnCard = React.memo(function TurnCard({
                   }}
                 >
                   <AnimatePresence mode="sync">
-                  {/* Grouped view for Task subagents */}
+                  {/* Task 子代理的分组视图 */}
                   {groupedActivities ? (
                     groupedActivities.map((item, index) => (
                       isActivityGroup(item) ? (
@@ -3072,7 +3068,7 @@ export const TurnCard = React.memo(function TurnCard({
                       )
                     ))
                   ) : (
-                    /* Flat view for simple tool calls */
+                    /* 简单工具调用的扁平视图 */
                     sortedActivities.map((activity, index) => (
                       <motion.div
                         key={activity.id}
@@ -3082,7 +3078,7 @@ export const TurnCard = React.memo(function TurnCard({
                             : false
                         }
                         animate={{ opacity: 1, x: 0 }}
-                        // Only animate on user toggle, not initial mount
+                        // 仅在用户切换时动画，初始挂载不动画
                         transition={{ delay: hasUserToggled.current ? (index < SIZE_CONFIG.staggeredAnimationLimit ? index * 0.03 : SIZE_CONFIG.staggeredAnimationLimit * 0.03) : 0 }}
                       >
                         <ActivityRow
@@ -3095,7 +3091,7 @@ export const TurnCard = React.memo(function TurnCard({
                       </motion.div>
                     ))
                   )}
-                  {/* Thinking/Buffering indicator - shown while waiting for response */}
+                  {/* 思考/缓冲指示器——等待响应时展示 */}
                   {isThinking && !animateResponse && (
                     <motion.div
                       key="thinking"
@@ -3114,7 +3110,7 @@ export const TurnCard = React.memo(function TurnCard({
                   )}
                   </AnimatePresence>
                 </div>
-                {/* TodoList - inside expanded section */}
+                {/* TodoList——展开区域内 */}
                 {todos && todos.length > 0 && (
                   <TodoList todos={todos} />
                 )}
@@ -3124,7 +3120,7 @@ export const TurnCard = React.memo(function TurnCard({
         </div>
       )}
 
-      {/* Standalone thinking indicator - when no activities but still working */}
+      {/* 独立思考指示器——无 activity 但仍在工作时展示 */}
       {!hasActivities && isThinking && !animateResponse && (
         <div className={cn("flex items-center gap-2 px-3 py-1.5 text-muted-foreground", SIZE_CONFIG.fontSize)}>
           <Spinner className={SIZE_CONFIG.spinnerSize} />
@@ -3132,7 +3128,7 @@ export const TurnCard = React.memo(function TurnCard({
         </div>
       )}
 
-      {/* Plan Activities - rendered as full ResponseCards, time-sorted with other activities */}
+      {/* plan activity——渲染为完整 ResponseCard，与其他 activity 按时间排序 */}
       {planActivities.map((planActivity, index) => (
         <div key={planActivity.id} className={cn("select-text", (hasActivities || index > 0) && "mt-2")}>
           <ResponseCard
@@ -3162,8 +3158,8 @@ export const TurnCard = React.memo(function TurnCard({
         </div>
       ))}
 
-      {/* Response Section - only shown when not buffering */}
-      {/* Animated version for playground demos */}
+      {/* 响应区域——仅在非缓冲时展示 */}
+      {/* playground 演示用的动画版本 */}
       {animateResponse && (
         <AnimatePresence>
           {response && !isBuffering && (
@@ -3202,7 +3198,7 @@ export const TurnCard = React.memo(function TurnCard({
           )}
         </AnimatePresence>
       )}
-      {/* Non-animated version for regular app use */}
+      {/* 常规应用使用的非动画版本 */}
       {!animateResponse && response && !isBuffering && (
         <div className={cn("select-text", hasActivities && "mt-2")}>
           <ResponseCard
@@ -3235,45 +3231,44 @@ export const TurnCard = React.memo(function TurnCard({
     </div>
   )
 }, (prev, next) => {
-  // Conservative memoization: only skip re-render for completed, non-streaming turns
-  // Active turns (streaming or incomplete) always re-render to show updates
+  // 保守 memo：仅对已完成、非流式的 turn 跳过重渲染
+  // 活跃 turn（流式或未完成）始终重渲染以展示更新
 
-  // Always re-render streaming turns
+  // 流式 turn 始终重渲染
   if (prev.isStreaming || next.isStreaming) return false
 
-  // Always re-render incomplete turns
+  // 未完成 turn 始终重渲染
   if (!prev.isComplete || !next.isComplete) return false
 
-  // Re-render if expansion state changed
+  // 展开状态变化时重渲染
   if (prev.isExpanded !== next.isExpanded) return false
   if (prev.expandedActivityGroups !== next.expandedActivityGroups) return false
 
-  // Re-render if isLastResponse changed (for Accept Plan button visibility)
+  // isLastResponse 变化时重渲染（影响 Accept Plan 按钮可见性）
   if (prev.isLastResponse !== next.isLastResponse) return false
 
-  // Re-render if displayMode changed
+  // displayMode 变化时重渲染
   if (prev.displayMode !== next.displayMode) return false
 
-  // Re-render if compactMode changed (affects ResponseCard footer rendering)
+  // compactMode 变化时重渲染（影响 ResponseCard 页脚渲染）
   if (prev.compactMode !== next.compactMode) return false
 
-  // Re-render if annotation interaction mode changed (interactive vs tooltip-only)
+  // 批注交互模式变化时重渲染（interactive vs tooltip-only）
   if (prev.annotationInteractionMode !== next.annotationInteractionMode) return false
 
-  // Re-render if activities changed (important for playground/testing scenarios)
+  // activity 变化时重渲染（对 playground/测试场景重要）
   if (prev.activities !== next.activities) return false
 
-  // Re-render when response object changes (e.g., annotation updates)
+  // response 对象变化时重渲染（例如批注更新）
   if (prev.response !== next.response) return false
 
-  // Re-render when external annotation-open requests change
+  // 外部批注打开请求变化时重渲染
   if (prev.openAnnotationRequest !== next.openAnnotationRequest) return false
 
-  // Re-render when active follow-up annotation state changes (plan CTA label)
+  // 活跃 follow-up 批注状态变化时重渲染（plan CTA 标签）
   if (prev.hasActiveFollowUpAnnotations !== next.hasActiveFollowUpAnnotations) return false
 
-  // For complete, non-streaming turns: skip re-render only when both
-  // session and turn identities match. Prevents stale local UI state from
-  // leaking across session switches that may reuse turn IDs/components.
+  // 对于完成、非流式的 turn：仅当会话和 turn 标识都匹配时跳过重渲染。
+  // 防止旧本地 UI 状态在可能复用 turn ID/组件的会话切换间泄漏。
   return prev.sessionId === next.sessionId && prev.turnId === next.turnId
 })

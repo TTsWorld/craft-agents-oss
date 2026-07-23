@@ -1,17 +1,16 @@
 /**
- * WhatsApp worker subprocess entry.
+ * WhatsApp worker 子进程入口。
  *
- * Owns all Baileys state. Communicates with the main process over
- * newline-delimited JSON on stdin/stdout (see protocol.ts).
+ * 持有所有 Baileys 状态。通过 stdin/stdout 上的换行分隔 JSON 与主进程通信
+ * （见 protocol.ts）。
  *
- * Baileys is bundled into worker.cjs by esbuild at build time, so the
- * dynamic import below always resolves. The try/catch stays as a runtime
- * safety net — e.g. if a future Baileys version throws during module init
- * on an unsupported Node runtime we want a clean `unavailable` event
- * instead of a subprocess crash.
+ * Baileys 在构建时由 esbuild 打包进 worker.cjs，因此下方的动态 import 总能解析成功。
+ * try/catch 作为运行时安全网保留——例如未来某个 Baileys 版本在不支持的
+ * Node 运行时上初始化模块时抛错，我们希望得到一个干净的 `unavailable` 事件，
+ * 而不是子进程崩溃。
  *
- * Runs under Node (not Bun) when packaged with Electron so Baileys'
- * crypto deps (libsignal, curve25519) resolve correctly.
+ * 随 Electron 打包时在 Node（而非 Bun）下运行，以保证 Baileys 的
+ * 加密依赖（libsignal、curve25519）能正确解析。
  */
 
 import { mkdirSync } from 'node:fs'
@@ -26,9 +25,8 @@ import { bareJid, rememberSentId } from './filter'
 import { processUpsertMessage } from './upsert'
 
 /**
- * Build-time constants injected by `scripts/build-wa-worker.ts`
- * via esbuild `--define`. At dev-time (no bundle) they fall back to the
- * `dev-*` values so typechecking and ad-hoc runs still work.
+ * 由 `scripts/build-wa-worker.ts` 通过 esbuild `--define` 注入的构建时常量。
+ * 开发时（未打包）回退到 `dev-*` 值，这样类型检查和临时运行仍然可用。
  */
 declare const __WA_WORKER_BUILD_ID__: string
 declare const __WA_WORKER_GIT_SHA__: string
@@ -38,7 +36,7 @@ const WORKER_GIT_SHA =
   typeof __WA_WORKER_GIT_SHA__ !== 'undefined' ? __WA_WORKER_GIT_SHA__ : 'dev-unbundled'
 
 // ---------------------------------------------------------------------------
-// Send helpers
+// 发送辅助函数
 // ---------------------------------------------------------------------------
 
 function emit(event: WorkerEvent): void {
@@ -46,16 +44,15 @@ function emit(event: WorkerEvent): void {
 }
 
 function log(...args: unknown[]): void {
-  // stderr is reserved for logs so the main process parser doesn't confuse them.
+  // stderr 保留给日志，避免被主进程的解析器误当成协议数据。
   process.stderr.write('[wa-worker] ' + args.map(String).join(' ') + '\n')
 }
 
 // ---------------------------------------------------------------------------
-// Silent logger for Baileys
+// Baileys 的静默日志器
 //
-// Baileys uses pino and by default writes to stdout — which collides with our
-// NDJSON protocol. This no-op logger implements the subset of the pino API
-// that Baileys actually calls, keeping the protocol stream clean.
+// Baileys 使用 pino，默认写 stdout——这会和我们的 NDJSON 协议冲突。
+// 这个 no-op 日志器实现了 Baileys 实际调用的 pino API 子集，保持协议流干净。
 // ---------------------------------------------------------------------------
 
 interface SilentLogger {
@@ -81,14 +78,14 @@ const silentLogger: SilentLogger = {
 }
 
 // ---------------------------------------------------------------------------
-// Baileys lifecycle (isolated — only referenced after dynamic import succeeds)
+// Baileys 生命周期（隔离——仅在动态 import 成功后才被引用）
 // ---------------------------------------------------------------------------
 
 export interface BaileysModule {
   /**
-   * Factory exported as both `default` and `makeWASocket`. We prefer the
-   * named export because CJS→ESM interop via esbuild's `await import()` does
-   * not always expose `.default` as the callable function.
+   * 同时以 `default` 和 `makeWASocket` 导出的工厂函数。我们优先用命名导出，
+   * 因为经 esbuild `await import()` 的 CJS→ESM interop 不总是把 `.default`
+   * 暴露为可调用函数。
    */
   default?: (config: unknown) => unknown
   makeWASocket: (config: unknown) => unknown
@@ -97,10 +94,9 @@ export interface BaileysModule {
   Browsers: { macOS: (name: string) => [string, string, string] }
   fetchLatestBaileysVersion: () => Promise<{ version: number[]; isLatest: boolean }>
   /**
-   * Download a media message (image / audio / video / document). Returns a
-   * Buffer when called with `'buffer'`. Throws if the message has no media
-   * payload — callers should guard with the variant key check first.
-   * Signature mirrors `@whiskeysockets/baileys@^6.7.0`.
+   * 下载媒体消息（图片 / 音频 / 视频 / 文档）。传入 `'buffer'` 时返回 Buffer。
+   * 消息没有媒体载荷时抛错——调用方应先用变体 key 检查做前置判断。
+   * 签名与 `@whiskeysockets/baileys@^6.7.0` 保持一致。
    */
   downloadMediaMessage: (
     message: { message?: unknown; key?: unknown },
@@ -128,42 +124,40 @@ interface SessionState {
   saveCreds: () => Promise<void>
   pairingMode: 'qr' | 'code'
   authStateDir: string
-  /** Set when `shutdown` command arrives so any pending reconnect is cancelled. */
+  /** 收到 `shutdown` 命令时置位，用于取消任何待处理的重连。 */
   shuttingDown: boolean
-  /** Consecutive reconnect attempts; reset on successful `connection=open`. */
+  /** 连续重连尝试次数；成功 `connection=open` 时重置。 */
   reconnectAttempts: number
-  /** Handle for a scheduled reconnect, so shutdown can clear it. */
+  /** 已调度的重连定时器句柄，便于 shutdown 时清除。 */
   reconnectTimer: NodeJS.Timeout | null
-  /** See `StartCommand.selfChatMode`. */
+  /** 见 `StartCommand.selfChatMode`。 */
   selfChatMode: boolean
-  /** Prefix prepended to outbound self-chat messages (non-empty). */
+  /** 追加到自聊出站消息前的前缀（非空）。 */
   responsePrefix: string
   /**
-   * Bounded LRU of recently-sent message IDs. Used to filter the agent's
-   * own echoes from `messages.upsert` — primary defence; the prefix check
-   * is the backup for IDs lost across worker restarts.
+   * 最近发送过的消息 ID 的有界 LRU。用于从 `messages.upsert` 中过滤 agent 自身的回声——
+   * 第一道防线；前缀检查则是 worker 重启导致 ID 丢失时的兜底。
    */
   sentIds: Set<string>
   /**
-   * Unix seconds at which the socket most recently transitioned to
-   * `connection: 'open'`. Used to skip history-sync messages that arrive
-   * as `upsert.type === 'append'` right after connect — we only route
-   * messages newer than this wall-clock cutoff (minus a small grace).
+   * socket 最近一次切换到 `connection: 'open'` 的 Unix 秒数。
+   * 用于跳过连接后立即以 `upsert.type === 'append'` 到达的历史同步消息——
+   * 我们只路由比这个挂钟时间截断点（减去少量宽限）更新的消息。
    */
   connectedAtSec: number
 }
 
 let session: SessionState | null = null
 
-/** Cap retries so a permanently-broken credential set doesn't loop forever. */
+/** 限制重试次数，避免永久损坏的凭证陷入无限循环。 */
 const MAX_RECONNECT_ATTEMPTS = 10
 
-/** Fallback prefix when selfChatMode is on but caller didn't specify one. */
+/** selfChatMode 开启但调用方未指定前缀时的兜底前缀。 */
 const DEFAULT_RESPONSE_PREFIX = '🤖'
 
 /**
- * Exponential backoff with a 30s ceiling: 1s, 2s, 4s, 8s, 16s, 30s, 30s, ...
- * Called with attempts>=1.
+ * 带 30s 上限的指数退避：1s、2s、4s、8s、16s、30s、30s、……
+ * 以 attempts>=1 调用。
  */
 function reconnectDelayMs(attempts: number): number {
   const exp = Math.min(attempts - 1, 5)
@@ -171,9 +165,8 @@ function reconnectDelayMs(attempts: number): number {
 }
 
 /**
- * Prepend `responsePrefix` to `text` when `selfChatMode` is on AND the
- * target channel is the self-JID. Idempotent: if the text already starts
- * with the prefix (e.g. relay/edit paths that re-send), leave it alone.
+ * 当 `selfChatMode` 开启且目标通道为 self-JID 时，把 `responsePrefix` 追加到 `text` 前。
+ * 幂等：如果文本已以该前缀开头（例如转发/编辑路径重新发送），则保持不变。
  */
 function applyPrefixIfSelfChat(state: SessionState, channelId: string, text: string): string {
   if (!state.selfChatMode) return text
@@ -191,8 +184,8 @@ function applyPrefixIfSelfChat(state: SessionState, channelId: string, text: str
 
 async function loadBaileys(): Promise<BaileysModule | null> {
   try {
-    // Baileys is bundled into worker.cjs at build time; the dynamic form
-    // keeps this site isolated behind a try/catch for runtime init failures.
+    // Baileys 在构建时打包进 worker.cjs；使用动态形式是为了把这一调用点
+    // 隔离在 try/catch 之后，应对运行时初始化失败。
     const mod = (await import('@whiskeysockets/baileys')) as unknown as BaileysModule
     return mod
   } catch (err) {
@@ -211,9 +204,8 @@ async function startSession(
     emit({ type: 'error', message: 'Session already started' })
     return
   }
-  // Build provenance — first line the main process sees on stderr so an
-  // operator can confirm which bundle is actually running. Also included
-  // in the `ready` event for structured logging.
+  // 构建来源信息——这是主进程在 stderr 上看到的第一行日志，运维人员据此确认
+  // 实际运行的是哪个 bundle。同时也会包含在 `ready` 事件里，用于结构化日志。
   log(
     `starting — build=${WORKER_BUILD_ID} sha=${WORKER_GIT_SHA} selfChatMode=${selfChatMode} pairingMode=${pairingMode}`,
   )
@@ -259,10 +251,10 @@ async function startSession(
   }
 
   /**
-   * Build a fresh Baileys socket bound to the persisted `state`. Called
-   * once at startup and again on every non-loggedOut reconnect. `creds.update`
-   * persistence keeps `state` current, so each new socket authenticates
-   * against the latest credentials on disk.
+   * 构建一个绑定到持久化 `state` 的新 Baileys socket。
+   * 启动时调用一次，每次非 loggedOut 重连时再调用一次。
+   * `creds.update` 持久化会让 `state` 保持最新，因此每个新 socket 都用
+   * 磁盘上最新的凭证做认证。
    */
   const bootSock = (): BaileysSock => {
     const sock = makeWASocket({
@@ -308,11 +300,9 @@ async function startSession(
         return
       }
 
-      // Non-logout close — this includes Baileys' 515 "Stream Errored
-      // (restart required)" emitted right after QR pairing, and any
-      // transient network failure later on. Rebuild the socket with the
-      // same persisted credentials. Honour shutdown, and cap retries
-      // so a permanently-broken state doesn't loop forever.
+      // 非登出关闭——包括 QR 配对后立即触发的 Baileys 515「Stream Errored
+      // (restart required)」，以及后续任何短暂网络故障。用相同的持久化凭证重建 socket。
+      // 遵守 shutdown 信号，并限制重试次数，避免永久损坏状态陷入无限循环。
       if (!session || session.shuttingDown) return
 
       session.reconnectAttempts++
@@ -338,35 +328,32 @@ async function startSession(
           session.sock = bootSock()
         } catch (err) {
           log('bootSock threw during reconnect:', err instanceof Error ? err.message : String(err))
-          // Let the next close event drive the backoff — or if the
-          // throw is synchronous and terminal, the attempts cap will
-          // stop the loop.
+          // 让下一次 close 事件驱动退避——或者如果抛错是同步且致命的，
+          // 重试次数上限会终止循环。
         }
       }, delay)
     })
 
     sock.ev.on('messages.upsert', (upsert) => {
-      // Accept 'notify' (new inbound from other accounts) AND 'append'
-      // (server sync — includes messages the user typed on another device
-      // into the self-chat, which is how self-chat arrives on this linked
-      // device). Reject unknown types (e.g. 'prepend' for pagination).
+      // 接受 'notify'（来自其他账号的新入站）和 'append'
+      // （服务端同步——包括用户在其他设备上输入到自聊的消息，自聊就是这样
+      // 投递到这台关联设备的）。拒绝未知类型（例如用于分页的 'prepend'）。
       if (upsert.type !== 'notify' && upsert.type !== 'append') return
       if (!session) return
 
-      // Visible at debug-level so `upsert.type`/batch-size anomalies are
-      // easy to spot in the main log when diagnosing routing issues.
+      // debug 级别可见，方便排查路由问题时在主日志里快速发现
+      // `upsert.type`/批量大小异常。
       log(`upsert type=${upsert.type} count=${upsert.messages.length}`)
 
-      // History-sync guard: Baileys re-emits old messages as 'append' on
-      // every connect. Only route messages newer than the last open
-      // timestamp, with a 5s grace for clock skew.
+      // 历史同步防护：Baileys 每次连接都会把旧消息以 'append' 重新投递。
+      // 只路由比上次 open 时间更新的消息，留 5s 宽限应对时钟偏差。
       const cutoff = session.connectedAtSec - 5
       const selfJid = bareJid(sock.user?.id)
       const selfLid = bareJid(sock.user?.lid)
 
-      // Per-message work is async (media download). Fire-and-forget the
-      // batch with a per-message try/catch — Baileys' event handler must
-      // not throw, and one bad media download must not poison the rest.
+      // 逐消息处理是异步的（涉及媒体下载）。对整批消息做 fire-and-forget，
+      // 并对每条消息单独 try/catch——Baileys 的事件处理器不能抛错，
+      // 单个失败的媒体下载也不能影响其余消息。
       const sess = session
       void (async () => {
         for (const msg of upsert.messages as Array<Record<string, unknown>>) {
@@ -492,7 +479,7 @@ async function handleCommand(cmd: WorkerCommand): Promise<void> {
         try {
           session.sock.end()
         } catch {
-          // ignore
+          // 忽略
         }
         session = null
       }
@@ -503,7 +490,7 @@ async function handleCommand(cmd: WorkerCommand): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// stdin reader
+// stdin 读取器
 // ---------------------------------------------------------------------------
 
 let stdinBuffer = ''
@@ -527,7 +514,7 @@ process.stdin.on('end', () => {
     try {
       session.sock.end()
     } catch {
-      // ignore
+      // 忽略
     }
   }
   process.exit(0)

@@ -12,7 +12,7 @@ export interface IslandNavigation<TView extends string> {
 }
 
 /**
- * Shared backstack helper for Island multi-view flows.
+ * Island 多视图流程的共享回退栈辅助 hook。
  */
 export function useIslandNavigation<TView extends string>(initial: TView): IslandNavigation<TView> {
   const [stack, setStack] = React.useState<TView[]>([initial])

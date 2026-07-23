@@ -1,7 +1,7 @@
 /**
- * TerminalPreviewOverlay - Overlay for terminal output (Bash/Grep/Glob tools)
+ * TerminalPreviewOverlay - 终端输出浮层（Bash/Grep/Glob 工具）
  *
- * Uses PreviewOverlay for presentation and TerminalOutput for display.
+ * 使用 PreviewOverlay 进行展示，TerminalOutput 进行显示。
  */
 
 import * as React from 'react'
@@ -12,25 +12,25 @@ import { ContentFrame } from './ContentFrame'
 import { TerminalOutput, type ToolType } from '../terminal/TerminalOutput'
 
 export interface TerminalPreviewOverlayProps {
-  /** Whether the overlay is visible */
+  /** 浮层是否可见 */
   isOpen: boolean
-  /** Callback when the overlay should close */
+  /** 浮层关闭时的回调 */
   onClose: () => void
-  /** The command that was executed */
+  /** 执行的命令 */
   command: string
-  /** The output from the command */
+  /** 命令的输出 */
   output: string
-  /** Exit code (0 = success) */
+  /** 退出码（0 = 成功） */
   exitCode?: number
-  /** Tool type for display styling */
+  /** 用于显示样式的工具类型 */
   toolType?: ToolType
-  /** Optional description of what the command does */
+  /** 命令功能的可选描述 */
   description?: string
-  /** Theme mode */
+  /** 主题模式 */
   theme?: 'light' | 'dark'
-  /** Error message if the command failed to execute */
+  /** 命令执行失败时的错误消息 */
   error?: string
-  /** Render inline without dialog (for playground) */
+  /** 无对话框内联渲染（用于 playground） */
   embedded?: boolean
 }
 

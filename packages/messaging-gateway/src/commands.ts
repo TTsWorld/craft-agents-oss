@@ -1,13 +1,13 @@
 /**
- * Commands — handles chat commands from unbound or bound channels.
+ * Commands —— 处理来自未绑定或已绑定 channel 的聊天命令。
  *
- * /new [name]    — create session + bind
- * /bind          — list recent sessions (or by id / index)
- * /pair <code>   — finish a session-initiated pairing flow
- * /unbind        — disconnect channel
- * /help          — show available commands
- * /status        — show current binding
- * /stop          — abort the current agent run
+ * /new [name]    —— 创建 session + 绑定
+ * /bind          —— 列出最近的 session（或按 id / 序号）
+ * /pair <code>   —— 完成一个由 session 发起的配对流程
+ * /unbind        —— 解除 channel 绑定
+ * /help          —— 显示可用命令
+ * /status        —— 显示当前 binding
+ * /stop          —— 中止当前 agent 运行
  */
 
 import type { ISessionManager } from '@craft-agent/server-core/handlers'
@@ -37,78 +37,73 @@ const NOOP_LOGGER: MessagingLogger = {
 }
 
 /**
- * Result of consuming a pairing code. The `kind` discriminator tells the
- * caller which downstream flow to run (bind a session, or register the
- * supergroup chat at the workspace level).
+ * 消费配对码的结果。`kind` 标记告诉调用方该跑哪个下游流程
+ *（绑定一个 session，还是在 workspace 级别注册这个超级群 chat）。
  */
 export type PairingConsumeResult =
   | { kind: 'session'; workspaceId: string; sessionId: string }
   | { kind: 'workspace-supergroup'; workspaceId: string }
 
 /**
- * Supplied by the registry. The gateway passes the consumer down to Commands so
- * /pair can redeem codes issued via the app UI. Only codes belonging to the
- * gateway's own workspace are honored.
+ * 由 registry 提供。gateway 把这个 consumer 下发给 Commands，
+ * 这样 `/pair` 就能消费通过 app UI 签发的配对码。只接受属于
+ * gateway 自身 workspace 的配对码。
  */
 export interface PairingCodeConsumer {
   /**
-   * Returns whether this sender may still attempt a /pair consume this minute.
-   * Defence-in-depth against brute-forcing the 6-digit code. Counted on entry,
-   * not after validation, so wrong guesses consume budget too.
+   * 返回此发送方在这一分钟内是否仍可尝试一次 `/pair` 消费。
+   * 作为防止暴力破解 6 位配对码的纵深防御。在入口处计数，
+   * 而不是在校验之后，所以猜错的尝试也会消耗预算。
    */
   canConsume(platform: PlatformType, senderId: string): boolean
-  /** Returns the pending pairing if the code is valid, or null. */
+  /** 如果配对码有效则返回待配对信息，否则返回 null。 */
   consume(platform: PlatformType, code: string): PairingConsumeResult | null
   /**
-   * Register the supergroup that just paired itself. Invoked from
-   * Commands.handlePair when the consumed code's kind is
-   * `workspace-supergroup`. Performs the persistence + adapter-reconfigure
-   * dance that lives in the registry.
+   * 注册刚刚完成配对的超级群。在 Commands.handlePair 里、当消费到的配对码
+   * kind 为 `workspace-supergroup` 时调用。执行 registry 里那套
+   * 持久化 + adapter 重配置的流程。
    */
   bindWorkspaceSupergroup?(args: {
     platform: PlatformType
     chatId: string
-    /** Optional fall-back display name; the registry can fetch a real one via getChat. */
+    /** 可选的兜底显示名；registry 可以通过 getChat 取一个真实名称。 */
     fallbackTitle?: string
   }): Promise<{ title: string }>
 }
 
 /**
- * Access-control wiring supplied by the gateway. Commands consults the
- * workspace config on every command invocation (so config edits take effect
- * without restart) and uses `seedOwnerOnFirstPair` to bootstrap ownership
- * the first time anyone redeems a pairing code.
+ * gateway 提供的权限控制装配。Commands 在每次命令调用时都会读取 workspace
+ * 配置（这样改配置无需重启即生效），并用 `seedOwnerOnFirstPair` 在
+ * 有人第一次消费配对码时引导出 owner 身份。
  */
 export interface AccessControlDeps {
   getWorkspaceConfig: () => MessagingConfig
   /**
-   * Append the sender to the platform's owners list iff the list is currently
-   * empty for that platform. Returns the updated list (or the existing list
-   * if the seed didn't run). Called from `/pair` consume.
+   * 当且仅当该平台的 owners 列表当前为空时，把发送方追加进去。
+   * 返回更新后的列表（若 seed 未执行则返回现有列表）。从 `/pair` 消费时调用。
    */
   seedOwnerOnFirstPair: (
     platform: PlatformType,
     candidate: PlatformOwner,
   ) => Promise<PlatformOwner[]>
-  /** Optional pending-senders store for recording rejected attempts. */
+  /** 可选的 pending-senders 存储，用于记录被拒绝的尝试。 */
   pendingStore?: PendingSendersStore
 }
 
 /**
- * Commands the gateway lets *anyone* run, regardless of ownership. `/pair`
- * is the bootstrap exception (first sender to redeem becomes owner) and
- * `/help` is informational.
+ * gateway 允许*任何人*执行的命令，与 owner 身份无关。`/pair`
+ * 是引导态例外（第一个消费配对码的发送方成为 owner），
+ * `/help` 则是信息性的。
  */
 const ALWAYS_ALLOWED_COMMANDS = new Set(['/pair', '/help'])
 
 /**
- * Telegram (and other Bot-API platforms) lets users address commands to
- * specific bots in shared chats: `/pair@MyBot 123456`. Without stripping
- * the `@BotName` suffix, the cmd token doesn't match our switch cases and
- * supergroup pairing breaks for users typing the canonical group form.
+ * Telegram（以及其他 Bot API 平台）允许用户在共享聊天里把命令定向给
+ * 特定 bot：`/pair@MyBot 123456`。不去掉 `@BotName` 后缀的话，cmd token
+ * 就匹配不上我们的 switch 分支，输入规范群格式的用户也就没法完成超级群配对。
  *
- * Returns `{ cmd: '', args: '' }` for non-command text. Lower-cases the
- * cmd so callsites can do exact-string comparisons.
+ * 对非命令文本返回 `{ cmd: '', args: '' }`。会把 cmd 转小写，
+ * 这样调用方可以做精确字符串比较。
  */
 export function parseCommand(text: string): { cmd: string; args: string } {
   const trimmed = text.trim()
@@ -141,11 +136,10 @@ export class Commands {
     const text = msg.text.trim()
     const replyOpts = msg.threadId !== undefined ? { threadId: msg.threadId } : {}
 
-    // Pre-binding gate: every inbound stimulus runs through the access
-    // evaluator, including non-command free-form text. Without this,
-    // a stranger DMing "hi" would receive the help message (revealing
-    // commands) and bypass the pending-senders flow. Only `/pair`
-    // (bootstrap) and `/help` (informational) skip the gate.
+    // pre-binding 门控：每条入站触发物都要过一遍 access evaluator，
+    // 包括非命令的自由文本。没有这层门控，陌生人 DM「hi」就会收到
+    // help 消息（泄露命令），还会绕过 pending-senders 流程。
+    // 只有 `/pair`（引导）和 `/help`（信息性）跳过门控。
     const cmd = parseCommand(text).cmd
     const skipsGate = cmd && ALWAYS_ALLOWED_COMMANDS.has(cmd)
     if (!skipsGate) {
@@ -159,9 +153,8 @@ export class Commands {
       }
     }
 
-    // Exact-cmd dispatch (parsed; supports `/cmd@BotName`). Avoids the old
-    // `text.startsWith('/new')` bug where `/newuser` would also dispatch
-    // to handleNew.
+    // 精确命令派发（已解析；支持 `/cmd@BotName`）。规避了旧的
+    // `text.startsWith('/new')` bug —— 那样 `/newuser` 也会被派发到 handleNew。
     if (cmd === '/new') {
       await this.handleNew(adapter, msg)
     } else if (cmd === '/bind') {
@@ -173,8 +166,8 @@ export class Commands {
     } else if (cmd === '/help') {
       await this.handleHelp(adapter, msg)
     } else {
-      // Sender passed the access gate (owner or open workspace) and typed
-      // free-form text into a chat with no binding. Show the help prompt.
+      // 发送方通过了 access 门控（owner 或 open workspace），
+      // 但在一个没有 binding 的聊天里输入了自由文本。显示 help 提示。
       await adapter.sendText(
         msg.channelId,
         'No session bound to this chat.\n\n' +
@@ -191,9 +184,8 @@ export class Commands {
     const text = msg.text.trim()
     if (!text.startsWith('/')) return false
 
-    // Strip the optional `@BotName` suffix Telegram uses to disambiguate
-    // commands in shared chats. Without this, `/pair@MyBot 123456` would
-    // never match the switch case below.
+    // 去掉 Telegram 在共享聊天里用于消歧命令的可选 `@BotName` 后缀。
+    // 没有这步，`/pair@MyBot 123456` 永远匹配不上下面的 switch 分支。
     const { cmd } = parseCommand(text)
     if (!cmd) return false
 
@@ -206,9 +198,9 @@ export class Commands {
       command: cmd,
     })
 
-    // Pre-binding gate for commands that arrive directly (i.e. typed inside
-    // an already-bound chat — `gateway.wireAdapter` always tries
-    // `handleCommand` before `router.route`). `/pair` and `/help` always pass.
+    // 针对直接到达的命令（即用户在已绑定的聊天里输入 —— `gateway.wireAdapter`
+    // 总是先尝试 `handleCommand` 再走 `router.route`）的 pre-binding 门控。
+    // `/pair` 和 `/help` 始终放行。
     if (!ALWAYS_ALLOWED_COMMANDS.has(cmd)) {
       const verdict = evaluatePreBindingAccess({
         msg,
@@ -248,8 +240,8 @@ export class Commands {
   }
 
   /**
-   * Reject reply for pre-binding gating. Delegates to the shared
-   * `executeRejection` so text and button paths emit identical output.
+   * pre-binding 门控的拒绝回复。委托给公共的 `executeRejection`，
+   * 这样文本路径和按钮路径产生完全一致的输出。
    */
   private async sendRejection(
     adapter: PlatformAdapter,
@@ -269,7 +261,7 @@ export class Commands {
   }
 
   // -------------------------------------------------------------------------
-  // Command handlers
+  // 命令 handler
   // -------------------------------------------------------------------------
 
   private async handleNew(adapter: PlatformAdapter, msg: IncomingMessage): Promise<void> {
@@ -397,9 +389,8 @@ export class Commands {
       return
     }
 
-    // Throttle BEFORE format validation — otherwise an attacker gets
-    // unlimited "is this a valid format" feedback that's almost as useful
-    // as a code check. Every `/pair` attempt counts against the budget.
+    // 在格式校验之前先做限流 —— 否则攻击者可以无限次获得
+    //「格式是否合法」的反馈，这几乎和查配对码一样有用。每一次 `/pair` 尝试都计入预算。
     if (!this.pairingConsumer.canConsume(adapter.platform, msg.senderId)) {
       this.log.warn('pairing consume rate limit hit', {
         event: 'pairing_consume_rate_limited',
@@ -416,9 +407,8 @@ export class Commands {
       return
     }
 
-    // Use the centralized parser so `/pair@MyBot 123456` works the same
-    // as `/pair 123456` — Telegram routes commands by bot suffix in
-    // group chats and many users will type the canonical form.
+    // 用集中式解析器，让 `/pair@MyBot 123456` 与 `/pair 123456` 行为一致 ——
+    // Telegram 在群聊里按 bot 后缀路由命令，很多用户会输入规范形式。
     const { args } = parseCommand(msg.text)
     const code = args.replace(/\s+/g, '')
 
@@ -431,11 +421,10 @@ export class Commands {
       return
     }
 
-    // Pre-consume access gate. Bootstrap rule: when the platform has zero
-    // owners, ANY successful redeem seeds the first owner (the user who
-    // typed `/pair`). Once owners exist, only existing owners may redeem
-    // further codes — without this, an attacker who steals or guesses a
-    // code becomes an owner.
+    // 消费前的 access 门控。引导规则：当平台还没有 owner 时，任何一次成功的
+    // 消费都会把第一个 owner 种子进去（即输入 `/pair` 的那个用户）。
+    // 一旦有了 owner，只有现有 owner 才能继续消费配对码 ——
+    // 否则窃取或猜中配对码的攻击者就会直接成为 owner。
     const wsConfig = this.access.getWorkspaceConfig()
     const wsMode = readPlatformAccessMode(wsConfig, adapter.platform)
     const owners = readPlatformOwners(wsConfig, adapter.platform)
@@ -464,10 +453,9 @@ export class Commands {
       return
     }
 
-    // Seed the first owner. The seeder is a no-op when the list is already
-    // populated, so it's safe to call unconditionally on every successful
-    // redeem. Failures are logged but never block the pair itself — losing
-    // the seed only means the operator has to add the user manually later.
+    // 种子化第一个 owner。当列表已有成员时 seeder 是 no-op，所以无条件地在
+    // 每次成功消费时调用是安全的。失败会被记日志但绝不会阻塞配对本身 ——
+    // 丢了种子只是意味着运维之后要手动把用户加进去。
     try {
       await this.access.seedOwnerOnFirstPair(adapter.platform, {
         userId: msg.senderId,
@@ -528,10 +516,9 @@ export class Commands {
   }
 
   /**
-   * Workspace-supergroup pairing: a `/pair <code>` typed in a Telegram
-   * supergroup with a workspace-supergroup-kind code. We register the
-   * supergroup's chat_id at the workspace level so the adapter starts
-   * accepting messages from it (in addition to DMs).
+   * Workspace-超级群配对：在一个 Telegram 超级群里输入 `/pair <code>`，
+   * 配合一个 workspace-supergroup 类型的配对码。我们在 workspace 级别
+   * 注册这个超级群的 chat_id，让适配器开始接收它（除 DM 外）的消息。
    */
   private async handleSupergroupPair(
     adapter: PlatformAdapter,

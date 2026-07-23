@@ -22,13 +22,12 @@ function cloneWithDescriptors<T extends object>(value: T): T {
 }
 
 /**
- * Return a Pi tool schema that accepts Craft's root-level metadata fields.
+ * 返回一个接受 Craft 根级元数据字段的 Pi 工具 schema。
  *
- * Pi validates tool arguments before Craft's pre-tool-use hook can strip
- * `_displayName` / `_intent`. Built-in Pi tools often use strict schemas with
- * `additionalProperties: false`, so we add those fields as optional root
- * properties at the adapter boundary. Unknown schema shapes are returned
- * unchanged, and upstream-defined metadata properties win if Pi adds them later.
+ * Pi 在 Craft 的 pre-tool-use 钩子剥除 `_displayName` / `_intent` 之前就会校验工具参数。
+ * Pi 内置工具常用带 `additionalProperties: false` 的严格 schema，因此我们在适配器边界
+ * 把这些字段加为可选的根级属性。未知 schema 形状原样返回；如果 Pi 后续也定义了同名
+ * 元数据属性，以 Pi 的为准。
  */
 export function allowCraftMetadataProperties<T>(schema: T): T {
   if (!isRecord(schema)) return schema;
@@ -55,7 +54,7 @@ export function allowCraftMetadataProperties<T>(schema: T): T {
   return nextSchema as T;
 }
 
-/** Strip Craft-only metadata before invoking the upstream Pi tool implementation. */
+/** 调用上游 Pi 工具实现前，剥除仅用于 Craft 的元数据。 */
 export function stripCraftMetadata<T>(input: T): T {
   if (!isRecord(input)) return input;
   if (!(CRAFT_DISPLAY_NAME_KEY in input) && !(CRAFT_INTENT_KEY in input)) return input;

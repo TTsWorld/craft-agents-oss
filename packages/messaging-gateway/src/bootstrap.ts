@@ -1,18 +1,17 @@
 /**
- * createMessagingBootstrap — composable messaging wiring shared by every host.
+ * createMessagingBootstrap —— 所有 host 共用的、可组合的 messaging 装配逻辑。
  *
- * Both hosts (Electron main and the standalone Bun server) MUST go through this
- * helper. Deleting either call site breaks the typecheck of the other — that is
- * the only guardrail keeping the two paths from diverging. Do not construct
- * MessagingGatewayRegistry directly from a host.
+ * 两个 host（Electron 主进程和独立的 Bun server）都必须走这个 helper。
+ * 删掉任意一个调用点都会让另一个的 typecheck 挂掉 —— 这是防止两条路径产生分歧的
+ * 唯一护栏。不要在 host 里直接 new MessagingGatewayRegistry。
  *
- * Shape:
- *   const handle = createMessagingBootstrap({ ... })                  // pre-bootstrapServer
- *   const deps   = { ..., messagingRegistry: handle.registry }        // into createHandlerDeps
- *   sink = handle.wrapSink(baseSink)                                  // into setSessionEventSink
- *   handle.setPublisher(instance.wsServer.push.bind(instance.wsServer))  // post-bootstrap
- *   await handle.initializeWorkspaces(workspaceIds)                   // post-bootstrap
- *   await handle.dispose()                                            // on shutdown
+ * 调用形状：
+ *   const handle = createMessagingBootstrap({ ... })                  // bootstrapServer 之前
+ *   const deps   = { ..., messagingRegistry: handle.registry }        // 传给 createHandlerDeps
+ *   sink = handle.wrapSink(baseSink)                                  // 传给 setSessionEventSink
+ *   handle.setPublisher(instance.wsServer.push.bind(instance.wsServer))  // bootstrap 之后
+ *   await handle.initializeWorkspaces(workspaceIds)                   // bootstrap 之后
+ *   await handle.dispose()                                            // 关闭时
  */
 
 import type { PushTarget } from '@craft-agent/shared/protocol'
@@ -28,19 +27,19 @@ export type PublishEventFn = (channel: string, target: PushTarget, ...args: unkn
 export interface MessagingBootstrapOptions {
   sessionManager: ISessionManager
   credentialManager: CredentialManager
-  /** Absolute path to the messaging storage directory for the given workspace. */
+  /** 给定 workspace 的 messaging 存储目录绝对路径。 */
   getMessagingDir: (workspaceId: string) => string
-  /** Optional legacy dir (pre-relocation) for one-shot migration. Headless omits this. */
+  /** 可选的 legacy 目录（relocation 之前），用于一次性迁移。Headless 省略此项。 */
   getLegacyMessagingDir?: (workspaceId: string) => string | undefined
   logger?: MessagingLogger
   whatsapp: {
-    /** Absolute path to the bundled worker.cjs. */
+    /** 内置 worker.cjs 的绝对路径。 */
     workerEntry: string
     /**
-     * Node binary to spawn. Required for hosts that don't run on Node themselves
-     * (i.e. Bun). Defaults to `process.execPath` inside WhatsAppAdapter — correct
-     * for Electron (which re-enters as Node via ELECTRON_RUN_AS_NODE) but wrong
-     * for Bun, so the Bun host must pass `'node'` or an explicit path.
+     * 要拉起的 Node 二进制。对于自身不跑在 Node 上的 host（即 Bun）是必填项。
+     * 在 WhatsAppAdapter 内部默认为 `process.execPath` —— 对 Electron 正确
+     *（通过 ELECTRON_RUN_AS_NODE 以 Node 方式重入），但对 Bun 是错的，
+     * 所以 Bun host 必须传 `'node'` 或一个显式路径。
      */
     nodeBin?: string
     pairingMode?: 'qr' | 'code'
@@ -48,18 +47,18 @@ export interface MessagingBootstrapOptions {
 }
 
 export interface MessagingBootstrapHandle {
-  /** The concrete registry; pass as `messagingRegistry` in HandlerDeps. */
+  /** 具体的 registry；在 HandlerDeps 里作为 `messagingRegistry` 传入。 */
   readonly registry: MessagingGatewayRegistry
   /**
-   * Bind the WS push publisher once `bootstrapServer` has returned and
-   * `instance.wsServer` is available. Safe to call before `initializeWorkspaces`.
+   * 在 `bootstrapServer` 返回、`instance.wsServer` 可用后，绑定 WS push publisher。
+   * 在 `initializeWorkspaces` 之前调用也是安全的。
    */
   setPublisher(push: PublishEventFn): void
-  /** Compose the session-event fan-out on top of the base RPC push sink. */
+  /** 在基础 RPC push sink 之上叠加 session-event 扇出。 */
   wrapSink(baseSink: EventSinkFn): EventSinkFn
-  /** Initialize the given workspace IDs. Callers filter (e.g. skip `remoteServer`). */
+  /** 初始化给定的 workspace ID 列表。调用方自行过滤（例如跳过 `remoteServer`）。 */
   initializeWorkspaces(workspaceIds: string[]): Promise<void>
-  /** Stop all gateways and release resources. Call from the host's shutdown path. */
+  /** 停止所有 gateway 并释放资源。从 host 的关闭路径调用。 */
   dispose(): Promise<void>
 }
 

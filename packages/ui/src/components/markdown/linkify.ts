@@ -2,24 +2,24 @@ import LinkifyIt from 'linkify-it'
 import { FILE_EXTENSIONS_PATTERN } from '../../lib/file-classification'
 
 /**
- * Linkify - URL and file path detection for markdown preprocessing
+ * Linkify - 用于 markdown 预处理的 URL 和文件路径检测
  *
- * Uses linkify-it (12M downloads/week) for battle-tested URL detection,
- * plus custom regex for local file paths.
+ * 使用 linkify-it（每周 1200 万下载量）进行久经考验的 URL 检测，
+ * 并辅以自定义正则来检测本地文件路径。
  */
 
-// Initialize linkify-it with default settings (fuzzy URLs, emails enabled)
+// 以默认设置初始化 linkify-it（模糊 URL、邮箱检测开启）
 const linkify = new LinkifyIt()
 
-// File path regex - detects absolute/home/explicit-relative/bare-relative paths with common extensions
-// Examples: /Users/foo.ts, ~/src/app.tsx, ./README.md, ../guide.md, apps/electron/src/main.ts
-// Extensions derived from file-classification.ts to stay in sync with preview support
+// 文件路径正则 - 检测绝对路径/家目录/显式相对路径/裸相对路径，需带常见扩展名
+// 示例：/Users/foo.ts, ~/src/app.tsx, ./README.md, ../guide.md, apps/electron/src/main.ts
+// 扩展名来源于 file-classification.ts，以与预览支持保持同步
 const FILE_PATH_REGEX_SOURCE = `(?:^|[\\s([\\{<])((?:/|~/|\\./|\\.\\./|[A-Za-z0-9_][\\w\\-./@]*)[\\w\\-./@]*\\.(?:${FILE_EXTENSIONS_PATTERN}))(?=[\\s)\\]}\\.,:;!?>]|$)`
 const FILE_PATH_REGEX = new RegExp(FILE_PATH_REGEX_SOURCE, 'gi')
 const FILE_PATH_PRETEST_REGEX = new RegExp(FILE_PATH_REGEX_SOURCE, 'i')
 
-// File-path regex for markdown anchor targets (entire href/text value)
-// Used by Markdown.tsx click handler to route file links to onFileClick.
+// 用于 markdown 锚点目标的文件路径正则（匹配整个 href/文本值）
+// 由 Markdown.tsx 的点击处理器使用，将文件链接路由到 onFileClick。
 const FILE_PATH_TARGET_REGEX = new RegExp(
   `^(?!https?://|mailto:|ftp://|data:)(?:/|~/|\./|\.\./|[A-Za-z0-9_][\\w\\-./@]*)[\\w\\-./@]*\\.(?:${FILE_EXTENSIONS_PATTERN})$`,
   'i'
@@ -39,25 +39,25 @@ interface CodeRange {
 }
 
 /**
- * Find all code block and inline code ranges in text
- * These ranges should be excluded from link detection
+ * 查找文本中所有代码块和行内代码区间
+ * 这些区间应从链接检测中排除
  */
 function findCodeRanges(text: string): CodeRange[] {
   const ranges: CodeRange[] = []
 
-  // Find fenced code blocks (```...```)
+  // 查找围栏代码块（```...```）
   const fencedRegex = /```[\s\S]*?```/g
   let match
   while ((match = fencedRegex.exec(text)) !== null) {
     ranges.push({ start: match.index, end: match.index + match[0].length })
   }
 
-  // Find inline code (`...`)
-  // But skip escaped backticks and code inside fenced blocks
+  // 查找行内代码（`...`）
+  // 但跳过转义反引号和围栏块内的代码
   const inlineRegex = /(?<!`)`(?!`)([^`\n]+)`(?!`)/g
   while ((match = inlineRegex.exec(text)) !== null) {
     const pos = match.index
-    // Check if this is inside a fenced block
+    // 检查是否在围栏块内
     const insideFenced = ranges.some(r => pos >= r.start && pos < r.end)
     if (!insideFenced) {
       ranges.push({ start: pos, end: pos + match[0].length })
@@ -68,31 +68,31 @@ function findCodeRanges(text: string): CodeRange[] {
 }
 
 /**
- * Check if a position is inside any code range
+ * 检查某位置是否落在任意代码区间内
  */
 function isInsideCode(pos: number, ranges: CodeRange[]): boolean {
   return ranges.some(r => pos >= r.start && pos < r.end)
 }
 
 /**
- * Find all markdown link ranges in text: both [text](...) and [text][ref] patterns.
- * Returns ranges covering the entire link syntax so any URL detected within
- * these spans is skipped by preprocessLinks() — preventing nested/broken links.
+ * 查找文本中所有 markdown 链接区间：包括 [text](...) 和 [text][ref] 两种模式。
+ * 返回覆盖整个链接语法的区间，使 preprocessLinks() 跳过这些区间内检测到的 URL，
+ * 从而防止嵌套/损坏的链接。
  */
 function findMarkdownLinkRanges(text: string): CodeRange[] {
   const ranges: CodeRange[] = []
 
-  // Match [text](url) — inline links
+  // 匹配 [text](url) — 行内链接
   const inlineLinkRegex = /\[(?:[^\[\]]|\\\[|\\\])*\]\([^)]*\)/g
   let match
   while ((match = inlineLinkRegex.exec(text)) !== null) {
     ranges.push({ start: match.index, end: match.index + match[0].length })
   }
 
-  // Match [text][ref] — reference links
+  // 匹配 [text][ref] — 引用链接
   const refLinkRegex = /\[(?:[^\[\]]|\\\[|\\\])*\]\[[^\]]*\]/g
   while ((match = refLinkRegex.exec(text)) !== null) {
-    // Avoid duplicates with inline links that already matched
+    // 避免与已匹配的行内链接重复
     const r = { start: match.index, end: match.index + match[0].length }
     const alreadyCovered = ranges.some(existing => rangesOverlap(existing, r))
     if (!alreadyCovered) {
@@ -104,30 +104,30 @@ function findMarkdownLinkRanges(text: string): CodeRange[] {
 }
 
 /**
- * Check if a position falls inside any markdown link range
+ * 检查某位置是否落在任意 markdown 链接区间内
  */
 function isInsideMarkdownLink(pos: number, ranges: CodeRange[]): boolean {
   return ranges.some(r => pos >= r.start && pos < r.end)
 }
 
 /**
- * Check if ranges overlap
+ * 检查两个区间是否重叠
  */
 function rangesOverlap(a: { start: number; end: number }, b: { start: number; end: number }): boolean {
   return a.start < b.end && b.start < a.end
 }
 
 /**
- * Detect all links (URLs, emails, file paths) in text
+ * 检测文本中所有链接（URL、邮箱、文件路径）
  */
 export function detectLinks(text: string): DetectedLink[] {
   const links: DetectedLink[] = []
 
-  // 1. Detect URLs and emails with linkify-it
+  // 1. 用 linkify-it 检测 URL 和邮箱
   const urlMatches = linkify.match(text) || []
-  // linkify-it doesn't strip trailing asterisks from bold/italic markdown,
-  // which causes broken links when URLs are wrapped like **url** or *url*
-  // Note: _ and ~ are valid URL chars so we only strip *
+  // linkify-it 不会去除粗体/斜体 markdown 的尾部星号，
+  // 这会导致 URL 被 **url** 或 *url* 包裹时出现损坏的链接
+  // 注意：_ 和 ~ 是合法 URL 字符，因此只去除 *
   const trailingMarkdownRe = /\*+$/
   for (const match of urlMatches) {
     let matchText = match.text
@@ -151,20 +151,20 @@ export function detectLinks(text: string): DetectedLink[] {
     })
   }
 
-  // 2. Detect file paths with custom regex
-  // Reset regex state
+  // 2. 用自定义正则检测文件路径
+  // 重置正则状态
   FILE_PATH_REGEX.lastIndex = 0
   let fileMatch
   while ((fileMatch = FILE_PATH_REGEX.exec(text)) !== null) {
     const path = fileMatch[1]
-    if (!path) continue // Skip if no capture group
+    if (!path) continue // 无捕获组则跳过
 
-    // Calculate actual start position (after any leading whitespace/punctuation)
+    // 计算实际起始位置（跳过前导空白/标点）
     const fullMatch = fileMatch[0]
     const pathOffset = fullMatch.indexOf(path)
     const start = fileMatch.index + pathOffset
 
-    // Check for overlaps with URL matches (URLs take precedence)
+    // 检查与 URL 匹配的重叠（URL 优先）
     const pathRange = { start, end: start + path.length }
     const overlapsUrl = links.some(link => rangesOverlap(pathRange, link))
     if (overlapsUrl) continue
@@ -172,47 +172,47 @@ export function detectLinks(text: string): DetectedLink[] {
     links.push({
       type: 'file',
       text: path,
-      url: path, // File paths are passed as-is to onFileClick handler
+      url: path, // 文件路径原样传递给 onFileClick 处理器
       start,
       end: start + path.length
     })
   }
 
-  // Sort by position
+  // 按位置排序
   return links.sort((a, b) => a.start - b.start)
 }
 
 /**
- * Detect placeholder/fabricated URLs that the AI generated without knowing the real URL.
- * These are URLs like `https://github.com/...` or `https://example.com/...`
- * that should be stripped back to inline code instead of rendered as links.
+ * 检测 AI 在不知道真实 URL 时生成的占位/伪造 URL。
+ * 例如 `https://github.com/...` 或 `https://example.com/...` 这类 URL，
+ * 应被还原为行内代码而非渲染为链接。
  */
 const PLACEHOLDER_URL_PATTERN = /\/\.\.\.(?:[)/\s#?]|$)/
 
 /**
- * Check if a URL looks like a placeholder/fabricated URL.
- * Returns true for URLs containing path segments like `/...`
+ * 检查 URL 是否为占位/伪造 URL。
+ * 当 URL 包含 `/...` 这类路径段时返回 true
  */
 export function isPlaceholderUrl(url: string): boolean {
   return PLACEHOLDER_URL_PATTERN.test(url)
 }
 
 /**
- * Strip markdown links with placeholder URLs back to plain text.
- * Converts `[text](https://github.com/...)` → `text`
- * Respects code blocks — links inside fenced or inline code are not touched.
+ * 将带占位 URL 的 markdown 链接还原为纯文本。
+ * 将 `[text](https://github.com/...)` → `text`
+ * 遵守代码块——围栏或行内代码内的链接不会被处理。
  */
 function stripPlaceholderLinks(text: string): string {
   const codeRanges = findCodeRanges(text)
-  // Match markdown links [text](url) where url contains placeholder patterns
+  // 匹配 url 中包含占位模式的 markdown 链接 [text](url)
   return text.replace(
     /\[([^\[\]]*)\]\(([^)]*)\)/g,
     (fullMatch, linkText: string, url: string, offset: number) => {
-      // Don't modify links inside code blocks
+      // 不处理代码块内的链接
       if (isInsideCode(offset, codeRanges)) return fullMatch
 
       if (isPlaceholderUrl(url)) {
-        // Strip the link, keep just the display text as plain text
+        // 去除链接，仅保留显示文本作为纯文本
         if (!linkText.trim()) return fullMatch
         return linkText
       }
@@ -222,15 +222,15 @@ function stripPlaceholderLinks(text: string): string {
 }
 
 /**
- * Preprocess text to convert raw URLs and file paths into markdown links
- * Skips code blocks and already-linked content
+ * 预处理文本，将原始 URL 和文件路径转换为 markdown 链接
+ * 跳过代码块和已链接的内容
  */
 export function preprocessLinks(text: string): string {
-  // First pass: strip markdown links with placeholder/fabricated URLs
-  // (e.g., AI-generated `[commit](https://github.com/...)` → `\`commit\``)
+  // 第一遍：去除带占位/伪造 URL 的 markdown 链接
+  //（例如 AI 生成的 `[commit](https://github.com/...)` → `\`commit\``）
   text = stripPlaceholderLinks(text)
 
-  // Quick check - if no potential links, return early
+  // 快速检查 - 若无潜在链接则提前返回
   if (!linkify.pretest(text) && !FILE_PATH_PRETEST_REGEX.test(text)) {
     return text
   }
@@ -241,43 +241,43 @@ export function preprocessLinks(text: string): string {
 
   if (links.length === 0) return text
 
-  // Build result, converting raw links to markdown links
+  // 构建结果，将原始链接转换为 markdown 链接
   let result = ''
   let lastIndex = 0
 
   for (const link of links) {
-    // Skip if inside code block
+    // 跳过代码块内的链接
     if (isInsideCode(link.start, codeRanges)) continue
 
-    // Skip if inside an existing markdown link (text or href portion)
+    // 跳过已存在的 markdown 链接内的链接（文本或 href 部分）
     if (isInsideMarkdownLink(link.start, markdownLinkRanges)) continue
 
-    // Add text before this link
+    // 添加此链接之前的文本
     result += text.slice(lastIndex, link.start)
 
-    // Convert to markdown link
+    // 转换为 markdown 链接
     result += `[${link.text}](${link.url})`
 
     lastIndex = link.end
   }
 
-  // Add remaining text
+  // 添加剩余文本
   result += text.slice(lastIndex)
 
   return result
 }
 
 /**
- * Test if text contains any detectable links
- * Useful for optimization - skip preprocessing if no links present
+ * 测试文本是否包含任何可检测的链接
+ * 用于优化 - 无链接时跳过预处理
  */
 export function hasLinks(text: string): boolean {
   return linkify.pretest(text) || FILE_PATH_PRETEST_REGEX.test(text)
 }
 
 /**
- * Check whether a markdown anchor target should be treated as a local file path.
- * Used by click handlers to route local paths to onFileClick instead of onUrlClick.
+ * 检查 markdown 锚点目标是否应被视为本地文件路径。
+ * 供点击处理器使用，将本地路径路由到 onFileClick 而非 onUrlClick。
  */
 export function isFilePathTarget(target: string): boolean {
   return FILE_PATH_TARGET_REGEX.test(target.trim())

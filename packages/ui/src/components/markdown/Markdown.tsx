@@ -27,10 +27,9 @@ import { MARKDOWN_MATH_OPTIONS } from './math-options'
 import { markdownUrlTransform } from './url-transform'
 
 /**
- * Names of preview-block code-fence types that recursive `Markdown` callers
- * may want to suppress. Used by `MarkdownDocBlock` to prevent
- * `markdown-preview` self-recursion while leaving other preview blocks
- * (mermaid, datatable, …) intact.
+ * 递归调用 `Markdown` 时可能需要抑制的 preview-block 代码围栏类型名。
+ * 供 `MarkdownDocBlock` 使用,用于避免 `markdown-preview` 自递归,
+ * 同时保留其他 preview block(mermaid、datatable 等)正常工作。
  */
 export type DisablablePreviewBlock =
   | 'markdown-preview'
@@ -39,82 +38,80 @@ export type DisablablePreviewBlock =
   | 'image-preview'
 
 /**
- * Render modes for markdown content:
+ * markdown 内容的渲染模式:
  *
- * - 'terminal': Raw output with minimal formatting, control chars visible
- *   Best for: Debug output, raw logs, when you want to see exactly what's there
+ * - 'terminal':原始输出、最少格式化,控制字符可见
+ *   最适合:调试输出、原始日志、想精确看到实际内容的场景
  *
- * - 'minimal': Clean rendering with syntax highlighting but no extra chrome
- *   Best for: Chat messages, inline content, when you want readability without clutter
+ * - 'minimal':带语法高亮的简洁渲染,无额外装饰
+ *   最适合:聊天消息、内嵌内容、追求可读性而不希望有杂乱装饰的场景
  *
- * - 'full': Rich rendering with beautiful tables, styled code blocks, proper typography
- *   Best for: Documentation, long-form content, when presentation matters
+ * - 'full':富渲染,带美观的表格、带样式的代码块、规范的排版
+ *   最适合:文档、长文内容、注重展示效果的场景
  */
 export type RenderMode = 'terminal' | 'minimal' | 'full'
 
 export interface MarkdownProps {
   children: string
   /**
-   * Render mode controlling formatting level
+   * 控制格式化级别的渲染模式
    * @default 'minimal'
    */
   mode?: RenderMode
   className?: string
   /**
-   * Message ID for memoization (optional)
-   * When provided, memoizes parsed blocks to avoid re-parsing during streaming
+   * 用于 memoization 的消息 ID(可选)
+   * 提供后会对解析结果做 memo,避免流式过程中重复解析
    */
   id?: string
   /**
-   * Callback when a URL is clicked
+   * 点击 URL 时的回调
    */
   onUrlClick?: (url: string) => void
   /**
-   * Callback when a file path is clicked
+   * 点击文件路径时的回调
    */
   onFileClick?: (path: string) => void
   /**
-   * Enable collapsible headings
-   * Requires wrapping in CollapsibleMarkdownProvider
+   * 启用可折叠标题
+   * 需要外层用 CollapsibleMarkdownProvider 包裹
    * @default false
    */
   collapsible?: boolean
   /**
-   * Hide expand button on first mermaid block (when message starts with mermaid)
-   * Used in chat to avoid overlap with TurnCard's fullscreen button
+   * 隐藏首个 mermaid block 的展开按钮(当消息以 mermaid 开头时)
+   * 在聊天场景中用于避免与 TurnCard 的全屏按钮重叠
    * @default true
    */
   hideFirstMermaidExpand?: boolean
   /**
-   * Disable specific preview-block handlers for nested rendering.
+   * 针对嵌套渲染禁用特定的 preview-block 处理器。
    *
-   * When a preview-block component renders user-supplied markdown through
-   * `Markdown` again (e.g. `MarkdownDocBlock`), it can pass the names of the
-   * preview-block types it wants to suppress to prevent infinite recursion.
-   * Suppressed blocks fall through to the default `CodeBlock` renderer.
+   * 当某个 preview-block 组件再次通过 `Markdown` 渲染用户提供的 markdown
+   * 时(例如 `MarkdownDocBlock`),可以传入想要抑制的 preview-block 类型名,
+   * 以防止无限递归。被抑制的 block 会回退到默认的 `CodeBlock` 渲染器。
    *
-   * Default behavior (prop omitted): all preview blocks are registered.
+   * 默认行为(不传该 prop):所有 preview block 均注册。
    */
   disablePreviewBlocks?: ReadonlySet<DisablablePreviewBlock>
 }
 
-/** Context for collapsible sections */
+/** 可折叠 section 的 context */
 interface CollapsibleContext {
   collapsedSections: Set<string>
   toggleSection: (id: string) => void
 }
 
 /**
- * Create custom components based on render mode.
+ * 根据渲染模式创建自定义组件。
  *
- * @param firstMermaidCodeRef - Ref holding the code of the first mermaid block
- *   when the markdown message starts with a mermaid fence. Used to hide the
- *   inline expand button on that block (TurnCard's own fullscreen button
- *   occupies the same top-right position). A ref is used so the closure can
- *   read the latest value without adding content to the memo deps — that would
- *   cause component re-mounting on every streaming update.
- * @param hideFirstMermaidExpand - Whether to hide the expand button on the first
- *   mermaid block when the message starts with a mermaid fence. Defaults to true.
+ * @param firstMermaidCodeRef - 当 markdown 消息以 mermaid 围栏开头时,保存
+ *   第一个 mermaid block 代码的 ref。用于隐藏该 block 内联的展开按钮
+ *   (TurnCard 自己的全屏按钮占据了同一个右上角位置)。使用 ref 的目的是
+ *   让闭包能读取最新值,而无需把内容加入 memo 依赖 —— 否则每次流式更新
+ *   都会导致组件重新挂载。
+ * @param hideFirstMermaidExpand - 当消息以 mermaid 围栏开头时,是否隐藏首个
+ *   mermaid block 的展开按钮。默认为 true。
  */
 function stableHash(input: string): string {
   let hash = 2166136261
@@ -162,12 +159,12 @@ function createComponents(
   }
 
   const baseComponents: Partial<Components> = {
-    // Section wrapper for collapsible headings
+    // 可折叠标题的 section 包裹器
     div: ({ node, children, ...props }) => {
       const sectionId = (props as Record<string, unknown>)['data-section-id'] as string | undefined
       const headingLevel = (props as Record<string, unknown>)['data-heading-level'] as number | undefined
 
-      // If this is a collapsible section div and we have context
+      // 若这是一个可折叠 section 的 div,且我们持有 context
       if (sectionId && headingLevel && collapsibleContext) {
         return (
           <CollapsibleSection
@@ -181,23 +178,21 @@ function createComponents(
         )
       }
 
-      // Regular div
+      // 普通 div
       return <div {...props}>{children}</div>
     },
-    // Links: Make clickable with callbacks.
+    // 链接:使其可点击并触发回调。
     //
-    // We sanitize the DOM `href` separately from the click-dispatch target:
-    // - `safeHref` is what React puts on the `<a>` element. We pass `href`
-    //   through `defaultUrlTransform`; any dangerous scheme
-    //   (javascript:/data:/vbscript:/file:) is stripped to empty, in which case
-    //   we omit the attribute entirely. That blocks middle-click and
-    //   cmd-click escape routes (Electron's `setWindowOpenHandler` /
-    //   `will-navigate` would otherwise bypass our React `onClick` and call
-    //   `shell.openExternal` directly).
-    // - The click handler still receives the ORIGINAL `href` and routes it
-    //   through `resolveMarkdownLinkTarget` so file URLs land in `onFileClick`
-    //   and blocked URLs surface a meaningful error via `onUrlClick` →
-    //   `classifyExternalUrl`.
+    // 我们对 DOM `href` 的清理与点击分发目标是分开处理的:
+    // - `safeHref` 是 React 放到 `<a>` 元素上的值。我们把 `href` 传给
+    //   `defaultUrlTransform`;任何危险协议
+    //   (javascript:/data:/vbscript:/file:) 会被置空,此时我们直接省略该属性。
+    //   这样可以堵住中键点击和 cmd-click 的旁路(Electron 的
+    //   `setWindowOpenHandler` / `will-navigate` 否则会绕过我们的 React
+    //   `onClick`,直接调用 `shell.openExternal`)。
+    // - 点击处理器仍然拿到原始 `href`,并通过 `resolveMarkdownLinkTarget`
+    //   进行路由,使文件 URL 走 `onFileClick`,被阻止的 URL 通过
+    //   `onUrlClick` → `classifyExternalUrl` 给出有意义的错误提示。
     a: ({ href, children }) => {
       const trimmedHref = href?.trim() ?? ''
       const sanitized = trimmedHref ? defaultUrlTransform(trimmedHref) : ''
@@ -206,8 +201,8 @@ function createComponents(
       const handleClick = (e: React.MouseEvent) => {
         e.preventDefault()
 
-        // Some AI outputs include raw HTML anchors with empty href but path text content.
-        // Fallback to the anchor text when href is missing/empty.
+        // 部分 AI 输出会包含原始 HTML 锚点,href 为空但文本内容是路径。
+        // 当 href 缺失/为空时,回退到锚点文本。
         const fallbackText = React.Children.toArray(children)
           .map((child) => (typeof child === 'string' ? child : ''))
           .join('')
@@ -236,24 +231,24 @@ function createComponents(
     },
   }
 
-  // Terminal mode: minimal formatting
+  // terminal 模式:最少格式化
   if (mode === 'terminal') {
     return {
       ...baseComponents,
-      // No special code handling - just monospace
+      // 无特殊代码处理 - 仅等宽字体
       code: ({ children }) => (
         <code className="font-mono">{children}</code>
       ),
       pre: ({ children }) => (
         <pre className="font-mono whitespace-pre-wrap my-2">{children}</pre>
       ),
-      // Minimal paragraph spacing
+      // 较小的段落间距
       p: ({ children }) => <p className="my-1">{children}</p>,
-      // Simple lists
+      // 简单列表
       ul: ({ children }) => <ul className="list-disc list-inside my-1">{children}</ul>,
       ol: ({ children }) => <ol className="list-decimal list-inside my-1">{children}</ol>,
       li: ({ children }) => <li className="my-0.5">{children}</li>,
-      // Plain tables
+      // 纯文本表格
       table: ({ children }) => (
         <table className="my-2 font-mono text-sm">{children}</table>
       ),
@@ -262,47 +257,47 @@ function createComponents(
     }
   }
 
-  // Minimal mode: clean with syntax highlighting
+  // minimal 模式:简洁风格,带语法高亮
   if (mode === 'minimal') {
     return {
       ...baseComponents,
-      // Inline code
+      // 行内代码
       code: ({ className, children, ...props }) => {
         const match = /language-([\w-]+)/.exec(className || '')
         const isBlock = 'node' in props && props.node?.position?.start.line !== props.node?.position?.end.line
 
-        // Block code
+        // 代码块
         if (match || isBlock) {
           const code = String(children).replace(/\n$/, '')
-          // Diff code blocks → pierre/diffs for a proper diff viewer
+          // diff 代码块 → 用 pierre/diffs 渲染成规范的 diff 查看器
           if (match?.[1] === 'diff') {
             return wrapBlock('code', code, <MarkdownDiffBlock code={code} className="my-2" />, props.node?.position)
           }
-          // JSON code blocks → interactive tree viewer
+          // JSON 代码块 → 交互式树形查看器
           if (match?.[1] === 'json') {
             return wrapBlock('code', code, <MarkdownJsonBlock code={code} className="my-2" />, props.node?.position)
           }
-          // Datatable code blocks → sortable/filterable data table
+          // datatable 代码块 → 可排序/可筛选的数据表
           if (match?.[1] === 'datatable') {
             return wrapBlock('datatable', code, <MarkdownDatatableBlock code={code} className="my-2" />, props.node?.position)
           }
-          // Spreadsheet code blocks → Excel-style grid
+          // spreadsheet 代码块 → Excel 风格网格
           if (match?.[1] === 'spreadsheet') {
             return wrapBlock('spreadsheet', code, <MarkdownSpreadsheetBlock code={code} className="my-2" />, props.node?.position)
           }
-          // HTML preview blocks → sandboxed iframe
+          // html-preview 代码块 → 沙箱化 iframe
           if (match?.[1] === 'html-preview' && isPreviewEnabled('html-preview')) {
             return wrapBlock('html-preview', code, <MarkdownHtmlBlock code={code} className="my-2" />, props.node?.position)
           }
-          // PDF preview blocks → inline first page with expand to full viewer
+          // pdf-preview 代码块 → 内联首页,可展开到完整查看器
           if (match?.[1] === 'pdf-preview' && isPreviewEnabled('pdf-preview')) {
             return wrapBlock('pdf-preview', code, <MarkdownPdfBlock code={code} className="my-2" />, props.node?.position)
           }
-          // Image preview blocks → inline image with expand to full viewer
+          // image-preview 代码块 → 内联图片,可展开到完整查看器
           if (match?.[1] === 'image-preview' && isPreviewEnabled('image-preview')) {
             return wrapBlock('image-preview', code, <MarkdownImageBlock code={code} className="my-2" />, props.node?.position)
           }
-          // Markdown preview blocks → inline rendered .md file
+          // markdown-preview 代码块 → 内联渲染 .md 文件
           if (match?.[1] === 'markdown-preview' && isPreviewEnabled('markdown-preview')) {
             return wrapBlock(
               'markdown-preview',
@@ -311,16 +306,15 @@ function createComponents(
               props.node?.position,
             )
           }
-          // LaTeX/math code blocks → KaTeX rendered display math
+          // LaTeX/数学代码块 → KaTeX 渲染的展示型数学公式
           if (match?.[1] === 'latex' || match?.[1] === 'math') {
             return wrapBlock('latex', code, <MarkdownLatexBlock code={code} className="my-2" />, props.node?.position)
           }
-          // Mermaid code blocks → zinc-styled SVG diagram.
-          // Hide the inline expand button when the mermaid block is the first
-          // content in the message — TurnCard's own fullscreen button occupies
-          // the same top-right spot. Detection uses firstMermaidCodeRef (content
-          // match) rather than AST line positions which are unreliable after
-          // preprocessLinks transforms the markdown.
+          // mermaid 代码块 → zinc 风格的 SVG 图。
+          // 当 mermaid block 是消息中的第一段内容时,隐藏内联展开按钮 ——
+          // TurnCard 自己的全屏按钮占据了同一个右上角位置。这里通过
+          // firstMermaidCodeRef 做内容匹配来判断,而非依赖 AST 行号,因为
+          // preprocessLinks 改写 markdown 后行号已不可靠。
           if (match?.[1] === 'mermaid') {
             const isFirstBlock = hideFirstMermaidExpand &&
                                 firstMermaidCodeRef?.current != null &&
@@ -335,13 +329,13 @@ function createComponents(
           return wrapBlock('code', code, <CodeBlock code={code} language={match?.[1]} mode="full" className="my-2" />, props.node?.position)
         }
 
-        // Inline code
+        // 行内代码
         return <InlineCode>{children}</InlineCode>
       },
       pre: ({ children }) => <>{children}</>,
-      // Comfortable paragraph spacing
+      // 舒适的段落间距
       p: ({ children }) => <p className="my-2 leading-relaxed">{children}</p>,
-      // Styled lists - ul uses tighter spacing, ol uses standard for number alignment
+      // 带样式的列表 - ul 用更紧凑的间距,ol 用标准间距以便数字对齐
       ul: ({ children, className }) => (
         <ul
           className={cn(
@@ -371,7 +365,7 @@ function createComponents(
         }
         return <input type={type} />
       },
-      // Clean tables
+      // 简洁表格
       table: ({ children }) => (
         <div className="my-3 overflow-x-auto">
           <table className="min-w-full text-sm">{children}</table>
@@ -384,63 +378,63 @@ function createComponents(
       td: ({ children }) => (
         <td className="py-2 px-3 border-b border-border/50">{children}</td>
       ),
-      // Headings - H1/H2 same size, differentiated by weight
+      // 标题 - H1/H2 字号相同,通过字重区分
       h1: ({ children }) => <h1 className="font-sans text-[16px] font-bold mt-5 mb-3">{children}</h1>,
       h2: ({ children }) => <h2 className="font-sans text-[16px] font-semibold mt-4 mb-3">{children}</h2>,
       h3: ({ children }) => <h3 className="font-sans text-[15px] font-semibold mt-4 mb-2">{children}</h3>,
-      // Blockquotes
+      // 引用块
       blockquote: ({ children }) => (
         <blockquote className="border-l-2 border-muted-foreground/30 pl-3 my-2 text-muted-foreground italic">
           {children}
         </blockquote>
       ),
-      // Horizontal rules
+      // 分隔线
       hr: () => <hr className="my-4 border-border" />,
-      // Strong/emphasis
+      // 加粗/斜体
       strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
       em: ({ children }) => <em className="italic">{children}</em>,
     }
   }
 
-  // Full mode: rich styling
+  // full 模式:富样式
   return {
     ...baseComponents,
-    // Full code blocks with copy button
+    // 完整代码块,带复制按钮
     code: ({ className, children, ...props }) => {
       const match = /language-([\w-]+)/.exec(className || '')
       const isBlock = 'node' in props && props.node?.position?.start.line !== props.node?.position?.end.line
 
       if (match || isBlock) {
         const code = String(children).replace(/\n$/, '')
-        // Diff code blocks → pierre/diffs for a proper diff viewer
+        // diff 代码块 → 用 pierre/diffs 渲染成规范的 diff 查看器
         if (match?.[1] === 'diff') {
           return wrapBlock('code', code, <MarkdownDiffBlock code={code} className="my-2" />, props.node?.position)
         }
-        // JSON code blocks → interactive tree viewer
+        // JSON 代码块 → 交互式树形查看器
         if (match?.[1] === 'json') {
           return wrapBlock('code', code, <MarkdownJsonBlock code={code} className="my-2" />, props.node?.position)
         }
-        // Datatable code blocks → sortable/filterable data table
+        // datatable 代码块 → 可排序/可筛选的数据表
         if (match?.[1] === 'datatable') {
           return wrapBlock('datatable', code, <MarkdownDatatableBlock code={code} className="my-2" />, props.node?.position)
         }
-        // Spreadsheet code blocks → Excel-style grid
+        // spreadsheet 代码块 → Excel 风格网格
         if (match?.[1] === 'spreadsheet') {
           return wrapBlock('spreadsheet', code, <MarkdownSpreadsheetBlock code={code} className="my-2" />, props.node?.position)
         }
-        // HTML preview blocks → sandboxed iframe
+        // html-preview 代码块 → 沙箱化 iframe
         if (match?.[1] === 'html-preview' && isPreviewEnabled('html-preview')) {
           return wrapBlock('html-preview', code, <MarkdownHtmlBlock code={code} className="my-2" />, props.node?.position)
         }
-        // PDF preview blocks → inline first page with expand to full viewer
+        // pdf-preview 代码块 → 内联首页,可展开到完整查看器
         if (match?.[1] === 'pdf-preview' && isPreviewEnabled('pdf-preview')) {
           return wrapBlock('pdf-preview', code, <MarkdownPdfBlock code={code} className="my-2" />, props.node?.position)
         }
-        // Image preview blocks → inline image with expand to full viewer
+        // image-preview 代码块 → 内联图片,可展开到完整查看器
         if (match?.[1] === 'image-preview' && isPreviewEnabled('image-preview')) {
           return wrapBlock('image-preview', code, <MarkdownImageBlock code={code} className="my-2" />, props.node?.position)
         }
-        // Markdown preview blocks → inline rendered .md file
+        // markdown-preview 代码块 → 内联渲染 .md 文件
         if (match?.[1] === 'markdown-preview' && isPreviewEnabled('markdown-preview')) {
           return wrapBlock(
             'markdown-preview',
@@ -449,12 +443,12 @@ function createComponents(
             props.node?.position,
           )
         }
-        // LaTeX/math code blocks → KaTeX rendered display math
+        // LaTeX/数学代码块 → KaTeX 渲染的展示型数学公式
         if (match?.[1] === 'latex' || match?.[1] === 'math') {
           return wrapBlock('latex', code, <MarkdownLatexBlock code={code} className="my-2" />, props.node?.position)
         }
-        // Mermaid code blocks → zinc-styled SVG diagram.
-        // (Same first-block detection as minimal mode — see comment above.)
+        // mermaid 代码块 → zinc 风格的 SVG 图。
+        // (首块检测逻辑同 minimal 模式,见上方注释。)
         if (match?.[1] === 'mermaid') {
           const isFirstBlock = hideFirstMermaidExpand &&
                               firstMermaidCodeRef?.current != null &&
@@ -472,9 +466,9 @@ function createComponents(
       return <InlineCode>{children}</InlineCode>
     },
     pre: ({ children }) => <>{children}</>,
-    // Rich paragraph spacing
+    // 宽松的段落间距
     p: ({ children }) => <p className="my-3 leading-relaxed">{children}</p>,
-    // Styled lists - ul uses tighter spacing, ol uses standard for number alignment
+    // 带样式的列表 - ul 用更紧凑的间距,ol 用标准间距以便数字对齐
     ul: ({ children, className }) => (
       <ul
         className={cn(
@@ -491,7 +485,7 @@ function createComponents(
     li: ({ children, className }) => (
       <li className={cn('leading-relaxed', className?.includes('task-list-item') && 'list-none')}>{children}</li>
     ),
-    // Beautiful tables
+    // 精美表格
     table: ({ children }) => (
       <div className="my-4 overflow-x-auto rounded-md border">
         <table className="min-w-full divide-y divide-border">{children}</table>
@@ -508,7 +502,7 @@ function createComponents(
     tr: ({ children }) => (
       <tr className="hover:bg-muted/30 transition-colors">{children}</tr>
     ),
-    // Rich headings - H1/H2 same size, differentiated by weight
+    // 富样式标题 - H1/H2 字号相同,通过字重区分
     h1: ({ children }) => (
       <h1 className="font-sans text-[16px] font-bold mt-7 mb-4">{children}</h1>
     ),
@@ -521,13 +515,13 @@ function createComponents(
     h4: ({ children }) => (
       <h4 className="text-[14px] font-semibold mt-3 mb-1">{children}</h4>
     ),
-    // Styled blockquotes
+    // 带样式的引用块
     blockquote: ({ children }) => (
       <blockquote className="border-l-4 border-foreground/30 bg-muted/30 pl-4 pr-3 py-2 my-3 rounded-r-md">
         {children}
       </blockquote>
     ),
-    // Task lists (GFM)
+    // 任务列表(GFM)
     input: ({ type, checked }) => {
       if (type === 'checkbox') {
         return (
@@ -541,27 +535,27 @@ function createComponents(
       }
       return <input type={type} />
     },
-    // Horizontal rules
+    // 分隔线
     hr: () => <hr className="my-6 border-border" />,
-    // Strong/emphasis
+    // 加粗/斜体
     strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
     em: ({ children }) => <em className="italic">{children}</em>,
     del: ({ children }) => <del className="line-through text-muted-foreground">{children}</del>,
-    // Handle unknown <markdown> tags that may come through rehype-raw
-    // Type assertion needed because 'markdown' is not a standard HTML element
+    // 处理可能来自 rehype-raw 的未知 <markdown> 标签
+    // 需要类型断言,因为 'markdown' 不是标准 HTML 元素
     markdown: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   } as Partial<Components>
 }
 
 /**
- * Markdown - Customizable markdown renderer with multiple render modes
+ * Markdown - 可定制的 markdown 渲染器,支持多种渲染模式
  *
- * Features:
- * - Three render modes: terminal, minimal, full
- * - Syntax highlighting via Shiki
- * - GFM support (tables, task lists, strikethrough)
- * - Clickable links and file paths
- * - Memoization for streaming performance
+ * 特性:
+ * - 三种渲染模式:terminal、minimal、full
+ * - 基于 Shiki 的语法高亮
+ * - 支持 GFM(表格、任务列表、删除线)
+ * - 可点击的链接和文件路径
+ * - 针对流式场景的 memoization
  */
 export function Markdown({
   children,
@@ -574,13 +568,12 @@ export function Markdown({
   hideFirstMermaidExpand = true,
   disablePreviewBlocks,
 }: MarkdownProps) {
-  // Get collapsible context if enabled
+  // 若启用则获取可折叠 context
   const collapsibleContext = useCollapsibleMarkdown()
 
-  // Extract the first mermaid code block's content when the message starts
-  // with a mermaid fence. Stored in a ref so createComponents can read it
-  // without adding `children` to the memo deps (which would remount all
-  // components on every streaming update, breaking internal state).
+  // 当消息以 mermaid 围栏开头时,提取第一个 mermaid 代码块的内容。
+  // 存入 ref,以便 createComponents 能读取它,而无需把 `children` 加入
+  // memo 依赖(否则每次流式更新都会重新挂载所有组件,破坏内部状态)。
   const firstMermaidCodeRef = React.useRef<string | null>(null)
   const trimmed = children.trimStart()
   if (trimmed.startsWith('```mermaid')) {
@@ -595,15 +588,15 @@ export function Markdown({
     [mode, onUrlClick, onFileClick, collapsible, collapsibleContext, hideFirstMermaidExpand, disablePreviewBlocks]
   )
 
-  // Preprocess to convert raw URLs and file paths to markdown links
+  // 预处理:把原始 URL 和文件路径转换为 markdown 链接
   const processedContent = React.useMemo(
     () => preprocessLinks(children),
     [children]
   )
 
-  // Conditionally include the collapsible sections plugin.
-  // IMPORTANT: Disable single-dollar inline math so currency like $2M–$4M
-  // stays plain text. Math should use $$...$$ delimiters.
+  // 根据条件决定是否引入可折叠 section 插件。
+  // 重要:禁用单美元符号的行内数学,使 $2M–$4M 这类货币金额保持纯文本。
+  // 数学公式应使用 $$...$$ 分隔符。
   const remarkPlugins = React.useMemo(
     () => {
       const mathPlugin: [typeof remarkMath, typeof MARKDOWN_MATH_OPTIONS] = [
@@ -632,15 +625,15 @@ export function Markdown({
 }
 
 /**
- * MemoizedMarkdown - Optimized for streaming scenarios
+ * MemoizedMarkdown - 针对流式场景优化
  *
- * Splits content into blocks and memoizes each block separately,
- * so only new/changed blocks re-render during streaming.
+ * 将内容拆分为 block 并分别 memo,
+ * 流式更新时只有新增/变化的 block 会重新渲染。
  */
 export const MemoizedMarkdown = React.memo(
   Markdown,
   (prevProps, nextProps) => {
-    // If id is provided, use it for memoization
+    // 若提供了 id,则基于 id 做 memoization
     if (prevProps.id && nextProps.id) {
       return (
         prevProps.id === nextProps.id &&
@@ -649,7 +642,7 @@ export const MemoizedMarkdown = React.memo(
         prevProps.disablePreviewBlocks === nextProps.disablePreviewBlocks
       )
     }
-    // Otherwise compare content and mode
+    // 否则比较内容和模式
     return (
       prevProps.children === nextProps.children &&
       prevProps.mode === nextProps.mode &&
@@ -659,6 +652,6 @@ export const MemoizedMarkdown = React.memo(
 )
 MemoizedMarkdown.displayName = 'MemoizedMarkdown'
 
-// Re-export for convenience
+// 为方便使用而 re-export
 export { CodeBlock, InlineCode } from './CodeBlock'
 export { CollapsibleMarkdownProvider } from './CollapsibleMarkdownContext'

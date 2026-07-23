@@ -3,9 +3,9 @@ import { useTranslation } from "react-i18next"
 import { cn } from "../../lib/utils"
 
 /**
- * Format duration in human-readable form
- * @param ms Duration in milliseconds
- * @returns "45s" for under a minute, "1:02" for 1+ minutes
+ * 将时长格式化为易读形式
+ * @param ms 时长（毫秒）
+ * @returns 不足一分钟返回 "45s"，一分钟及以上返回 "1:02"
  */
 function formatDuration(ms: number): string {
   const seconds = Math.floor(ms / 1000)
@@ -16,27 +16,27 @@ function formatDuration(ms: number): string {
 }
 
 export interface SpinnerProps {
-  /** Additional className */
+  /** 附加 className */
   className?: string
 }
 
 /**
- * Spinner - 3x3 grid spinner based on SpinKit Grid
+ * Spinner - 基于 SpinKit Grid 的 3x3 网格加载动画
  *
- * Features:
- * - Uses currentColor (inherits text color from parent)
- * - Uses em sizing (scales with font-size)
- * - 3x3 grid of cubes with staggered scale animation
- * - Pure CSS animation (no JS state)
+ * 特性：
+ * - 使用 currentColor（继承父元素文本颜色）
+ * - 使用 em 尺寸（随字号缩放）
+ * - 3x3 立方体网格，带交错缩放动画
+ * - 纯 CSS 动画（无 JS 状态）
  *
- * Usage:
+ * 用法：
  * ```tsx
- * // Inherits color and size from parent
+ * // 继承父元素颜色与尺寸
  * <div className="text-muted-foreground text-sm">
  *   <Spinner />
  * </div>
  *
- * // Or override with className
+ * // 或通过 className 覆盖
  * <Spinner className="text-amber-500 text-lg" />
  * ```
  */
@@ -62,27 +62,27 @@ export function Spinner({ className }: SpinnerProps) {
 }
 
 export interface LoadingIndicatorProps {
-  /** Optional label to show next to spinner */
+  /** 在 spinner 旁显示的可选标签 */
   label?: string
-  /** Whether to animate the spinner */
+  /** 是否为 spinner 播放动画 */
   animated?: boolean
-  /** Show elapsed time (pass start timestamp or true to auto-track) */
+  /** 显示已用时长（传入起始时间戳，或传 true 自动追踪） */
   showElapsed?: boolean | number
-  /** Additional className for the container */
+  /** 容器的附加 className */
   className?: string
-  /** Additional className for the spinner (e.g., "text-xs" to make it smaller) */
+  /** spinner 的附加 className（例如 "text-xs" 使其更小） */
   spinnerClassName?: string
 }
 
 /**
- * LoadingIndicator - Spinner with optional label and elapsed time
+ * LoadingIndicator - 带可选标签与已用时长的 Spinner
  *
- * Inherits text color and size from parent element.
+ * 继承父元素的文本颜色与尺寸。
  *
- * Features:
- * - Animated 3x3 dot grid spinner (CSS-only)
- * - Optional label text
- * - Optional elapsed time display
+ * 特性：
+ * - 动画式 3x3 点阵 spinner（纯 CSS）
+ * - 可选标签文本
+ * - 可选已用时长展示
  */
 export function LoadingIndicator({
   label,
@@ -94,11 +94,11 @@ export function LoadingIndicator({
   const [elapsed, setElapsed] = React.useState(0)
   const startTimeRef = React.useRef<number | null>(null)
 
-  // Elapsed time tracking
+  // 已用时长追踪
   React.useEffect(() => {
     if (!showElapsed) return
 
-    // Initialize start time
+    // 初始化起始时间
     if (typeof showElapsed === 'number') {
       startTimeRef.current = showElapsed
     } else if (!startTimeRef.current) {
@@ -116,21 +116,21 @@ export function LoadingIndicator({
 
   return (
     <span className={cn("inline-flex items-center gap-2", className)}>
-      {/* Spinner */}
+      {/* 加载动画 */}
       {animated ? (
         <Spinner className={spinnerClassName} />
       ) : (
         <span className="inline-flex items-center justify-center w-[1em] h-[1em]">●</span>
       )}
 
-      {/* Label */}
+      {/* 标签 */}
       {label && (
         <span className="text-muted-foreground">
           {label}
         </span>
       )}
 
-      {/* Elapsed time */}
+      {/* 已用时长 */}
       {showElapsed && elapsed >= 1000 && (
         <span className="text-muted-foreground/60 tabular-nums">
           ({formatDuration(elapsed)})

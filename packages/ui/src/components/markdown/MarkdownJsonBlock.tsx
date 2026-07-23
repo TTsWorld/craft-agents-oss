@@ -1,15 +1,14 @@
 /**
- * MarkdownJsonBlock - Interactive JSON tree viewer for markdown code blocks
+ * MarkdownJsonBlock - 用于 markdown 代码块的交互式 JSON 树查看器
  *
- * When the markdown viewer encounters a ```json code block, this component
- * renders it with the same @uiw/react-json-view setup and styling used in
- * JSONPreviewOverlay, instead of static Shiki syntax highlighting.
+ * 当 markdown 查看器遇到 ```json 代码块时,本组件用与 JSONPreviewOverlay
+ * 相同的 @uiw/react-json-view 配置和样式来渲染,而不是使用静态的 Shiki 语法高亮。
  *
- * - Parses the raw code string as JSON
- * - Recursively expands stringified-JSON-within-JSON (deepParseJson)
- * - Uses craft themes (transparent bg, CSS variable fonts)
- * - Defaults to collapsed={2} for inline chat context
- * - Falls back to CodeBlock if JSON parsing or rendering fails
+ * - 将原始 code 字符串解析为 JSON
+ * - 递归展开 JSON 中的字符串化 JSON(deepParseJson)
+ * - 使用 craft 主题(透明背景、CSS 变量字体)
+ * - 内联聊天场景默认 collapsed={2}
+ * - 若 JSON 解析或渲染失败,则回退到 CodeBlock
  */
 
 import * as React from 'react'
@@ -21,9 +20,9 @@ import { Copy, Check } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { CodeBlock } from './CodeBlock'
 
-// ── Themes (same as JSONPreviewOverlay) ────────────────────────────────────
-// Transparent background so the container's bg-muted/30 shows through,
-// and CSS variable font so it matches the app's monospace font.
+// ── 主题(与 JSONPreviewOverlay 一致) ────────────────────────────────────
+// 透明背景,使容器的 bg-muted/30 能透出;
+// 使用 CSS 变量字体,以匹配应用的等宽字体。
 
 const craftAgentDarkTheme = {
   ...vscodeTheme,
@@ -37,9 +36,9 @@ const craftAgentLightTheme = {
   '--w-rjv-background-color': 'transparent',
 }
 
-// ── Deep parse helper (same as JSONPreviewOverlay) ─────────────────────────
-// Recursively parse stringified JSON within JSON values so nested objects
-// like {"result": "{\"nested\": \"value\"}"} display as expandable nodes.
+// ── 深度解析辅助(与 JSONPreviewOverlay 一致) ─────────────────────────
+// 递归解析 JSON 值中字符串化的 JSON,使 {"result": "{\"nested\": \"value\"}"}
+// 这类嵌套对象显示为可展开节点。
 
 function deepParseJson(value: unknown): unknown {
   if (value === null || value === undefined) return value
@@ -74,15 +73,15 @@ function deepParseJson(value: unknown): unknown {
   return value
 }
 
-// ── Error boundary ────────────────────────────────────────────────────────
+// ── 错误边界 ────────────────────────────────────────────────────────────────
 
 interface ErrorBoundaryState {
   hasError: boolean
 }
 
 /**
- * Lightweight error boundary so a JsonView failure doesn't crash the whole
- * message — we fall back to the regular CodeBlock instead.
+ * 轻量错误边界,使 JsonView 失败时不会让整条消息崩溃 —— 而是回退到
+ * 普通 CodeBlock。
  */
 class JsonErrorBoundary extends React.Component<
   { children: React.ReactNode; fallback: React.ReactNode },
@@ -104,17 +103,17 @@ class JsonErrorBoundary extends React.Component<
   }
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── 辅助函数 ────────────────────────────────────────────────────────────────
 
 function isDarkMode(): boolean {
   if (typeof document === 'undefined') return false
   return document.documentElement.classList.contains('dark')
 }
 
-// ── Main component ────────────────────────────────────────────────────────
+// ── 主组件 ────────────────────────────────────────────────────────────────
 
 export interface MarkdownJsonBlockProps {
-  /** Raw JSON string from the markdown code block */
+  /** 来自 markdown 代码块的原始 JSON 字符串 */
   code: string
   className?: string
 }
@@ -123,7 +122,7 @@ export function MarkdownJsonBlock({ code, className }: MarkdownJsonBlockProps) {
   const { t } = useTranslation()
   const [copied, setCopied] = React.useState(false)
 
-  // Try to parse – fall back to syntax-highlighted CodeBlock if invalid JSON
+  // 尝试解析 —— 若是非法 JSON,回退到带语法高亮的 CodeBlock
   const parsed = React.useMemo(() => {
     try {
       const raw = JSON.parse(code)
@@ -154,7 +153,7 @@ export function MarkdownJsonBlock({ code, className }: MarkdownJsonBlockProps) {
   return (
     <JsonErrorBoundary fallback={fallback}>
       <div className={cn('relative group rounded-[8px] overflow-hidden border bg-muted/30', className)}>
-        {/* Header — matches CodeBlock full mode (label + copy on hover) */}
+        {/* 标题栏 —— 与 CodeBlock full 模式一致(标签 + hover 时显示复制按钮) */}
         <div className="flex items-center justify-between px-3 py-1.5 bg-muted/50 border-b text-xs">
           <span className="text-muted-foreground font-medium uppercase tracking-wide">json</span>
           <button
@@ -170,7 +169,7 @@ export function MarkdownJsonBlock({ code, className }: MarkdownJsonBlockProps) {
           </button>
         </div>
 
-        {/* Interactive tree viewer */}
+        {/* 交互式树形查看器 */}
         <div className="p-3 overflow-x-auto text-sm">
           <JsonView
             value={parsed}
@@ -180,7 +179,7 @@ export function MarkdownJsonBlock({ code, className }: MarkdownJsonBlockProps) {
             displayDataTypes={false}
             shortenTextAfterLength={100}
           >
-            {/* Custom copy icon — same as JSONPreviewOverlay */}
+            {/* 自定义复制图标 —— 与 JSONPreviewOverlay 一致 */}
             <JsonView.Copied
               render={(props) => {
                 const isCopied = (props as Record<string, unknown>)['data-copied']

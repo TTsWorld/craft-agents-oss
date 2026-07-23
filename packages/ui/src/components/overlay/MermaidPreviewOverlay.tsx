@@ -1,5 +1,5 @@
 /**
- * MermaidPreviewOverlay — fullscreen diagram preview with zoom and pan.
+ * MermaidPreviewOverlay — 带缩放和平移的全屏图示预览。
  */
 
 import { useRef } from 'react'
@@ -11,7 +11,7 @@ import { ZoomControls } from './ZoomControls'
 import { RICH_BLOCK_DEFAULTS } from './rich-block-interaction-spec'
 import { useRichBlockInteractions } from './useRichBlockInteractions'
 
-/** Parse width/height from an SVG string's root element attributes. */
+/** 从 SVG 字符串根元素属性解析宽高。 */
 function parseSvgDimensions(svgString: string): { width: number; height: number } | null {
   const widthMatch = svgString.match(/width="(\d+(?:\.\d+)?)"/)
   const heightMatch = svgString.match(/height="(\d+(?:\.\d+)?)"/)

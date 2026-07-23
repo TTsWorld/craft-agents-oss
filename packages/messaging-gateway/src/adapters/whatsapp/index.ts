@@ -1,19 +1,18 @@
 /**
- * WhatsAppAdapter — out-of-process adapter that spawns the
- * `@craft-agent/messaging-whatsapp-worker` subprocess.
+ * WhatsAppAdapter —— 进程外适配器，拉起
+ * `@craft-agent/messaging-whatsapp-worker` 子进程。
  *
- * WhatsApp has no official bot API usable by us. Baileys reimplements the
- * WA multi-device protocol — it runs in a child process so that:
- *   (a) a Baileys crash/segfault can't take down the Electron main process,
- *   (b) Baileys can run under Node even when the host runtime is Bun,
- *   (c) memory isolation: auth state, signal ratchets, etc.
+ * WhatsApp 没有我们能用的官方 bot API。Baileys 重新实现了 WA multi-device
+ * 协议 —— 它跑在子进程里，目的是：
+ *   (a) Baileys 的 crash/segfault 不会拖垮 Electron 主进程，
+ *   (b) 即使宿主运行时是 Bun，Baileys 也能在 Node 下运行，
+ *   (c) 内存隔离：auth state、signal ratchets 等。
  *
- * The worker contract is defined in @craft-agent/messaging-whatsapp-worker.
- * This adapter owns the process lifecycle + translates events to the
- * PlatformAdapter interface.
+ * worker 契约定义在 @craft-agent/messaging-whatsapp-worker 里。
+ * 本适配器负责进程生命周期管理，并把事件翻译为 PlatformAdapter 接口。
  *
- * Unofficial API disclaimer: Baileys is not endorsed by WhatsApp/Meta and
- * may stop working at any time. Account bans are possible.
+ * 非官方 API 免责声明：Baileys 未被 WhatsApp/Meta 认可，
+ * 随时可能失效。账号封禁也是有可能的。
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -45,13 +44,12 @@ const NOOP_LOGGER: MessagingLogger = {
 }
 
 /**
- * Hard ceiling for `sendText`/`sendFile` awaits. If the worker wedges
- * between command dispatch and `send_result` (Baileys deadlock, infinite
- * retry, stalled socket) we surface a real error to the caller instead
- * of letting the renderer's `text_complete` path hang indefinitely and
- * freeze the chat. Chosen to comfortably exceed the worst-case Baileys
- * round-trip on a slow network; shorter would starve legitimate sends.
- * Tests pass a much smaller value via `WhatsAppConfig.sendTimeoutMs`.
+ * `sendText`/`sendFile` 等待的硬上限。如果 worker 在命令派发与
+ * `send_result` 之间卡住（Baileys 死锁、无限重试、socket 停滞），
+ * 我们就向调用方暴露一个真实错误，而不是让 renderer 的 `text_complete`
+ * 路径无限挂起、冻结聊天。取值要从容覆盖慢网络下 Baileys 最坏往返时延；
+ * 更短会让合法的发送被饿死。测试通过 `WhatsAppConfig.sendTimeoutMs`
+ * 传一个更小的值。
  */
 const DEFAULT_SEND_TIMEOUT_MS = 30_000
 
@@ -61,38 +59,35 @@ type PendingEntry = {
 }
 
 // ---------------------------------------------------------------------------
-// Config
+// 配置
 // ---------------------------------------------------------------------------
 
 export interface WhatsAppConfig extends PlatformConfig {
-  /** Directory Baileys persists multi-file auth state into. Required. */
+  /** Baileys 持久化 multi-file auth state 的目录。必填。 */
   authStateDir: string
-  /** Absolute path to the worker entry script. Required. */
+  /** worker 入口脚本的绝对路径。必填。 */
   workerEntry: string
-  /** Node binary path. Defaults to 'node'. */
+  /** Node 二进制路径。默认为 'node'。 */
   nodeBin?: string
-  /** Pairing flow: 'qr' (default) or 'code' (phone-number based 8-char code). */
+  /** 配对流程：'qr'（默认）或 'code'（基于手机号的 8 字符配对码）。 */
   pairingMode?: 'qr' | 'code'
   /**
-   * Accept messages sent from this account's other devices (phone/WA
-   * Desktop/WA Web) in the self-chat. Agent echoes are filtered by
-   * sent-ID tracking + the response prefix. See `WorkerCommand.StartCommand`
-   * for mechanics.
+   * 是否接受本账号其他设备（手机/WA Desktop/WA Web）在 self-chat 里发出的消息。
+   * agent 回显通过 sent-ID 跟踪 + response prefix 过滤掉。具体机制见
+   * `WorkerCommand.StartCommand`。
    */
   selfChatMode?: boolean
-  /** Prefix tagged onto outbound self-chat messages. Defaults to 🤖. */
+  /** 加在出站 self-chat 消息前的前缀。默认为 🤖。 */
   responsePrefix?: string
   /**
-   * Override the default per-send timeout (30s). Used by tests; not
-   * exposed through the registry or UI. Shorter values help surface
-   * worker deadlocks faster but risk rejecting legitimate sends on
-   * slow networks.
+   * 覆盖默认的每次发送超时（30s）。供测试使用；不通过 registry 或 UI 暴露。
+   * 更小的值能更快暴露 worker 死锁，但在慢网络下有误杀合法发送的风险。
    */
   sendTimeoutMs?: number
 }
 
 // ---------------------------------------------------------------------------
-// Event bus (adapter-level, surfaced via registry)
+// 事件总线（适配器级别，通过 registry 暴露）
 // ---------------------------------------------------------------------------
 
 export type WhatsAppEvent =
@@ -106,7 +101,7 @@ export type WhatsAppEvent =
 type EventHandler = (event: WhatsAppEvent) => void
 
 // ---------------------------------------------------------------------------
-// Adapter
+// 适配器
 // ---------------------------------------------------------------------------
 
 export class WhatsAppAdapter implements PlatformAdapter {
@@ -239,10 +234,9 @@ export class WhatsAppAdapter implements PlatformAdapter {
         resolve()
       })
     })
-    // Defensive: `proc.on('exit')` normally drains first, but if the exit
-    // event is delayed or was set up after a race, the promise above can
-    // resolve via the SIGKILL timer before `exit` fires. Drain again here
-    // so no caller is left hanging.
+    // 防御性：`proc.on('exit')` 通常会先做 drain，但如果 exit 事件被延迟，
+    // 或者在一次竞争之后才注册，上面的 promise 可能先通过 SIGKILL 定时器 resolve，
+    // 此时 `exit` 还没触发。这里再 drain 一次，确保没有调用方被遗留挂起。
     this.drainPending('adapter destroyed')
     this.proc = null
     this.started = false
@@ -261,13 +255,13 @@ export class WhatsAppAdapter implements PlatformAdapter {
     this.buttonHandler = handler
   }
 
-  /** Subscribe to adapter-level events (QR, pairing code, unavailable, errors). */
+  /** 订阅适配器级别的事件（QR、配对码、unavailable、错误）。 */
   onEvent(handler: EventHandler): () => void {
     this.eventHandlers.add(handler)
     return () => this.eventHandlers.delete(handler)
   }
 
-  /** Submit a phone number to obtain an 8-char pairing code (pairingMode=code). */
+  /** 提交手机号以获取 8 字符配对码（pairingMode=code）。 */
   async requestPairingCode(phoneNumber: string): Promise<void> {
     if (!this.started) throw new Error('WhatsApp adapter not started')
     this.log.info('requesting WhatsApp pairing code', {
@@ -277,7 +271,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
   }
 
   async sendText(channelId: string, text: string, _opts?: SendOptions): Promise<SentMessage> {
-    // _opts (threadId) is Telegram-specific; ignored on WhatsApp.
+    // _opts（threadId）是 Telegram 专用的；WhatsApp 上忽略。
     const id = String(this.nextCmdId++)
     const result = await this.sendWithResult({ id, type: 'send_text', channelId, text })
     if (!result.ok) throw new Error(result.error ?? 'Send failed')
@@ -311,8 +305,8 @@ export class WhatsAppAdapter implements PlatformAdapter {
   }
 
   async sendTyping(_channelId: string, _opts?: SendOptions): Promise<void> {
-    // No-op — omitting "typing" presence updates avoids an extra round-trip
-    // through the worker; UX remains acceptable without it.
+    // 空操作 —— 省略「正在输入」的 presence 更新可以少一次穿过 worker 的往返；
+    // 没有它 UX 仍然可接受。
   }
 
   async sendFile(
@@ -340,7 +334,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
   }
 
   // -------------------------------------------------------------------------
-  // Internals
+  // 内部实现
   // -------------------------------------------------------------------------
 
   private sendCommand(cmd: WorkerCommand): void {
@@ -355,9 +349,8 @@ export class WhatsAppAdapter implements PlatformAdapter {
   ): Promise<{ ok: boolean; messageId?: string; error?: string }> {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
-        // `delete` returns false if `send_result` already arrived and cleared
-        // the entry; in that race we've already resolved and must not do it
-        // again.
+        // 如果 `send_result` 已经到达并清掉了 entry，`delete` 会返回 false；
+        // 在那种竞争里我们已经 resolve 过了，不能再 resolve 一次。
         if (this.pending.delete(cmd.id)) {
           this.log.warn('WhatsApp send timed out', {
             event: 'whatsapp_send_timeout',
@@ -385,9 +378,9 @@ export class WhatsAppAdapter implements PlatformAdapter {
   }
 
   /**
-   * Resolve all pending sends with a failure. Called from `proc.on('exit')`
-   * (worker crashed/quit) and from `destroy()` (orderly shutdown) so callers
-   * never hang waiting for a worker that will never respond.
+   * 把所有 pending 的发送以失败 resolve 掉。从 `proc.on('exit')`
+   *（worker 崩溃/退出）和 `destroy()`（有序关闭）两处调用，
+   * 这样调用方永远不会挂在一个不会再响应的 worker 上。
    */
   private drainPending(reason: string): void {
     if (this.pending.size === 0) return
@@ -408,7 +401,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
       try {
         h(event)
       } catch {
-        // isolate handler errors
+        // 隔离 handler 抛出的错误
       }
     }
   }
@@ -451,10 +444,9 @@ export class WhatsAppAdapter implements PlatformAdapter {
         return
       case 'incoming':
         if (this.messageHandler) {
-          // WhatsApp has no separate file_id like Telegram; reuse messageId
-          // for traceability. The worker has already written the bytes to
-          // `localPath`, so the router can wrap each attachment via
-          // `readFileAttachment()` directly.
+          // WhatsApp 不像 Telegram 有独立的 file_id；这里复用 messageId 做可追溯。
+          // worker 已经把字节写到了 `localPath`，所以 router 可以直接通过
+          // `readFileAttachment()` 包装每个附件。
           const attachments: IncomingAttachment[] | undefined = ev.attachments?.map((a) => ({
             type: a.type,
             fileId: ev.messageId,

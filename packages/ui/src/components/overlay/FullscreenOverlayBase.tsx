@@ -1,25 +1,25 @@
 /**
- * FullscreenOverlayBase - Base component for all fullscreen overlays
+ * FullscreenOverlayBase - 所有全屏浮层的基础组件
  *
- * Uses Radix Dialog primitives for proper:
- * - Focus management (blur on open, restore on close)
- * - ESC key handling
- * - Coordination with other Radix components (popovers, dropdowns)
- * - Accessibility (role="dialog", aria-modal)
+ * 使用 Radix Dialog 原语实现：
+ * - 焦点管理（打开时失焦，关闭时恢复）
+ * - ESC 键处理
+ * - 与其他 Radix 组件协调（弹出层、下拉菜单）
+ * - 无障碍（role="dialog", aria-modal）
  *
- * Additionally handles:
- * - macOS traffic light hiding (via PlatformContext)
- * - Default scenic background (bg-foreground-3 + fullscreen-overlay-background blur)
- *   Callers can override via className (twMerge resolves conflicts)
- * - Optional structured header with badges (typeBadge, filePath, title, subtitle)
- * - Optional built-in copy button (copyContent prop)
- * - Full-viewport scroll container with edge-to-edge gradient fade mask (iOS-style contentInset).
- *   The scroll area covers the entire viewport — content scrolls behind the floating header.
- *   A CSS mask gradient fades content at both edges (top and bottom, starting from y=0).
- *   The header floats on top and covers content behind it.
- *   Content padding clears the header at rest so nothing is clipped initially.
+ * 额外处理：
+ * - macOS 交通灯按钮隐藏（通过 PlatformContext）
+ * - 默认景深背景（bg-foreground-3 + fullscreen-overlay-background 模糊）
+ *   调用方可通过 className 覆盖（twMerge 解决冲突）
+ * - 可选的结构化头部，带徽标（typeBadge, filePath, title, subtitle）
+ * - 可选的内置复制按钮（copyContent 属性）
+ * - 全视口滚动容器，带边缘到边缘的渐变遮罩（iOS 风格 contentInset）。
+ *   滚动区域覆盖整个对话框——内容在浮动头部后方滚动。
+ *   CSS 遮罩渐变在两端（顶部和底部，从 y=0 开始）淡出内容。
+ *   头部浮在最上层，覆盖其后的内容。
+ *   内容内边距在静止状态清空头部的空间，确保初始无裁剪。
  *
- * Layout:
+ * 布局：
  *   Dialog.Content (fixed inset-0, relative)
  *   ├── Masked area (absolute inset-0, CSS mask gradient)
  *   │   └── Scroll container (h-full, overflow-y-auto, paddingTop = header + fade)
@@ -27,7 +27,7 @@
  *   │       └── {children}
  *   └── Header (absolute top-0, z-10, floating on top of scroll content)
  *
- * Used by: PreviewOverlay, DocumentFormattedMarkdownOverlay, WorkspaceCreationScreen
+ * 使用方：PreviewOverlay, DocumentFormattedMarkdownOverlay, WorkspaceCreationScreen
  */
 
 import { useEffect, useRef, type ReactNode } from 'react'
@@ -38,50 +38,50 @@ import { getDismissibleLayerBridge } from '../../lib/dismissible-layer-bridge'
 import { FullscreenOverlayBaseHeader, type OverlayTypeBadge } from './FullscreenOverlayBaseHeader'
 import { OverlayErrorBanner, type OverlayErrorBannerProps } from './OverlayErrorBanner'
 
-// Z-index for fullscreen overlays - must be above app chrome (z-overlay: 300)
-// Uses CSS variable when available, falls back to hardcoded value
+// 全屏浮层的 z-index——必须高于应用外层 UI（z-overlay: 300）
+// 优先使用 CSS 变量，回退到硬编码值
 const Z_FULLSCREEN = 'var(--z-fullscreen, 350)'
 
-// HEADER_HEIGHT must match PreviewHeader's height prop (48px).
-// FADE_SIZE is the transition zone where content fades in/out at edges.
+// HEADER_HEIGHT 必须与 PreviewHeader 的 height 属性一致（48px）。
+// FADE_SIZE 是内容在边缘淡入/淡出的过渡区域大小。
 const HEADER_HEIGHT = 48
 const FADE_SIZE = 24
 
-// Edge-to-edge gradient fade mask — starts at y=0, fades over FADE_SIZE at both edges.
-// The floating header covers content behind it; the mask just provides the smooth fade.
+// 边缘到边缘的渐变淡出遮罩——从 y=0 开始，在两端按 FADE_SIZE 淡出。
+// 浮动头部覆盖其后的内容；遮罩仅提供平滑的淡出效果。
 const FADE_MASK = `linear-gradient(to bottom, transparent 0px, black ${FADE_SIZE}px, black calc(100% - ${FADE_SIZE}px), transparent 100%)`
 
 export interface FullscreenOverlayBaseProps {
-  /** Whether the overlay is visible */
+  /** 浮层是否可见 */
   isOpen: boolean
-  /** Callback when the overlay should close (ESC key triggers this) */
+  /** 浮层关闭时的回调（ESC 键触发） */
   onClose: () => void
-  /** Content to render inside the overlay */
+  /** 浮层内部渲染的内容 */
   children: ReactNode
-  /** Additional CSS classes for the container */
+  /** 容器的额外 CSS 类 */
   className?: string
-  /** Accessible title for the overlay (visually hidden) */
+  /** 浮层的无障碍标题（视觉隐藏） */
   accessibleTitle?: string
 
-  // --- Structured header props (optional) ---
-  // When any of these are provided, a FullscreenOverlayBaseHeader is rendered above children.
+  // --- 结构化头部属性（可选） ---
+  // 提供以下任一属性时，会在子内容上方渲染 FullscreenOverlayBaseHeader。
 
-  /** Type badge — tool/format indicator (e.g. "Read", "Image", "Bash") */
+  /** 类型徽标——工具/格式标识（如"Read"、"Image"、"Bash"） */
   typeBadge?: OverlayTypeBadge
-  /** File path — shows dual-trigger menu badge with "Open" + "Reveal in {file manager}" */
+  /** 文件路径——显示带"打开"+"在 {文件管理器} 中显示"的双触发菜单徽标 */
   filePath?: string
-  /** Title — displayed as a badge when no filePath */
+  /** 标题——无 filePath 时显示为徽标 */
   title?: string
-  /** Click handler for the title badge */
+  /** 标题徽标的点击处理函数 */
   onTitleClick?: () => void
-  /** Subtitle — extra info badge (e.g. "Lines 1-50 of 200") */
+  /** 副标题——附加信息徽标（如"第 1-50 行，共 200 行"） */
   subtitle?: string
-  /** Right-side header actions (e.g. diff controls) */
+  /** 头部右侧操作（如 diff 控件） */
   headerActions?: ReactNode
-  /** When provided, renders a built-in copy button in the header right actions area */
+  /** 提供时，在头部右侧操作区渲染内置复制按钮 */
   copyContent?: string
 
-  /** Optional error banner — rendered between header and children */
+  /** 可选错误横幅——渲染在头部和子内容之间 */
   error?: OverlayErrorBannerProps
 }
 
@@ -108,8 +108,8 @@ export function FullscreenOverlayBase({
 }: FullscreenOverlayBaseProps) {
   const { onSetTrafficLightsVisible } = usePlatform()
 
-  // Determine if we should render the structured header.
-  // Any header-related prop triggers header rendering.
+  // 判断是否需要渲染结构化头部。
+  // 任何头部相关属性都会触发头部渲染。
   const hasHeader = !!(typeBadge || filePath || title || subtitle || headerActions || copyContent)
   const overlayIdRef = useRef(`fullscreen-overlay-${Math.random().toString(36).slice(2)}`)
 
@@ -127,8 +127,8 @@ export function FullscreenOverlayBase({
     })
   }, [isOpen, onClose])
 
-  // Hide macOS traffic lights when overlay opens, restore when it closes
-  // This prevents accidental clicks on window controls behind the fullscreen overlay
+  // 浮层打开时隐藏 macOS 交通灯按钮，关闭时恢复
+  // 防止在全屏浮层后方误点窗口控件
   useEffect(() => {
     if (!isOpen) return
 
@@ -136,8 +136,8 @@ export function FullscreenOverlayBase({
     return () => onSetTrafficLightsVisible?.(true)
   }, [isOpen, onSetTrafficLightsVisible])
 
-  // Content padding clears the floating header at rest (when present).
-  // Without a header, just the fade zone inset.
+  // 内容内边距在静止状态清除浮动头部的空间（存在时）。
+  // 无头部时，仅保留淡出区域的内边距。
   const contentPaddingTop = hasHeader ? HEADER_HEIGHT + FADE_SIZE : FADE_SIZE
 
   return (
@@ -159,12 +159,12 @@ export function FullscreenOverlayBase({
             event.stopPropagation()
           }}
         >
-          {/* Visually hidden title for accessibility - required by Radix Dialog */}
+          {/* 无障碍用的视觉隐藏标题——Radix Dialog 要求 */}
           <Dialog.Title className="sr-only">{accessibleTitle}</Dialog.Title>
 
-          {/* Full-viewport masked scroll area — covers the entire dialog including behind the header.
-              The CSS mask gradient fades content at both edges (starting from y=0).
-              Content padding clears the header at rest. */}
+          {/* 全视口带遮罩的滚动区域——覆盖整个对话框（含头部后方）。
+              CSS 遮罩渐变在两端淡出内容（从 y=0 开始）。
+              内容内边距在静止状态清空头部的空间。 */}
           <div
             className="absolute inset-0"
             style={{ maskImage: FADE_MASK, WebkitMaskImage: FADE_MASK }}
@@ -173,10 +173,10 @@ export function FullscreenOverlayBase({
               className="h-full overflow-y-auto"
               style={{ paddingTop: contentPaddingTop, paddingBottom: FADE_SIZE, scrollPaddingTop: contentPaddingTop }}
             >
-              {/* Centering wrapper — error + content move together as a unit.
-                  min-h-full ensures centering when content is small; content can grow beyond. */}
+              {/* 居中包裹层——错误横幅和内容作为一个整体移动。
+                  min-h-full 确保内容较小时居中；内容可以超出增长。 */}
               <div className="min-h-full flex flex-col justify-center">
-                {/* Error banner — inside centering flow, above content */}
+                {/* 错误横幅——在居中流中，位于内容上方 */}
                 {error && (
                   <div className="px-6 pb-4">
                     <OverlayErrorBanner label={error.label} message={error.message} />
@@ -187,8 +187,8 @@ export function FullscreenOverlayBase({
             </div>
           </div>
 
-          {/* Floating header — rendered after scroll area so it's visually on top (DOM order).
-              Positioned absolutely at the top of the viewport, above the scroll content. */}
+          {/* 浮动头部——渲染在滚动区域之后，使其视觉上在最上层（DOM 顺序）。
+              绝对定位在视口顶部，位于滚动内容之上。 */}
           {hasHeader && (
             <div className="absolute top-0 left-0 right-0 z-10">
               <FullscreenOverlayBaseHeader

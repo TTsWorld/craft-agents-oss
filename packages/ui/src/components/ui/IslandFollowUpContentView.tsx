@@ -35,11 +35,11 @@ export interface IslandFollowUpContentViewProps {
 }
 
 /**
- * Reusable Follow-up confirmation view for Island flows.
+ * Island 流程中可复用的 Follow-up 确认视图。
  *
- * - Uses multiline textarea input
- * - Esc cancels
- * - Cmd/Ctrl+Enter submits
+ * - 使用多行 textarea 输入
+ * - Esc 取消
+ * - Cmd/Ctrl+Enter 提交
  */
 export function IslandFollowUpContentView({
   id,
@@ -91,8 +91,8 @@ export function IslandFollowUpContentView({
       }
     }
 
-    // Dismiss only the Save & Send popup. Do not let this outside tap
-    // cascade into the parent island's outside-dismiss behavior.
+    // 仅关闭"保存并发送"弹窗。不要让此次外部点击
+    // 级联触发父级 island 的外部关闭行为。
     dismissEvent.preventDefault?.()
     dismissEvent.detail?.originalEvent?.preventDefault?.()
     dismissEvent.detail?.originalEvent?.stopPropagation?.()

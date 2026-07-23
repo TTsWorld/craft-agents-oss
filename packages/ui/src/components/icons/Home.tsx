@@ -1,11 +1,11 @@
 import type { IconProps } from './types'
 
 /**
- * Custom Home icon for the working directory badge.
- * Rounded house outline — clean silhouette.
+ * 用于工作目录徽标的自定义 Home 图标。
+ * 圆角房屋轮廓——简洁的剪影。
  *
- * ADDING NEW ICONS: Ensure paths fill the 2-22 range (Lucide standard).
- * Use strokeWidth={2} to match Lucide visual weight.
+ * 新增图标时:确保路径填满 2-22 范围(Lucide 标准)。
+ * 使用 strokeWidth={2} 以匹配 Lucide 的视觉粗细。
  */
 export function Icon_Home({ size, className, ...props }: IconProps) {
   const sizeProps = className ? {} : { width: size ?? 24, height: size ?? 24 }

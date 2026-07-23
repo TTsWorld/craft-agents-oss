@@ -1,8 +1,8 @@
 /**
- * MessagingGateway — orchestrator for messaging platform adapters.
+ * MessagingGateway —— 各消息平台适配器的编排者。
  *
- * Runs in-process alongside SessionManager. Wires adapters, router,
- * renderer, and binding store together. One instance per workspace.
+ * 与 SessionManager 同进程运行。把 adapter、router、renderer 和 binding store
+ * 接在一起。每个 workspace 一个实例。
  */
 
 import type { ISessionManager } from '@craft-agent/server-core/handlers'
@@ -46,42 +46,41 @@ const consoleLogger: MessagingLogger = {
 export interface GatewayOptions {
   sessionManager: ISessionManager
   workspaceId: string
-  /** Absolute path to the messaging storage directory. */
+  /** messaging 存储目录的绝对路径。 */
   storageDir: string
-  /** Optional legacy directory for one-shot migration of bindings.json. */
+  /** 可选的 legacy 目录，用于 bindings.json 的一次性迁移。 */
   legacyStorageDir?: string
-  /** Optional consumer that resolves /pair codes issued elsewhere. */
+  /** 可选的 consumer，用于解析在别处签发的 /pair 配对码。 */
   pairingConsumer?: PairingCodeConsumer
-  /** Fired after any binding mutation (bind/unbind). */
+  /** 任意 binding 变更（bind/unbind）后触发。 */
   onBindingChanged?: () => void
   /**
-   * Reads the workspace's MessagingConfig. Called per-message so config
-   * edits (toggling accessMode, adding owners) take effect without restart.
-   * Optional — when omitted, the gateway falls back to a permissive
-   * "everything is open" config (useful for legacy callers and unit tests).
+   * 读取 workspace 的 MessagingConfig。每条消息都调用一次，这样改配置
+   *（切换 accessMode、添加 owners）无需重启即可生效。
+   * 可选 —— 省略时 gateway 回退到一个宽松的「全部 open」配置
+   *（对旧调用方和单测有用）。
    */
   getWorkspaceConfig?: () => MessagingConfig
   /**
-   * Append `candidate` to the platform's owners list iff the list is
-   * currently empty. No-op otherwise. Used by Commands.handlePair to
-   * bootstrap ownership the first time anyone redeems a code.
+   * 当且仅当该平台的 owners 列表当前为空时，把 `candidate` 追加进去。
+   * 否则 no-op。被 Commands.handlePair 用于在有人第一次消费配对码时引导 owner 身份。
    */
   seedOwnerOnFirstPair?: (
     platform: PlatformType,
     candidate: PlatformOwner,
   ) => Promise<PlatformOwner[]>
   /**
-   * Fires after the pending-senders store mutates, so the registry can push
-   * an event to the renderer. Mirrors `onBindingChanged`.
+   * 在 pending-senders 存储发生变更后触发，让 registry 可以向 renderer push 一个事件。
+   * 与 `onBindingChanged` 对称。
    */
   onPendingChanged?: () => void
-  /** Optional logger — defaults to console. Pass a structured host logger in Electron. */
+  /** 可选 logger —— 默认用 console。Electron 下传入一个结构化的 host logger。 */
   logger?: MessagingLogger
 }
 
 /**
- * Per-plan metadata tracked while a plan approval button is live on a chat.
- * Used to disable the inline keyboard after a tap. Keyed by plan token.
+ * 计划批准按钮在聊天里存活期间，按计划维度追踪的元数据。
+ * 用于在点击后禁用 inline keyboard。以 plan token 为键。
  */
 interface PlanMessageRecord {
   bindingId: string
@@ -91,16 +90,15 @@ interface PlanMessageRecord {
 }
 
 /**
- * Per-permission-prompt metadata tracked while inline Approve/Deny buttons
- * are live on a chat. Keyed by `requestId`. Two roles:
+ * 内联 Approve/Deny 按钮在聊天里存活期间，按权限提示维度追踪的元数据。
+ * 以 `requestId` 为键。两个作用：
  *
- *  1. Idempotency claim — `handleButtonPress` removes the entry before doing
- *     anything visible, so a second tap on the same prompt finds nothing and
- *     silently no-ops. Stops the duplicate "✅ Allowed / ❌ Denied" flood.
- *  2. Stale-prompt cleanup — when the agent moves past the permission
- *     (resolved from any channel — desktop, MCP, etc.), `onSessionEvent`
- *     sweeps the entry and clears the inline keyboard so the user can't
- *     even produce a callback by tapping a stale button.
+ *  1. 幂等认领 —— `handleButtonPress` 在做任何可见动作之前就移除该条目，
+ *     这样第二次点击同一提示时找不到记录，静默 no-op。能止住重复的
+ *     「✅ Allowed / ❌ Denied」刷屏。
+ *  2. 陈旧提示清理 —— 当 agent 已越过该权限（无论从哪个渠道解决 ——
+ *     desktop、MCP 等），`onSessionEvent` 会清扫该条目并清掉 inline keyboard，
+ *     这样用户即便点陈旧按钮也产生不了 callback。
  */
 interface PermissionMessageRecord {
   bindingId: string
@@ -117,7 +115,7 @@ interface PendingCompactAccept {
   bindingId: string
   platform: PlatformType
   channelId: string
-  /** Forum topic id where the press came from (Telegram supergroup), if any. */
+  /** 点击来源的论坛话题 id（Telegram 超级群），可选。 */
   threadId?: number
   messageId: string
   planPath: string
@@ -136,19 +134,17 @@ export class MessagingGateway {
   private readonly renderer: Renderer
   private readonly planTokens: PlanTokenRegistry
   private readonly planMessages = new Map<string, PlanMessageRecord>()
-  /** Live permission prompts, keyed by `requestId`. See PermissionMessageRecord. */
+  /** 存活中的权限提示，以 `requestId` 为键。见 PermissionMessageRecord。 */
   private readonly permissionMessages = new Map<string, PermissionMessageRecord>()
   private readonly pendingCompactAccepts = new Map<string, PendingCompactAccept>()
   private readonly adapters = new Map<PlatformType, PlatformAdapter>()
   private readonly log: MessagingLogger
   private started = false
   /**
-   * Access-control surface — `getWorkspaceConfig` is called per-button so
-   * config edits take effect without restart, mirroring the text path.
-   * `recentRejectReplies` is a separate cooldown map from Router/Commands
-   * so callback-button rejection rate-limiting is independent of text
-   * rejection rate-limiting (a stranger spamming buttons doesn't lock
-   * out their text-channel reply, and vice versa).
+   * access-control 表面 —— `getWorkspaceConfig` 每次按钮都调用，这样改配置
+   * 无需重启即生效，与文本路径对齐。`recentRejectReplies` 是独立于
+   * Router/Commands 的冷却映射表，让回调按钮的拒绝限流与文本拒绝限流相互独立
+   *（陌生人狂点按钮不会锁掉他在文本渠道的回复，反之亦然）。
    */
   private readonly accessDeps: AccessControlDeps
   private readonly buttonRecentRejectReplies = new Map<string, number>()
@@ -206,10 +202,9 @@ export class MessagingGateway {
     this.planTokens = new PlanTokenRegistry()
     this.renderer = new Renderer({
       planTokens: this.planTokens,
-      // The renderer hands us the exact binding that sent the message.
-      // We must not resolve it ourselves — `findBySession` returns every
-      // binding and picking the first Telegram binding attributes the
-      // message to the wrong chat whenever the session has more than one.
+      // renderer 把发送该消息的确切 binding 交给我们。
+      // 我们不能自己解析 —— `findBySession` 会返回所有 binding，
+      // 挑第一个 Telegram binding 会在 session 有多个 binding 时把消息记到错误的聊天。
       recordPlanMessage: (binding, token, messageId) => {
         this.planMessages.set(token, {
           bindingId: binding.id,
@@ -232,7 +227,7 @@ export class MessagingGateway {
   }
 
   // -------------------------------------------------------------------------
-  // Adapter registration
+  // adapter 注册
   // -------------------------------------------------------------------------
 
   registerAdapter(adapter: PlatformAdapter): void {
@@ -280,7 +275,7 @@ export class MessagingGateway {
   }
 
   // -------------------------------------------------------------------------
-  // Lifecycle
+  // 生命周期
   // -------------------------------------------------------------------------
 
   async start(): Promise<void> {
@@ -336,7 +331,7 @@ export class MessagingGateway {
   }
 
   // -------------------------------------------------------------------------
-  // Event handling (called by fan-out EventSink)
+  // 事件处理（由扇出 EventSink 调用）
   // -------------------------------------------------------------------------
 
   onSessionEvent(channel: string, _target: PushTarget, ...args: any[]): void {
@@ -345,9 +340,9 @@ export class MessagingGateway {
     const event = args[0] as SessionEvent | undefined
     if (!event?.sessionId) return
 
-    // If this session has a pending "accept & compact" that is now finishing
-    // compaction, dispatch the approval now. Before the fan-out so the
-    // renderer's own `info:compaction_complete` path doesn't race.
+    // 如果该 session 有一个 pending 的「accept & compact」现在刚好压缩完成，
+    // 就立即派发批准。放在扇出之前，避免 renderer 自己的
+    // `info:compaction_complete` 路径与之竞争。
     if (
       event.type === 'info' &&
       (event as { statusType?: string }).statusType === 'compaction_complete'
@@ -355,12 +350,11 @@ export class MessagingGateway {
       void this.finishPendingCompactAccept(event.sessionId)
     }
 
-    // Drop stale permission prompts for this session. The agent halts while
-    // a permission is pending, so any non-permission_request event implies
-    // the prior prompt was resolved (from the desktop, an MCP allow-list,
-    // remember-window auto-approval, etc.). Without this sweep the inline
-    // keyboard stays live in Telegram and users keep tapping stale buttons,
-    // which is the visible side of #726.
+    // 丢弃该 session 的陈旧权限提示。agent 在有 pending permission 时会暂停，
+    // 所以任何非 permission_request 事件都意味着之前的提示已被解决
+    //（通过 desktop、MCP allow-list、remember-window 自动批准等）。
+    // 没有这次清扫的话，Telegram 里的 inline keyboard 会一直存活，
+    // 用户会继续点陈旧按钮 —— 这正是 #726 可见的症状。
     this.sweepStalePermissions(event)
 
     const bindings = this.bindingStore.findBySession(event.sessionId)
@@ -391,14 +385,13 @@ export class MessagingGateway {
   }
 
   /**
-   * Drop entries from `permissionMessages` whose requestId differs from the
-   * event's current permission request (or all of them, for non-permission
-   * events). For each dropped entry we also fire-and-forget a `clearButtons`
-   * so Telegram won't deliver any further callbacks for the stale prompt.
+   * 把 `permissionMessages` 里 requestId 与事件当前权限请求不同
+   *（对非权限事件则是全部）的条目丢弃。每个被丢弃的条目我们还
+   * fire-and-forget 一次 `clearButtons`，这样 Telegram 就不会再为
+   * 这个陈旧提示投递任何 callback。
    *
-   * Same-requestId `permission_request` events are preserved so a re-render
-   * (rare but possible when the renderer retries) doesn't blow away the
-   * record we'd then need to re-create.
+   * requestId 相同的 `permission_request` 事件会保留，这样 renderer 重渲染时
+   *（罕见，但 renderer 重试时有可能）不会把我们之后还要重建的记录也一起删掉。
    */
   private sweepStalePermissions(event: SessionEvent): void {
     if (this.permissionMessages.size === 0) return
@@ -427,23 +420,21 @@ export class MessagingGateway {
   }
 
   // -------------------------------------------------------------------------
-  // Button handling
+  // 按钮处理
   // -------------------------------------------------------------------------
 
   private async handleButtonPress(platform: PlatformType, press: ButtonPress): Promise<void> {
     const adapter = this.adapters.get(platform)
     if (!adapter) return
 
-    // Press metadata reused across all branches so responses post back into
-    // the same topic (Telegram supergroup) the button was tapped from.
+    // 点击元数据在所有分支里复用，确保回复发回到按钮被点击的那个话题
+    //（Telegram 超级群）。
     const pressOpts = press.threadId !== undefined ? { threadId: press.threadId } : {}
 
-    // Access gate. Inline buttons in supergroup topics are visible to
-    // every member of the chat, so without this gate any non-owner could
-    // tap `bind:`/`perm:`/`plan:` and bypass the text-side filter. The
-    // text path is locked but callbacks would not be — that's exactly
-    // the "looks locked but isn't" UX the access control is meant to
-    // prevent.
+    // access 门控。超级群话题里的内联按钮对聊天里所有成员可见，所以没有这层门控，
+    // 任何非 owner 都可以点 `bind:`/`perm:`/`plan:` 绕过文本侧的过滤。
+    // 文本路径锁了，但 callback 没锁 —— 这正是 access control 要防止的
+    //「看起来锁了其实没锁」的 UX。
     const allowed = await this.gateButtonPress(adapter, press)
     if (!allowed) return
 
@@ -499,14 +490,13 @@ export class MessagingGateway {
   }
 
   /**
-   * Handle an inline `perm:allow:<id>` / `perm:deny:<id>` press.
+   * 处理 `perm:allow:<id>` / `perm:deny:<id>` 的内联点击。
    *
-   * Brought to parity with `handlePlanButton` (#726): claim the prompt via
-   * `permissionMessages.delete()` before any visible action so a second tap
-   * silently no-ops, clear the inline keyboard so Telegram won't even
-   * deliver further callbacks for it, and only post the user-facing
-   * `✅ Allowed / ❌ Denied` confirmation when `respondToPermission` reports
-   * the response was actually delivered to a live agent.
+   * 与 `handlePlanButton` 对齐（#726）：在任何可见动作之前，先通过
+   * `permissionMessages.delete()` 认领该提示，这样第二次点击会静默 no-op；
+   * 清掉 inline keyboard，让 Telegram 连后续 callback 都不再投递；
+   * 只有当 `respondToPermission` 报告响应确实送达了一个存活的 agent 时，
+   * 才发出面向用户的 `✅ Allowed / ❌ Denied` 确认。
    */
   private async handlePermissionButton(
     adapter: PlatformAdapter,
@@ -520,9 +510,9 @@ export class MessagingGateway {
     const requestId = parts[2]
     if (!requestId || (action !== 'allow' && action !== 'deny')) return
 
-    // Idempotency claim: remove the entry up-front. A concurrent second tap
-    // (or a race with the stale-prompt sweep in onSessionEvent) finds nothing
-    // here and exits silently — no duplicate "✅ Allowed" message.
+    // 幂等认领：先把条目移除。并发的第二次点击
+    //（或与 onSessionEvent 里陈旧提示清扫的竞争）在这里找不到记录，
+    // 静默退出 —— 不会出现重复的「✅ Allowed」消息。
     const record = this.permissionMessages.get(requestId)
     if (!record) {
       this.log.info('perm press dropped: no live prompt for requestId', {
@@ -535,8 +525,8 @@ export class MessagingGateway {
     }
     this.permissionMessages.delete(requestId)
 
-    // Clear the inline keyboard before doing anything else so Telegram won't
-    // deliver further callbacks for this prompt at all.
+    // 在做其他任何事之前先清掉 inline keyboard，让 Telegram 根本不再为
+    // 这个提示投递后续 callback。
     if (adapter.clearButtons) {
       await adapter.clearButtons(record.channelId, record.messageId).catch(() => {})
     }
@@ -559,9 +549,9 @@ export class MessagingGateway {
     })
 
     if (!delivered) {
-      // Session/agent gone or the prompt was already resolved by another
-      // channel between our `permissionMessages.get()` and here. Don't post a
-      // misleading "✅ Allowed" — the action did not take effect on this side.
+      // session/agent 已不在，或者提示在我们 `permissionMessages.get()` 到
+      // 这里之间已被其他渠道解决。不要发出误导性的「✅ Allowed」——
+      // 这边的动作其实没生效。
       return
     }
 
@@ -590,7 +580,7 @@ export class MessagingGateway {
       return
     }
 
-    // Disable the buttons so the user can't tap twice. Non-fatal if it fails.
+    // 禁用按钮，防止用户点两次。失败也非致命。
     const record = this.planMessages.get(token)
     if (record && adapter.clearButtons) {
       await adapter.clearButtons(record.channelId, record.messageId).catch(() => {})
@@ -618,9 +608,8 @@ export class MessagingGateway {
       return
     }
 
-    // action === 'compact': persist the "waiting for compaction" intent, send
-    // /compact, and let onSessionEvent → finishPendingCompactAccept dispatch
-    // the approval once compaction finishes.
+    // action === 'compact'：持久化「等待压缩」的意图，发送 /compact，
+    // 然后让 onSessionEvent → finishPendingCompactAccept 在压缩完成后派发批准。
     const binding = this.bindingStore.findByChannel(platform, press.channelId, press.threadId)
     if (!binding) return
 
@@ -660,14 +649,13 @@ export class MessagingGateway {
   }
 
   /**
-   * Decide whether a button press may proceed. `bind:` is workspace-owner
-   * only (matches the `/bind` text command); `perm:` and `plan:` are gated
-   * by the binding's access policy (matches the routing-time check in
-   * Router.route). Bot senders are silent-dropped before any other logic.
+   * 判断一次按钮点击能否继续。`bind:` 仅 workspace owner 可用
+   *（与 `/bind` 文本命令一致）；`perm:` 和 `plan:` 受 binding 的 access 策略约束
+   *（与 Router.route 在路由时的检查一致）。bot 发件人在任何其他逻辑之前就被静默丢弃。
    *
-   * Returns true to proceed, false on reject (caller must return early).
-   * The reject path emits the friendly reply and records the sender in
-   * the pending-senders store via the shared `executeRejection` helper.
+   * 返回 true 表示放行，false 表示拒绝（调用方必须立即返回）。
+   * 拒绝路径会发出友好回复，并通过公共的 `executeRejection` helper
+   * 把发送方记入 pending-senders 存储区。
    */
   private async gateButtonPress(
     adapter: PlatformAdapter,
@@ -686,9 +674,8 @@ export class MessagingGateway {
     let extra: { bindingId?: string; sessionId?: string } = {}
 
     if (press.buttonId.startsWith('bind:')) {
-      // `bind:` runs the same gate as the `/bind` text command — the
-      // operator who emitted the keyboard is offering session-binding
-      // privileges, but only owners may take them.
+      // `bind:` 走与 `/bind` 文本命令相同的门控 —— 发出该键盘的运营者
+      // 是在提供绑定 session 的特权，但只有 owner 才能领取。
       verdict = evaluatePreBindingAccess({
         msg: this.synthesizeMsgForGate(press),
         workspaceConfig: this.accessDeps.getWorkspaceConfig(),
@@ -697,17 +684,16 @@ export class MessagingGateway {
       press.buttonId.startsWith('perm:') ||
       press.buttonId.startsWith('plan:')
     ) {
-      // `perm:`/`plan:` are session-level approvals; the sender must have
-      // routing access to the binding the button was attached to.
+      // `perm:`/`plan:` 是 session 级审批；发送方必须对按钮所依附的 binding
+      // 拥有路由访问权。
       const binding = this.bindingStore.findByChannel(
         press.platform,
         press.channelId,
         press.threadId,
       )
       if (!binding) {
-        // No binding to evaluate against — fall through to the existing
-        // "not bound" handling in the caller (which will silently no-op
-        // for perm/plan since they require a binding lookup anyway).
+        // 没有可评估的 binding —— 交给调用方现有的「未绑定」处理
+        //（对 perm/plan 而言反正会静默 no-op，因为它们本来就要查 binding）。
         return true
       }
       extra = { bindingId: binding.id, sessionId: binding.sessionId }
@@ -717,7 +703,7 @@ export class MessagingGateway {
         binding,
       })
     } else {
-      // Unknown button prefix — let the caller handle it.
+      // 未知按钮前缀 —— 交给调用方处理。
       return true
     }
 
@@ -738,9 +724,9 @@ export class MessagingGateway {
   }
 
   /**
-   * Build the minimum `IncomingMessage` shape the access evaluators read.
-   * The evaluators only consult `platform`, `senderId`, `senderIsBot` —
-   * everything else is dummy/empty for the button-press path.
+   * 构造 access evaluator 所需的最小 `IncomingMessage` 形状。
+   * evaluator 只会读取 `platform`、`senderId`、`senderIsBot` ——
+   * 其余字段对按钮点击路径而言都是占位/空。
    */
   private synthesizeMsgForGate(press: ButtonPress): IncomingMessage {
     return {
@@ -796,7 +782,7 @@ export class MessagingGateway {
   }
 
   // -------------------------------------------------------------------------
-  // Accessors
+  // 取值器
   // -------------------------------------------------------------------------
 
   getBindingStore(): BindingStore {

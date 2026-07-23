@@ -1,11 +1,11 @@
 /**
- * UnifiedDiffViewer - Diff viewer for pre-computed unified diff strings
+ * UnifiedDiffViewer - 用于预计算 unified diff 字符串的 diff 查看器
  *
- * Used for Codex file operations which provide unified diff patches
- * instead of original/modified content strings.
+ * 用于 Codex 文件操作，后者提供 unified diff patch
+ * 而非原始/修改后的内容字符串。
  *
- * Uses @pierre/diffs parsePatchFiles to parse the unified diff string
- * and renders via the FileDiff component with proper theming.
+ * 使用 @pierre/diffs 的 parsePatchFiles 解析 unified diff 字符串，
+ * 并通过 FileDiff 组件渲染，支持正确主题。
  */
 
 import * as React from 'react'
@@ -15,8 +15,8 @@ import { parsePatchFiles, DIFFS_TAG_NAME, registerCustomTheme, resolveTheme, typ
 import { cn } from '../../lib/utils'
 import { LANGUAGE_MAP } from './language-map'
 
-// Register the diffs-container custom element if not already registered
-// (shared with ShikiDiffViewer - safe to call multiple times)
+// 若尚未注册则注册 diffs-container 自定义元素
+// （与 ShikiDiffViewer 共享——多次调用安全）
 if (typeof HTMLElement !== 'undefined' && !customElements.get(DIFFS_TAG_NAME)) {
   class FileDiffContainer extends HTMLElement {
     constructor() {
@@ -28,36 +28,36 @@ if (typeof HTMLElement !== 'undefined' && !customElements.get(DIFFS_TAG_NAME)) {
   customElements.define(DIFFS_TAG_NAME, FileDiffContainer)
 }
 
-// Custom themes are registered in ShikiDiffViewer and shared across components
+// 自定义主题在 ShikiDiffViewer 中注册，跨组件共享
 
 export interface UnifiedDiffViewerProps {
-  /** Raw unified diff string (e.g., from Codex fileChange.diff) */
+  /** 原始 unified diff 字符串（例如来自 Codex fileChange.diff） */
   unifiedDiff: string
-  /** File path - used for display in header */
+  /** 文件路径——用于头部展示 */
   filePath?: string
-  /** Diff style: 'unified' (stacked) or 'split' (side-by-side) */
+  /** diff 样式：'unified'（堆叠）或 'split'（并排） */
   diffStyle?: 'unified' | 'split'
-  /** Theme mode */
+  /** 主题模式 */
   theme?: 'light' | 'dark'
-  /** Shiki theme name (e.g., 'dracula', 'github-dark'). When provided, uses the matching
-   *  Shiki theme natively. Falls back to craft-dark/craft-light (transparent bg) if not set. */
+  /** Shiki 主题名（例如 'dracula'、'github-dark'）。提供时使用对应的 Shiki 原生主题；
+   *  未设置时回退到 craft-dark/craft-light（透明背景）。 */
   shikiTheme?: string
-  /** Disable background highlighting on changed lines */
+  /** 禁用变更行的背景高亮 */
   disableBackground?: boolean
-  /** Whether to hide pierre's native file header (filename + stats). Default: true */
+  /** 是否隐藏 pierre 原生文件头（文件名 + 统计）。默认 true */
   disableFileHeader?: boolean
-  /** Callback when the file header is clicked (e.g. to open the file in an editor).
-   *  When provided, the header becomes clickable with cursor: pointer. */
+  /** 文件头被点击时的回调（例如在编辑器中打开文件）。
+   *  提供时文件头变为可点击，cursor: pointer。 */
   onFileHeaderClick?: (filePath: string) => void
-  /** Callback when ready */
+  /** 就绪时的回调 */
   onReady?: () => void
-  /** Additional class names */
+  /** 额外类名 */
   className?: string
 }
 
 /**
- * Parse a unified diff string into FileDiffMetadata.
- * Handles edge cases like empty diffs or malformed patches.
+ * 将 unified diff 字符串解析为 FileDiffMetadata。
+ * 处理空 diff 或格式错误 patch 等边界情况。
  */
 function parseUnifiedDiff(unifiedDiff: string, filePath: string): FileDiffMetadata | null {
   if (!unifiedDiff || !unifiedDiff.trim()) {
@@ -65,14 +65,14 @@ function parseUnifiedDiff(unifiedDiff: string, filePath: string): FileDiffMetada
   }
 
   try {
-    // parsePatchFiles expects a complete patch format
-    // If the diff doesn't have a proper header, we might need to add one
+    // parsePatchFiles 期望完整的 patch 格式
+    // 若 diff 没有正确的头部，可能需要补一个
     let patchContent = unifiedDiff
 
-    // Check if it's a raw hunk without file headers
-    // A proper unified diff starts with "---" or "diff --git"
+    // 检查是否为无文件头的裸 hunk
+    // 正确的 unified diff 以 "---" 或 "diff --git" 开头
     if (!patchContent.startsWith('---') && !patchContent.startsWith('diff ')) {
-      // Wrap in minimal unified diff format
+      // 包装为最小化的 unified diff 格式
       patchContent = `--- a/${filePath}\n+++ b/${filePath}\n${patchContent}`
     }
 
@@ -90,7 +90,7 @@ function parseUnifiedDiff(unifiedDiff: string, filePath: string): FileDiffMetada
 }
 
 /**
- * UnifiedDiffViewer - Renders pre-computed unified diff strings
+ * UnifiedDiffViewer - 渲染预计算的 unified diff 字符串
  */
 export function UnifiedDiffViewer({
   unifiedDiff,
@@ -107,16 +107,16 @@ export function UnifiedDiffViewer({
   const hasCalledReady = useRef(false)
   const [isReady, setIsReady] = useState(false)
 
-  // Parse the unified diff
+  // 解析 unified diff
   const fileDiff = useMemo(() => {
     return parseUnifiedDiff(unifiedDiff, filePath)
   }, [unifiedDiff, filePath])
 
-  // Diff options - use the app's Shiki theme if available, otherwise fall back
-  // to craft-dark/craft-light which have transparent bg for CSS variable theming
+  // diff 选项——若有 app 的 Shiki 主题则使用，否则回退到
+  // craft-dark/craft-light（透明背景，支持 CSS 变量主题）
   const resolvedThemeName = shikiTheme || (theme === 'dark' ? 'craft-dark' : 'craft-light')
 
-  // When onFileHeaderClick is provided, inject CSS to make the header look clickable
+  // 提供 onFileHeaderClick 时，注入 CSS 使头部看起来可点击
   const unsafeCSS = onFileHeaderClick
     ? '[data-diffs-header] { cursor: pointer; } [data-diffs-header]:hover [data-title] { text-decoration: underline; }'
     : undefined
@@ -133,23 +133,23 @@ export function UnifiedDiffViewer({
     unsafeCSS,
   }), [resolvedThemeName, theme, diffStyle, disableBackground, disableFileHeader, unsafeCSS])
 
-  // Call onReady after first render
+  // 首次渲染后调用 onReady
   useEffect(() => {
     if (!hasCalledReady.current && onReady) {
       hasCalledReady.current = true
-      // Give Shiki time to highlight
+      // 给 Shiki 高亮留出时间
       const timer = setTimeout(() => {
         setIsReady(true)
         onReady()
       }, 100)
       return () => {
         clearTimeout(timer)
-        hasCalledReady.current = false // Reset so re-mounts (including StrictMode) re-arm the timer
+        hasCalledReady.current = false // 重置，使重新挂载（含 StrictMode）能重新启动定时器
       }
     }
   }, [onReady, unifiedDiff, fileDiff])
 
-  // Attach a click listener to the file header inside pierre's shadow DOM.
+  // 在 pierre 的 shadow DOM 内为文件头附加点击监听器。
   const containerRef = useRef<HTMLDivElement>(null)
   const onFileHeaderClickRef = useRef(onFileHeaderClick)
   onFileHeaderClickRef.current = onFileHeaderClick
@@ -157,7 +157,7 @@ export function UnifiedDiffViewer({
   useEffect(() => {
     if (!onFileHeaderClick || disableFileHeader) return
 
-    // Wait briefly for pierre to render the header into the shadow DOM
+    // 短暂等待 pierre 将头部渲染进 shadow DOM
     const timer = setTimeout(() => {
       const diffsContainer = containerRef.current?.querySelector(DIFFS_TAG_NAME)
       const header = diffsContainer?.shadowRoot?.querySelector('[data-diffs-header]')
@@ -167,7 +167,7 @@ export function UnifiedDiffViewer({
         onFileHeaderClickRef.current?.(filePath)
       }
       header.addEventListener('click', handleClick)
-      // Store cleanup ref so we can remove listener
+      // 存储清理引用以便移除监听器
       ;(header as any).__craftClickCleanup = () => header.removeEventListener('click', handleClick)
     }, 150)
 
@@ -181,10 +181,10 @@ export function UnifiedDiffViewer({
     }
   }, [filePath, disableFileHeader, onFileHeaderClick])
 
-  // Use CSS variable so custom themes are respected
+  // 使用 CSS 变量以尊重自定义主题
   const backgroundColor = 'var(--background)'
 
-  // If we couldn't parse the diff, show a fallback
+  // 若无法解析 diff，展示兜底内容
   if (!fileDiff) {
     return (
       <div
@@ -229,8 +229,8 @@ export function UnifiedDiffViewer({
 }
 
 /**
- * Calculate addition/deletion stats from a unified diff string.
- * Useful for displaying change counts in headers without full rendering.
+ * 从 unified diff 字符串计算新增/删除统计。
+ * 用于无需完整渲染即可在头部展示变更计数。
  */
 export function getUnifiedDiffStats(unifiedDiff: string, filePath: string = 'file'): { additions: number; deletions: number } | null {
   const fileDiff = parseUnifiedDiff(unifiedDiff, filePath)

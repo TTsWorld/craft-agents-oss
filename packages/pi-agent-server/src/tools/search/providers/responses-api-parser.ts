@@ -1,9 +1,9 @@
 /**
- * Shared parser for the OpenAI Responses API format.
+ * OpenAI Responses API 格式的共享解析器。
  *
- * Both `api.openai.com/v1/responses` and `chatgpt.com/backend-api/codex/responses`
- * return the same shape: output items with text content and URL-citation annotations.
- * OpenRouter also mirrors this format at `openrouter.ai/api/v1/responses`.
+ * `api.openai.com/v1/responses` 和 `chatgpt.com/backend-api/codex/responses`
+ * 返回相同的结构：带文本内容和 URL-citation 标注的 output items。
+ * OpenRouter 在 `openrouter.ai/api/v1/responses` 也采用同样的格式。
  */
 
 import type { WebSearchResult } from '../types.ts';
@@ -70,10 +70,9 @@ export function collectUrlCitations(data: ResponsesApiResponse): UrlCitation[] {
 }
 
 /**
- * Parse a Responses API response into WebSearchResult[].
+ * 把 Responses API 响应解析为 WebSearchResult[]。
  *
- * Extracts URL citations first (structured results), falls back to a
- * plain-text summary if no citations are found.
+ * 优先提取 URL 引用（结构化结果），找不到引用时回退为纯文本摘要。
  */
 export function parseResponsesApiResults(
   data: ResponsesApiResponse,
@@ -111,7 +110,7 @@ export function parseResponsesApiResults(
     throw new Error('Search returned no content');
   }
 
-  // Fallback: return full text summary as a single result.
+  // 兜底：把完整文本摘要作为单条结果返回。
   return [
     {
       title: `Search results for "${query}"`,

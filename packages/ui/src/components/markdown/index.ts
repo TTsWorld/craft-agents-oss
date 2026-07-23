@@ -1,5 +1,5 @@
 /**
- * Markdown component exports for @craft-agent/ui
+ * @craft-agent/ui 的 Markdown 组件导出
  */
 
 export { Markdown, MemoizedMarkdown, type MarkdownProps, type RenderMode, type DisablablePreviewBlock } from './Markdown'

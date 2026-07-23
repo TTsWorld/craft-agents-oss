@@ -1,5 +1,5 @@
 /**
- * UI primitives for @craft-agent/ui
+ * @craft-agent/ui 的 UI 基础组件
  */
 
 export { Spinner, type SpinnerProps, LoadingIndicator, type LoadingIndicatorProps } from './LoadingIndicator'

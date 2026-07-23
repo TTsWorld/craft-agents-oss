@@ -1,22 +1,19 @@
 /**
- * TopicRegistry — workspace-scoped cache of automation forum topics.
+ * TopicRegistry —— workspace 作用域的 automation 论坛话题缓存。
  *
- * Each entry maps a user-specified topic name to a Telegram forum-topic
- * thread ID. The first time a name is requested for a workspace, the
- * registry calls the supplied `createTopic` callback and persists the
- * resulting threadId. Subsequent requests for the same name return the
- * cached entry — so multiple automations sharing a `telegramTopic`
- * value share one topic.
+ * 每个条目把一个用户指定的话题名映射到一个 Telegram 论坛话题 thread ID。
+ * 第一次为某个 workspace 请求某个名字时，registry 会调用传入的
+ * `createTopic` 回调并持久化返回的 threadId。之后对同一名字的请求返回
+ * 缓存条目 —— 所以共享同一个 `telegramTopic` 值的多个 automation 共享一个话题。
  *
- * Storage: `{messagingDir}/topic-registry.json`
+ * 存储：`{messagingDir}/topic-registry.json`
  *
- * Concurrency: an in-memory async mutex per `(workspaceId, topicName)`
- * serializes simultaneous create-or-reuse requests, so two automation
- * runs racing on the same name only create the topic once.
+ * 并发：每个 `(workspaceId, topicName)` 一个内存 async mutex，
+ * 把同时到达的 create-or-reuse 请求串行化，这样两个争抢同一名字的
+ * automation 运行只会创建一次话题。
  *
- * Errors raised by `createTopic` propagate to the caller (so the
- * caller can surface "no Manage Topics permission" etc. without
- * the registry making a policy decision).
+ * `createTopic` 抛出的错误会向上冒泡给调用方（让调用方能呈现
+ *「没有 Manage Topics 权限」等，而无需 registry 替它做策略决策）。
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
@@ -24,12 +21,12 @@ import { join } from 'node:path'
 import type { MessagingLogger } from './types'
 
 export interface AutomationTopicEntry {
-  /** User-specified topic name (case-sensitive). The cache key together with workspaceId. */
+  /** 用户指定的话题名（大小写敏感）。与 workspaceId 一起作为缓存键。 */
   topicName: string
   platform: 'telegram'
-  /** Telegram chat ID of the supergroup hosting this topic. */
+  /** 承载该话题的超级群 Telegram chat ID。 */
   chatId: string
-  /** Telegram `message_thread_id` returned by `createForumTopic`. */
+  /** `createForumTopic` 返回的 Telegram `message_thread_id`。 */
   threadId: number
   createdAt: number
   lastUsedAt: number
@@ -53,9 +50,9 @@ export class TopicRegistry {
   private readonly filePath: string
   private readonly dirPath: string
   private readonly log: MessagingLogger
-  /** Cache: keyed by `topicName`. One workspace per registry instance. */
+  /** 缓存：以 `topicName` 为键。每个 registry 实例对应一个 workspace。 */
   private byName = new Map<string, AutomationTopicEntry>()
-  /** In-flight find-or-create promises per topic name, used as a mutex. */
+  /** 每个话题名进行中的 find-or-create promise，用作 mutex。 */
   private inflight = new Map<string, Promise<AutomationTopicEntry>>()
 
   constructor(storageDir: string, logger: MessagingLogger = NOOP_LOGGER) {
@@ -66,7 +63,7 @@ export class TopicRegistry {
   }
 
   // -------------------------------------------------------------------------
-  // Query
+  // 查询
   // -------------------------------------------------------------------------
 
   get(topicName: string): AutomationTopicEntry | undefined {
@@ -78,16 +75,14 @@ export class TopicRegistry {
   }
 
   // -------------------------------------------------------------------------
-  // Mutation
+  // 变更
   // -------------------------------------------------------------------------
 
   /**
-   * Return the cached entry for `topicName`; if none exists, call
-   * `createTopic(topicName)` to create a forum topic in `chatId`,
-   * persist the result, and return the new entry.
+   * 返回 `topicName` 的缓存条目；若不存在，则调用 `createTopic(topicName)`
+   * 在 `chatId` 里创建一个论坛话题，持久化结果并返回新条目。
    *
-   * Concurrent calls with the same name share the same in-flight
-   * promise — only one `createTopic` call is made.
+   * 同名的并发调用共享同一个 in-flight promise —— 只会发起一次 `createTopic` 调用。
    */
   async findOrCreate(args: {
     topicName: string
@@ -98,7 +93,7 @@ export class TopicRegistry {
 
     const existing = this.byName.get(topicName)
     if (existing) {
-      // Touch lastUsedAt — best-effort, don't block on persistence
+      // 更新 lastUsedAt —— 尽力而为，不阻塞持久化
       existing.lastUsedAt = Date.now()
       this.save()
       return existing
@@ -108,8 +103,8 @@ export class TopicRegistry {
     if (inflight) return inflight
 
     const promise = (async (): Promise<AutomationTopicEntry> => {
-      // Re-check inside the mutex in case another caller raced us between
-      // the get() above and the inflight set below.
+      // 在 mutex 内再查一次，防止另一个调用方在上面的 get()
+      // 与下面的 inflight set 之间抢先一步。
       const racedExisting = this.byName.get(topicName)
       if (racedExisting) {
         racedExisting.lastUsedAt = Date.now()
@@ -156,7 +151,7 @@ export class TopicRegistry {
   }
 
   // -------------------------------------------------------------------------
-  // Persistence
+  // 持久化
   // -------------------------------------------------------------------------
 
   private load(): void {

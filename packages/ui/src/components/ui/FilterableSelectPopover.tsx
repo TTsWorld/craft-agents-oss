@@ -27,11 +27,11 @@ export interface FilterableSelectPopoverProps<T> {
 }
 
 /**
- * Reusable flat list selector with:
- * - text filtering
- * - keyboard navigation (↑/↓, Enter, Esc)
- * - click-outside dismissal
- * - anchor-based portal positioning
+ * 可复用的扁平列表选择器，具备：
+ * - 文本过滤
+ * - 键盘导航（↑/↓、Enter、Esc）
+ * - 点击外部关闭
+ * - 基于锚点的 Portal 定位
  */
 export function FilterableSelectPopover<T>({
   open,

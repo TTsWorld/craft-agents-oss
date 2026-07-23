@@ -40,7 +40,7 @@ function forceShikiDecorations(editor: any) {
       editor.view?.dispatch(tr)
     }
   } catch {
-    // Best-effort refresh only.
+    // 仅做尽力刷新,忽略错误。
   }
 }
 
@@ -55,16 +55,16 @@ function scheduleShikiRefresh(editor: any) {
 }
 
 const INLINE_DOUBLE_DOLLAR_REGEX = /\$\$([^\n]+?)\$\$/g
-// Currency marker used during official parse to avoid accidental math tokenization.
+// 官方解析时使用的货币标记,避免被误判为数学公式。
 const CURRENCY_MARKER = '¤'
 const CURRENCY_RANGE_REGEX = /\$(\d[\dA-Za-z.,]*\s*[–-]\s*)\$(\d[\dA-Za-z.,]*)/g
 const CURRENCY_AMOUNT_REGEX = /\$(\d[\dA-Za-z.,]*)/g
 
 /**
- * Normalize markdown for official TipTap parser:
- * - Keep product policy: users write math with $$...$$
- * - Convert same-line $$...$$ to inline $...$ (TipTap inline math)
- * - Escape currency-like dollars ($100, $2M...) so they don't become inline math nodes
+ * 为官方 TipTap 解析器规范化 markdown:
+ * - 保持产品策略:用户使用 $$...$$ 书写数学公式
+ * - 将同一行内的 $$...$$ 转换为行内 $...$(TipTap 行内数学)
+ * - 转义类货币的美元符号($100、$2M 等),避免它们变成行内数学节点
  */
 export function preprocessMarkdownForOfficial(markdown: string): string {
   let index = 0
@@ -92,7 +92,7 @@ export function preprocessMarkdownForOfficial(markdown: string): string {
   })
 }
 
-/** Undo parser-safety escaping in serialized markdown. */
+/** 反转序列化 markdown 中为解析安全所做的转义。 */
 export function postprocessMarkdownFromOfficial(markdown: string): string {
   return markdown.replaceAll(CURRENCY_MARKER, '$')
 }
@@ -194,19 +194,19 @@ async function handleDroppedOrPastedFiles(
 }
 
 export interface TiptapMarkdownEditorProps {
-  /** Markdown string content */
+  /** markdown 字符串内容 */
   content: string
-  /** Called when content changes */
+  /** 内容变化时的回调 */
   onUpdate?: (markdown: string) => void
-  /** Placeholder text when empty */
+  /** 为空时的占位文本 */
   placeholder?: string
   className?: string
-  /** Whether the editor is editable */
+  /** 编辑器是否可编辑 */
   editable?: boolean
   /**
-   * Migration flag for markdown engine foundations.
-   * - `legacy`: tiptap-markdown (default for safe rollout)
-   * - `official`: @tiptap/markdown + mathematics extension
+   * markdown 引擎底座的迁移开关。
+   * - `legacy`:tiptap-markdown(默认,稳妥渐进上线)
+   * - `official`:@tiptap/markdown + mathematics 扩展
    */
   markdownEngine?: MarkdownEngine
 }
@@ -222,8 +222,8 @@ export function TiptapMarkdownEditor({
   const onUpdateRef = React.useRef(onUpdate)
   onUpdateRef.current = onUpdate
 
-  // Ref for the editor instance — used by the Mathematics onClick callback
-  // which is created at extension-configure time (before useEditor returns).
+  // editor 实例的 ref —— 供 Mathematics 的 onClick 回调使用,
+  // 因为该回调在扩展配置阶段创建(早于 useEditor 返回)。
   const editorRef = React.useRef<ReturnType<typeof useEditor>>(null!)
 
   const useOfficialMarkdown = markdownEngine === 'official'
@@ -271,7 +271,7 @@ export function TiptapMarkdownEditor({
               const e = editorRef.current
               if (!e) return
               e.chain().focus().setNodeSelection(pos).run()
-              // Emit after selection so BubbleMenu mounts, then the event activates the input
+              // 在选区建立后再 emit,使 BubbleMenu 先挂载,然后由该事件激活输入框
               queueMicrotask(() => (e as any).emit(INLINE_MATH_EDIT_EVENT))
             },
           },
@@ -352,27 +352,26 @@ export function TiptapMarkdownEditor({
     },
   }, [useOfficialMarkdown, extensions])
 
-  // Keep editorRef in sync for the Mathematics onClick callback
+  // 保持 editorRef 与 Mathematics 的 onClick 回调同步
   editorRef.current = editor
 
 
-  // Sync editable prop
+  // 同步 editable prop
   React.useEffect(() => {
     if (editor && editor.isEditable !== editable) {
       editor.setEditable(editable)
     }
   }, [editor, editable])
 
-  // Sync content when the selected task changes (key prop handles this,
-  // but as a safety net for direct content prop changes)
+  // 当选中的任务变化时同步内容(key prop 已处理,
+  // 但作为直接修改 content prop 的兜底保护)
   const prevContentRef = React.useRef(content)
   React.useEffect(() => {
     if (editor && content !== prevContentRef.current) {
       prevContentRef.current = content
 
-      // Important: when this editor is currently focused, treat incoming content as
-      // local controlled echo and avoid setContent resets that can collapse transient
-      // block states (e.g. slash-inserted code blocks) and jump selection.
+      // 重要:当编辑器当前处于焦点时,把传入的内容视为本地受控回显,
+      // 避免 setContent 重置导致瞬时 block 状态被折叠(例如斜杠插入的代码块)以及选区跳动。
       if (editor.isFocused) return
 
       const currentMd = useOfficialMarkdown

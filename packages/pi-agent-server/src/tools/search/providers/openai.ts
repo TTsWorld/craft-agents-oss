@@ -1,11 +1,11 @@
 /**
- * Responses API search provider — works with any endpoint that implements the
- * OpenAI Responses API format with a built-in `web_search` tool.
+ * Responses API 搜索 provider——适配任何实现了 OpenAI Responses API 格式
+ * 且带内置 `web_search` 工具的 endpoint。
  *
- * Supports:
- *   - api.openai.com/v1  (OpenAI direct)
+ * 支持：
+ *   - api.openai.com/v1  (OpenAI 直连)
  *   - openrouter.ai/api/v1  (OpenRouter)
- *   - Any future Responses API-compatible endpoint
+ *   - 任何未来兼容 Responses API 的 endpoint
  */
 
 import type { WebSearchProvider, WebSearchResult } from '../types.ts';
@@ -14,15 +14,15 @@ import { parseResponsesApiResults, type ResponsesApiResponse } from './responses
 const DEFAULT_SEARCH_MODEL = 'gpt-4o-mini';
 
 export interface ResponsesApiSearchConfig {
-  /** Base URL without trailing slash (e.g. "https://api.openai.com/v1") */
+  /** 不带尾斜杠的 base URL（例如 "https://api.openai.com/v1"） */
   apiBase: string;
-  /** Bearer token for Authorization header */
+  /** Authorization 头的 Bearer token */
   apiKey: string;
-  /** Model to use for the search call (default: gpt-4o-mini) */
+  /** 搜索调用使用的模型（默认：gpt-4o-mini） */
   model?: string;
-  /** Additional headers to include in the request */
+  /** 请求中附带的额外头 */
   extraHeaders?: Record<string, string>;
-  /** Display name for this provider (default: derived from apiBase) */
+  /** 该 provider 的显示名（默认：由 apiBase 推导） */
   displayName?: string;
 }
 
@@ -60,8 +60,8 @@ export class ResponsesApiSearchProvider implements WebSearchProvider {
 }
 
 /**
- * @deprecated Use `ResponsesApiSearchProvider` instead.
- * Kept as a re-export for backwards compatibility with existing imports.
+ * @deprecated 请改用 `ResponsesApiSearchProvider`。
+ * 为兼容已有 import 而保留的 re-export。
  */
 export const OpenAISearchProvider = ResponsesApiSearchProvider;
 

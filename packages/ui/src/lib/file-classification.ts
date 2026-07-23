@@ -1,41 +1,41 @@
 /**
- * File type classification for the link interceptor.
+ * 链接拦截器使用的文件类型分类。
  *
- * Classifies file paths by extension to determine whether the app can show
- * an in-app preview overlay, and if so, which type of preview to use.
- * Used by useLinkInterceptor to decide between in-app preview vs. opening externally.
+ * 通过扩展名对文件路径进行分类，以判断应用能否展示
+ * 应用内预览浮层，以及应使用哪种预览类型。
+ * 供 useLinkInterceptor 用于决定应用内预览还是外部打开。
  */
 
-/** Preview types that map to specific overlay components */
+/** 映射到特定浮层组件的预览类型 */
 export type FilePreviewType = 'image' | 'code' | 'markdown' | 'json' | 'text' | 'pdf'
 
 export interface FileClassification {
-  /** The preview type, or null if no in-app preview is available */
+  /** 预览类型，若无应用内预览则为 null */
   type: FilePreviewType | null
-  /** Whether the file can be previewed in-app */
+  /** 该文件是否可在应用内预览 */
   canPreview: boolean
 }
 
 /**
- * Image formats — rendered in ImagePreviewOverlay via data URL.
- * Only includes formats Chromium can natively decode.
- * HEIC/HEIF and TIFF are excluded — Chromium has no codec for these,
- * so they fall through to system open (external app).
+ * 图片格式 —— 通过 data URL 在 ImagePreviewOverlay 中渲染。
+ * 仅包含 Chromium 可原生解码的格式。
+ * 不含 HEIC/HEIF 和 TIFF —— Chromium 没有对应编解码器，
+ * 因此它们会回落到系统打开（外部应用）。
  */
 const IMAGE_EXTENSIONS = new Set([
   'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif',
 ])
 
 /**
- * Code file extensions — rendered in CodePreviewOverlay with syntax highlighting.
- * Mirrors LANGUAGE_MAP from file-utils.ts but as a flat set for classification only.
+ * 代码文件扩展名 —— 在 CodePreviewOverlay 中带语法高亮渲染。
+ * 与 file-utils.ts 中的 LANGUAGE_MAP 对应，但此处仅作为扁平集合用于分类。
  */
 const CODE_EXTENSIONS = new Set([
   'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs',
   'py', 'rb', 'rs', 'go', 'java', 'kt', 'swift',
   'c', 'cpp', 'h', 'hpp', 'cs',
   'css', 'scss', 'less',
-  'html', 'htm', 'xml', 'svg',  // SVG is also code-viewable, but image takes priority
+  'html', 'htm', 'xml', 'svg',  // SVG 也可作为代码查看，但图片优先级更高
   'yaml', 'yml', 'toml',
   'sh', 'bash', 'zsh', 'fish',
   'sql', 'graphql',
@@ -45,13 +45,13 @@ const CODE_EXTENSIONS = new Set([
   'vue', 'svelte', 'astro', 'prisma',
 ])
 
-/** Markdown files — rendered with the Markdown component */
+/** Markdown 文件 —— 使用 Markdown 组件渲染 */
 const MARKDOWN_EXTENSIONS = new Set(['md', 'mdx'])
 
-/** JSON files — rendered in JSONPreviewOverlay or code viewer */
+/** JSON 文件 —— 在 JSONPreviewOverlay 或代码查看器中渲染 */
 const JSON_EXTENSIONS = new Set(['json', 'jsonc', 'json5'])
 
-/** Plain text files — rendered as plaintext in code viewer */
+/** 纯文本文件 —— 在代码查看器中以纯文本渲染 */
 const TEXT_EXTENSIONS = new Set([
   'txt', 'log', 'csv', 'tsv',
   'cfg', 'ini', 'conf',
@@ -61,28 +61,28 @@ const TEXT_EXTENSIONS = new Set([
   'rtf',
 ])
 
-/** PDF files — rendered in PDFPreviewOverlay via embedded viewer */
+/** PDF 文件 —— 通过内嵌查看器在 PDFPreviewOverlay 中渲染 */
 const PDF_EXTENSIONS = new Set(['pdf'])
 
 /**
- * External-only file extensions — recognized as file links but opened externally.
- * These are included in FILE_EXTENSIONS_PATTERN so linkify.ts detects them as file paths,
- * but classifyFile() returns canPreview: false so they route to the system opener.
+ * 仅外部打开的文件扩展名 —— 被识别为文件链接但通过外部方式打开。
+ * 它们被包含在 FILE_EXTENSIONS_PATTERN 中以便 linkify.ts 将其检测为文件路径，
+ * 但 classifyFile() 返回 canPreview: false，因此会路由到系统打开器。
  */
 const EXTERNAL_EXTENSIONS = new Set([
-  'xlsx', 'xls', 'xlsm',   // Spreadsheets
-  'docx', 'doc',             // Word documents
-  'pptx', 'ppt',             // Presentations
-  'zip', 'tar', 'gz', 'rar', '7z',  // Archives
-  'dmg', 'pkg', 'exe', 'msi',       // Installers
-  'mp3', 'wav', 'flac', 'aac',      // Audio
-  'mp4', 'mov', 'avi', 'mkv',       // Video
-  'heic', 'heif', 'tiff', 'tif',    // Images Chromium can't decode
+  'xlsx', 'xls', 'xlsm',   // 电子表格
+  'docx', 'doc',             // Word 文档
+  'pptx', 'ppt',             // 演示文稿
+  'zip', 'tar', 'gz', 'rar', '7z',  // 压缩包
+  'dmg', 'pkg', 'exe', 'msi',       // 安装包
+  'mp3', 'wav', 'flac', 'aac',      // 音频
+  'mp4', 'mov', 'avi', 'mkv',       // 视频
+  'heic', 'heif', 'tiff', 'tif',    // Chromium 无法解码的图片
 ])
 
 /**
- * Extract the file extension from a path, lowercased.
- * Handles compound extensions like .env.local by returning the last segment.
+ * 从路径中提取文件扩展名（小写形式）。
+ * 对于 .env.local 这类复合扩展名，返回最后一段。
  */
 function getExtension(filePath: string): string {
   const basename = filePath.split('/').pop() ?? filePath
@@ -92,9 +92,9 @@ function getExtension(filePath: string): string {
 }
 
 /**
- * Classify a file path by extension to determine preview capability.
+ * 通过扩展名对文件路径进行分类以确定预览能力。
  *
- * Priority order when an extension matches multiple sets (e.g. svg):
+ * 当扩展名匹配多个集合时（如 svg）的优先级顺序：
  * image > code > markdown > json > text > pdf
  */
 export function classifyFile(filePath: string): FileClassification {
@@ -112,9 +112,8 @@ export function classifyFile(filePath: string): FileClassification {
 }
 
 /**
- * Regex alternation of all known file extensions (e.g. "ts|tsx|js|...").
- * Derived from the classification sets above so link detection stays in sync
- * with preview support automatically.
+ * 所有可能的文件扩展名的正则或表达式（如 "ts|tsx|js|..."）。
+ * 派生自上方的分类集合，使链接检测与预览支持自动保持同步。
  */
 export const FILE_EXTENSIONS_PATTERN = [
   ...IMAGE_EXTENSIONS,

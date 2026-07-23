@@ -5,8 +5,8 @@ export interface WebSearchResult {
 }
 
 export interface WebSearchProvider {
-  /** Display name shown in search results attribution (e.g. "Google", "OpenAI") */
+  /** 搜索结果归属里显示的名称（例如 "Google"、"OpenAI"） */
   name: string;
-  /** Execute a web search and return structured results. */
+  /** 执行 web 搜索并返回结构化结果。 */
   search(query: string, count: number): Promise<WebSearchResult[]>;
 }

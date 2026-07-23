@@ -22,12 +22,11 @@ interface NormalizedText {
 }
 
 /**
- * v1 normalization policy for quote fallback matching:
- * - collapse any whitespace run (spaces, tabs, newlines) into a single space
- * - preserve all non-whitespace characters as-is
+ * 用于 quote 回退匹配的 v1 规范化策略:
+ * - 将任意连续空白(空格、制表符、换行)折叠为单个空格
+ * - 非空白字符原样保留
  *
- * We keep a char-level map back to original indices so resolved ranges are
- * returned in original (un-normalized) coordinates.
+ * 我们维护一个字符级到原始索引的映射,使解析出的范围以原始(未规范化)坐标返回。
  */
 function normalizeWhitespaceWithMap(input: string): NormalizedText {
   const outChars: string[] = []
@@ -62,7 +61,7 @@ function findQuoteRange(
 ): { start: number; end: number } | null {
   if (!quote.exact) return null
 
-  // First try exact matching without normalization (fast path).
+  // 先尝试不做规范化的精确匹配(快速路径)。
   let searchIndex = fullText.indexOf(quote.exact)
   while (searchIndex !== -1) {
     const candidateStart = searchIndex
@@ -78,7 +77,7 @@ function findQuoteRange(
     searchIndex = fullText.indexOf(quote.exact, searchIndex + 1)
   }
 
-  // Fallback: normalized matching for minor whitespace drift.
+  // 回退:针对轻微空白差异做规范化匹配。
   const normalizedFull = normalizeWhitespaceWithMap(fullText)
   const normalizedExact = normalizeWhitespaceWithMap(quote.exact).text
   const normalizedPrefix = quote.prefix ? normalizeWhitespaceWithMap(quote.prefix).text : undefined

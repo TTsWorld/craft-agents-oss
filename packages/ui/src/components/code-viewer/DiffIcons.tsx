@@ -1,7 +1,7 @@
 /**
- * DiffIcons - SVG icons for diff viewer controls
+ * DiffIcons - diff 查看器控件的 SVG 图标
  *
- * Icons sourced from diffs.com for visual consistency with @pierre/diffs
+ * 图标取自 diffs.com，以保持与 @pierre/diffs 的视觉一致性
  */
 
 import * as React from 'react'
@@ -11,8 +11,8 @@ interface IconProps {
 }
 
 /**
- * Split view icon - shows two panels side by side
- * Used when currently in unified mode, click to switch to split
+ * 分屏视图图标——并排展示两个面板
+ * 当前处于 unified 模式时使用，点击切换到 split
  */
 export function DiffSplitIcon({ className }: IconProps) {
   return (
@@ -34,8 +34,8 @@ export function DiffSplitIcon({ className }: IconProps) {
 }
 
 /**
- * Unified view icon - shows stacked panels (additions below deletions)
- * Used when currently in split mode, click to switch to unified
+ * Unified 视图图标——堆叠面板（新增在删除下方）
+ * 当前处于 split 模式时使用，点击切换到 unified
  */
 export function DiffUnifiedIcon({ className }: IconProps) {
   return (
@@ -63,8 +63,8 @@ export function DiffUnifiedIcon({ className }: IconProps) {
 }
 
 /**
- * Background toggle icon - lines with a highlighted box in the middle
- * Toggles background highlighting on changed lines
+ * 背景切换图标——中间带高亮框的线条
+ * 切换变更行的背景高亮
  */
 export function DiffBackgroundIcon({ className }: IconProps) {
   return (

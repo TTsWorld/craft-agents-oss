@@ -1,9 +1,8 @@
 /**
- * Per-message upsert pipeline used by the WA worker's `messages.upsert`
- * listener.
+ * WA Worker 的 `messages.upsert` 监听器使用的逐消息 upsert 处理管线。
  *
- * Extracted into its own module so unit tests can drive it without
- * importing `worker.ts` (whose top level installs stdin / signal handlers).
+ * 抽离成独立模块后，单元测试可以直接驱动它，而无需 import `worker.ts`
+ * （后者顶层会安装 stdin / 信号处理句柄）。
  */
 
 import { bareJid, classifyInbound } from './filter'
@@ -28,16 +27,16 @@ export type EmitFn = (event: IncomingEvent) => void
 export type LogFn = (...args: unknown[]) => void
 
 /**
- * Process a single upsert message: history filter → classify → media extract → emit.
+ * 处理单条 upsert 消息：历史过滤 → 分类 → 媒体提取 → 上报。
  *
- * Decision precedence:
- * - history (timestamp older than `cutoff`) → skip silently
- * - classifyInbound → handles malformed / own_echo_id / own_outbound /
- *   non_self_chat_inbound / own_echo_prefix and returns either `emit { text }`
- *   or `skip { reason }`. Any non-`empty` skip is honoured here too — we do
- *   NOT route own outbound just because it carries media.
- * - the only override is `skip { reason: 'empty' }`: a voice note has no
- *   caption, so empty text + media must still emit.
+ * 判定优先级：
+ * - 历史（时间戳早于 `cutoff`）→ 静默跳过
+ * - classifyInbound → 处理 malformed / own_echo_id / own_outbound /
+ *   non_self_chat_inbound / own_echo_prefix，返回 `emit { text }` 或
+ *   `skip { reason }`。任何非 `empty` 的跳过在此同样生效——我们不会因为
+ *   自己的出站消息带媒体就改判为上报。
+ * - 唯一的覆盖场景是 `skip { reason: 'empty' }`：语音消息没有 caption，
+ *   所以空文本 + 媒体时仍需上报。
  */
 export async function processUpsertMessage(
   msg: Record<string, unknown>,
@@ -52,8 +51,8 @@ export async function processUpsertMessage(
     return
   }
 
-  // Debug context: surface the exact signals classifyInbound uses so
-  // silent-skip cases ('own_outbound', 'empty') are visible.
+  // 调试上下文：把 classifyInbound 依赖的精确信号暴露出来，
+  // 方便定位静默跳过的场景（'own_outbound'、'empty'）。
   const dbgKey = (msg.key ?? {}) as {
     remoteJid?: string
     fromMe?: boolean

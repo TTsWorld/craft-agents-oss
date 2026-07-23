@@ -3,21 +3,18 @@ import { resolvePiModel, isDeniedMiniModelId } from './model-resolution.ts';
 import { PI_PREFERRED_DEFAULTS } from '../../shared/src/config/llm-connections.ts';
 
 /**
- * Pick an auth-provider-appropriate default mini model.
+ * 挑选一个与当前鉴权 provider 匹配的默认 mini 模型。
  *
- * `getDefaultSummarizationModel()` returns `claude-haiku-4-5`, which only resolves
- * under `anthropic` auth. For `openai` / `openai-codex` / `google` /
- * `github-copilot` / `amazon-bedrock` we need a model from that provider's
- * preferred list — otherwise the ephemeral session ends up with no explicit
- * model and Pi SDK's internal default (post-0.70.0 an openai model) is used,
- * surfacing as a misleading "No API key found for openai" error when the user
- * is authenticated under a different provider.
+ * `getDefaultSummarizationModel()` 返回 `claude-haiku-4-5`，它只有在 `anthropic`
+ * 鉴权下才能解析。对于 `openai` / `openai-codex` / `google` /
+ * `github-copilot` / `amazon-bedrock`，我们需要从该 provider 的偏好列表里取一个模型——
+ * 否则临时会话没有显式模型，会落到 Pi SDK 的内部默认（0.70.0 之后是 openai 模型），
+ * 在用户以其他 provider 鉴权时会报出误导性的 "No API key found for openai"。
  *
- * Walks `PI_PREFERRED_DEFAULTS[authProvider]` and returns the first candidate
- * that is not denied by `isDeniedMiniModelId` and resolves via `resolvePiModel`.
+ * 遍历 `PI_PREFERRED_DEFAULTS[authProvider]`，返回第一个未被 `isDeniedMiniModelId`
+ * 拒绝、且能通过 `resolvePiModel` 解析的候选。
  *
- * Returns `undefined` when there is no resolvable candidate; callers should
- * fall back to `getDefaultSummarizationModel()` in that case.
+ * 没有可解析候选时返回 `undefined`；调用方应回退到 `getDefaultSummarizationModel()`。
  */
 export function pickProviderAppropriateMiniModel(
   authProvider: string,

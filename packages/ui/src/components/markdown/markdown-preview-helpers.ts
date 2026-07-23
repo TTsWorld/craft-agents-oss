@@ -1,9 +1,8 @@
 /**
- * Pure helpers for MarkdownDocBlock.
+ * MarkdownDocBlock 的纯辅助函数。
  *
- * Extracted so we can unit-test the JSON-spec → preview-items normalization
- * without spinning up React. Component DOM behavior is covered by manual
- * Electron smoke (see plan).
+ * 抽取出来以便在不启动 React 的情况下对 JSON-spec → 预览项的归一化
+ * 进行单元测试。组件 DOM 行为由 Electron 手动冒烟测试覆盖（见计划）。
  */
 
 export interface MarkdownPreviewItem {
@@ -18,11 +17,11 @@ export interface MarkdownPreviewSpec {
 }
 
 /**
- * Parse a `markdown-preview` JSON spec string.
+ * 解析 `markdown-preview` JSON 规范字符串。
  *
- * Returns `null` for invalid JSON or specs that lack both `src` and a non-empty
- * `items` array. Mirrors `MarkdownHtmlBlock`/`MarkdownPdfBlock` so the same
- * spec shape works across preview block types.
+ * 对于无效 JSON 或同时缺少 `src` 和非空 `items` 数组的规范，返回 `null`。
+ * 与 `MarkdownHtmlBlock`/`MarkdownPdfBlock` 保持一致，使相同的规范结构
+ * 可跨预览块类型使用。
  */
 export function parseMarkdownPreviewSpec(code: string): MarkdownPreviewSpec | null {
   let raw: unknown
@@ -60,11 +59,10 @@ export function parseMarkdownPreviewSpec(code: string): MarkdownPreviewSpec | nu
 }
 
 /**
- * Normalize a spec to a flat array of items.
+ * 将规范归一化为扁平的项数组。
  *
- * Single-item specs (only `src`) are wrapped into a one-element array so the
- * rest of the component can iterate uniformly. If both fields are present,
- * `items` wins (matches sibling preview blocks).
+ * 单项规范（仅有 `src`）会被包装为单元素数组，使组件其余部分可以统一迭代。
+ * 若两个字段同时存在，`items` 优先（与同级预览块一致）。
  */
 export function normalizePreviewItems(spec: MarkdownPreviewSpec | null): MarkdownPreviewItem[] {
   if (!spec) return []

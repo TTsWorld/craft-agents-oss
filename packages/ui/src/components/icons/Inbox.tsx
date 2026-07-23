@@ -1,10 +1,10 @@
 import type { IconProps } from './types'
 
 /**
- * Custom Inbox icon with Lucide-compatible bounds.
+ * 自定义 Inbox 图标,采用与 Lucide 兼容的边界范围。
  *
- * ADDING NEW ICONS: Ensure paths fill the 2-22 range (Lucide standard).
- * Use strokeWidth={2} to match Lucide visual weight.
+ * 新增图标时:确保路径填满 2-22 范围(Lucide 标准)。
+ * 使用 strokeWidth={2} 以匹配 Lucide 的视觉粗细。
  */
 export function Icon_Inbox({ size, className, ...props }: IconProps) {
   const sizeProps = className ? {} : { width: size ?? 24, height: size ?? 24 }

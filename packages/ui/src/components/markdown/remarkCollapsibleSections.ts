@@ -1,15 +1,15 @@
 /**
- * Remark plugin that wraps heading + content groups into section nodes.
+ * 将标题 + 内容组合包装为 section 节点的 remark 插件。
  *
- * For each heading (H1-H6), it collects all content until the next
- * same-or-higher level heading and wraps them in a section node.
+ * 对于每个标题（H1-H6），收集到下一个同级或更高级别标题之前的所有内容，
+ * 并将它们包装在一个 section 节点中。
  *
- * Example:
+ * 示例：
  *   ## Intro       -> section[depth=2]
- *     paragraph       contains: heading, paragraph, paragraph, section[depth=3]
+ *     paragraph       包含：heading, paragraph, paragraph, section[depth=3]
  *     paragraph
- *     ### Details  -> section[depth=3] (nested inside Intro section)
- *       paragraph     contains: heading, paragraph
+ *     ### Details  -> section[depth=3]（嵌套在 Intro section 内）
+ *       paragraph     包含：heading, paragraph
  *   ## Next       -> section[depth=2]
  */
 
@@ -31,22 +31,21 @@ interface SectionNode extends Parent {
   children: Content[]
 }
 
-// Module-level counter reset for each parse
+// 模块级计数器，每次解析时重置
 let sectionCounter = 0
 
 /**
  * remarkCollapsibleSections
  *
- * Transforms the markdown AST to wrap heading+content groups into
- * section nodes that can be rendered as collapsible sections.
+ * 转换 markdown AST，将标题+内容组合包装为可渲染为折叠区块的 section 节点。
  */
 const remarkCollapsibleSections: Plugin<[], Root> = () => {
   return (tree: Root) => {
-    // Reset counter for each document
+    // 每个文档重置计数器
     sectionCounter = 0
 
-    // Process from deepest to shallowest (6 -> 1)
-    // This ensures nested sections are created before their parents
+    // 从最深到最浅处理（6 -> 1）
+    // 确保嵌套 section 在其父级之前创建
     for (let depth = 6; depth >= 1; depth--) {
       wrapHeadingsAtDepth(tree, depth)
     }
@@ -54,7 +53,7 @@ const remarkCollapsibleSections: Plugin<[], Root> = () => {
 }
 
 function wrapHeadingsAtDepth(tree: Root, depth: number): void {
-  // We need to iterate manually because we're modifying the tree
+  // 需要手动迭代，因为我们正在修改树
   const processNode = (parent: Parent) => {
     let i = 0
     while (i < parent.children.length) {
@@ -64,32 +63,32 @@ function wrapHeadingsAtDepth(tree: Root, depth: number): void {
         continue
       }
 
-      // Recursively process existing sections (for nested content)
-      // Note: 'section' is our custom node type, not in mdast types
+      // 递归处理已存在的 section（用于嵌套内容）
+      // 注意：'section' 是我们的自定义节点类型，不在 mdast 类型中
       if ((node as { type: string }).type === 'section') {
         processNode(node as Parent)
         i++
         continue
       }
 
-      // Found a heading at our target depth
+      // 找到目标层级的标题
       if (node.type === 'heading' && (node as Heading).depth === depth) {
         const sectionId = `section-${++sectionCounter}`
 
-        // Find where this section ends (next same-or-higher level heading)
+        // 查找此 section 的结束位置（下一个同级或更高级标题）
         let endIndex = i + 1
         while (endIndex < parent.children.length) {
           const sibling = parent.children[endIndex]
           if (!sibling) break
 
-          // Stop at another heading of same or higher level (lower number)
+          // 遇到同级或更高级标题（数字更小）时停止
           if (sibling.type === 'heading' && (sibling as Heading).depth <= depth) {
             break
           }
 
-          // Stop at a section that contains a same-or-higher level heading
-          // (already processed deeper sections)
-          // Note: 'section' is our custom node type, not in mdast types
+          // 遇到包含同级或更高级标题的 section 时停止
+          //（已处理更深层的 section）
+          // 注意：'section' 是我们的自定义节点类型，不在 mdast 类型中
           if ((sibling as { type: string }).type === 'section' && (sibling as unknown as SectionNode).depth <= depth) {
             break
           }
@@ -97,7 +96,7 @@ function wrapHeadingsAtDepth(tree: Root, depth: number): void {
           endIndex++
         }
 
-        // Extract nodes for this section
+        // 提取此 section 的节点
         const sectionChildren = parent.children.slice(i, endIndex) as Content[]
 
         // Create section wrapper
@@ -115,7 +114,7 @@ function wrapHeadingsAtDepth(tree: Root, depth: number): void {
           },
         }
 
-        // Replace the heading and its content with the section
+        // 用 section 替换标题及其内容
         parent.children.splice(i, sectionChildren.length, section as unknown as Content)
       }
 

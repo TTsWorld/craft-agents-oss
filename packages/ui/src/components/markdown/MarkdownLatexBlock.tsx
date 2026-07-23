@@ -8,10 +8,10 @@ interface MarkdownLatexBlockProps {
 }
 
 /**
- * MarkdownLatexBlock - Renders fenced ```latex / ```math code blocks as display math.
+ * MarkdownLatexBlock - 将 ```latex / ```math 代码围栏渲染为展示型数学公式。
  *
- * Uses KaTeX to render LaTeX source into styled HTML.
- * On parse errors, shows the raw source with an error message.
+ * 使用 KaTeX 把 LaTeX 源码渲染为带样式的 HTML。
+ * 解析出错时显示原始源码及错误信息。
  */
 export function MarkdownLatexBlock({ code, className }: MarkdownLatexBlockProps) {
   const html = React.useMemo(() => {

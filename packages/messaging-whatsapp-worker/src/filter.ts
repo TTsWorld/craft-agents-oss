@@ -1,15 +1,14 @@
 /**
- * Pure filter helpers used by the WA worker's `messages.upsert` handler.
+ * filter.ts — WA Worker 的 `messages.upsert` 处理器使用的纯过滤辅助函数。
  *
- * Extracted from `worker.ts` so the classification logic can be unit
- * tested without importing the worker entry (which installs stdin and
- * signal handlers on module load).
+ * 逻辑从 `worker.ts` 抽离成独立文件后，分类逻辑可以在不加载 worker 入口
+ * （它会在模块加载时安装 stdin 和信号处理句柄）的情况下做单元测试。
  */
 
 /**
- * Normalize a Baileys JID so `sock.user.id` (which may carry a device
- * suffix like `num:10@s.whatsapp.net`) compares equal to the plain
- * `num@s.whatsapp.net` form used in `key.remoteJid` for the self-chat.
+ * 把 Baileys 的 JID 归一化，让 `sock.user.id`（可能带设备后缀，
+ * 例如 `num:10@s.whatsapp.net`）能和自聊(self-chat)里 `key.remoteJid`
+ * 使用的纯 `num@s.whatsapp.net` 形式相等比较。
  */
 export function bareJid(jid: string | undefined | null): string | null {
   if (!jid) return null
@@ -22,9 +21,8 @@ export function bareJid(jid: string | undefined | null): string | null {
 }
 
 /**
- * Extract the visible text from a Baileys message. Covers the subset of
- * content types we care about: plain conversation, extended text,
- * captions on image/doc/video.
+ * 从 Baileys 消息里提取可见文本。覆盖我们关心的内容类型子集：
+ * 纯文本 conversation、extendedText，以及图片/文档/视频的 caption（说明文字）。
  */
 export function extractText(msg: Record<string, unknown>): string {
   const m = msg.message as Record<string, unknown> | undefined
@@ -45,13 +43,12 @@ export function extractText(msg: Record<string, unknown>): string {
 export interface ClassifyContext {
   selfChatMode: boolean
   responsePrefix: string
-  /** Bare phone-number JID of the account (no device suffix), e.g. `num@s.whatsapp.net`. */
+  /** 账号的纯号码 JID（无设备后缀），例如 `num@s.whatsapp.net`。 */
   selfJid: string | null
   /**
-   * Bare LID form of the account (no device suffix), e.g. `lid@lid`.
-   * WhatsApp's newer clients may deliver the self-chat `key.remoteJid`
-   * in LID form even when `sock.user.id` is still the phone-number JID,
-   * so the self-chat check must accept either.
+   * 账号的纯 LID 形式（无设备后缀），例如 `lid@lid`。
+   * WhatsApp 较新的客户端即使在 `sock.user.id` 仍是号码 JID 时，
+   * 也可能以 LID 形式投递自聊的 `key.remoteJid`，因此自聊判定必须同时接受两者。
    */
   selfLid: string | null
   sentIds: Set<string>
@@ -71,8 +68,8 @@ export type InboundDecision =
     }
 
 /**
- * True when `remoteJid` is the account's self-chat (compared against the
- * phone-number JID and the LID form, both stripped of device suffix).
+ * 当 `remoteJid` 是账号的自聊会话时返回 true（与号码 JID 和 LID 形式比较，
+ * 两者都已剥离设备后缀）。
  */
 function isSelfChatJid(
   remoteJid: string,
@@ -87,23 +84,22 @@ function isSelfChatJid(
 }
 
 /**
- * Decide what to do with a single upsert message.
+ * 判定如何处理单条 upsert 消息。
  *
- * Semantics of `selfChatMode`: "only operate in the account's self-chat."
- * Both directions are gated symmetrically — outbound from other devices AND
- * inbound from contacts are dropped when they are not in the self-chat.
+ * `selfChatMode` 的语义：「只在账号的自聊会话里工作。」
+ * 两个方向对称地做门控——非自聊时，其他设备的出站消息和联系人的入站消息都会被丢弃。
  *
- * Precedence for `fromMe=true`:
- *   1. id in sentIds         → skip (our own echo, primary defence)
- *   2. not self-chat          → skip (user's outbound in normal chats)
- *   3. prefix match           → skip (echo backup defence)
- *   4. empty                  → skip
- *   5. otherwise              → emit (phone/desktop typing in self-chat)
+ * `fromMe=true` 时的判定优先级：
+ *   1. id 在 sentIds 中      → 跳过（我们自己的回声，第一道防线）
+ *   2. 非自聊                 → 跳过（用户在普通会话里的出站）
+ *   3. 匹配前缀               → 跳过（回声兜底防线）
+ *   4. 空文本                 → 跳过
+ *   5. 其他                   → 上报（手机/桌面端在自聊里输入的内容）
  *
- * For `fromMe=false`:
- *   1. selfChatMode on AND not self-chat → skip (contacts/groups DMing us)
- *   2. empty                              → skip
- *   3. otherwise                          → emit
+ * `fromMe=false` 时：
+ *   1. selfChatMode 开启且非自聊 → 跳过（联系人/群组给我们发消息）
+ *   2. 空文本                     → 跳过
+ *   3. 其他                       → 上报
  */
 export function classifyInbound(
   msg: Record<string, unknown>,
@@ -136,13 +132,12 @@ export function classifyInbound(
   return { action: 'emit', text }
 }
 
-/** Cap the sent-ID set so long-running sessions don't leak memory. */
+/** 限制 sent-ID 集合大小，避免长时间运行的会话泄漏内存。 */
 export const MAX_SENT_IDS = 500
 
 /**
- * Insert `id` into the bounded sent-ID set. `Set` preserves insertion order
- * so the oldest entry is `values().next().value` — evict it when we
- * overflow.
+ * 将 `id` 插入有界 sent-ID 集合。`Set` 保持插入顺序，
+ * 因此最旧的条目就是 `values().next().value`——在溢出时淘汰它。
  */
 export function rememberSentId(sentIds: Set<string>, id: string): void {
   sentIds.add(id)

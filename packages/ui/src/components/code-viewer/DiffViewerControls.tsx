@@ -1,12 +1,12 @@
 /**
- * DiffViewerControls - Header controls for diff viewer
+ * DiffViewerControls - diff 查看器的头部控件
  *
- * Displays:
- * - Change statistics (-X +Y with colored text)
- * - Diff style toggle (unified/split)
- * - Background toggle (enable/disable highlighting)
+ * 展示：
+ * - 变更统计（-X +Y，带颜色文本）
+ * - diff 样式切换（unified/split）
+ * - 背景切换（启用/禁用高亮）
  *
- * Styled to match diffs.com controls
+ * 样式匹配 diffs.com 控件
  */
 
 import * as React from 'react'
@@ -15,29 +15,29 @@ import { cn } from '../../lib/utils'
 import { DiffSplitIcon, DiffUnifiedIcon, DiffBackgroundIcon } from './DiffIcons'
 
 export interface DiffViewerControlsProps {
-  /** Number of added lines */
+  /** 新增行数 */
   additions: number
-  /** Number of deleted lines */
+  /** 删除行数 */
   deletions: number
 
-  /** Current diff style */
+  /** 当前 diff 样式 */
   diffStyle: 'unified' | 'split'
-  /** Callback when diff style changes */
+  /** diff 样式变化时的回调 */
   onDiffStyleChange: (style: 'unified' | 'split') => void
 
-  /** Whether background highlighting is disabled */
+  /** 是否禁用背景高亮 */
   disableBackground: boolean
-  /** Callback when background toggle changes */
+  /** 背景切换变化时的回调 */
   onBackgroundChange: (disabled: boolean) => void
 
-  /** Additional className */
+  /** 额外 className */
   className?: string
 }
 
 /**
- * DiffViewerControls - Compact control bar for diff viewer settings
+ * DiffViewerControls - diff 查看器设置的紧凑控件栏
  *
- * Button styling matches diffs.com: opacity-60 hover:opacity-100
+ * 按钮样式匹配 diffs.com：opacity-60 hover:opacity-100
  */
 export function DiffViewerControls({
   additions,
@@ -51,13 +51,13 @@ export function DiffViewerControls({
   const { t } = useTranslation()
   return (
     <div className={cn('flex items-center gap-1.5', className)}>
-      {/* Stats display: -X +Y */}
+      {/* 统计展示：-X +Y */}
       <div className="flex items-center gap-2 mr-0.5 text-[13px] font-medium font-mono">
         <span className="text-destructive">-{deletions}</span>
         <span className="text-success">+{additions}</span>
       </div>
 
-      {/* Diff style toggle - show icon for the OTHER mode (what you'll switch to) */}
+      {/* diff 样式切换——展示另一种模式的图标（即将要切换到的模式） */}
       <button
         type="button"
         onClick={() => onDiffStyleChange(diffStyle === 'unified' ? 'split' : 'unified')}
@@ -66,11 +66,11 @@ export function DiffViewerControls({
         title={diffStyle === 'unified' ? t('diff.switchToSplit') : t('diff.switchToUnified')}
         aria-label={diffStyle === 'unified' ? t('diff.switchToSplit') : t('diff.switchToUnified')}
       >
-        {/* Show split icon when in unified (to switch TO split), and vice versa */}
+        {/* unified 模式下展示 split 图标（以便切换到 split），反之亦然 */}
         {diffStyle === 'unified' ? <DiffSplitIcon /> : <DiffUnifiedIcon />}
       </button>
 
-      {/* Background toggle */}
+      {/* 背景切换 */}
       <button
         type="button"
         onClick={() => onBackgroundChange(!disableBackground)}

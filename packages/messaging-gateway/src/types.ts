@@ -1,12 +1,12 @@
 /**
- * Core types for the messaging gateway.
+ * messaging gateway 的核心类型。
  *
- * Workspace-scoped bindings, platform adapter interface, runtime state, and
- * messaging-stack logging contracts.
+ * workspace 作用域的 binding、平台 adapter 接口、runtime 状态，
+ * 以及 messaging 栈的日志契约。
  */
 
 // ---------------------------------------------------------------------------
-// Platform types
+// 平台类型
 // ---------------------------------------------------------------------------
 
 export type PlatformType = 'telegram' | 'whatsapp' | 'lark'
@@ -28,10 +28,9 @@ export interface MessagingLogContext {
 export type MessagingLogMeta = Record<string, unknown>
 
 /**
- * Structured logger used by the messaging stack.
+ * messaging 栈使用的结构化 logger。
  *
- * Implementations should write structured logs and preserve contextual fields
- * added via `child(...)`.
+ * 实现应写出结构化日志，并保留通过 `child(...)` 添加的上下文字段。
  */
 export interface MessagingLogger {
   info(message: string, meta?: MessagingLogMeta): void
@@ -41,7 +40,7 @@ export interface MessagingLogger {
 }
 
 // ---------------------------------------------------------------------------
-// Runtime platform status
+// 运行时平台状态
 // ---------------------------------------------------------------------------
 
 export type MessagingPlatformRuntimeState =
@@ -62,7 +61,7 @@ export interface MessagingPlatformRuntimeInfo {
 }
 
 // ---------------------------------------------------------------------------
-// Adapter capabilities
+// adapter 能力
 // ---------------------------------------------------------------------------
 
 export interface AdapterCapabilities {
@@ -75,31 +74,30 @@ export interface AdapterCapabilities {
 }
 
 // ---------------------------------------------------------------------------
-// Messages
+// 消息
 // ---------------------------------------------------------------------------
 
 export interface IncomingMessage {
   platform: PlatformType
   channelId: string
   /**
-   * Telegram supergroup forum topic id (`message_thread_id`). Undefined for
-   * DMs, the General topic, and non-forum chats. Only Telegram populates this.
+   * Telegram 超级群论坛话题 id（`message_thread_id`）。对 DM、General 话题
+   * 以及非论坛聊天为 undefined。只有 Telegram 会填这个。
    */
   threadId?: number
   messageId: string
   senderId: string
   senderName?: string
   /**
-   * Platform-native username if the user has one set. Telegram supplies this
-   * via `from.username`; WhatsApp/Lark may leave it undefined. Used by the
-   * access-control layer to render friendlier "pending requests" rows in the
-   * Settings UI without forcing the operator to read raw user_ids.
+   * 用户设置过的平台原生 username。Telegram 通过 `from.username` 提供；
+   * WhatsApp/Lark 可能不填。access-control 层用它让 Settings UI 里的
+   *「Pending requests」行显示得更友好，不必逼着运营者读原始 user_id。
    */
   senderUsername?: string
   /**
-   * `true` when the platform marks the sender as a bot (Telegram `from.is_bot`).
-   * Adapters use this to silently drop bot-to-bot traffic before it reaches
-   * the router; surfaces in `IncomingMessage` so access-control can audit.
+   * 当平台把发送方标记为 bot（Telegram `from.is_bot`）时为 `true`。
+   * adapter 用它在到达 router 之前静默丢弃 bot↔bot 流量；
+   * 出现在 `IncomingMessage` 里便于 access-control 审计。
    */
   senderIsBot?: boolean
   text: string
@@ -116,11 +114,9 @@ export interface IncomingAttachment {
   mimeType?: string
   fileSize?: number
   /**
-   * Absolute path on local disk where the adapter has already downloaded the
-   * blob. When set, the router wraps it with `readFileAttachment()` and
-   * forwards it as a `FileAttachment` to the session. Adapters that emit
-   * attachments MUST populate this — attachments without `localPath` are
-   * dropped by the router.
+   * adapter 已把二进制下载到的本地磁盘绝对路径。设置后，router 会用
+   * `readFileAttachment()` 包装它，并作为 `FileAttachment` 转发给 session。
+   * 发出附件的 adapter 必须填这个 —— 没有 `localPath` 的附件会被 router 丢弃。
    */
   localPath?: string
 }
@@ -140,31 +136,31 @@ export interface InlineButton {
 export interface ButtonPress {
   platform: PlatformType
   channelId: string
-  /** Forum topic id of the message the button was attached to (Telegram). */
+  /** 按钮所依附消息的论坛话题 id（Telegram）。 */
   threadId?: number
   messageId: string
   senderId: string
-  /** Optional sender display name (Telegram first name). For UI / pending list. */
+  /** 可选的发送方显示名（Telegram first name）。用于 UI / pending 列表。 */
   senderName?: string
-  /** Optional sender username (Telegram @username, no `@`). For UI / pending list. */
+  /** 可选的发送方 username（Telegram @username，不带 `@`）。用于 UI / pending 列表。 */
   senderUsername?: string
-  /** True when the platform marks the sender as a bot. Access control silent-drops these. */
+  /** 平台把发送方标记为 bot 时为 true。access-control 会静默丢弃这些。 */
   senderIsBot?: boolean
   buttonId: string
   data?: string
 }
 
 /**
- * Per-call options for outbound adapter operations. Currently only Telegram
- * uses `threadId` (forum topic posting); other adapters ignore extra fields.
+ * 出站 adapter 操作的每次调用选项。目前只有 Telegram 用 `threadId`
+ *（发到论坛话题）；其他 adapter 忽略多余字段。
  */
 export interface SendOptions {
-  /** Telegram forum topic to post into. Undefined → DM or General topic. */
+  /** 要发到哪个 Telegram 论坛话题。undefined → DM 或 General 话题。 */
   threadId?: number
 }
 
 // ---------------------------------------------------------------------------
-// Adapter interface
+// adapter 接口
 // ---------------------------------------------------------------------------
 
 export interface PlatformConfig {
@@ -172,12 +168,11 @@ export interface PlatformConfig {
   webhookUrl?: string
   webhookSecretToken?: string
   /**
-   * Telegram only: a configured supergroup chatId. When set, the adapter
-   * accepts messages from that chat (in addition to DMs); when unset,
-   * the adapter is DM-only as before.
+   * 仅 Telegram：已配置的超级群 chatId。设置后 adapter 接收该聊天的消息
+   *（在 DM 之外）；未设置时 adapter 维持仅 DM 的旧行为。
    */
   acceptedSupergroupChatId?: string
-  /** Optional logger for adapter-level diagnostics. */
+  /** 可选 logger，用于 adapter 级别诊断。 */
   logger?: MessagingLogger
   [key: string]: unknown
 }
@@ -200,90 +195,83 @@ export interface PlatformAdapter {
   sendFile(channelId: string, file: Buffer, filename: string, caption?: string, opts?: SendOptions): Promise<SentMessage>
 
   /**
-   * Clear the inline keyboard on a previously-sent message. Optional because
-   * only platforms with inline-button support (currently Telegram) need it.
-   * Errors are the caller's concern — most implementations should swallow
-   * "message can't be edited" since it's non-fatal.
+   * 清除之前已发送消息上的 inline keyboard。可选，因为只有支持内联按钮的
+   * 平台（目前是 Telegram）才需要。错误由调用方负责 ——
+   * 大多数实现应吞掉「message can't be edited」，因为它非致命。
    */
   clearButtons?(channelId: string, messageId: string, opts?: SendOptions): Promise<void>
 
   /**
-   * Update the set of chats the adapter accepts inbound messages from at
-   * runtime, without restarting the polling loop. Telegram uses this to
-   * (de)authorise a supergroup chatId after the user pairs/unpairs it in
-   * Settings. Adapters that don't have a configurable filter can implement
-   * this as a no-op.
+   * 在运行时更新 adapter 接收入站消息的聊天集合，无需重启轮询循环。
+   * Telegram 用它在用户于 Settings 里配对/取消配对超级群 chatId 后
+   * 进行授权/取消授权。没有可配置过滤器的 adapter 可以实现为 no-op。
    */
   setAcceptedSupergroupChatId?(chatId: string | undefined): void
 
   /**
-   * Telegram-only: create a new forum topic in a supergroup. Used by
-   * automation integrations that auto-spawn topics per session. Other
-   * platforms throw or omit the method.
+   * 仅 Telegram：在超级群里创建一个新的论坛话题。用于按 session
+   * 自动生成话题的 automation 集成。其他平台抛错或省略该方法。
    */
   createForumTopic?(chatId: string, name: string): Promise<{ threadId: number; name: string }>
 
-  /** Webhook handler for headless server (Telegram only). */
+  /** headless server 的 webhook handler（仅 Telegram）。 */
   handleWebhook?(request: Request): Promise<Response>
 }
 
 // ---------------------------------------------------------------------------
-// Channel binding
+// channel binding
 // ---------------------------------------------------------------------------
 
 /**
- * How agent output is rendered to the chat.
+ * agent 输出如何渲染到聊天。
  *
- * - `streaming` — legacy behaviour: live edits during the final turn, and
- *   every intermediate `text_complete` starts a fresh message. Produces
- *   multiple messages per agent run. Kept for parity with in-app UI.
- * - `progress` — one evolving message per run. Posts a "💭 thinking…"
- *   bubble on first activity, edits it as tools run, replaces it with
- *   the final answer on `complete`. Intermediate assistant text is
- *   dropped. Default for new bindings.
- * - `final_only` — silent until `complete`, then one message with the
- *   final text. Nothing is posted if the run has no final text.
+ * - `streaming` —— legacy 行为：最终 turn 期间做实时编辑，
+ *   且每次中间态 `text_complete` 都开一条新消息。一次 agent 运行产出多条消息。
+ *   保留是为了与 app 内 UI 对齐。
+ * - `progress` —— 每次运行一条不断演进的消息。首次活动时发「💭 thinking…」
+ *   气泡，工具运行时编辑它，`complete` 时用最终回答替换。
+ *   中间态 assistant 文本被丢弃。新 binding 的默认值。
+ * - `final_only` —— 直到 `complete` 才发声，然后发一条带最终文本的消息。
+ *   运行没有最终文本时不发任何东西。
  */
 export type ResponseMode = 'streaming' | 'progress' | 'final_only'
 
 /**
- * Per-binding access policy.
+ * 每个 binding 的 access 策略。
  *
- * - `inherit`     — defer to the platform's owners list (default for new bindings).
- * - `allow-list`  — only senders in `allowedSenderIds` may route to the bound session.
- * - `open`        — anyone in an accepted chat may route. Used as the migration
- *                   default for bindings created before access control existed,
- *                   and for explicitly-public bindings (e.g. support bots).
+ * - `inherit`     —— 交给平台的 owners 列表（新 binding 的默认值）。
+ * - `allow-list`  —— 只有 `allowedSenderIds` 中的发送方可路由到绑定的 session。
+ * - `open`        —— 受接受聊天里的任何人都可路由。作为 access control 出现前
+ *                   创建的 binding 的迁移默认值，也用于显式公开的 binding
+ *                  （如客服 bot）。
  */
 export type BindingAccessMode = 'inherit' | 'allow-list' | 'open'
 
 export interface BindingConfig {
-  /** How outbound agent output is rendered. Default: 'progress' */
+  /** 出站 agent 输出如何渲染。默认：'progress' */
   responseMode: ResponseMode
   /**
-   * @deprecated Use `responseMode` instead. Retained so persisted configs
-   * written by older versions keep validating; the renderer ignores this
-   * field when `responseMode` is present.
+   * @deprecated 改用 `responseMode`。保留是为了让旧版本写的持久化配置
+   * 仍能通过校验；当 `responseMode` 存在时 renderer 会忽略此字段。
    */
   streamResponses: boolean
-  /** Show compact tool activity summaries. Default: false */
+  /** 是否显示紧凑的工具活动摘要。默认：false */
   showToolActivity: boolean
-  /** WHERE approval happens (not WHETHER — session mode is authoritative). */
+  /** 审批发生在*哪里*（不是是否审批 —— session mode 才是权威）。 */
   approvalChannel: 'chat' | 'app'
-  /** Telegram edit interval in ms. ~3500ms stays under 20 edits/min. */
+  /** Telegram 编辑间隔，单位 ms。约 3500ms 可控制在 20 次/分钟 以下。 */
   editIntervalMs: number
   /**
-   * Per-binding access mode. Governs Router.route() admission for this
-   * binding only. Defaults vary by migration vs. fresh creation:
-   *  - Fresh bindings (created after access control shipped): `'inherit'`.
-   *  - Migrated bindings (legacy data with no field set): `'open'` so prod
-   *    behaviour is unchanged until the owner explicitly locks down.
+   * 每个 binding 的 access 模式。仅约束 Router.route() 对本 binding 的准入。
+   * 默认值因迁移 vs. 新建而异：
+   *  - 新建的 binding（access control 上线后创建）：`'inherit'`。
+   *  - 迁移的 binding（未设置该字段的旧数据）：`'open'`，这样生产行为在
+   *    owner 显式锁定前保持不变。
    */
   accessMode: BindingAccessMode
   /**
-   * Sender ids permitted to route into this binding when `accessMode === 'allow-list'`.
-   * Ignored otherwise. The list is platform-native (Telegram numeric user_id
-   * as a string).
+   * 当 `accessMode === 'allow-list'` 时允许路由进本 binding 的发送方 id。
+   * 其他模式下被忽略。列表是平台原生的（Telegram 数字 user_id 作为字符串）。
    */
   allowedSenderIds: string[]
 }
@@ -314,9 +302,8 @@ export function normalizeBindingConfig(
     config?.responseMode ??
     (config?.streamResponses === false ? 'final_only' : config?.streamResponses === true ? 'streaming' : base.responseMode)
 
-  // Migration rule: if a persisted config predates access control (no
-  // `accessMode` field), treat the binding as `'open'` so prod behaviour
-  // doesn't change silently. Owners explicitly lock down via Settings.
+  // 迁移规则：如果某个持久化配置早于 access control（没有 `accessMode` 字段），
+  // 把该 binding 当作 `'open'`，这样生产行为不会悄悄变化。owner 通过 Settings 显式锁定。
   const accessMode: BindingAccessMode =
     config?.accessMode ?? (config !== undefined ? 'open' : base.accessMode)
 
@@ -341,9 +328,9 @@ export interface ChannelBinding {
   platform: PlatformType
   channelId: string
   /**
-   * Telegram supergroup forum topic id. Undefined = DM, General topic, or
-   * non-Telegram. Eviction on `bind()` keys on `(platform, channelId, threadId ?? null)`,
-   * so DMs and topics in the same supergroup are independently bindable.
+   * Telegram 超级群论坛话题 id。undefined = DM、General 话题或非 Telegram。
+   * `bind()` 时的踢出以 `(platform, channelId, threadId ?? null)` 为键，
+   * 所以 DM 和同一超级群里的话题可以独立绑定。
    */
   threadId?: number
   channelName?: string
@@ -353,106 +340,95 @@ export interface ChannelBinding {
 }
 
 // ---------------------------------------------------------------------------
-// Gateway config (persisted per workspace)
+// gateway 配置（按 workspace 持久化）
 // ---------------------------------------------------------------------------
 
 /**
- * Workspace-level Telegram supergroup ("forum") configuration. When set,
- * the adapter accepts messages from this chat (in addition to DMs) and
- * sessions can be bound to specific topics inside it.
+ * workspace 级别的 Telegram 超级群（「forum」）配置。设置后，
+ * adapter 接收该聊天的消息（在 DM 之外），session 可以绑定到其中特定话题。
  *
- * Captured by typing `/pair <code>` in the supergroup with a workspace-
- * supergroup-kind pairing code. The bot reads the chat title from
- * `getChat()` once and stores it for display only.
+ * 通过在超级群里输入 `/pair <code>`（配 workspace-supergroup 类型的配对码）
+ * 捕获。机器人用 `getChat()` 读取一次聊天标题，存储仅供显示。
  */
 export interface TelegramSupergroupConfig {
-  /** Telegram chat_id of the supergroup, e.g. `"-1001234567890"`. */
+  /** 超级群的 Telegram chat_id，如 `"-1001234567890"`。 */
   chatId: string
-  /** Display title captured at pairing time. Refreshed on next successful connect. */
+  /** 配对时捕获的显示标题。下次成功连接时刷新。 */
   title: string
-  /** Unix-ms timestamp when the supergroup was paired. */
+  /** 配对该超级群时的 Unix-ms 时间戳。 */
   capturedAt: number
 }
 
 /**
- * Workspace-level access policy for a messaging platform.
+ * messaging 平台的 workspace 级别 access 策略。
  *
- * - `open`        — anyone in an accepted chat can run pre-binding commands
- *                   (`/new`, `/bind`) and bound chats fall back to their own
- *                   `BindingConfig.accessMode` for routing.
- * - `owner-only`  — pre-binding commands require sender to be on the
- *                   platform's `owners` list. Bindings whose `accessMode`
- *                   is `'inherit'` use the same list as their allow-list.
+ * - `open`        —— 受接受聊天里的任何人都能执行 pre-binding 命令
+ *                   （`/new`、`/bind`），已绑定的聊天在路由时回退到各自的
+ *                   `BindingConfig.accessMode`。
+ * - `owner-only`  —— pre-binding 命令要求发送方在平台的 `owners` 列表里。
+ *                   `accessMode` 为 `'inherit'` 的 binding 用同一份列表作为 allow-list。
  *
- * Defaults vary by migration vs. fresh setup:
- *  - Fresh workspaces pairing the bot for the first time → `'owner-only'`.
- *  - Existing workspaces that predate access control → `'open'` so the
- *    Settings UI can show a "Lock down" banner without breaking traffic.
+ * 默认值因迁移 vs. 新建而异：
+ *  - 首次配对机器人的全新 workspace → `'owner-only'`。
+ *  - 早于 access control 的已有 workspace → `'open'`，这样 Settings UI 可以
+ *    显示「Lock down」banner，而不打断流量。
  */
 export type PlatformAccessMode = 'open' | 'owner-only'
 
 /**
- * A user authorised to interact with the workspace's bot. Platform-native
- * `userId` (Telegram numeric user_id as a string). `displayName` and
- * `username` are best-effort metadata captured when the user pairs or sends
- * a message; they're for UI rendering only.
+ * 一个被授权与该 workspace 机器人交互的用户。平台原生 `userId`
+ *（Telegram 数字 user_id 作为字符串）。`displayName` 和 `username`
+ * 是用户配对或发消息时尽力捕获的元数据，仅供 UI 渲染。
  */
 export interface PlatformOwner {
   userId: string
   displayName?: string
   username?: string
-  /** Unix-ms when this owner was added to the list. */
+  /** 该 owner 被加入列表的 Unix-ms 时间戳。 */
   addedAt: number
 }
 
 /**
- * Why a sender ended up in the pending list. Drives the UI's "Allow"
- * button: promoting a workspace-level reject is different from promoting
- * a binding-allow-list reject, and conflating them silently was a real
- * privilege-escalation footgun.
+ * 发送方为何进入 pending 列表。驱动 UI 的「Allow」按钮：
+ * 提升 workspace 级拒绝与提升 binding-allow-list 级拒绝是两回事，
+ * 把二者悄悄混为一谈曾是一个真实的权限提升隐患。
  *
- * - `not-owner` — workspace-level pre-binding reject. Allowing means
- *   adding the sender to `platforms.{platform}.owners`.
- * - `not-on-binding-allowlist` — binding-level reject. Allowing means
- *   appending the sender to that binding's `allowedSenderIds`, NOT
- *   touching workspace owners.
+ * - `not-owner` —— workspace 级 pre-binding 拒绝。允许意味着
+ *   把发送方加入 `platforms.{platform}.owners`。
+ * - `not-on-binding-allowlist` —— binding 级拒绝。允许意味着
+ *   把发送方追加到该 binding 的 `allowedSenderIds`，不动 workspace owners。
  */
 export type PendingRejectReason = 'not-owner' | 'not-on-binding-allowlist'
 
 /**
- * A sender the gateway recently rejected. Surfaces in the Settings UI so
- * the operator can promote them with one click instead of typing numeric
- * ids by hand.
+ * gateway 最近拒绝的发送方。在 Settings UI 里呈现，让运营者一键提升，
+ * 而不必手敲数字 id。
  *
- * The store is bounded (LRU + TTL) — see `pending-senders.ts`. Persistence
- * is best-effort: losing the file just means the operator has to wait for
- * the user to attempt access again.
+ * 该存储有界（LRU + TTL）—— 见 `pending-senders.ts`。持久化尽力而为：
+ * 丢文件只是意味着运营者要等用户再次尝试访问。
  *
- * Same `(platform, userId)` is allowed to appear multiple times when the
- * sender hits *different* bindings — the operator needs to see (and
- * decide on) each binding-level reject separately rather than having
- * the second silently overwrite the first.
+ * 同一个 `(platform, userId)` 在命中*不同* binding 时可以出现多次 ——
+ * 运营者需要分别看到（并决定）每个 binding 级拒绝，
+ * 而不是让后一条悄悄覆盖前一条。
  */
 export interface PendingSender {
-  /** Platform identity. */
+  /** 平台身份。 */
   platform: PlatformType
   userId: string
   displayName?: string
   username?: string
-  /** Unix-ms of the most recent rejected attempt. */
+  /** 最近一次被拒尝试的 Unix-ms。 */
   lastAttemptAt: number
-  /** Total attempts since this sender first appeared in the pending list. */
+  /** 自该发送方首次出现在 pending 列表以来的总尝试次数。 */
   attemptCount: number
   /**
-   * Why the sender was rejected. Optional for back-compat with persisted
-   * entries written by an earlier build that lacked the field; missing
-   * `reason` is treated as `'not-owner'` (the safer default).
+   * 发送方被拒的原因。可选，用于与缺少该字段的旧构建写入的持久化条目
+   * 向后兼容；缺失 `reason` 时按 `'not-owner'`（更安全的默认）处理。
    */
   reason?: PendingRejectReason
   /**
-   * Binding the reject was scoped to. Only present when
-   * `reason === 'not-on-binding-allowlist'`. Lets the operator's "Allow"
-   * action target the right binding's `allowedSenderIds`.
+   * 拒绝所作用域的 binding。仅在 `reason === 'not-on-binding-allowlist'`
+   * 时存在。让运营者的「Allow」操作能定位到正确 binding 的 `allowedSenderIds`。
    */
   bindingId?: string
   sessionId?: string
@@ -466,46 +442,43 @@ export interface MessagingConfig {
     telegram?: {
       enabled: boolean
       /**
-       * Optional configured supergroup. Adapter accepts messages from this
-       * chat in addition to DMs. Sessions can bind to specific topics within.
+       * 可选的已配置超级群。adapter 除 DM 外也接收该聊天的消息。
+       * session 可以绑定到其中特定话题。
        */
       supergroup?: TelegramSupergroupConfig
       /**
-       * Workspace-level access policy. Missing field = `'open'` for back-
-       * compat with workspaces that predate access control. Fresh setups
-       * land on `'owner-only'` automatically (registry sets it on first pair).
+       * workspace 级别的 access 策略。字段缺失 = `'open'`，
+       * 用于与早于 access control 的 workspace 向后兼容。全新配置会自动落到
+       * `'owner-only'`（registry 在首次配对时设置）。
        */
       accessMode?: PlatformAccessMode
       /**
-       * Telegram user ids permitted to drive the bot at workspace level.
-       * Gates `/new`, `/bind`, `/unbind`, `/status`, `/stop` and serves as
-       * the default sender allow-list for bindings whose `accessMode === 'inherit'`.
+       * 允许在 workspace 级别驱动机器人的 Telegram 用户 id。
+       * 门控 `/new`、`/bind`、`/unbind`、`/status`、`/stop`，
+       * 并作为 `accessMode === 'inherit'` 的 binding 的默认发送方 allow-list。
        *
-       * `/pair` itself stays open: if the list is empty, the first
-       * successful redeem seeds the list with the consuming sender. After
-       * that, only existing owners may redeem further codes.
+       * `/pair` 本身保持开放：列表为空时，第一次成功消费会把消费的发送方
+       * 种子进列表。此后只有现有 owner 才能继续消费配对码。
        */
       owners?: PlatformOwner[]
     }
     whatsapp?: {
       enabled: boolean
       /**
-       * When true, messages sent from other devices on the same WA account
-       * to the self-JID (your own number) are routed to a bound session.
-       * The worker filters its own echoes via sent-ID tracking + a response
-       * prefix. Defaults to `true` when unset — the no-second-phone flow is
-       * the expected UX for new users.
+       * 为 true 时，同一 WA 账号的其他设备发到 self-JID（你自己的号码）的消息
+       * 会被路由到绑定的 session。worker 通过 sent-ID 跟踪 + response prefix
+       * 过滤自己的回显。未设置时默认为 `true` —— 对新用户而言，
+       *「不用第二个手机号」的流程才是预期 UX。
        */
       selfChatMode?: boolean
     }
     lark?: {
       enabled: boolean
       /**
-       * Which Lark/Feishu domain the bot belongs to. A bot is registered
-       * with one Open Platform — they're separate ecosystems despite
-       * sharing the same SDK + protocols.
-       *  - `lark` → open.larksuite.com (international)
-       *  - `feishu` → open.feishu.cn (China)
+       * 该机器人属于哪个 Lark/飞书域名。一个机器人注册在一个开放平台下 ——
+       * 尽管共用同一套 SDK + 协议，它们是相互独立的生态。
+       *  - `lark` → open.larksuite.com（国际版）
+       *  - `feishu` → open.feishu.cn（中国）
        */
       domain?: 'lark' | 'feishu'
     }

@@ -4,8 +4,8 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { ANIMATED_TASK_ITEM_TOKENS } from './animated-task-item.tokens'
 
 /**
- * Custom TaskItem node view that keeps TipTap behavior but renders
- * an SVG checkmark path element so CSS can animate stroke-dashoffset.
+ * 自定义 TaskItem 节点视图,保留 TipTap 行为,但渲染一个 SVG 勾选路径元素,
+ * 以便 CSS 能对 stroke-dashoffset 做动画。
  */
 export const AnimatedTaskItem = TaskItem.extend({
   addNodeView() {
@@ -23,7 +23,7 @@ export const AnimatedTaskItem = TaskItem.extend({
       checkSvg.setAttribute('viewBox', ANIMATED_TASK_ITEM_TOKENS.svgViewBox)
       checkSvg.setAttribute('aria-hidden', 'true')
 
-      // Based on Spell's check path geometry for a similar look.
+      // 参考 Spell 的勾选路径几何,以获得相似的视觉效果。
       checkPath.setAttribute('d', ANIMATED_TASK_ITEM_TOKENS.pathD)
       checkPath.setAttribute('pathLength', ANIMATED_TASK_ITEM_TOKENS.pathLength)
       checkPath.setAttribute('fill', 'transparent')

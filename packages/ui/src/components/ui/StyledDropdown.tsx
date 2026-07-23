@@ -1,14 +1,14 @@
 /**
- * StyledDropdown - Shared styled dropdown components
+ * StyledDropdown - 共享的样式化下拉菜单组件
  *
- * Pre-styled Radix dropdown wrappers matching the app's vibrancy style:
- * - popover-styled background with blur
- * - Consistent item spacing and subtle hover states (foreground/[0.03])
- * - Icon sizing standardization (3.5 × 3.5)
+ * 预设样式的 Radix 下拉菜单封装，与应用的毛玻璃风格保持一致：
+ * - popover-styled 背景，带模糊效果
+ * - 统一的菜单项间距与细微的悬停态（foreground/[0.03]）
+ * - 图标尺寸标准化（3.5 × 3.5）
  *
- * Wraps raw @radix-ui/react-dropdown-menu primitives with the full class set
- * (shadcn base layer + styled additions) so consumers get the correct look
- * without depending on the shadcn wrapper layer in apps/electron.
+ * 封装原始的 @radix-ui/react-dropdown-menu 基础组件并附加完整类名集合
+ * （shadcn 基础层 + 样式化扩展），使使用方无需依赖 apps/electron 中的
+ * shadcn 封装层即可获得正确外观。
  */
 
 import * as React from 'react'
@@ -19,12 +19,12 @@ import { cn } from '../../lib/utils'
 const SUPPORTED_HOVER_PREFIXES = ['bg-', 'text-', 'border-', 'ring-', 'opacity-']
 
 /**
- * Mirror hover styles to open-state styles for Radix triggers.
+ * 将悬停样式镜像为打开态样式，适用于 Radix 触发器。
  *
- * Example:
+ * 示例：
  * - hover:bg-foreground/5 -> data-[state=open]:bg-foreground/5
  *
- * Consumers can still provide explicit data-[state=open]:* classes to override.
+ * 使用方仍可显式提供 data-[state=open]:* 类来覆盖。
  */
 export function mirrorHoverToOpenStateClasses(className?: string): string | undefined {
   if (!className) return className
@@ -47,12 +47,12 @@ export function mirrorHoverToOpenStateClasses(className?: string): string | unde
   return cn(...mirrored, className)
 }
 
-// Re-export raw primitives that need no styling
+// 重新导出无需额外样式的原始基础组件
 const DropdownMenu = DropdownMenuPrimitive.Root
 const DropdownMenuSub = DropdownMenuPrimitive.Sub
 
 interface DropdownMenuTriggerProps extends React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Trigger> {
-  /** Auto-mirror hover:* classes to data-[state=open]:* while menu is open. Default: true */
+  /** 菜单打开时自动将 hover:* 类镜像为 data-[state=open]:*。默认：true */
   autoMirrorHoverToOpen?: boolean
 }
 
@@ -94,12 +94,12 @@ DropdownMenuTrigger.displayName = 'DropdownMenuTrigger'
 
 export { DropdownMenu, DropdownMenuTrigger, DropdownMenuSub }
 
-// ── Content ──────────────────────────────────────────────────────────────────
+// ── 内容 ──────────────────────────────────────────────────────────────────
 
 interface StyledDropdownMenuContentProps
   extends React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content> {
   minWidth?: string
-  /** Force light mode instead of dark */
+  /** 强制使用亮色模式而非暗色 */
   light?: boolean
 }
 
@@ -112,7 +112,7 @@ export const StyledDropdownMenuContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        // shadcn base layer
+        // shadcn 基础层
         'popover-styled overflow-x-hidden overflow-y-auto p-1 z-dropdown',
         'max-h-(--radix-dropdown-menu-content-available-height)',
         'origin-(--radix-dropdown-menu-content-transform-origin)',
@@ -121,7 +121,7 @@ export const StyledDropdownMenuContent = React.forwardRef<
         'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
         'data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2',
         'data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2',
-        // styled additions
+        // 样式化扩展
         'w-fit font-sans whitespace-nowrap text-xs flex flex-col gap-0.5',
         minWidth,
         className,
@@ -132,7 +132,7 @@ export const StyledDropdownMenuContent = React.forwardRef<
 ))
 StyledDropdownMenuContent.displayName = 'StyledDropdownMenuContent'
 
-// ── Item ─────────────────────────────────────────────────────────────────────
+// ── 菜单项 ─────────────────────────────────────────────────────────────────────
 
 interface StyledDropdownMenuItemProps
   extends React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Item> {
@@ -146,11 +146,11 @@ export const StyledDropdownMenuItem = React.forwardRef<
   <DropdownMenuPrimitive.Item
     ref={ref}
     className={cn(
-      // shadcn base layer
+      // shadcn 基础层
       'relative flex cursor-default items-center gap-2 px-2 py-1.5 text-sm outline-hidden select-none',
       '[&_svg]:pointer-events-none [&_svg]:shrink-0',
       'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
-      // styled additions
+      // 样式化扩展
       'pr-4 rounded-[4px] hover:bg-foreground/[0.03] focus:bg-foreground/[0.03]',
       '[&>svg]:h-3.5 [&>svg]:w-3.5 [&>svg]:shrink-0',
       variant === 'destructive' && 'text-destructive focus:text-destructive hover:text-destructive [&_svg]:!text-destructive',
@@ -161,7 +161,7 @@ export const StyledDropdownMenuItem = React.forwardRef<
 ))
 StyledDropdownMenuItem.displayName = 'StyledDropdownMenuItem'
 
-// ── Separator ────────────────────────────────────────────────────────────────
+// ── 分隔线 ────────────────────────────────────────────────────────────────
 
 export const StyledDropdownMenuSeparator = React.forwardRef<
   React.ComponentRef<typeof DropdownMenuPrimitive.Separator>,
@@ -175,7 +175,7 @@ export const StyledDropdownMenuSeparator = React.forwardRef<
 ))
 StyledDropdownMenuSeparator.displayName = 'StyledDropdownMenuSeparator'
 
-// ── Sub-menu trigger ─────────────────────────────────────────────────────────
+// ── 子菜单触发器 ─────────────────────────────────────────────────────────
 
 export const StyledDropdownMenuSubTrigger = React.forwardRef<
   React.ComponentRef<typeof DropdownMenuPrimitive.SubTrigger>,
@@ -198,7 +198,7 @@ export const StyledDropdownMenuSubTrigger = React.forwardRef<
 ))
 StyledDropdownMenuSubTrigger.displayName = 'StyledDropdownMenuSubTrigger'
 
-// ── Sub-menu content ─────────────────────────────────────────────────────────
+// ── 子菜单内容 ─────────────────────────────────────────────────────────
 
 interface StyledDropdownMenuSubContentProps
   extends React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent> {
@@ -228,7 +228,7 @@ export const StyledDropdownMenuSubContent = React.forwardRef<
 ))
 StyledDropdownMenuSubContent.displayName = 'StyledDropdownMenuSubContent'
 
-// ── Shortcut ─────────────────────────────────────────────────────────────────
+// ── 快捷键 ─────────────────────────────────────────────────────────────────
 
 export function DropdownMenuShortcut({
   className,

@@ -1,11 +1,11 @@
 /**
- * PreviewHeader - Unified header component for preview windows and overlays
+ * PreviewHeader - 预览窗口与浮层的统一头部组件
  *
- * Works in two contexts:
- * - Electron windows: Traffic lights on left (handled by OS), badges centered
- * - Viewer overlays: Badges centered, close button on right
+ * 适用于两种场景：
+ * - Electron 窗口：左侧为红绿灯按钮（由系统处理），徽标居中
+ * - 查看器浮层：徽标居中，右侧为关闭按钮
  *
- * Use `onClose` prop to show the close button on the right.
+ * 通过 `onClose` 属性可在右侧显示关闭按钮。
  */
 
 import * as React from 'react'
@@ -14,7 +14,7 @@ import { X, type LucideIcon } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
 /**
- * Badge variants using semantic colors
+ * 使用语义化颜色的徽标变体
  */
 export const PREVIEW_BADGE_VARIANTS = {
   edit: 'text-foreground/70',
@@ -35,32 +35,32 @@ export const PREVIEW_BADGE_VARIANTS = {
 export type PreviewBadgeVariant = keyof typeof PREVIEW_BADGE_VARIANTS
 
 export interface PreviewHeaderBadgeProps {
-  /** Icon component to display */
+  /** 要显示的图标组件 */
   icon?: LucideIcon
-  /** Badge label text */
+  /** 徽标文本 */
   label: string
-  /** Badge variant (default: 'default') */
+  /** 徽标变体（默认：'default'） */
   variant?: PreviewBadgeVariant
-  /** Click handler (makes it a clickable link-style button) */
+  /** 点击处理函数（使其成为可点击的链接式按钮） */
   onClick?: () => void
-  /** Title for tooltip */
+  /** 用于 tooltip 的标题 */
   title?: string
-  /** Additional className */
+  /** 附加 className */
   className?: string
-  /** Allow badge to shrink (for long paths) - default: false */
+  /** 允许徽标收缩（适用于长路径） - 默认：false */
   shrinkable?: boolean
 }
 
 /**
- * PreviewHeaderBadge - Badge component for preview headers
+ * PreviewHeaderBadge - 预览头部的徽标组件
  *
- * Style specs:
- * - Height: 26px
- * - Padding: 10px horizontal
- * - Border radius: 6px
- * - Font: Sans-serif, 13px, medium weight
- * - Truncation: CSS truncate, shrink, stay 1 line
- * - Clickable: underline on hover, pointer cursor
+ * 样式规格：
+ * - 高度：26px
+ * - 内边距：水平 10px
+ * - 圆角：6px
+ * - 字体：无衬线，13px，中等字重
+ * - 截断：CSS 截断、收缩、保持单行
+ * - 可点击：悬停时下划线、指针光标
  */
 export function PreviewHeaderBadge({
   icon: Icon,
@@ -100,27 +100,27 @@ export function PreviewHeaderBadge({
 }
 
 export interface PreviewHeaderProps {
-  /** Badge elements to render in center */
+  /** 居中渲染的徽标元素 */
   children?: React.ReactNode
-  /** Close handler - when provided, shows X button on right */
+  /** 关闭处理函数 - 提供时在右侧显示 X 按钮 */
   onClose?: () => void
-  /** Actions to render on the right, just before the close button */
+  /** 渲染在右侧、紧邻关闭按钮之前的操作区 */
   rightActions?: React.ReactNode
-  /** Height of the header (default: 50px for windows, 44px for overlays) */
+  /** 头部高度（默认：窗口 50px，浮层 44px） */
   height?: number
-  /** Additional className for the header */
+  /** 头部的附加 className */
   className?: string
-  /** Inline styles */
+  /** 内联样式 */
   style?: React.CSSProperties
 }
 
 /**
- * PreviewHeader - Header/toolbar for preview windows and overlays
+ * PreviewHeader - 预览窗口与浮层的头部/工具栏
  *
- * Layout:
- * - Left: 70px spacer (for macOS traffic lights in Electron)
- * - Center: Badges row
- * - Right: Close button (if onClose provided) or 70px spacer
+ * 布局：
+ * - 左侧：70px 占位（用于 Electron 中 macOS 的红绿灯按钮）
+ * - 中间：徽标行
+ * - 右侧：关闭按钮（若提供 onClose）或 70px 占位
  */
 export function PreviewHeader({
   children,
@@ -139,15 +139,15 @@ export function PreviewHeader({
       )}
       style={{ height, ...style }}
     >
-      {/* Left side - space for traffic lights on macOS, flex-1 to balance with right side */}
+      {/* 左侧 - 为 macOS 红绿灯按钮留出空间，flex-1 用于与右侧平衡 */}
       <div className="flex-1 min-w-[70px]" />
 
-      {/* Center - badges row. no-drag so badges are clickable in the window drag region. */}
+      {/* 中间 - 徽标行。no-drag 使徽标在窗口拖拽区域内可点击。 */}
       <div className="flex items-center gap-2 min-w-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         {children}
       </div>
 
-      {/* Right side - actions + close button. no-drag so actions are clickable in the window drag region. */}
+      {/* 右侧 - 操作区 + 关闭按钮。no-drag 使操作区在窗口拖拽区域内可点击。 */}
       <div className="flex-1 min-w-[70px] flex items-center gap-2 justify-end" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         {rightActions}
         {onClose && (

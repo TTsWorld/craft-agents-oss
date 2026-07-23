@@ -30,11 +30,11 @@ function resolveFileUrlPath(target: string): string | null {
 }
 
 /**
- * Resolve markdown link targets for click dispatch.
+ * 解析 markdown 链接目标以供点击分发。
  *
- * - Raw filesystem paths are routed through onFileClick
- * - Explicit file:// URLs are normalized to filesystem paths and also routed through onFileClick
- * - Everything else is treated as a URL and routed through onUrlClick
+ * - 原始文件系统路径通过 onFileClick 路由
+ * - 显式 file:// URL 被归一化为文件系统路径，也通过 onFileClick 路由
+ * - 其他所有内容视为 URL，通过 onUrlClick 路由
  */
 export function resolveMarkdownLinkTarget(target: string): ResolvedMarkdownLinkTarget {
   const trimmed = target.trim()
@@ -52,7 +52,7 @@ export function resolveMarkdownLinkTarget(target: string): ResolvedMarkdownLinkT
 }
 
 /**
- * Backward-compatible classifier for tests and existing callers that only need the kind.
+ * 向后兼容的分类器，供仅需类型的测试和现有调用方使用。
  */
 export function classifyMarkdownLinkTarget(target: string): 'file' | 'url' {
   return resolveMarkdownLinkTarget(target).kind

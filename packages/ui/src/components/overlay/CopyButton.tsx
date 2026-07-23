@@ -1,8 +1,8 @@
 /**
- * CopyButton - Reusable copy-to-clipboard button with feedback
+ * CopyButton - 可复用的复制到剪贴板按钮，带反馈状态
  *
- * Shows "Copy" initially, then "Copied!" with checkmark for 2 seconds after copying.
- * Used in overlay headers for copying content.
+ * 初始显示"复制"，复制成功后显示"已复制！"并带勾选标记，持续 2 秒。
+ * 用于浮层头部复制内容。
  */
 
 import * as React from 'react'
@@ -12,13 +12,13 @@ import { Copy, Check } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
 export interface CopyButtonProps {
-  /** Content to copy to clipboard */
+  /** 要复制到剪贴板的内容 */
   content: string
-  /** Optional label (default: "Copy") */
+  /** 可选标签（默认："Copy"） */
   label?: string
-  /** Optional tooltip for the button */
+  /** 按钮的可选 tooltip */
   title?: string
-  /** Optional className override */
+  /** 可选 className 覆盖 */
   className?: string
 }
 

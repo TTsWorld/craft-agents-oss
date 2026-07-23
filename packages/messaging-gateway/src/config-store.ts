@@ -1,8 +1,8 @@
 /**
- * ConfigStore — workspace-scoped messaging config.json persistence.
+ * ConfigStore —— workspace 作用域的 messaging config.json 持久化。
  *
- * Stored at `{storageDir}/config.json`. Shape is `MessagingConfig`.
- * One-shot migration from a legacy directory is supported (mirrors BindingStore).
+ * 存放在 `{storageDir}/config.json`，形状为 `MessagingConfig`。
+ * 支持从 legacy 目录做一次性迁移（与 BindingStore 对齐）。
  */
 
 import {

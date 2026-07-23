@@ -1,16 +1,16 @@
 /**
- * MultiDiffPreviewOverlay - Overlay for multiple file changes (Edit/Write tools)
+ * MultiDiffPreviewOverlay - 多文件变更浮层（Edit/Write 工具）
  *
- * Layout: Stacked diffs using pierre's native file headers — GitHub PR-like view.
- * Each diff renders its own file header (filename + addition/deletion counts) via @pierre/diffs.
- * No card chrome or collapse — all diffs are visible in a single scrollable area.
+ * 布局：使用 pierre 原生文件头的堆叠 diff——类似 GitHub PR 的视图。
+ * 每个 diff 通过 @pierre/diffs 渲染自己的文件头（文件名 + 增删行数）。
+ * 无卡片外框或折叠——所有 diff 在单个滚动区域中可见。
  *
- * Features:
- * - Stacked diffs with native pierre file headers (no custom card wrappers)
- * - Consolidated view (group by file) or individual changes
- * - Unified/split diff viewer for each change
- * - Focused change support (scroll to specific change on open)
- * - Header shows file path for single file, "N edits" summary for multiple files
+ * 功能：
+ * - 带 pierre 原生文件头的堆叠 diff（无自定义卡片包裹）
+ * - 合并视图（按文件分组）或独立变更
+ * - 每个变更支持统一/分屏 diff 查看器
+ * - 聚焦变更支持（打开时滚动到特定变更）
+ * - 头部：单文件显示文件路径，多文件显示"N edits"摘要
  */
 
 import * as React from 'react'
@@ -26,32 +26,32 @@ import { usePlatform } from '../../context/PlatformContext'
 import { cn } from '../../lib/utils'
 
 /**
- * A single file change (Edit or Write)
+ * 单个文件变更（Edit 或 Write）
  *
- * Supports two formats:
- * - Claude Code: original/modified strings (computed diff)
- * - Codex: unifiedDiff string (pre-computed unified diff patch)
+ * 支持两种格式：
+ * - Claude Code：original/modified 字符串（计算 diff）
+ * - Codex：unifiedDiff 字符串（预计算的统一 diff 补丁）
  */
 export interface FileChange {
-  /** Unique ID for this change */
+  /** 此变更的唯一 ID */
   id: string
-  /** Absolute file path */
+  /** 绝对文件路径 */
   filePath: string
-  /** Tool type: Edit or Write */
+  /** 工具类型：Edit 或 Write */
   toolType: 'Edit' | 'Write'
-  /** For Edit: the old_string; For Write: empty or previous content if available */
+  /** Edit 时为 old_string；Write 时为空或可用的上一版本内容 */
   original: string
-  /** For Edit: the new_string; For Write: the written content */
+  /** Edit 时为 new_string；Write 时为写入的内容 */
   modified: string
-  /** Codex format: raw unified diff string (alternative to original/modified) */
+  /** Codex 格式：原始统一 diff 字符串（与 original/modified 二选一） */
   unifiedDiff?: string
-  /** Error message if the tool failed */
+  /** 工具执行失败时的错误信息 */
   error?: string
 }
 
 /**
- * Diff viewer display preferences
- * Passed from parent to avoid localStorage usage - all settings stored in preferences.json
+ * diff 查看器显示偏好
+ * 由父级传入以避免使用 localStorage——所有设置存储在 preferences.json 中
  */
 export interface DiffViewerSettings {
   diffStyle: 'unified' | 'split'
@@ -59,31 +59,31 @@ export interface DiffViewerSettings {
 }
 
 export interface MultiDiffPreviewOverlayProps {
-  /** Whether the overlay is visible */
+  /** 浮层是否可见 */
   isOpen: boolean
-  /** Callback when the overlay should close */
+  /** 浮层关闭时的回调 */
   onClose: () => void
-  /** List of file changes to display */
+  /** 要显示的文件变更列表 */
   changes: FileChange[]
-  /** Whether to consolidate changes by file path (default: true) */
+  /** 是否按文件路径合并变更（默认：true） */
   consolidated?: boolean
-  /** ID of change to focus on initially */
+  /** 初始聚焦的变更 ID */
   focusedChangeId?: string
-  /** Theme mode */
+  /** 主题模式 */
   theme?: 'light' | 'dark'
-  /** Render inline without dialog (for playground) */
+  /** 内联渲染，不使用对话框（用于 playground） */
   embedded?: boolean
-  /** Initial diff viewer settings (from user preferences) */
+  /** 初始 diff 查看器设置（来自用户偏好） */
   diffViewerSettings?: Partial<DiffViewerSettings>
-  /** Callback when diff viewer settings change (to persist to preferences) */
+  /** diff 查看器设置变更时的回调（用于持久化到偏好） */
   onDiffViewerSettingsChange?: (settings: DiffViewerSettings) => void
 }
 
 // ============================================
-// Helpers
+// 辅助函数
 // ============================================
 
-/** A group of changes for a single file (or a single ungrouped change) */
+/** 单个文件的变更组（或一个未分组的独立变更） */
 interface FileSection {
   key: string
   filePath: string
@@ -91,9 +91,9 @@ interface FileSection {
 }
 
 /**
- * Groups changes into file sections.
- * In consolidated mode, changes to the same file are grouped together.
- * In non-consolidated mode, each change is its own section.
+ * 将变更按文件分组。
+ * 合并模式下，同一文件的变更会被合并到一起。
+ * 非合并模式下，每个变更为独立分组。
  */
 function createFileSections(changes: FileChange[], consolidated: boolean): FileSection[] {
   if (!consolidated) {
@@ -104,7 +104,7 @@ function createFileSections(changes: FileChange[], consolidated: boolean): FileS
     }))
   }
 
-  // Group by file path, preserving order of first occurrence
+  // 按文件路径分组，保持首次出现的顺序
   const byPath = new Map<string, FileChange[]>()
   for (const change of changes) {
     const existing = byPath.get(change.filePath) || []
@@ -119,15 +119,15 @@ function createFileSections(changes: FileChange[], consolidated: boolean): FileS
   }))
 }
 
-/** Compute diff stats for a single change */
+/** 计算单个变更的 diff 统计 */
 function computeChangeStats(change: FileChange): { additions: number; deletions: number } {
-  // Handle Codex format: unified diff string
+  // 处理 Codex 格式：统一 diff 字符串
   if (change.unifiedDiff) {
     const stats = getUnifiedDiffStats(change.unifiedDiff, change.filePath)
     return stats || { additions: 0, deletions: 0 }
   }
 
-  // Handle Claude Code format: original/modified strings
+  // 处理 Claude Code 格式：original/modified 字符串
   const ext = change.filePath.split('.').pop()?.toLowerCase() || ''
   const lang = LANGUAGE_MAP[ext] || 'text'
   const oldFile: FileContents = { name: change.filePath, contents: change.original, lang: lang as any }
@@ -137,7 +137,7 @@ function computeChangeStats(change: FileChange): { additions: number; deletions:
 }
 
 // ============================================
-// Main Component
+// 主组件
 // ============================================
 
 export function MultiDiffPreviewOverlay({
@@ -153,23 +153,23 @@ export function MultiDiffPreviewOverlay({
 }: MultiDiffPreviewOverlayProps) {
   const { onOpenFileExternal } = usePlatform()
 
-  // Ref map for scroll-to-focused-change support
+  // 用于滚动到聚焦变更的 ref 映射
   const changeRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
-  // Build file sections (grouped or ungrouped)
+  // 构建文件分组（合并或非合并）
   const fileSections = useMemo(() => {
     return createFileSections(changes, consolidated)
   }, [changes, consolidated])
 
-  // ── Fade-in reveal ──────────────────────────────────────────────────
-  // Content starts invisible (opacity 0) while ShikiDiffViewers load and
-  // scroll position is achieved. Once all diffs fire onReady AND scroll is
-  // done, we reveal with a CSS transition. If everything is ready within
-  // the first frame (~50ms), we skip the transition for an instant show.
-  // Only count visible (non-error) diffs for reveal gating
+  // ── 淡入显示 ──────────────────────────────────────────────────
+  // 内容初始不可见（opacity 0），等待 ShikiDiffViewers 加载完成
+  // 且滚动位置就绪。当所有 diff 触发 onReady 且滚动完成后，
+  // 通过 CSS 过渡显示内容。如果所有条件在首帧（约 50ms）内就绪，
+  // 则跳过过渡直接显示。
+  // 仅统计可见（非错误）的 diff 用于显示门控
   const diffCount = useMemo(() => changes.filter(c => !c.error).length, [changes])
   const readyCountRef = useRef(0)
-  const scrollDoneRef = useRef(!focusedChangeId) // no scroll needed → already done
+  const scrollDoneRef = useRef(!focusedChangeId) // 无需滚动 → 已完成
   const revealedRef = useRef(false)
   const mountedAtRef = useRef(performance.now())
   const [contentVisible, setContentVisible] = useState(false)
@@ -179,7 +179,7 @@ export function MultiDiffPreviewOverlay({
     if (revealedRef.current) return
     if (readyCountRef.current >= diffCount && scrollDoneRef.current) {
       revealedRef.current = true
-      // If all conditions met within first frame, show instantly (no transition)
+      // 若所有条件在首帧内满足，直接显示（无过渡）
       const elapsed = performance.now() - mountedAtRef.current
       if (elapsed < 50) setAnimateReveal(false)
       setContentVisible(true)
@@ -191,13 +191,13 @@ export function MultiDiffPreviewOverlay({
     checkReveal()
   }, [checkReveal])
 
-  // Check reveal on mount — handles edge cases like diffCount=0 (all errors)
+  // 挂载时检查显示——处理 diffCount=0（全部错误）等边界情况
   useEffect(() => {
     checkReveal()
   }, [checkReveal])
 
-  // Diff viewer controls state — initialized from props (user preferences)
-  // Settings are persisted via onDiffViewerSettingsChange callback to preferences.json
+  // diff 查看器控件状态——从属性初始化（用户偏好）
+  // 设置通过 onDiffViewerSettingsChange 回调持久化到 preferences.json
   const [diffStyle, setDiffStyleInternal] = useState<'unified' | 'split'>(
     diffViewerSettings?.diffStyle ?? 'unified'
   )
@@ -205,7 +205,7 @@ export function MultiDiffPreviewOverlay({
     diffViewerSettings?.disableBackground ?? false
   )
 
-  // Wrap setters to also call the persistence callback
+  // 包装 setter 以同时调用持久化回调
   const setDiffStyle = useCallback((style: 'unified' | 'split') => {
     setDiffStyleInternal(style)
     onDiffViewerSettingsChange?.({ diffStyle: style, disableBackground })
@@ -216,7 +216,7 @@ export function MultiDiffPreviewOverlay({
     onDiffViewerSettingsChange?.({ diffStyle, disableBackground: disabled })
   }, [diffStyle, onDiffViewerSettingsChange])
 
-  // Compute total diff stats for the overlay header
+  // 计算浮层头部的 diff 总统计
   const totalStats = useMemo(() => {
     let additions = 0
     let deletions = 0
@@ -229,7 +229,7 @@ export function MultiDiffPreviewOverlay({
     return { additions, deletions }
   }, [changes])
 
-  // Scroll to focused change after mount, then signal scroll completion for reveal
+  // 挂载后滚动到聚焦变更，然后标记滚动完成以触发显示
   useEffect(() => {
     if (!focusedChangeId) {
       scrollDoneRef.current = true
@@ -237,7 +237,7 @@ export function MultiDiffPreviewOverlay({
       return
     }
 
-    // Small delay to allow ShikiDiffViewer to render (async syntax highlighting)
+    // 小延迟以等待 ShikiDiffViewer 渲染（异步语法高亮）
     const timer = setTimeout(() => {
       const el = changeRefs.current.get(focusedChangeId)
       if (el) {
@@ -250,11 +250,11 @@ export function MultiDiffPreviewOverlay({
     return () => clearTimeout(timer)
   }, [focusedChangeId, checkReveal])
 
-  // Determine header content based on single vs. multiple files
+  // 根据单文件还是多文件确定头部内容
   const isMultiFile = fileSections.length > 1
   const totalChangeCount = fileSections.reduce((acc, s) => acc + s.changes.length, 0)
 
-  // Type badge: for single file, show Edit/Write; for multi-file, show edit count
+  // 类型徽标：单文件显示 Edit/Write；多文件显示编辑计数
   const typeBadge = useMemo((): { icon: typeof PencilLine; label: string; variant: BadgeVariant } => {
     const hasWrite = changes.some(c => c.toolType === 'Write' && !c.error)
     if (isMultiFile) {
@@ -264,7 +264,7 @@ export function MultiDiffPreviewOverlay({
         variant: hasWrite ? 'green' : 'orange',
       }
     }
-    // Single file — show tool type and count if multiple changes
+    // 单文件——变更数大于 1 时显示工具类型和计数
     const firstSection = fileSections[0]
     if (!firstSection) return { icon: PencilLine, label: 'Edit', variant: 'orange' }
     const sectionHasWrite = firstSection.changes.some(c => c.toolType === 'Write')
@@ -278,13 +278,13 @@ export function MultiDiffPreviewOverlay({
     }
   }, [changes, isMultiFile, totalChangeCount, fileSections])
 
-  // Header file path (single file) or summary title (multi-file)
+  // 头部文件路径（单文件）或摘要标题（多文件）
   const headerFilePath = !isMultiFile ? fileSections[0]?.filePath : undefined
   const headerTitle = isMultiFile
     ? `${totalChangeCount} edit${totalChangeCount !== 1 ? 's' : ''} across ${fileSections.length} file${fileSections.length !== 1 ? 's' : ''}`
     : undefined
 
-  // Header actions: total diff stats + viewer controls
+  // 头部操作：diff 总统计 + 查看器控件
   const headerActions = (
     <DiffViewerControls
       additions={totalStats.additions}
@@ -296,7 +296,7 @@ export function MultiDiffPreviewOverlay({
     />
   )
 
-  // Ref callback to register each change element for scroll-to support
+  // ref 回调，注册每个变更元素以支持滚动定位
   const setChangeRef = useCallback((changeId: string, el: HTMLDivElement | null) => {
     if (el) {
       changeRefs.current.set(changeId, el)
@@ -317,8 +317,8 @@ export function MultiDiffPreviewOverlay({
       embedded={embedded}
       className="bg-foreground-3"
     >
-      {/* Stacked diffs — flow layout inside parent scroll container.
-          Hidden until all diffs are loaded + scroll position achieved (fade-in reveal). */}
+      {/* 堆叠 diff——在父级滚动容器内流式布局。
+          所有 diff 加载完成且滚动位置就绪前隐藏（淡入显示）。 */}
       <div
         className={cn(
           "flex px-6 min-h-full",
@@ -327,8 +327,8 @@ export function MultiDiffPreviewOverlay({
         style={{ opacity: contentVisible ? 1 : 0 }}
       >
         <div className="m-auto" style={{ width: 'max-content', maxWidth: '100%', minWidth: 'min(850px, 100%)' }}>
-          {/* Stacked diffs: each ShikiDiffViewer renders with pierre's native file header.
-              No card chrome or collapse — continuous stacked layout like a GitHub PR diff. */}
+          {/* 堆叠 diff：每个 ShikiDiffViewer 渲染时带 pierre 的原生文件头。
+              无卡片外框或折叠——连续堆叠布局，类似 GitHub PR diff。 */}
           <div className="flex flex-col gap-4">
             {fileSections.map((section) => (
               <div key={section.key} className="flex flex-col gap-4">
@@ -340,7 +340,7 @@ export function MultiDiffPreviewOverlay({
                     style={{ minHeight: change.error ? undefined : 200, borderRadius: 12 }}
                   >
                     {change.error ? (
-                      // Errored change — tinted error banner
+                      // 出错的变更——带色调的错误横幅
                       <div className="px-4 py-4">
                         <div
                           className="flex items-start gap-3 px-4 py-3 rounded-[8px] bg-[color-mix(in_oklab,var(--destructive)_5%,var(--background))] shadow-tinted"
@@ -358,7 +358,7 @@ export function MultiDiffPreviewOverlay({
                         </div>
                       </div>
                     ) : change.unifiedDiff ? (
-                      // Codex format: pre-computed unified diff
+                      // Codex 格式：预计算的统一 diff
                       <UnifiedDiffViewer
                         unifiedDiff={change.unifiedDiff}
                         filePath={change.filePath}
@@ -370,7 +370,7 @@ export function MultiDiffPreviewOverlay({
                         onReady={handleDiffReady}
                       />
                     ) : (
-                      // Claude Code format: original/modified strings
+                      // Claude Code 格式：original/modified 字符串
                       <ShikiDiffViewer
                         original={change.original}
                         modified={change.modified}

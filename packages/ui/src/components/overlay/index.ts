@@ -1,15 +1,15 @@
-// Base overlay components
+// 基础浮层组件
 export { FullscreenOverlayBase, type FullscreenOverlayBaseProps } from './FullscreenOverlayBase'
 export { FullscreenOverlayBaseHeader, type FullscreenOverlayBaseHeaderProps, type OverlayTypeBadge } from './FullscreenOverlayBaseHeader'
 export { PreviewOverlay, type PreviewOverlayProps, type BadgeVariant } from './PreviewOverlay'
 export { ContentFrame, type ContentFrameProps } from './ContentFrame'
 
-// Helper components
+// 辅助组件
 export { CopyButton, type CopyButtonProps } from './CopyButton'
 export { ItemNavigator, type ItemNavigatorProps } from './ItemNavigator'
 export { OverlayErrorBanner, type OverlayErrorBannerProps } from './OverlayErrorBanner'
 
-// Specialized overlays
+// 专用浮层
 export { CodePreviewOverlay, type CodePreviewOverlayProps } from './CodePreviewOverlay'
 export { MultiDiffPreviewOverlay, type MultiDiffPreviewOverlayProps, type FileChange, type DiffViewerSettings } from './MultiDiffPreviewOverlay'
 export { TerminalPreviewOverlay, type TerminalPreviewOverlayProps } from './TerminalPreviewOverlay'

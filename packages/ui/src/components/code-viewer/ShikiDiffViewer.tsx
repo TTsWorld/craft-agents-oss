@@ -1,11 +1,11 @@
 /**
- * ShikiDiffViewer - Diff viewer using @pierre/diffs (Shiki-based)
+ * ShikiDiffViewer - 使用 @pierre/diffs 的 diff 查看器（基于 Shiki）
  *
- * Platform-agnostic component for displaying file diffs with:
- * - Unified or split diff view
- * - Syntax highlighting via Shiki
- * - Light/dark theme support
- * - Line-level diff highlighting
+ * 平台无关的文件 diff 展示组件，支持：
+ * - unified 或 split diff 视图
+ * - 通过 Shiki 的语法高亮
+ * - 亮/暗主题支持
+ * - 行级 diff 高亮
  */
 
 import * as React from 'react'
@@ -16,8 +16,8 @@ import { cn } from '../../lib/utils'
 import { LANGUAGE_MAP } from './language-map'
 import { registerCraftShikiThemes } from './registerShikiThemes'
 
-// Register the diffs-container custom element if not already registered
-// This is necessary because the React component renders a custom element
+// 若尚未注册则注册 diffs-container 自定义元素
+// 这是必要的，因为 React 组件会渲染一个自定义元素
 if (typeof HTMLElement !== 'undefined' && !customElements.get(DIFFS_TAG_NAME)) {
   class FileDiffContainer extends HTMLElement {
     constructor() {
@@ -29,41 +29,41 @@ if (typeof HTMLElement !== 'undefined' && !customElements.get(DIFFS_TAG_NAME)) {
   customElements.define(DIFFS_TAG_NAME, FileDiffContainer)
 }
 
-// Register custom themes once per runtime.
+// 每个运行时注册一次自定义主题。
 registerCraftShikiThemes()
 
 export interface ShikiDiffViewerProps {
-  /** Original (before) content */
+  /** 原始（修改前）内容 */
   original: string
-  /** Modified (after) content */
+  /** 修改后（修改后）内容 */
   modified: string
-  /** File path - used for language detection and display */
+  /** 文件路径——用于语言检测和展示 */
   filePath?: string
-  /** Language for syntax highlighting (auto-detected from filePath if not provided) */
+  /** 语法高亮语言（未提供时从 filePath 自动检测） */
   language?: string
-  /** Diff style: 'unified' (stacked) or 'split' (side-by-side) */
+  /** diff 样式：'unified'（堆叠）或 'split'（并排） */
   diffStyle?: 'unified' | 'split'
-  /** Theme mode */
+  /** 主题模式 */
   theme?: 'light' | 'dark'
-  /** Shiki theme name (e.g., 'dracula', 'github-dark'). When provided, uses the matching
-   *  Shiki theme natively. Falls back to craft-dark/craft-light (transparent bg) if not set. */
+  /** Shiki 主题名（例如 'dracula'、'github-dark'）。提供时使用对应的 Shiki 原生主题；
+   *  未设置时回退到 craft-dark/craft-light（透明背景）。 */
   shikiTheme?: string
-  /** Disable background highlighting on changed lines */
+  /** 禁用变更行的背景高亮 */
   disableBackground?: boolean
-  /** Whether to hide pierre's native file header (filename + stats). Default: true */
+  /** 是否隐藏 pierre 原生文件头（文件名 + 统计）。默认 true */
   disableFileHeader?: boolean
-  /** Callback when the file header is clicked (e.g. to open the file in an editor).
-   *  When provided, the header becomes clickable with cursor: pointer. */
+  /** 文件头被点击时的回调（例如在编辑器中打开文件）。
+   *  提供时文件头变为可点击，cursor: pointer。 */
   onFileHeaderClick?: (filePath: string) => void
-  /** Callback when ready */
+  /** 就绪时的回调 */
   onReady?: () => void
-  /** Additional class names */
+  /** 额外类名 */
   className?: string
 }
 
 /**
- * Calculate addition/deletion stats from a FileDiffMetadata
- * Useful for displaying change counts in headers
+ * 从 FileDiffMetadata 计算新增/删除统计。
+ * 用于在头部展示变更计数
  */
 export function getDiffStats(fileDiff: FileDiffMetadata): { additions: number; deletions: number } {
   let additions = 0
@@ -82,7 +82,7 @@ function getLanguageFromPath(filePath: string, explicit?: string): string {
 }
 
 /**
- * ShikiDiffViewer - Shiki-based diff viewer component
+ * ShikiDiffViewer - 基于 Shiki 的 diff 查看器组件
  */
 export function ShikiDiffViewer({
   original,
@@ -101,12 +101,12 @@ export function ShikiDiffViewer({
   const hasCalledReady = useRef(false)
   const [isReady, setIsReady] = useState(false)
 
-  // Resolve language
+  // 解析语言
   const resolvedLang = useMemo(() => {
     return language || getLanguageFromPath(filePath)
   }, [language, filePath])
 
-  // Create file contents objects for the diff parser
+  // 为 diff 解析器创建文件内容对象
   const oldFile: FileContents = useMemo(() => ({
     name: filePath,
     contents: original,
@@ -119,15 +119,15 @@ export function ShikiDiffViewer({
     lang: resolvedLang as any,
   }), [filePath, modified, resolvedLang])
 
-  // Parse the diff
+  // 解析 diff
   const fileDiff: FileDiffMetadata = useMemo(() => {
     return parseDiffFromFile(oldFile, newFile)
   }, [oldFile, newFile])
 
-  // Diff options - use the app's Shiki theme if available, otherwise fall back
-  // to craft-dark/craft-light which have transparent bg for CSS variable theming
+  // diff 选项——若有 app 的 Shiki 主题则使用，否则回退到
+  // craft-dark/craft-light（透明背景，支持 CSS 变量主题）
   const resolvedThemeName = shikiTheme || (theme === 'dark' ? 'craft-dark' : 'craft-light')
-  // When onFileHeaderClick is provided, inject CSS to make the header look clickable
+  // 提供 onFileHeaderClick 时，注入 CSS 使头部看起来可点击
   const unsafeCSS = onFileHeaderClick
     ? '[data-diffs-header] { cursor: pointer; } [data-diffs-header]:hover [data-title] { text-decoration: underline; }'
     : undefined
@@ -144,25 +144,25 @@ export function ShikiDiffViewer({
     unsafeCSS,
   }), [resolvedThemeName, theme, diffStyle, disableBackground, disableFileHeader, unsafeCSS])
 
-  // Call onReady after first render
+  // 首次渲染后调用 onReady
   useEffect(() => {
     if (!hasCalledReady.current && onReady) {
       hasCalledReady.current = true
-      // Give Shiki time to highlight
+      // 给 Shiki 高亮留出时间
       const timer = setTimeout(() => {
         setIsReady(true)
         onReady()
       }, 100)
       return () => {
         clearTimeout(timer)
-        hasCalledReady.current = false // Reset so re-mounts (including StrictMode) re-arm the timer
+        hasCalledReady.current = false // 重置，使重新挂载（含 StrictMode）能重新启动定时器
       }
     }
   }, [onReady, original, modified, fileDiff])
 
-  // Attach a click listener to the file header inside pierre's shadow DOM.
-  // We query for the <diffs-container> custom element, then find [data-diffs-header]
-  // inside its shadowRoot. This lets the filename be clickable without modifying pierre.
+  // 在 pierre 的 shadow DOM 内为文件头附加点击监听器。
+  // 我们查找 <diffs-container> 自定义元素，然后在其 shadowRoot 中找 [data-diffs-header]。
+  // 这样无需修改 pierre 即可使文件名可点击。
   const containerRef = useRef<HTMLDivElement>(null)
   const onFileHeaderClickRef = useRef(onFileHeaderClick)
   onFileHeaderClickRef.current = onFileHeaderClick
@@ -170,7 +170,7 @@ export function ShikiDiffViewer({
   useEffect(() => {
     if (!onFileHeaderClick || disableFileHeader) return
 
-    // Wait briefly for pierre to render the header into the shadow DOM
+    // 短暂等待 pierre 将头部渲染进 shadow DOM
     const timer = setTimeout(() => {
       const diffsContainer = containerRef.current?.querySelector(DIFFS_TAG_NAME)
       const header = diffsContainer?.shadowRoot?.querySelector('[data-diffs-header]')
@@ -180,7 +180,7 @@ export function ShikiDiffViewer({
         onFileHeaderClickRef.current?.(filePath)
       }
       header.addEventListener('click', handleClick)
-      // Store cleanup ref so we can remove listener
+      // 存储清理引用以便移除监听器
       ;(header as any).__craftClickCleanup = () => header.removeEventListener('click', handleClick)
     }, 150)
 
@@ -194,7 +194,7 @@ export function ShikiDiffViewer({
     }
   }, [filePath, disableFileHeader, onFileHeaderClick])
 
-  // Use CSS variable so custom themes are respected
+  // 使用 CSS 变量以尊重自定义主题
   const backgroundColor = 'var(--background)'
 
   return (

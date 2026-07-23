@@ -1,12 +1,11 @@
 /**
- * BindingStore — workspace-scoped persistence for channel bindings.
+ * BindingStore —— workspace 作用域的 channel binding 持久化。
  *
- * Stores bindings in an explicit storage directory (passed by the caller).
- * In Electron this is `~/.craft-agent/workspaces/{wsId}/messaging/`, but tests
- * can point it at any directory.
+ * 在一个显式存储目录（由调用方传入）里保存 bindings。Electron 下是
+ * `~/.craft-agent/workspaces/{wsId}/messaging/`，测试可以指向任意目录。
  *
- * One-shot migration: if a legacy path is provided and contains a bindings.json
- * that the new path does not, the legacy file is copied forward on construction.
+ * 一次性迁移：如果传入了 legacy 目录且其中存在 bindings.json、而新路径下没有，
+ * 则在构造时把 legacy 文件拷贝到新位置。
  */
 
 import {
@@ -36,9 +35,9 @@ export class BindingStore {
   private changeListener?: () => void
 
   /**
-   * @param storageDir  Absolute path to the directory where bindings.json is stored.
-   * @param legacyDir   Optional legacy directory. If its bindings.json exists and
-   *                    the new location does not, the file is copied forward once.
+   * @param storageDir  bindings.json 存放目录的绝对路径。
+   * @param legacyDir   可选的 legacy 目录。如果其下存在 bindings.json、而新位置没有，
+   *                    则把该文件拷贝到新位置一次。
    */
   constructor(storageDir: string, legacyDir?: string, logger: MessagingLogger = NOOP_LOGGER) {
     this.dirPath = storageDir
@@ -48,22 +47,22 @@ export class BindingStore {
     this.load()
   }
 
-  /** Register a callback fired after any mutation is persisted. */
+  /** 注册一个回调，在任意变更被持久化后触发。 */
   onChange(fn: () => void): void {
     this.changeListener = fn
   }
 
   // -------------------------------------------------------------------------
-  // Query
+  // 查询
   // -------------------------------------------------------------------------
 
   /**
-   * Find the active binding for a (platform, channelId, threadId) tuple.
-   * `threadId` distinguishes Telegram supergroup forum topics from each
-   * other and from the supergroup's General topic / DMs (undefined).
+   * 查找 (platform, channelId, threadId) 元组对应的活跃 binding。
+   * `threadId` 用于区分 Telegram 超级群的各个论坛话题，以及与超级群的
+   * General 话题 / DM（undefined）区分开。
    *
-   * Bindings created without `threadId` (DMs, pre-topics-feature data)
-   * only match calls passing `threadId === undefined`.
+   * 不带 `threadId` 创建的 binding（DM、topics 功能上线前的旧数据）
+   * 只会匹配 `threadId === undefined` 的查询。
    */
   findByChannel(platform: PlatformType, channelId: string, threadId?: number): ChannelBinding | undefined {
     return this.bindings.find(
@@ -84,7 +83,7 @@ export class BindingStore {
   }
 
   // -------------------------------------------------------------------------
-  // Mutation
+  // 变更
   // -------------------------------------------------------------------------
 
   bind(
@@ -96,9 +95,8 @@ export class BindingStore {
     config?: Partial<ChannelBinding['config']>,
     threadId?: number,
   ): ChannelBinding {
-    // One channel → one session: evict any existing binding for the
-    // (platform, channelId, threadId) tuple. Different topics in the same
-    // supergroup are independently bindable.
+    // 一个 channel → 一个 session：踢掉 (platform, channelId, threadId)
+    // 元组上已存在的任何 binding。同一超级群内的不同话题可以独立绑定。
     this.bindings = this.bindings.filter(
       (b) => !(b.platform === platform && b.channelId === channelId && (b.threadId ?? undefined) === threadId),
     )
@@ -132,15 +130,14 @@ export class BindingStore {
   }
 
   /**
-   * Update a binding's `BindingConfig` in place — preserves `id`,
-   * `createdAt`, `channelId`, etc. Returns the updated binding (or null
-   * if the id wasn't found).
+   * 原地更新某个 binding 的 `BindingConfig` —— 保留 `id`、
+   * `createdAt`、`channelId` 等。返回更新后的 binding
+   *（找不到 id 则返回 null）。
    *
-   * Use this instead of `bind()` when you only need to change config
-   * fields like `accessMode` or `allowedSenderIds`. `bind()` evicts and
-   * re-creates with a fresh UUID, which silently rotates the binding id
-   * and breaks anything keyed on it (audit logs, deep links, stale UI
-   * closures).
+   * 当你只需要改 `accessMode` 或 `allowedSenderIds` 这类 config 字段时，
+   * 用这个而不是 `bind()`。`bind()` 会踢掉并以一个新 UUID 重建，
+   * 这会悄悄轮换 binding id，进而破坏所有以它为键的东西
+   *（审计日志、深链、陈旧的 UI 闭包）。
    */
   updateBindingConfig(bindingId: string, patch: Partial<ChannelBinding['config']>): ChannelBinding | null {
     const binding = this.bindings.find((b) => b.id === bindingId)
@@ -214,7 +211,7 @@ export class BindingStore {
   }
 
   // -------------------------------------------------------------------------
-  // Persistence
+  // 持久化
   // -------------------------------------------------------------------------
 
   private migrateLegacy(legacyDir?: string): void {
@@ -267,9 +264,8 @@ export class BindingStore {
         mkdirSync(this.dirPath, { recursive: true })
       }
       writeFileSync(this.filePath, JSON.stringify(this.bindings, null, 2), 'utf-8')
-      // Fire the listener only after the write succeeds — otherwise the UI
-      // shows a "binding added" event for state that will disappear on
-      // restart.
+      // 只在写盘成功后才触发 listener —— 否则 UI 会为一个重启后就会消失的状态
+      // 弹出「binding 已添加」事件。
       this.changeListener?.()
     } catch (err) {
       this.log.error('failed to save bindings store', {
@@ -282,7 +278,7 @@ export class BindingStore {
 }
 
 // ---------------------------------------------------------------------------
-// Migration helpers
+// 迁移辅助函数
 // ---------------------------------------------------------------------------
 
 function normalizeBinding(raw: ChannelBinding): ChannelBinding {

@@ -1,34 +1,32 @@
 /**
- * PairingCodeManager — issues and validates one-time pairing codes.
+ * PairingCodeManager —— 签发并校验一次性配对码。
  *
- * Codes are 6-digit, 5-minute TTL, in-memory only (never persisted).
- * Rate-limited per workspace (default: 10 codes/minute) to prevent brute-force
- * enumeration if a bot token ever leaks.
+ * 配对码为 6 位数字、5 分钟 TTL、仅存内存（从不持久化）。
+ * 按 workspace 限速（默认：10 次/分钟），防止 bot token 一旦泄露后被暴力枚举。
  *
- * Consumption is atomic: consume() returns the entry exactly once, then deletes
- * it. A wrong code does not count against the issuing rate limit (consume is
- * called by incoming chat messages which are their own side-channel).
+ * 消费是原子的：consume() 恰好返回一次条目，然后删除它。
+ * 输错码不会计入签发侧的限速（consume 由入站聊天消息触发，
+ * 那本身就是一个独立的带外信道）。
  */
 
 import { randomInt } from 'node:crypto'
 import type { PlatformType } from './types'
 
 /**
- * Pairing-code intent.
+ * 配对码意图。
  *
- * - `session`: classic flow — typing `/pair <code>` in a chat binds that
- *   chat (DM, or a Telegram supergroup topic) to the originating session.
- * - `workspace-supergroup`: workspace-level setup — typing `/pair <code>`
- *   in a Telegram supergroup registers that supergroup as the workspace's
- *   accepted forum, after which sessions can be bound to specific topics
- *   inside it. The `sessionId` field is unused for this kind.
+ * - `session`：经典流程 —— 在一个聊天里输入 `/pair <code>`，把该聊天
+ *  （DM，或 Telegram 超级群话题）绑定到发起配对的 session。
+ * - `workspace-supergroup`：workspace 级别设置 —— 在一个 Telegram 超级群里
+ *   输入 `/pair <code>`，把该超级群注册为 workspace 接受的论坛，
+ *   之后 session 可以绑定到其中特定的话题。这种类型下 `sessionId` 字段不用。
  */
 export type PairingKind = 'session' | 'workspace-supergroup'
 
 export interface PairingEntry {
   kind: PairingKind
   workspaceId: string
-  /** Only set for `kind: 'session'`. */
+  /** 仅当 `kind: 'session'` 时设置。 */
   sessionId?: string
   platform: PlatformType
   code: string
@@ -43,10 +41,9 @@ export interface GeneratedPairing {
 export const PAIRING_TTL_MS = 5 * 60 * 1000
 export const PAIRING_RATE_LIMIT_PER_MINUTE = 10
 /**
- * Per-sender ceiling on `/pair` attempts. With a 6-digit decimal code and a
- * 5-minute TTL, a brute-force needs on the order of 500k attempts per target
- * code. 5/minute × 5 minutes = 25 tries across the TTL — a ~25/1,000,000
- * upper bound. That's defence-in-depth; the real guarantee is the short TTL.
+ * 每个发送方对 `/pair` 尝试的上限。一个 6 位十进制配对码配合 5 分钟 TTL，
+ * 暴力破解需要约 50 万次尝试。5 次/分钟 × 5 分钟 = TTL 内 25 次尝试 ——
+ * 上限约 25/1,000,000。这是纵深防御；真正的保障是短 TTL。
  */
 export const PAIR_CONSUME_RATE_PER_MINUTE = 5
 
@@ -56,11 +53,11 @@ interface Bucket {
 }
 
 export class PairingCodeManager {
-  /** Key: `${platform}:${code}` */
+  /** 键：`${platform}:${code}` */
   private readonly entries = new Map<string, PairingEntry>()
-  /** Key: workspaceId */
+  /** 键：workspaceId */
   private readonly buckets = new Map<string, Bucket>()
-  /** Key: `${workspaceId}:${platform}:${senderId}` — counts attempts, right or wrong. */
+  /** 键：`${workspaceId}:${platform}:${senderId}` —— 计算尝试次数，无论对错。 */
   private readonly consumeBuckets = new Map<string, Bucket>()
 
   constructor(
@@ -70,17 +67,16 @@ export class PairingCodeManager {
   ) {}
 
   /**
-   * Issue a new pairing code.
-   * @throws Error with code 'RATE_LIMIT' when the workspace exceeds the per-minute cap.
+   * 签发一个新的配对码。
+   * @throws 当 workspace 超过每分钟上限时抛出 code 为 'RATE_LIMIT' 的 Error。
    */
   generate(workspaceId: string, sessionId: string, platform: PlatformType): GeneratedPairing {
     return this.generateInternal({ kind: 'session', workspaceId, sessionId, platform })
   }
 
   /**
-   * Issue a workspace-supergroup pairing code. Used for the one-time setup
-   * flow that captures a Telegram supergroup's chat_id when the user types
-   * `/pair <code>` inside it.
+   * 签发一个 workspace-超级群配对码。用于一次性设置流程 ——
+   * 当用户在超级群里输入 `/pair <code>` 时，捕获该 Telegram 超级群的 chat_id。
    */
   generateForSupergroup(workspaceId: string, platform: PlatformType): GeneratedPairing {
     return this.generateInternal({ kind: 'workspace-supergroup', workspaceId, platform })
@@ -95,7 +91,7 @@ export class PairingCodeManager {
     this.checkRate(args.workspaceId)
     this.gc()
 
-    // Collision-resistant: retry a few times if we clash with a live code.
+    // 抗碰撞：如果与一个存活中的配对码撞了，就重试几次。
     let code = this.randomCode()
     for (let i = 0; i < 5 && this.entries.has(this.key(args.platform, code)); i++) {
       code = this.randomCode()
@@ -114,8 +110,8 @@ export class PairingCodeManager {
   }
 
   /**
-   * Consume a code. Returns the entry once then deletes it.
-   * Returns null if unknown, expired, or workspace does not match.
+   * 消费一个配对码。返回一次条目后删除。
+   * 未知、过期或 workspace 不匹配时返回 null。
    */
   consume(workspaceId: string, platform: PlatformType, code: string): PairingEntry | null {
     const entry = this.entries.get(this.key(platform, code))
@@ -129,7 +125,7 @@ export class PairingCodeManager {
     return entry
   }
 
-  /** Invalidate all codes for a workspace. Used on platform disconnect. */
+  /** 作废某个 workspace 的所有配对码。平台断开时使用。 */
   clearWorkspace(workspaceId: string): void {
     for (const [k, v] of this.entries) {
       if (v.workspaceId === workspaceId) this.entries.delete(k)
@@ -137,13 +133,11 @@ export class PairingCodeManager {
   }
 
   /**
-   * Per-sender throttle for `/pair` attempts. Counts on entry, NOT after
-   * validation — otherwise wrong guesses cost nothing and the throttle is
-   * decorative. Sender identity is always scoped with workspaceId+platform
-   * so a leaked senderId can't bleed across workspaces.
+   * 针对单个发送方的 `/pair` 尝试限流。在入口处计数，而不是在校验之后 ——
+   * 否则猜错的成本为零，限流形同虚设。发送方身份始终以
+   * workspaceId+platform 作作用域，避免泄露的 senderId 跨 workspace 串扰。
    *
-   * Returns `true` if the caller may attempt another consume, `false` if
-   * they've hit the per-minute cap.
+   * 返回 `true` 表示调用方可以再尝试一次 consume，`false` 表示已到每分钟上限。
    */
   canConsume(workspaceId: string, platform: PlatformType, senderId: string): boolean {
     const key = `${workspaceId}:${platform}:${senderId}`
@@ -165,7 +159,7 @@ export class PairingCodeManager {
   }
 
   private randomCode(): string {
-    // 6 decimal digits, zero-padded
+    // 6 位十进制数字，前补零
     return randomInt(0, 1_000_000).toString().padStart(6, '0')
   }
 
@@ -184,7 +178,7 @@ export class PairingCodeManager {
     bucket.count += 1
   }
 
-  /** Purge expired entries. O(n) but n is tiny (per-workspace, 5-min window). */
+  /** 清除过期条目。O(n)，但 n 很小（每个 workspace、5 分钟窗口）。 */
   private gc(): void {
     const now = Date.now()
     for (const [k, v] of this.entries) {

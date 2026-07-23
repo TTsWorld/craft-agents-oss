@@ -1,17 +1,14 @@
 #!/usr/bin/env node
 /**
- * Pi Agent Server
+ * Pi Agent Server —— 通过 stdio JSONL 与主进程通信的进程外 Pi agent 服务。
  *
- * Out-of-process Pi agent server communicating via JSONL over stdio.
- * Wraps @earendil-works/pi-coding-agent SDK and communicates with the main
- * Electron process using a line-delimited JSON protocol.
+ * 封装 @earendil-works/pi-coding-agent SDK，用行分隔 JSON 协议与
+ * Electron 主进程通信。
  *
- * The main process spawns this as a child process. All Pi SDK interactions
- * (session creation, prompting, tool execution, permissions) happen here,
- * with events forwarded back to the main process for UI rendering.
+ * 主进程把它作为子进程拉起。所有 Pi SDK 交互（会话创建、提示、工具执行、权限）
+ * 都在这里完成，事件回传给主进程以渲染 UI。
  *
- * This design isolates the Pi SDK's ESM + heavy dependencies into a
- * separate process, avoiding bundling issues in the Electron main process.
+ * 这种设计把 Pi SDK 的 ESM + 重依赖隔离到独立进程，避免 Electron 主进程的打包问题。
  */
 
 import http from 'node:http';
@@ -46,16 +43,15 @@ import type {
 // Pi AI types
 import type { TextContent as PiTextContent } from '@earendil-works/pi-ai';
 
-// Pre-register the Bedrock provider module so the Pi SDK doesn't attempt a
-// dynamic import of "./amazon-bedrock.js" — which fails in the bundled output
-// because bun collapses everything into a single file.
-// pi-ai is deduped (single hoisted copy), so one registration covers both
-// pi-ai and pi-agent-core module scopes.
+// 预注册 Bedrock provider 模块，避免 Pi SDK 在打包产物里动态 import
+// "./amazon-bedrock.js"——bun 把所有东西打进单文件后这会失败。
+// pi-ai 已去重（单一提升副本），所以一次注册就能覆盖 pi-ai 和
+// pi-agent-core 两个模块作用域。
 import { setBedrockProviderModule } from '@earendil-works/pi-ai/api/bedrock-converse-stream.lazy';
 import { bedrockProviderModule } from '@earendil-works/pi-ai/bedrock-provider';
 setBedrockProviderModule(bedrockProviderModule);
 
-// Model resolution (extracted for testability + custom-endpoint precedence)
+// 模型解析（抽离出来便于测试 + 自定义 endpoint 优先级）
 import { resolvePiModel, isDeniedMiniModelId, isModelNotFoundError } from './model-resolution.ts';
 import { pickProviderAppropriateMiniModel } from './pick-mini-model.ts';
 import {
@@ -66,7 +62,7 @@ import {
   type CustomEndpointModelOverrides,
 } from './custom-endpoint-models.ts';
 
-// Direct source imports from shared (bundled by bun build)
+// 从 shared 直接导入源码（由 bun build 打包）
 import { handleLargeResponse, estimateTokens, tokenLimitFor } from '../../shared/src/utils/large-response.ts';
 import { getSessionPlansPath, getSessionPath } from '../../shared/src/sessions/storage.ts';
 import { buildCallLlmRequest, withTimeout, LLM_QUERY_TIMEOUT_MS } from '../../shared/src/agent/llm-tool.ts';
@@ -80,19 +76,19 @@ import { allowCraftMetadataProperties, stripCraftMetadata } from './craft-metada
 import { applySystemPromptOverride } from './system-prompt-override.ts';
 
 // ============================================================
-// Types — JSONL Protocol
+// 类型 —— JSONL 协议
 // ============================================================
 
-/** Credential union used in init and token_update messages */
+/** init 和 token_update 消息里使用的凭证联合类型 */
 type PiCredential =
   | { type: 'api_key'; key: string }
   | { type: 'oauth'; access: string; refresh: string; expires: number }
   | { type: 'iam'; accessKeyId: string; secretAccessKey: string; region?: string; sessionToken?: string };
 
-/** Custom endpoint protocol — determines which streaming adapter Pi SDK uses */
+/** 自定义 endpoint 协议——决定 Pi SDK 使用哪个流式适配器 */
 type CustomEndpointApi = 'openai-completions' | 'anthropic-messages';
 
-/** Init message from main process — configures the Pi agent server */
+/** 来自主进程的 init 消息——配置 Pi agent server */
 interface InitMessage {
   type: 'init';
   apiKey: string;
@@ -129,7 +125,7 @@ interface RuntimeConfigUpdateMessage {
   customModels?: Array<string | { id: string; contextWindow?: number; supportsImages?: boolean }>;
 }
 
-/** Messages from main process (stdin) */
+/** 来自主进程的消息（stdin） */
 type InboundMessage =
   | InitMessage
   | { type: 'prompt'; id: string; message: string; systemPrompt: string; images?: Array<{ type: 'image'; data: string; mimeType: string }> }
@@ -149,14 +145,14 @@ type InboundMessage =
   | { type: 'token_update'; piAuth: { provider: string; credential: PiCredential } }
   | { type: 'shutdown' };
 
-/** Proxy tool definition from main process */
+/** 来自主进程的代理工具定义 */
 interface ProxyToolDef {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
 }
 
-/** Canonical tool metadata propagated on Pi tool start events */
+/** 在 Pi 工具开始事件里透传的规范化工具元数据 */
 interface ToolExecutionMetadata {
   intent?: string;
   displayName?: string;
@@ -169,7 +165,7 @@ type EnrichedToolExecutionStartEvent = Extract<AgentSessionEvent, { type: 'tool_
 
 type OutboundAgentEvent = AgentSessionEvent | EnrichedToolExecutionStartEvent;
 
-/** Messages to main process (stdout) */
+/** 发往主进程的消息（stdout） */
 interface OutboundReady { type: 'ready'; sessionId: string | null; callbackPort: number }
 interface OutboundEvent { type: 'event'; event: OutboundAgentEvent }
 interface OutboundPreToolUseReq {
@@ -188,8 +184,8 @@ interface OutboundLlmQueryResult {
   result: LLMQueryResult | null;
   errorMessage?: string;
   /**
-   * When set, signals the main process that a generic `error` with the same code
-   * was also emitted on the error channel (for centralized auth-refresh detection).
+   * 设置后，向主进程表明同一 code 的通用 `error` 也已发到 error 通道
+   * （用于集中式的鉴权刷新检测）。
    */
   errorCode?: string;
 }
@@ -234,7 +230,7 @@ type OutboundMessage =
   | OutboundError;
 
 // ============================================================
-// State
+// 状态
 // ============================================================
 
 let piSession: AgentSession | null = null;
@@ -242,26 +238,26 @@ let piModelRegistry: PiModelRegistry | null = null;
 let moduleAuthStorage: PiAuthStorage | null = null;
 let unsubscribeEvents: (() => void) | null = null;
 
-// Init config (set on 'init' message)
+// init 配置（收到 'init' 消息时设置）
 let initConfig: Extract<InboundMessage, { type: 'init' }> | null = null;
 
-// Mutable state
+// 可变状态
 let currentUserMessage = '';
 
-// Pending promises for async handshakes
+// 异步握手的待处理 Promise
 const pendingPreToolUse = new Map<string, { resolve: (response: { action: string; input?: Record<string, unknown>; reason?: string }) => void }>();
 const pendingToolExecutions = new Map<string, { resolve: (result: { content: string; isError: boolean }) => void }>();
 
-// Pending session MCP tool calls for completion detection
+// 用于完成检测的待处理 session MCP 工具调用
 const pendingSessionToolCalls = new Map<string, { toolName: string; arguments: Record<string, unknown> }>();
 
-// Proxy tool definitions from main process
+// 来自主进程的代理工具定义
 let proxyToolDefs: ProxyToolDef[] = [];
 
-// Speculative prefetch for read-only tools (enables parallel execution despite Pi SDK's sequential loop).
-// When the LLM emits multiple call_llm tool calls in a single message, we fire all requests
-// to the main process in parallel on message_end (before executeToolCalls iterates sequentially).
-// Each proxy tool's execute() then hits the cache instead of sending a new request.
+// 只读工具的投机性预取（让 Pi SDK 顺序循环下也能并行执行）。
+// 当 LLM 在单条消息里发出多个 call_llm 工具调用时，我们在 message_end 就并行向
+// 主进程发出所有请求（早于 executeToolCalls 的顺序遍历）。
+// 之后每个代理工具的 execute() 直接命中缓存，不再发新请求。
 const PREFETCHABLE_TOOLS = new Set(['call_llm']);
 const prefetchCache = new Map<string, Promise<{ content: string; isError: boolean }>>();
 
@@ -270,15 +266,15 @@ function isPrefetchableTool(toolName: string): boolean {
   return PREFETCHABLE_TOOLS.has(stripped);
 }
 
-// Flag: proxy tools changed since last session creation — session needs recreation
+// 标记：自上次创建会话以来代理工具发生了变化——会话需要重建
 let toolsChanged = false;
 
-// Callback server for call_llm
+// call_llm 的回调服务器
 let callbackServer: http.Server | null = null;
 let callbackPort = 0;
 
 // ============================================================
-// JSONL I/O
+// JSONL 输入输出
 // ============================================================
 
 function send(msg: OutboundMessage): void {
@@ -287,11 +283,11 @@ function send(msg: OutboundMessage): void {
 }
 
 function debugLog(message: string): void {
-  // Write debug messages to stderr so they don't interfere with JSONL protocol
+  // 把调试信息写到 stderr，避免干扰 JSONL 协议
   process.stderr.write(`[pi-server] ${message}\n`);
 }
 
-/** Find the most recent .jsonl session file in a directory. */
+/** 在目录里查找最近修改的 .jsonl 会话文件。 */
 function findMostRecentSessionFile(sessionDir: string): string | null {
   if (!existsSync(sessionDir)) return null;
   let best: { path: string; mtime: number } | null = null;
@@ -307,7 +303,7 @@ function findMostRecentSessionFile(sessionDir: string): string | null {
 }
 
 // ============================================================
-// Callback Server (for call_llm from session MCP server)
+// 回调服务器（供 session MCP server 的 call_llm 使用）
 // ============================================================
 
 async function startCallbackServer(): Promise<void> {
@@ -358,7 +354,7 @@ function stopCallbackServer(): void {
 }
 
 // ============================================================
-// Pi Session Management
+// Pi 会话管理
 // ============================================================
 
 function resolvedCwd(): string {
@@ -368,14 +364,14 @@ function resolvedCwd(): string {
   return wd;
 }
 
-// Helper: derive preferCustomEndpoint flag from init config
+// 辅助函数：根据 init 配置推导 preferCustomEndpoint 标志
 function shouldPreferCustomEndpoint(): boolean {
   return Boolean(initConfig?.customEndpoint && initConfig?.baseUrl?.trim());
 }
 
 /**
- * Expose the active Pi model API/provider/base URL to the interceptor process.
- * This gives the interceptor a robust routing hint (instead of brittle URL-only matching).
+ * 把当前 Pi 模型的 API/provider/base URL 暴露给拦截器进程。
+ * 给拦截器一个稳健的路由线索（而非脆弱的纯 URL 匹配）。
  */
 function setInterceptorApiHints(model: { api?: string; provider?: string; baseUrl?: string } | undefined): void {
   if (!model) {
@@ -395,8 +391,8 @@ function setInterceptorApiHints(model: { api?: string; provider?: string; baseUr
 }
 
 /**
- * Resolve the API key for custom endpoint auth.
- * Returns empty string for local endpoints (Ollama etc.) that don't need auth.
+ * 解析自定义 endpoint 鉴权用的 API key。
+ * 对于不需要鉴权的本地 endpoint（Ollama 等）返回空字符串。
  */
 function resolveCustomEndpointApiKey(): string {
   if (initConfig?.piAuth?.credential?.type === 'api_key') {
@@ -405,8 +401,8 @@ function resolveCustomEndpointApiKey(): string {
   const key = initConfig?.apiKey || '';
   if (!key && initConfig?.baseUrl) {
     if (isLocalhostUrl(initConfig.baseUrl)) {
-      // Local endpoints (Ollama, LM Studio) don't need auth.
-      // Pi SDK requires a truthy apiKey to register models, so use a placeholder.
+      // 本地 endpoint（Ollama、LM Studio）不需要鉴权。
+      // Pi SDK 注册模型时要求一个真值的 apiKey，所以用占位符。
       return 'not-needed';
     }
     debugLog('[custom-endpoint] Warning: no API key found for non-localhost endpoint — requests will likely fail');
@@ -426,13 +422,13 @@ function isLocalhostUrl(url: string): boolean {
   }
 }
 
-/** Model IDs currently registered under the custom-endpoint provider */
+/** 当前注册在 custom-endpoint provider 下的 model ID */
 let customEndpointModelIds: Set<string> = new Set();
 
 /**
- * Register (or re-register) the custom-endpoint provider with the given models.
- * Note: registerProvider replaces the entire provider, so we maintain a Set of all
- * known model IDs and always pass the full set.
+ * 用给定模型注册（或重新注册）custom-endpoint provider。
+ * 注意：registerProvider 会整体替换 provider，所以我们用一个 Set 维护所有已知
+ * model ID，每次都传完整集合。
  */
 const customModelOverrides = new Map<string, CustomEndpointModelOverrides>();
 
@@ -467,26 +463,25 @@ function registerCustomEndpointModels(
 }
 
 /**
- * Create an in-memory auth storage pre-loaded with the user's credentials
- * and a model registry backed by it. Used by both the main session and
- * ephemeral queryLlm sessions.
+ * 创建一个预加载用户凭证的内存 auth storage，以及基于它的 model registry。
+ * 主会话和临时 queryLlm 会话都使用它。
  */
 function createAuthenticatedRegistry(): {
   authStorage: PiAuthStorage;
   modelRegistry: PiModelRegistry;
 } {
-  // Reuse module-level authStorage if already created (allows token_update to mutate it).
-  // Only create a new one on first call or after re-init.
+  // 复用模块级 authStorage（若已创建），以便 token_update 能修改它。
+  // 只在首次调用或 re-init 之后才新建。
   if (!moduleAuthStorage) {
     moduleAuthStorage = PiAuthStorage.inMemory();
   }
   const authStorage = moduleAuthStorage;
   if (initConfig?.piAuth) {
     const { provider, credential } = initConfig.piAuth;
-    // Pi SDK 0.70.0's AuthCredential union (ApiKeyCredential | OAuthCredential) doesn't
-    // include 'iam' as a first-class member, but the auth storage accepts it at runtime
-    // — the Bedrock provider module reads AWS env directly; this `set` keeps Pi SDK's
-    // internal provider-tracking consistent regardless of credential shape.
+    // Pi SDK 0.70.0 的 AuthCredential 联合（ApiKeyCredential | OAuthCredential）
+    // 没有把 'iam' 作为一等成员，但 auth storage 在运行时接受它——
+    // Bedrock provider 模块直接读 AWS 环境变量；这个 `set` 让 Pi SDK 内部的
+    // provider 追踪与凭证形态无关地保持一致。
     authStorage.set(provider, credential as unknown as AuthCredential);
     debugLog(`Injected ${credential.type} credential for provider: ${provider}`);
   } else if (initConfig?.apiKey) {
@@ -496,9 +491,9 @@ function createAuthenticatedRegistry(): {
 
   const modelRegistry = PiModelRegistry.inMemory(authStorage);
 
-  // Register custom endpoint models dynamically via Pi SDK's registerProvider API.
-  // This makes arbitrary OpenAI/Anthropic-compatible endpoints work through the Pi SDK
-  // by creating synthetic Model<Api> objects that the SDK requires.
+  // 通过 Pi SDK 的 registerProvider API 动态注册自定义 endpoint 模型。
+  // 这样就能让任意 OpenAI/Anthropic 兼容的 endpoint 借助合成的 Model<Api> 对象
+  // 跑通 Pi SDK。
   const hasCustomEndpoint = !!initConfig?.baseUrl?.trim();
   if (hasCustomEndpoint && initConfig?.customEndpoint) {
     const { api } = initConfig.customEndpoint;
@@ -506,7 +501,7 @@ function createAuthenticatedRegistry(): {
       ? initConfig.customModels
       : [initConfig.model || 'default']
     ).map(normalizeCustomEndpointModelEntry);
-    customEndpointModelIds = new Set();  // Reset on fresh registry creation
+    customEndpointModelIds = new Set();  // 新建注册表时重置
     registerCustomEndpointModels(modelRegistry, api, initConfig.baseUrl!.trim(), modelEntries);
   } else if (hasCustomEndpoint && !initConfig?.customEndpoint) {
     debugLog('Custom endpoint without protocol config — models may not resolve. Set customEndpoint.api for proper routing.');
@@ -522,18 +517,17 @@ async function ensureSession(): Promise<AgentSession> {
   const cwd = resolvedCwd();
 
   const { authStorage, modelRegistry } = createAuthenticatedRegistry();
-  // Store at module scope for set_model handler
+  // 存到模块作用域，供 set_model handler 使用
   piModelRegistry = modelRegistry;
 
-  // Build tools: coding tools + web tools wrapped with permission hooks + proxy tools.
-  // Search provider is selected based on the user's LLM connection:
-  //   - OpenAI/OpenRouter → Responses API built-in web_search
-  //   - ChatGPT Plus (openai-codex) → ChatGPT backend responses endpoint
-  //   - Google → Gemini API with googleSearch grounding
-  //   - Others → DuckDuckGo fallback
+  // 构建工具：编码工具 + 带权限钩子的 web 工具 + 代理工具。
+  // 搜索 provider 按用户的 LLM 连接选择：
+  //   - OpenAI/OpenRouter → Responses API 内置的 web_search
+  //   - ChatGPT Plus (openai-codex) → ChatGPT 后端 responses endpoint
+  //   - Google → 带 googleSearch grounding 的 Gemini API
+  //   - 其他 → DuckDuckGo 兜底
   //
-  // IMPORTANT: resolve dynamically on each search call so token_update refreshes
-  // are used without recreating the session.
+  // 重要：每次搜索调用都动态解析，这样 token_update 刷新无需重建会话即可生效。
   const searchProvider = {
     get name() {
       return resolveSearchProvider(initConfig?.piAuth).name;
@@ -548,15 +542,14 @@ async function ensureSession(): Promise<AgentSession> {
   );
   const webTools = [searchTool, webFetchTool];
 
-  // Pi SDK 0.70.0 registration contract:
-  //   - `customTools` accepts ToolDefinition[] — our hook-wrapped objects go here
-  //   - `tools` is a string[] name allowlist — MUST include every tool we want active,
-  //     otherwise Pi SDK defaults to the built-in [read, bash, edit, write] set and
-  //     silently filters out everything else. Custom tool names with matching built-in
-  //     names override the SDK's raw implementation inside _refreshToolRegistry, so
-  //     our hooked versions take effect (permissions + large-response summarization).
-  //   - Do NOT pass tool *objects* to `tools` — `allowedToolNames = new Set(options.tools)`
-  //     then `.has(name)` returns false for every string lookup → zero tools active.
+  // Pi SDK 0.70.0 注册契约：
+  //   - `customTools` 接受 ToolDefinition[]——我们包了钩子的工具对象放这里
+  //   - `tools` 是 string[] 名字白名单——必须包含每一个想启用的工具，
+  //     否则 Pi SDK 会默认使用内置的 [read, bash, edit, write] 集合并静默过滤掉其他。
+  //     名字与内置工具同名的自定义工具会在 _refreshToolRegistry 里覆盖 SDK 的原始实现，
+  //     于是我们的钩子版本（权限 + 大响应摘要）生效。
+  //   - 不要把工具*对象*传给 `tools`——`allowedToolNames = new Set(options.tools)`
+  //     之后对每个字符串 `.has(name)` 都返回 false → 一个工具都不会启用。
   const builtinDefs = [
     createReadToolDefinition(cwd),
     createBashToolDefinition(cwd),
@@ -571,7 +564,7 @@ async function ensureSession(): Promise<AgentSession> {
   const toolAllowlist = wrappedAll.map(t => t.name);
   debugLog(`Session tools: ${builtinDefs.length} builtin + ${webTools.length} web + ${proxyTools.length} proxy = ${wrappedAll.length} total`);
 
-  // Build session options
+  // 构建会话选项
   const sessionOptions: CreateAgentSessionOptions = {
     cwd,
     authStorage,
@@ -580,23 +573,23 @@ async function ensureSession(): Promise<AgentSession> {
     tools: toolAllowlist,
   };
 
-  // Extension isolation: set agentDir to a temp directory under session path
-  // to prevent loading global Pi extensions from ~/.pi/agent
+  // 扩展隔离：把 agentDir 设为会话路径下的临时目录，
+  // 防止从 ~/.pi/agent 加载全局 Pi 扩展
   if (initConfig.sessionPath) {
     const agentDir = initConfig.agentDir || join(initConfig.sessionPath, '.pi-agent');
     mkdirSync(agentDir, { recursive: true });
     sessionOptions.agentDir = agentDir;
 
-    // Session resume: use a per-Craft-session directory so the Pi SDK can
-    // persist and resume its own session across subprocess restarts.
-    // continueRecent() loads the existing session if one exists, otherwise
-    // creates a new one — so this handles both first-run and resume.
+    // 会话恢复：使用每个 Craft 会话独立的目录，让 Pi SDK 能在子进程重启后
+    // 持久化并恢复自己的会话。
+    // continueRecent() 会加载已存在的会话，不存在则新建——
+    // 所以首启和恢复两种场景都覆盖了。
     const sessionDir = join(initConfig.sessionPath, '.pi-sessions');
     mkdirSync(sessionDir, { recursive: true });
 
     if (initConfig.branchFromSessionPath) {
-      // Branching: fork from the parent session's Pi session file.
-      // Branches must not silently degrade to fresh sessions.
+      // 分支：从父会话的 Pi 会话文件 fork 出来。
+      // 分支绝不能静默退化为全新会话。
       const parentPiSessionDir = join(initConfig.branchFromSessionPath, '.pi-sessions');
       const parentPiSessionFile = findMostRecentSessionFile(parentPiSessionDir);
       if (!parentPiSessionFile) {
@@ -606,8 +599,8 @@ async function ensureSession(): Promise<AgentSession> {
       debugLog(`Forking Pi session from parent: ${parentPiSessionFile}`);
       const forkedSessionManager = PiSessionManager.forkFrom(parentPiSessionFile, cwd, sessionDir);
 
-      // Strict branch cutoff: move leaf to the selected parent entry if provided.
-      // This is Pi's equivalent of Claude resumeSessionAt.
+      // 严格分支截断：若提供了父条目，则把叶子移动到选中的父条目。
+      // 这是 Pi 里等价于 Claude resumeSessionAt 的实现。
       if (initConfig.branchFromSdkTurnId) {
         const anchorId = initConfig.branchFromSdkTurnId;
         const anchorEntry = forkedSessionManager.getEntry(anchorId);
@@ -625,14 +618,14 @@ async function ensureSession(): Promise<AgentSession> {
 
   }
 
-  // Set model if specified
+  // 指定时设置模型
   if (initConfig.model) {
     try {
       const piModel = resolvePiModel(modelRegistry, initConfig.model, initConfig.piAuth?.provider, shouldPreferCustomEndpoint());
       if (piModel) {
-        // Verify resolved model's provider is compatible with the authenticated provider.
-        // Without this, a model that resolves to a different provider (e.g. azure-openai-responses
-        // when authed as github-copilot) would cause "No API key found" at runtime.
+        // 校验解析出的模型 provider 与已鉴权 provider 是否兼容。
+        // 没有这层校验，解析到不同 provider 的模型（例如以 github-copilot 鉴权时
+        // 却解析到 azure-openai-responses）会在运行时报 "No API key found"。
         const resolvedProvider = (piModel as any)?.provider;
         const isCompatible = !initConfig.piAuth ||
           resolvedProvider === initConfig.piAuth.provider ||
@@ -655,20 +648,20 @@ async function ensureSession(): Promise<AgentSession> {
     setInterceptorApiHints(undefined);
   }
 
-  // Set thinking level
+  // 设置 thinking 级别
   const piThinkingLevel = THINKING_TO_PI[initConfig.thinkingLevel as keyof typeof THINKING_TO_PI];
   if (piThinkingLevel) {
     sessionOptions.thinkingLevel = piThinkingLevel;
   }
 
-  // Create the session — tools flow through customTools + allowlist (see comment above).
+  // 创建会话——工具通过 customTools + 白名单传递（见上方注释）。
   const { session } = await createAgentSession(sessionOptions);
   piSession = session;
 
   toolsChanged = false;
   debugLog(`Created Pi session: ${session.sessionId} (${wrappedAll.length} tools)`);
 
-  // Notify main process of session ID
+  // 通知主进程会话 ID
   send({ type: 'session_id_update', sessionId: session.sessionId });
 
   return session;
@@ -676,18 +669,17 @@ async function ensureSession(): Promise<AgentSession> {
 
 
 // ============================================================
-// Tool Wrapping (Permission Enforcement + Large Response Summarization)
+// 工具包装（权限校验 + 大响应摘要）
 // ============================================================
 
 /**
- * Shared permission enforcement for both coding tools and proxy tools.
- * Checks mode-manager rules and, in Ask mode, prompts the user via the
- * pending-permissions handshake. Throws on deny or block.
+ * 编码工具和代理工具共享的权限校验。
+ * 检查 mode-manager 规则，Ask 模式下通过待处理权限握手提示用户。拒绝或拦截时抛错。
  */
 /**
- * Send pre_tool_use_request to main process and wait for response.
- * Returns the (potentially modified) input if approved, throws if blocked.
- * All permission checking, transforms, and source activation happen in the main process.
+ * 向主进程发送 pre_tool_use_request 并等待响应。
+ * 批准时返回（可能被修改过的）input，拦截时抛错。
+ * 所有权限检查、变换、source 激活都在主进程里完成。
  */
 async function requestPreToolUseApproval(
   sdkToolName: string,
@@ -740,36 +732,35 @@ function wrapSingleTool(tool: ToolDefinition<any, any>): ToolDefinition<any, any
     const sdkToolName = PI_TOOL_NAME_MAP[tool.name] || tool.name;
     let inputObj: Record<string, unknown> = { ...(params as Record<string, unknown>) };
 
-    // Extract intent before main process strips metadata (used for summarization)
+    // 在主进程剥除元数据前先提取 intent（用于摘要）
     const intent = typeof inputObj._intent === 'string' ? inputObj._intent : undefined;
 
-    // Normalize Pi SDK parameter names: path → file_path
+    // 归一化 Pi SDK 参数名：path → file_path
     if ((sdkToolName === 'Write' || sdkToolName === 'Edit' || sdkToolName === 'MultiEdit' || sdkToolName === 'NotebookEdit')
         && typeof inputObj.path === 'string' && !inputObj.file_path) {
       inputObj = { ...inputObj, file_path: inputObj.path };
     }
 
-    // Send to main process for permission checking + transforms
+    // 发给主进程做权限检查 + 变换
     inputObj = await requestPreToolUseApproval(sdkToolName, inputObj, toolCallId);
 
-    // Metadata is for Craft UI only. Keep a final defensive strip here so the
-    // upstream Pi tool implementation always receives clean executable args,
-    // even if a future pre-tool-use path returns `allow` without modification.
+    // 元数据仅供 Craft UI 使用。这里再做一次防御性剥除，确保上游 Pi 工具实现
+    // 总能收到干净的可执行参数，即便未来某条 pre-tool-use 路径在 `allow` 时
+    // 不做修改也能兜住。
     inputObj = stripCraftMetadata(inputObj);
 
-    // Execute original tool with (potentially modified) input
+    // 用（可能被修改过的）input 执行原始工具
     const result = await originalExecute(toolCallId, inputObj, signal, onUpdate, ctx);
 
-    // --- Post-execute: large response summarization ---
+    // --- 执行后：大响应摘要 ---
 
     const resultText = result.content
       .filter((c): c is PiTextContent => c.type === 'text')
       .map(c => c.text)
       .join('');
 
-    // Source the active model's contextWindow each call so the threshold
-    // tracks set_model mid-session, not the model that was active at session
-    // creation. Falls back to the fixed default when the model isn't set yet.
+    // 每次调用都取当前模型的 contextWindow，让阈值随会话中的 set_model 动态变化，
+    // 而不是锁定在创建会话时的模型。模型尚未设置时回退到固定默认值。
     const modelContextWindow = piSession?.agent.state.model?.contextWindow;
     if (estimateTokens(resultText) > tokenLimitFor(modelContextWindow) && initConfig) {
       try {
@@ -815,7 +806,7 @@ function wrapSingleTool(tool: ToolDefinition<any, any>): ToolDefinition<any, any
 }
 
 // ============================================================
-// Proxy Tools (tools executed in main process)
+// 代理工具（在主进程中执行的工具）
 // ============================================================
 
 function buildProxyTools(): ToolDefinition<any, any>[] {
@@ -828,9 +819,9 @@ function buildProxyTools(): ToolDefinition<any, any>[] {
       .replace(/_/g, ' ')
       .replace(/([a-z])([A-Z])/g, '$1 $2'),
     description: def.description,
-    // Pi SDK omits tools without promptSnippet from the system prompt's
-    // "Available tools" section, making them invisible to the LLM.
-    // Derive a snippet from the description so proxy tools are listed.
+    // Pi SDK 会把没有 promptSnippet 的工具从 system prompt 的
+    // "Available tools" 段落里省略，导致 LLM 看不到它们。
+    // 从 description 派生一个 snippet，让代理工具能被列出。
     promptSnippet: def.description.length > 200
       ? def.description.slice(0, 197) + '...'
       : def.description,
@@ -839,9 +830,9 @@ function buildProxyTools(): ToolDefinition<any, any>[] {
       toolCallId: string,
       params: any,
     ): Promise<AgentToolResult<any>> => {
-      // Check speculative prefetch cache first (parallel call_llm optimization).
-      // If this tool was prefetched on message_end, the request is already in-flight —
-      // just await the result instead of sending a duplicate request.
+      // 先查投机预取缓存（call_llm 并行优化）。
+      // 如果该工具在 message_end 已被预取，请求已在途——直接 await 结果即可，
+      // 不必再发重复请求。
       const prefetched = prefetchCache.get(toolCallId);
       if (prefetched) {
         prefetchCache.delete(toolCallId);
@@ -855,10 +846,10 @@ function buildProxyTools(): ToolDefinition<any, any>[] {
 
       const inputObj = params as Record<string, unknown>;
 
-      // Permission checking via main process
+      // 通过主进程做权限检查
       const approvedInput = await requestPreToolUseApproval(def.name, inputObj, toolCallId);
 
-      // Execute via main process
+      // 通过主进程执行
       const requestId = `proxy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       send({
@@ -881,7 +872,7 @@ function buildProxyTools(): ToolDefinition<any, any>[] {
 }
 
 // ============================================================
-// LLM Query (ephemeral session for call_llm + mini completions)
+// LLM 查询（用于 call_llm + mini 补全的临时会话）
 // ============================================================
 
 async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
@@ -889,21 +880,20 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
 
   debugLog('[queryLlm] Starting');
 
-  // Pick mini model. If the configured miniModel uses a different provider than
-  // what the user authenticated with (e.g. gemini-2.5-pro when only anthropic
-  // credentials exist), fall back to the default summarization model which uses
-  // the same provider family.
+  // 选 mini 模型。如果配置的 miniModel 用的 provider 与用户鉴权的 provider 不同
+  // （例如只有 anthropic 凭证却配了 gemini-2.5-pro），则回退到默认摘要模型——
+  // 它用的是同一 provider 家族。
   let model = request.model ?? initConfig.miniModel ?? getDefaultSummarizationModel();
 
-  // Create authenticated registry upfront — used by both the provider guard and the ephemeral session.
+  // 提前创建带鉴权的注册表——provider 守卫和临时会话都会用到它。
   const { authStorage, modelRegistry } = createAuthenticatedRegistry();
 
   const piAuthProvider = initConfig.piAuth?.provider;
 
-  // If piAuth is set, ensure the mini model uses the same provider.
-  // Pi SDK will fail with "No API key found" if the model requires a different provider.
-  // Exception: 'custom-endpoint' provider is always compatible because it has its own
-  // API key configured via resolveCustomEndpointApiKey() and doesn't use authStorage.
+  // piAuth 已设置时，确保 mini 模型用同一 provider。
+  // 模型若需要不同 provider，Pi SDK 会报 "No API key found"。
+  // 例外：'custom-endpoint' provider 永远兼容，因为它通过 resolveCustomEndpointApiKey()
+  // 配了自己的 API key，不走 authStorage。
   if (initConfig.piAuth) {
     const authProvider = initConfig.piAuth.provider;
     const bareModel = model.startsWith('pi/') ? model.slice(3) : model;
@@ -911,9 +901,8 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
     const resolvedProvider = (resolved as any)?.provider;
     const isCompatible = resolvedProvider === authProvider || resolvedProvider === 'custom-endpoint';
     if (!resolved || !isCompatible || isDeniedMiniModelId(model, piAuthProvider)) {
-      // Anthropic: keep Haiku (the cheap/fast mini). For every other provider
-      // Haiku is unresolvable, so walk PI_PREFERRED_DEFAULTS for a model that
-      // actually works under the user's auth.
+      // Anthropic：保留 Haiku（便宜/快的 mini）。其他 provider 下 Haiku 无法解析，
+      // 所以遍历 PI_PREFERRED_DEFAULTS 找一个在用户鉴权下真能用的模型。
       const providerDefault = authProvider === 'anthropic'
         ? undefined
         : pickProviderAppropriateMiniModel(authProvider, modelRegistry, shouldPreferCustomEndpoint());
@@ -926,10 +915,9 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
   const runQueryWithModel = async (modelId: string): Promise<string> => {
     debugLog(`[queryLlm] Using model: ${modelId}`);
 
-    // Resolve model — fail fast if unresolvable so we don't let the Pi SDK
-    // fall back to its own internal default (which may require a provider
-    // the user hasn't authenticated with, surfacing as a misleading
-    // "No API key found for <provider>" error).
+    // 解析模型——无法解析时立刻失败，避免让 Pi SDK 回退到自己的内部默认
+    // （那可能要求一个用户没鉴权过的 provider，表现为误导性的
+    // "No API key found for <provider>" 错误）。
     const piModel = resolvePiModel(modelRegistry, modelId, initConfig!.piAuth?.provider, shouldPreferCustomEndpoint());
     if (!piModel) {
       throw new Error(
@@ -937,7 +925,7 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
       );
     }
 
-    // Create minimal ephemeral session
+    // 创建最小化临时会话
     const ephemeralOptions: CreateAgentSessionOptions = {
       cwd: resolvedCwd(),
       authStorage,
@@ -949,8 +937,8 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
 
     const { session: ephemeralSession } = await createAgentSession(ephemeralOptions);
 
-    // Pi SDK ignores options.model for ephemeral sessions (same issue as options.tools).
-    // Explicitly set the model after creation to ensure the mini model is used.
+    // Pi SDK 对临时会话会忽略 options.model（与 options.tools 同一问题）。
+    // 创建后显式设置模型，确保用的是 mini 模型。
     try {
       await ephemeralSession.setModel(piModel);
     } catch {
@@ -959,13 +947,13 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
 
     debugLog(`[queryLlm] Created ephemeral session: ${ephemeralSession.sessionId}`);
 
-    // Force the system prompt — see system-prompt-override.ts for why direct
-    // assignment to `state.systemPrompt` doesn't survive `session.prompt()`.
+    // 强制设置 system prompt——直接赋值给 `state.systemPrompt` 无法在
+    // `session.prompt()` 后存活，原因见 system-prompt-override.ts。
     const promptForSession =
       request.systemPrompt ?? 'Reply with ONLY the requested text. No explanation.';
     applySystemPromptOverride(ephemeralSession, promptForSession);
 
-    // Collect response text and errors from events
+    // 从事件中收集响应文本和错误
     let result = '';
     let lastError = '';
     let completionResolve: () => void;
@@ -975,7 +963,7 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
 
     const unsub = ephemeralSession.subscribe((event: AgentSessionEvent) => {
       if (event.type === 'message_end') {
-        // Only capture assistant messages — Pi SDK emits message_end for user messages too
+        // 只捕获 assistant 消息——Pi SDK 对 user 消息也会发 message_end
         const msg = event.message as {
           role?: string;
           content?: string | Array<{ type: string; text?: string }>;
@@ -984,7 +972,7 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
         };
         if (msg.role !== 'assistant') return;
 
-        // Capture API errors from message_end (e.g. auth failures, model errors)
+        // 从 message_end 捕获 API 错误（例如鉴权失败、模型错误）
         if (msg.stopReason === 'error' && msg.errorMessage) {
           lastError = msg.errorMessage;
           debugLog(`[queryLlm] API error in message_end: ${msg.errorMessage}`);
@@ -1013,7 +1001,7 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
       );
       debugLog(`[queryLlm] Result length: ${result.trim().length}`);
 
-      // If we got no text but captured an error, throw so callers see the real issue
+      // 如果没拿到文本但捕获到了错误，抛出让调用方看到真正的问题
       if (!result.trim() && lastError) {
         throw new Error(lastError);
       }
@@ -1026,8 +1014,8 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
   };
 
   const fallbackCandidates = [
-    // Removed 'pi/gpt-5.1-codex-mini' (#596) — stale on several OpenAI catalogs.
-    // The connection-configured miniModel is still tried via `initConfig.miniModel`.
+    // 已移除 'pi/gpt-5.1-codex-mini'（#596）——在多个 OpenAI catalog 上已失效。
+    // 连接配置的 miniModel 仍会通过 `initConfig.miniModel` 尝试。
     'pi/gpt-5-mini',
     initConfig.miniModel,
     getDefaultSummarizationModel(),
@@ -1097,7 +1085,7 @@ async function runMiniCompletion(prompt: string): Promise<string | null> {
 }
 
 // ============================================================
-// Event Handling
+// 事件处理
 // ============================================================
 
 function extractToolExecutionMetadata(args: Record<string, unknown> | undefined): ToolExecutionMetadata | undefined {
@@ -1118,7 +1106,7 @@ function extractToolExecutionMetadata(args: Record<string, unknown> | undefined)
 function handleSessionEvent(event: AgentSessionEvent): void {
   let forwardedEvent: OutboundAgentEvent = event;
 
-  // Log API errors for debugging and attach provider-native turn anchor for branch cutoffs.
+  // 记录 API 错误用于调试，并附上 provider 原生的轮次锚点用于分支截断。
   if (event.type === 'message_end') {
     const msg = event.message as { role?: string; stopReason?: string; errorMessage?: string } | undefined;
     if (msg?.stopReason === 'error') {
@@ -1126,23 +1114,20 @@ function handleSessionEvent(event: AgentSessionEvent): void {
     }
 
     if (msg?.role === 'assistant' && piSession) {
-      // CRITICAL: do NOT read `getLeafId()` here.
+      // 关键：这里不要读 `getLeafId()`。
       //
-      // The Pi SDK fires `message_end` synchronously BEFORE calling
-      // `appendMessage(event.message)` (see `agent-session.js:_processAgentEvent`).
-      // At this moment the assistant entry does not yet exist in the
-      // SessionManager — `leafId` still points at the *previous* leaf, which for
-      // a plain text turn is the user message that triggered the response.
-      // Recording that wrong anchor and using it for `branch()` makes the next
-      // turn a sibling of the assistant message, dropping the assistant reply
-      // from the LLM's view of history (craft-agents-oss#782).
+      // Pi SDK 在调用 `appendMessage(event.message)` 之前同步触发 `message_end`
+      // （见 `agent-session.js:_processAgentEvent`）。此时 assistant 条目还没写入
+      // SessionManager——`leafId` 还指向*上一个*叶子，对纯文本轮次而言就是触发
+      // 响应的 user 消息。把这个错误的锚点记下来再用于 `branch()`，会让下一轮变成
+      // assistant 消息的兄弟节点，把 assistant 回复从 LLM 的历史视图里丢掉
+      // （craft-agents-oss#782）。
       //
-      // Instead, attach the SDK's message id to the forwarded event so the main
-      // process can correlate this turn, then queue a microtask to read the
-      // correct leaf AFTER `appendMessage` has run. The microtask drains before
-      // any subsequent SDK event is dispatched, so the follow-up
-      // `pi_turn_anchor` event is delivered to the main process in the right
-      // order (after this `message_end`, before the next event).
+      // 改为把 SDK 的 message id 附到转发事件上，让主进程能关联这一轮；
+      // 然后排队一个 microtask，在 `appendMessage` 执行后再读正确的叶子。
+      // microtask 会在后续任何 SDK 事件分发前排空，因此后续的
+      // `pi_turn_anchor` 事件会按正确顺序投递给主进程
+      // （在本条 `message_end` 之后、下一个事件之前）。
       const sdkMessageId = (msg as { id?: string }).id;
       if (sdkMessageId) {
         forwardedEvent = {
@@ -1152,8 +1137,7 @@ function handleSessionEvent(event: AgentSessionEvent): void {
 
         const sessionManagerSnapshot = piSession.sessionManager;
         queueMicrotask(() => {
-          // Defensive: session may have been disposed between the message_end
-          // emit and the microtask drain.
+          // 防御性处理：message_end 触发到 microtask 排空之间，会话可能已被释放。
           if (!piSession || piSession.sessionManager !== sessionManagerSnapshot) {
             return;
           }
@@ -1170,9 +1154,9 @@ function handleSessionEvent(event: AgentSessionEvent): void {
         });
       }
 
-      // Speculative prefetch: if the assistant message contains 2+ prefetchable tool calls,
-      // fire all requests to the main process in parallel NOW, before executeToolCalls
-      // iterates sequentially. Each proxy tool's execute() will hit the cache.
+      // 投机预取：如果 assistant 消息包含 2 个及以上可预取的工具调用，
+      // 现在就并行向主进程发出所有请求，早于 executeToolCalls 的顺序遍历。
+      // 每个代理工具的 execute() 之后会命中缓存。
       const content = (msg as { content?: Array<{ type: string; id?: string; name?: string; arguments?: unknown }> }).content;
       if (Array.isArray(content)) {
         const prefetchableToolCalls = content.filter(
@@ -1198,7 +1182,7 @@ function handleSessionEvent(event: AgentSessionEvent): void {
     }
   }
 
-  // Detect session MCP tool completions + enrich tool starts with canonical metadata
+  // 检测 session MCP 工具完成 + 给工具开始事件附上规范化元数据
   if (event.type === 'tool_execution_start') {
     const toolName = event.toolName;
     if (toolName.startsWith('session__') || toolName.startsWith('mcp__session__')) {
@@ -1231,16 +1215,16 @@ function handleSessionEvent(event: AgentSessionEvent): void {
     }
   }
 
-  // Forward all events to main process
+  // 把所有事件转发给主进程
   send({ type: 'event', event: forwardedEvent });
 }
 
 // ============================================================
-// Command Handlers
+// 命令处理器
 // ============================================================
 
 async function handleInit(msg: Extract<InboundMessage, { type: 'init' }>): Promise<void> {
-  // Clean up any existing session from a previous init
+  // 清理上一次 init 遗留的会话
   if (piSession) {
     if (unsubscribeEvents) {
       unsubscribeEvents();
@@ -1248,20 +1232,20 @@ async function handleInit(msg: Extract<InboundMessage, { type: 'init' }>): Promi
     }
     piSession.dispose();
     piSession = null;
-    moduleAuthStorage = null; // Reset so createAuthenticatedRegistry() creates fresh storage
+    moduleAuthStorage = null; // 重置，让 createAuthenticatedRegistry() 重新创建存储
     debugLog('Cleaned up existing session for re-init');
   }
 
   initConfig = msg;
 
-  // Azure OpenAI requires a tenant-specific endpoint URL.
-  // The Pi SDK (via Vercel AI SDK) reads AZURE_OPENAI_BASE_URL from env.
+  // Azure OpenAI 需要租户专属的 endpoint URL。
+  // Pi SDK（经 Vercel AI SDK）从 env 读取 AZURE_OPENAI_BASE_URL。
   if (msg.piAuth?.provider === 'azure-openai-responses' && msg.baseUrl) {
     process.env.AZURE_OPENAI_BASE_URL = msg.baseUrl;
     debugLog(`Set AZURE_OPENAI_BASE_URL=${msg.baseUrl}`);
   }
 
-  // Start callback server for call_llm (idempotent — skips if already running)
+  // 启动 call_llm 回调服务器（幂等——已运行则跳过）
   await startCallbackServer();
 
   send({
@@ -1272,12 +1256,10 @@ async function handleInit(msg: Extract<InboundMessage, { type: 'init' }>): Promi
 }
 
 /**
- * Wait for any in-flight compaction to finish before sending a prompt or
- * starting another compaction. Prevents a race in the Pi SDK where concurrent
- * _runAutoCompaction calls crash on a shared AbortController
- * (see craft-agents-oss#464). Default timeout matches the RPC compact timeout
- * in PiAgent.requestCompact (300 s), since GPT compactions can legitimately
- * take 60–120 s.
+ * 在发送 prompt 或启动另一次压缩前，等待任何进行中的压缩完成。
+ * 避免 Pi SDK 里并发 _runAutoCompaction 在共享 AbortController 上崩溃的竞态
+ * （见 craft-agents-oss#464）。默认超时与 PiAgent.requestCompact 的 RPC
+ * 压缩超时一致（300 s），因为 GPT 压缩合理情况下可能要 60–120 s。
  */
 async function waitForCompaction(session: { isCompacting: boolean }, timeoutMs = 300_000): Promise<void> {
   if (!session.isCompacting) return;
@@ -1299,9 +1281,9 @@ async function handlePrompt(msg: Extract<InboundMessage, { type: 'prompt' }>): P
   currentUserMessage = msg.message;
 
   try {
-    // If proxy tools changed since last session creation, dispose and recreate.
-    // This avoids calling _buildRuntime() for dynamic tool updates — instead
-    // we create a fresh session via continueRecent() with all tools known upfront.
+    // 若自上次创建会话以来代理工具发生了变化，则销毁并重建。
+    // 这样避免为动态工具更新去调 _buildRuntime()——而是用 continueRecent()
+    // 新建一个已知全部工具的会话。
     if (toolsChanged && piSession) {
       debugLog('Recreating session due to tool changes');
       if (unsubscribeEvents) {
@@ -1314,24 +1296,24 @@ async function handlePrompt(msg: Extract<InboundMessage, { type: 'prompt' }>): P
 
     const session = await ensureSession();
 
-    // Force the Craft-built system prompt onto the Pi session. Direct assignment
-    // to `state.systemPrompt` is wiped on every `session.prompt()` call by the Pi
-    // SDK (see system-prompt-override.ts).
+    // 把 Craft 构建的 system prompt 强制写入 Pi 会话。直接赋值给
+    // `state.systemPrompt` 会在每次 `session.prompt()` 调用时被 Pi SDK 覆盖
+    // （见 system-prompt-override.ts）。
     if (msg.systemPrompt) {
       applySystemPromptOverride(session, msg.systemPrompt);
     }
 
-    // Wire up event handler
+    // 绑定事件处理器
     if (unsubscribeEvents) {
       unsubscribeEvents();
     }
     unsubscribeEvents = session.subscribe(handleSessionEvent);
 
-    // Wait for any in-flight auto-compaction to avoid race (craft-agents-oss#464)
+    // 等待任何进行中的自动压缩，避免竞态（craft-agents-oss#464）
     await waitForCompaction(session);
 
-    // Fire prompt — use followUp when session is already streaming so the
-    // message is queued instead of throwing "Agent is already processing".
+    // 发起 prompt——会话已在流式输出时用 followUp，把消息排队，
+    // 而不是抛 "Agent is already processing"。
     await session.prompt(msg.message, {
       images: msg.images && msg.images.length > 0 ? msg.images : undefined,
       streamingBehavior: 'followUp',
@@ -1339,25 +1321,23 @@ async function handlePrompt(msg: Extract<InboundMessage, { type: 'prompt' }>): P
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
 
-    // No wrapper-side overflow recovery here. The Pi SDK's _checkCompaction
-    // already runs `_runAutoCompaction("overflow", true)` on overflow and
-    // calls agent.continue() to retry once. Running our own session.compact()
-    // in parallel raced against the SDK and is the documented cause of the
-    // AbortController crash in `_runAutoCompaction` (see
-    // plans/fix-pi-gpt-compaction.md). PiEventAdapter holds the Craft event
-    // queue open across the SDK's recovery flow so the recovered turn
-    // reaches the UI.
+    // 这里不做 wrapper 侧的溢出恢复。Pi SDK 的 _checkCompaction 已在溢出时
+    // 调用 `_runAutoCompaction("overflow", true)` 并调 agent.continue() 重试一次。
+    // 我们自己再跑 session.compact() 会与 SDK 并发竞争，这正是
+    // `_runAutoCompaction` 中 AbortController 崩溃的文档化成因（见
+    // plans/fix-pi-gpt-compaction.md）。PiEventAdapter 会在 SDK 恢复流程期间
+    // 保持 Craft 事件队列打开，让恢复后的轮次能到达 UI。
 
     debugLog(`Prompt failed: ${errorMsg}`);
     send({ type: 'error', message: errorMsg, code: 'prompt_error' });
-    // Send synthetic agent_end so the main process event queue unblocks.
-    // willRetry: false — this is the terminal error path, no retry follows.
+    // 发送合成的 agent_end，让主进程事件队列解除阻塞。
+    // willRetry: false——这是终结错误路径，不会再重试。
     send({ type: 'event', event: { type: 'agent_end', messages: [], willRetry: false } });
   }
 }
 
 function handleRegisterTools(msg: Extract<InboundMessage, { type: 'register_tools' }>): void {
-  // Merge: replace existing tools by name, add new ones
+  // 合并：按名字替换已有工具，添加新工具
   const incoming = new Map(msg.tools.map(t => [t.name, t]));
   proxyToolDefs = [
     ...proxyToolDefs.filter(t => !incoming.has(t.name)),
@@ -1365,8 +1345,8 @@ function handleRegisterTools(msg: Extract<InboundMessage, { type: 'register_tool
   ];
   debugLog(`Registered ${msg.tools.length} proxy tools (total: ${proxyToolDefs.length}): ${msg.tools.map(t => t.name).join(', ')}`);
 
-  // If session exists, mark for recreation on next prompt.
-  // Don't dispose mid-generation — the flag is checked in handlePrompt().
+  // 会话已存在时，标记下次 prompt 时重建。
+  // 不在生成中途销毁——该标志在 handlePrompt() 里检查。
   if (piSession) {
     toolsChanged = true;
     debugLog('Proxy tools changed — session will be recreated on next prompt');
@@ -1402,20 +1382,19 @@ async function handleAbort(): Promise<void> {
     }
   }
 
-  // Reject all pending pre-tool-use requests
+  // 拒绝所有待处理的 pre-tool-use 请求
   for (const [, pending] of pendingPreToolUse) {
     pending.resolve({ action: 'block', reason: 'Aborted' });
   }
   pendingPreToolUse.clear();
 
-  // Clear speculative prefetch cache — in-flight prefetches will resolve but never be consumed
+  // 清空投机预取缓存——在途的预取会 resolve 但永远不会被消费
   prefetchCache.clear();
 }
 
 async function handleMiniCompletion(msg: Extract<InboundMessage, { type: 'mini_completion' }>): Promise<void> {
-  // Call queryLlm directly (not runMiniCompletion) so auth errors propagate
-  // as 'error' messages instead of being swallowed and returned as null.
-  // runMiniCompletion is kept for the summarize callback where null is acceptable.
+  // 直接调用 queryLlm（不走 runMiniCompletion），让鉴权错误以 'error' 消息上抛，
+  // 而不是被吞掉返回 null。runMiniCompletion 保留给摘要回调，那里 null 是可接受的。
   try {
     const result = await queryLlm({ prompt: msg.prompt });
     send({ type: 'mini_completion_result', id: msg.id, text: result.text || null });
@@ -1426,10 +1405,9 @@ async function handleMiniCompletion(msg: Extract<InboundMessage, { type: 'mini_c
   }
 }
 
-// INVARIANT: the full LLMQueryRequest shape must pass through this RPC unchanged.
-// Adding a field to LLMQueryRequest? Nothing to do here — we pass `msg.request`
-// to queryLlm() verbatim. But verify queryLlm() actually honors the new field;
-// request-propagation + request-honoring are independent (see #596).
+// 不变式：完整的 LLMQueryRequest 形状必须原样通过这个 RPC。
+// 给 LLMQueryRequest 加了字段？这里不用改——我们把 `msg.request` 原样传给 queryLlm()。
+// 但要确认 queryLlm() 确实用到了新字段；请求透传与请求生效是两回事（见 #596）。
 async function handleLlmQuery(msg: Extract<InboundMessage, { type: 'llm_query' }>): Promise<void> {
   try {
     const result = await queryLlm(msg.request);
@@ -1437,9 +1415,8 @@ async function handleLlmQuery(msg: Extract<InboundMessage, { type: 'llm_query' }
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     debugLog(`[handleLlmQuery] Error: ${errorMsg}`);
-    // Dual-emit: the generic `error` channel drives main-process OAuth
-    // auth-refresh detection (centralized in PiAgent), while the targeted
-    // `llm_query_result` rejects the pending promise for this specific call.
+    // 双发：通用 `error` 通道驱动主进程的 OAuth 鉴权刷新检测（集中在 PiAgent），
+    // 定向的 `llm_query_result` 则 reject 本次调用对应的 pending Promise。
     send({ type: 'error', message: errorMsg, code: 'llm_query_error' });
     send({ type: 'llm_query_result', id: msg.id, result: null, errorMessage: errorMsg, errorCode: 'llm_query_error' });
   }
@@ -1457,12 +1434,11 @@ async function handleEnsureSessionReady(msg: Extract<InboundMessage, { type: 'en
 async function handleCompact(msg: Extract<InboundMessage, { type: 'compact' }>): Promise<void> {
   try {
     const session = await ensureSession();
-    // Serialize manual /compact behind any in-flight auto-compaction. Public
-    // session.compact() calls agent.abort() and uses its own controller; if
-    // it runs while _runAutoCompaction is suspended, agent state churns and
-    // the SDK's race surface widens. Wait for the auto-compaction to drain
-    // before starting a manual one. waitForCompaction has its own timeout
-    // fallback so we don't deadlock on a stuck subprocess.
+    // 把手动 /compact 串行化在所有进行中的自动压缩之后。公开的
+    // session.compact() 会调 agent.abort() 并用自己的 controller；若在
+    // _runAutoCompaction 挂起期间运行，agent 状态会反复变化，扩大 SDK 的竞态面。
+    // 等自动压缩排空后再启动手动压缩。waitForCompaction 有自己的超时兜底，
+    // 不会因卡住的子进程而死锁。
     await waitForCompaction(session);
     const result = await session.compact(msg.customInstructions);
     send({
@@ -1573,9 +1549,9 @@ async function handleSetModel(msg: Extract<InboundMessage, { type: 'set_model' }
   }
   let piModel = resolvePiModel(piModelRegistry, msg.model, initConfig?.piAuth?.provider, shouldPreferCustomEndpoint());
 
-  // For custom endpoints, dynamically register unknown models so mid-session switching works.
-  // Uses registerCustomEndpointModels which accumulates into the existing model set
-  // (registerProvider replaces, so we track all IDs and re-register the full set).
+  // 自定义 endpoint 下，动态注册未知模型，让会话中途切换模型可用。
+  // 用 registerCustomEndpointModels，它会把模型累加进已有集合
+  // （registerProvider 是整体替换，所以我们追踪所有 ID 再整体注册）。
   if (!piModel && initConfig?.baseUrl?.trim() && initConfig?.customEndpoint) {
     const bareId = stripPiPrefix(msg.model);
     registerCustomEndpointModels(piModelRegistry, initConfig.customEndpoint.api, initConfig.baseUrl!.trim(), [{ id: bareId }]);
@@ -1624,22 +1600,22 @@ async function handleSetThinkingLevel(msg: Extract<InboundMessage, { type: 'set_
 function handleShutdown(): void {
   debugLog('Shutdown requested');
 
-  // Unsubscribe events
+  // 取消事件订阅
   if (unsubscribeEvents) {
     unsubscribeEvents();
     unsubscribeEvents = null;
   }
 
-  // Dispose session
+  // 释放会话
   if (piSession) {
     piSession.dispose();
     piSession = null;
   }
 
-  // Stop callback server
+  // 停止回调服务器
   stopCallbackServer();
 
-  // Reject pending promises
+  // reject 待处理的 Promise
   for (const [, pending] of pendingPreToolUse) {
     pending.resolve({ action: 'block', reason: 'Server shutting down' });
   }
@@ -1654,7 +1630,7 @@ function handleShutdown(): void {
 }
 
 // ============================================================
-// Main JSONL Reader Loop
+// 主 JSONL 读取循环
 // ============================================================
 
 async function processMessage(msg: InboundMessage): Promise<void> {
@@ -1727,7 +1703,7 @@ async function processMessage(msg: InboundMessage): Promise<void> {
     case 'token_update':
       if (moduleAuthStorage) {
         const { provider, credential } = msg.piAuth;
-        // See ambient comment at the initial `authStorage.set` call — same shape reason.
+        // 见首次 `authStorage.set` 调用处的注释——同样的形态原因。
         moduleAuthStorage.set(provider, credential as unknown as AuthCredential);
         if (initConfig) {
           initConfig.piAuth = msg.piAuth;
@@ -1771,17 +1747,17 @@ function main(): void {
     handleShutdown();
   });
 
-  // Handle unexpected errors — process state is unreliable after these,
-  // so we attempt to report and then exit immediately.
-  // send() is wrapped in try/catch because stdout itself may be broken
-  // (e.g. EFAULT from a closed pipe), and we must not let the error
-  // report trigger another uncaughtException (which would loop).
+  // 处理未捕获错误——发生这些错误后进程状态已不可靠，
+  // 因此先尝试上报再立即退出。
+  // send() 包了 try/catch，因为 stdout 本身可能已坏
+  // （例如管道关闭导致的 EFAULT），不能让错误上报再触发一次
+  // uncaughtException（会死循环）。
   process.on('uncaughtException', (error) => {
     debugLog(`Uncaught exception: ${error.message}`);
     try {
       send({ type: 'error', message: `Uncaught exception: ${error.message}`, code: 'uncaught' });
     } catch {
-      // stdout may be broken — swallow to avoid re-triggering
+      // stdout 可能已坏——吞掉，避免再次触发
     }
     process.exit(1);
   });
@@ -1792,7 +1768,7 @@ function main(): void {
     try {
       send({ type: 'error', message: `Unhandled rejection: ${msg}`, code: 'unhandled_rejection' });
     } catch {
-      // stdout may be broken — swallow to avoid re-triggering
+      // stdout 可能已坏——吞掉，避免再次触发
     }
     process.exit(1);
   });

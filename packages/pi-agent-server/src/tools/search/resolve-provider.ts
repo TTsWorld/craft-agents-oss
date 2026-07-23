@@ -1,13 +1,13 @@
 /**
- * Resolves the best web search provider based on the user's LLM connection.
+ * 根据用户的 LLM 连接解析最佳 web 搜索 provider。
  *
- * Priority:
- *   1. Provider-native search (OpenAI, ChatGPT, OpenRouter, Google) — best quality
- *   2. DuckDuckGo — universal fallback, no API key required
+ * 优先级：
+ *   1. provider 原生搜索（OpenAI、ChatGPT、OpenRouter、Google）——质量最好
+ *   2. DuckDuckGo——通用兜底，无需 API key
  *
- * To add a new Responses API-compatible provider:
- *   1. Add a case here with the provider name and apiBase URL
- *   2. The ResponsesApiSearchProvider handles the rest
+ * 新增兼容 Responses API 的 provider 步骤：
+ *   1. 在这里加一个 case，带上 provider 名和 apiBase URL
+ *   2. 其余交给 ResponsesApiSearchProvider 处理
  */
 
 import type { WebSearchProvider } from './types.ts';
@@ -40,9 +40,9 @@ function getOAuthAccess(piAuth?: SearchProviderAuthConfig): string | undefined {
 }
 
 /**
- * openai-codex tokens may arrive as either:
- *  - oauth.access (legacy/explicit oauth shape), or
- *  - api_key.key (current runtime shape for ChatGPT Plus OAuth bearer token)
+ * openai-codex 的 token 可能以两种形态到达：
+ *  - oauth.access（旧的/显式 oauth 形态），或
+ *  - api_key.key（当前运行时 ChatGPT Plus OAuth bearer token 的形态）
  */
 function getOpenAiCodexAccessToken(piAuth?: SearchProviderAuthConfig): string | undefined {
   if (piAuth?.provider !== 'openai-codex') return undefined;
@@ -54,7 +54,7 @@ export function resolveSearchProvider(piAuth?: SearchProviderAuthConfig): WebSea
   const apiKey = getApiKey(piAuth);
   const openAiCodexAccess = getOpenAiCodexAccessToken(piAuth);
 
-  // OpenAI with API key → standard Responses API
+  // 带 API key 的 OpenAI → 标准 Responses API
   if (provider === 'openai' && apiKey) {
     return new ResponsesApiSearchProvider({
       apiBase: 'https://api.openai.com/v1',
@@ -62,17 +62,17 @@ export function resolveSearchProvider(piAuth?: SearchProviderAuthConfig): WebSea
     });
   }
 
-  // ChatGPT Plus (OpenAI OAuth bearer token) → ChatGPT backend endpoint
-  // Supports both oauth.access and api_key.key token shapes.
+  // ChatGPT Plus（OpenAI OAuth bearer token）→ ChatGPT 后端 endpoint
+  // 同时支持 oauth.access 和 api_key.key 两种 token 形态。
   if (provider === 'openai-codex' && openAiCodexAccess) {
     const accountId = extractChatGptAccountId(openAiCodexAccess);
     if (accountId) {
       return new ChatGPTBackendSearchProvider(openAiCodexAccess, accountId);
     }
-    // Can't extract accountId (malformed/non-JWT token) → fall through to DDG
+    // 无法提取 accountId（格式错误/非 JWT token）→ 回退到 DDG
   }
 
-  // OpenRouter → same Responses API format, different base URL
+  // OpenRouter → 同样的 Responses API 格式，只是 base URL 不同
   if (provider === 'openrouter' && apiKey) {
     return new ResponsesApiSearchProvider({
       apiBase: 'https://openrouter.ai/api/v1',
@@ -81,14 +81,14 @@ export function resolveSearchProvider(piAuth?: SearchProviderAuthConfig): WebSea
     });
   }
 
-  // Google → Gemini API with native Google Search grounding
+  // Google → 带 Google Search grounding 的 Gemini API
   if (provider === 'google' && apiKey) {
     return new GoogleSearchProvider(apiKey);
   }
 
-  // Vercel AI Gateway is currently not wired to provider-native search routing.
-  // It intentionally falls back to DDG until we add an explicit Responses API mapping.
+  // Vercel AI Gateway 目前未接入 provider 原生搜索路由。
+  // 在我们补上显式的 Responses API 映射之前，它有意回退到 DDG。
 
-  // Universal fallback — no API key required
+  // 通用兜底——无需 API key
   return new DDGSearchProvider();
 }

@@ -181,7 +181,7 @@ export function AnnotatableMarkdownDocument({
       return { rects: geometry.rects, chips: geometry.chips }
     }
 
-    // Full recompute: rewrites block-marker DOM. Used for content/annotation changes.
+    // 完整重算：会重写块标记 DOM。用于内容/标注变更时。
     const recomputeOverlay = () => {
       clearBlockAnnotationMarkers(root)
 
@@ -197,7 +197,7 @@ export function AnnotatableMarkdownDocument({
       setAnnotationOverlay(next)
     }
 
-    // Fast path: coordinates only, no DOM mutation. Used by scroll/resize.
+    // 快速路径：仅重算坐标，不修改 DOM。用于滚动/缩放时。
     const recomputeOverlayCoords = () => {
       if (!renderedAnnotations.length) return
       setAnnotationOverlay(computeGeometry())
@@ -214,9 +214,8 @@ export function AnnotatableMarkdownDocument({
 
     recomputeOverlay()
     window.addEventListener('resize', scheduleCoordsRecompute)
-    // Capture-phase: scroll events don't bubble, but capture-phase listeners on
-    // ancestors fire for descendant scrolls — so this catches the overflow-auto
-    // viewport inside MarkdownDocBlock (and any future nested scroll surface).
+    // 捕获阶段：scroll 事件不冒泡，但祖先节点上的捕获阶段监听器会对后代滚动触发，
+    // 因此可以捕获 MarkdownDocBlock 内部的 overflow-auto 视口（以及未来任何嵌套滚动容器）。
     root.addEventListener('scroll', scheduleCoordsRecompute, { capture: true, passive: true })
 
     return () => {

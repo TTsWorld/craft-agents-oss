@@ -15,7 +15,7 @@ const MERMAID_DIAGRAM_PREFIXES = [
   'xychart-beta',
 ]
 
-/** Remove Mermaid YAML frontmatter (`--- ... ---`) from the start of a diagram. */
+/** 从图示开头移除 Mermaid YAML frontmatter（`--- ... ---`）。 */
 export function stripMermaidFrontmatter(code: string): string {
   const withoutBom = code.replace(/^\uFEFF/, '')
   const leadingWhitespace = withoutBom.match(/^\s*/)?.[0] ?? ''
@@ -31,9 +31,9 @@ export function stripMermaidFrontmatter(code: string): string {
 }
 
 /**
- * Normalize Mermaid before handing it to the native renderer.
- * Frontmatter is metadata, and leading comments/directives should not control
- * diagram-type detection for renderers that route by the first meaningful line.
+ * 在交给原生渲染器之前对 Mermaid 进行归一化。
+ * Frontmatter 是元数据，前导注释/指令不应控制按第一个有效行路由的
+ * 渲染器的图示类型检测。
  */
 export function normalizeMermaidSource(code: string): string {
   const lines = stripMermaidFrontmatter(code).split(/\r?\n/)

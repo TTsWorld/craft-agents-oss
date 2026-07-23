@@ -1,17 +1,17 @@
 /**
- * Attachment helpers for displaying file type icons and labels
+ * 用于展示文件类型图标和标签的附件辅助工具
  *
- * Shared utilities for rendering file attachments in user messages.
- * Used by both Electron app and web viewer.
+ * 在用户消息中渲染文件附件的共享工具。
+ * Electron 应用和 web viewer 共同使用。
  */
 
 import { File, Image as ImageIcon } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import type { AttachmentType } from '@craft-agent/core'
 
-// Comprehensive MIME type to human-friendly label mapping
+// MIME 类型到人类友好标签的完整映射
 const MIME_TYPE_LABELS: Record<string, string> = {
-  // Documents
+  // 文档
   'application/pdf': 'PDF',
   'application/msword': 'Word',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'Word',
@@ -21,7 +21,7 @@ const MIME_TYPE_LABELS: Record<string, string> = {
   'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'PowerPoint',
   'application/rtf': 'RTF',
 
-  // Text & Markup
+  // 文本与标记语言
   'text/plain': 'Text',
   'text/markdown': 'Markdown',
   'text/html': 'HTML',
@@ -33,7 +33,7 @@ const MIME_TYPE_LABELS: Record<string, string> = {
   'application/x-yaml': 'YAML',
   'text/yaml': 'YAML',
 
-  // Code
+  // 代码
   'text/javascript': 'JavaScript',
   'application/javascript': 'JavaScript',
   'text/typescript': 'TypeScript',
@@ -52,7 +52,7 @@ const MIME_TYPE_LABELS: Record<string, string> = {
   'application/x-sh': 'Shell',
   'text/x-shellscript': 'Shell',
 
-  // Images
+  // 图片
   'image/png': 'PNG',
   'image/jpeg': 'JPEG',
   'image/gif': 'GIF',
@@ -63,23 +63,23 @@ const MIME_TYPE_LABELS: Record<string, string> = {
   'image/heic': 'HEIC',
   'image/heif': 'HEIF',
 
-  // Archives
+  // 归档
   'application/zip': 'ZIP',
   'application/x-rar-compressed': 'RAR',
   'application/x-7z-compressed': '7-Zip',
   'application/gzip': 'GZIP',
   'application/x-tar': 'TAR',
 
-  // Media
+  // 媒体
   'audio/mpeg': 'MP3',
   'audio/wav': 'WAV',
   'video/mp4': 'MP4',
   'video/quicktime': 'MOV',
 }
 
-// Extension fallback for when MIME type is generic (e.g., application/octet-stream)
+// MIME 类型为通用类型（例如 application/octet-stream）时的扩展名兜底
 const EXTENSION_LABELS: Record<string, string> = {
-  // Code
+  // 代码
   'js': 'JavaScript',
   'ts': 'TypeScript',
   'tsx': 'React TSX',
@@ -100,7 +100,7 @@ const EXTENSION_LABELS: Record<string, string> = {
   'bash': 'Bash',
   'zsh': 'Zsh',
 
-  // Config
+  // 配置
   'json': 'JSON',
   'yaml': 'YAML',
   'yml': 'YAML',
@@ -109,7 +109,7 @@ const EXTENSION_LABELS: Record<string, string> = {
   'ini': 'Config',
   'env': 'Env',
 
-  // Docs
+  // 文档
   'md': 'Markdown',
   'txt': 'Text',
   'rtf': 'RTF',
@@ -124,15 +124,15 @@ const EXTENSION_LABELS: Record<string, string> = {
 }
 
 /**
- * Get a human-friendly label for a file type
+ * 获取文件类型的人类友好标签
  */
 export function getFileTypeLabel(type: AttachmentType, mimeType: string, fileName?: string): string {
-  // 1. Check exact MIME type match
+  // 1. 检查精确的 MIME 类型匹配
   if (MIME_TYPE_LABELS[mimeType]) {
     return MIME_TYPE_LABELS[mimeType]
   }
 
-  // 2. Try to extract from filename extension
+  // 2. 尝试从文件名扩展名提取
   if (fileName) {
     const ext = fileName.split('.').pop()?.toLowerCase()
     if (ext && EXTENSION_LABELS[ext]) {
@@ -140,7 +140,7 @@ export function getFileTypeLabel(type: AttachmentType, mimeType: string, fileNam
     }
   }
 
-  // 3. Fallback based on type category
+  // 3. 按类型分类兜底
   switch (type) {
     case 'pdf': return 'PDF'
     case 'office': return 'Document'
@@ -157,23 +157,23 @@ export interface FileTypeIconProps {
 }
 
 /**
- * File icon - ImageIcon for images, generic File icon with color tint for others
+ * 文件图标——图片用 ImageIcon，其余用带色彩倾向的通用 File 图标
  */
 export function FileTypeIcon({ type, mimeType, className }: FileTypeIconProps) {
   const baseClass = cn("h-4 w-4", className)
 
-  // Images get dedicated icon
+  // 图片使用专属图标
   if (type === 'image') {
     return <ImageIcon className={cn(baseClass, "text-accent")} />
   }
 
-  // Everything else gets generic file icon with color tint
+  // 其余使用带色彩倾向的通用文件图标
   const colorClass = getFileColor(type, mimeType)
   return <File className={cn(baseClass, colorClass)} />
 }
 
 function getFileColor(type: AttachmentType, mimeType: string): string {
-  // Code files get success color
+  // 代码文件使用 success 色
   if (isCodeFile(mimeType)) {
     return "text-success"
   }

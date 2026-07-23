@@ -1,13 +1,13 @@
 /**
- * FullscreenOverlayBaseHeader - Header component for fullscreen overlays
+ * FullscreenOverlayBaseHeader - 全屏浮层的头部组件
  *
- * Builds a badge row from structured props (typeBadge, filePath, title, subtitle).
- * The file path badge has a dual-trigger menu:
- * - Left-click → Radix DropdownMenu with "Open" / "Reveal in {file manager}"
- * - Right-click → Radix ContextMenu with the same items
+ * 从结构化属性（typeBadge, filePath, title, subtitle）构建徽标行。
+ * 文件路径徽标带双触发菜单：
+ * - 左键点击 → Radix DropdownMenu，包含"打开"/"在 {文件管理器} 中显示"
+ * - 右键点击 → Radix ContextMenu，包含相同项
  *
- * Both menus share one internal items array, just wrapped differently.
- * onOpenFileExternal and onRevealInFinder come from PlatformContext — no per-overlay callbacks.
+ * 两个菜单共享同一份内部项数组，仅包装方式不同。
+ * onOpenFileExternal 和 onRevealInFinder 来自 PlatformContext——无需每个浮层单独传回调。
  */
 
 import { useState, useCallback, type ReactNode } from 'react'
@@ -24,7 +24,7 @@ import {
 import { usePlatform } from '../../context/PlatformContext'
 import { cn } from '../../lib/utils'
 
-/** Structured type badge — tool/format indicator (e.g. "Read", "Image", "Bash") */
+/** 结构化类型徽标——工具/格式标识（如"Read"、"Image"、"Bash"） */
 export interface OverlayTypeBadge {
   icon: LucideIcon
   label: string
@@ -32,32 +32,32 @@ export interface OverlayTypeBadge {
 }
 
 export interface FullscreenOverlayBaseHeaderProps {
-  /** Close handler — shows X button in header */
+  /** 关闭处理函数——在头部显示 X 按钮 */
   onClose: () => void
-  /** Type badge — tool/format indicator */
+  /** 类型徽标——工具/格式标识 */
   typeBadge?: OverlayTypeBadge
-  /** File path — shows dual-trigger menu badge with "Open" + "Reveal in {file manager}" */
+  /** 文件路径——显示带"打开"+"在 {文件管理器} 中显示"的双触发菜单徽标 */
   filePath?: string
-  /** Title — displayed as a badge. Fallback when no file path. */
+  /** 标题——显示为徽标。无文件路径时的回退选项。 */
   title?: string
-  /** Click handler for the title badge */
+  /** 标题徽标的点击处理函数 */
   onTitleClick?: () => void
-  /** Subtitle — extra info badge (e.g. "Lines 1-50 of 200") */
+  /** 副标题——附加信息徽标（如"第 1-50 行，共 200 行"） */
   subtitle?: string
-  /** Right-side actions (e.g. diff controls) */
+  /** 右侧操作（如 diff 控件） */
   headerActions?: ReactNode
-  /** When provided, renders a built-in copy button (matching close button style) */
+  /** 提供时，渲染内置复制按钮（与关闭按钮样式一致） */
   copyContent?: string
 }
 
 /**
- * Truncates a file path to show just the filename for display in the badge.
- * Full path is available via tooltip.
+ * 截断文件路径，仅在徽标中显示文件名。
+ * 完整路径可通过 tooltip 查看。
  */
 function displayPath(filePath: string): string {
   const parts = filePath.split('/')
   const name = parts.pop() || filePath
-  // Show parent dir + filename if available (e.g. "src/App.tsx")
+  // 可用时显示父目录 + 文件名（如 "src/App.tsx"）
   if (parts.length > 0) {
     const parent = parts.pop()
     return `${parent}/${name}`
@@ -66,7 +66,7 @@ function displayPath(filePath: string): string {
 }
 
 // ============================================================================
-// Shared context menu styling — matches StyledDropdown's popover-styled look
+// 共享上下文菜单样式——与 StyledDropdown 的弹出层样式一致
 // ============================================================================
 
 const contextMenuContentClasses = cn(
@@ -83,7 +83,7 @@ const contextMenuItemClasses = cn(
 )
 
 // ============================================================================
-// FilePathBadge — badge with dual-trigger menu (dropdown + context menu)
+// FilePathBadge — 带双触发菜单的徽标（下拉菜单 + 上下文菜单）
 // ============================================================================
 
 interface FilePathBadgeProps {
@@ -91,13 +91,12 @@ interface FilePathBadgeProps {
 }
 
 /**
- * FilePathBadge - Badge that opens a menu on both left-click and right-click.
+ * FilePathBadge - 左键和右键点击均能打开菜单的徽标。
  *
- * Implementation: Wraps a Radix DropdownMenu (left-click trigger) inside a
- * Radix ContextMenu (right-click trigger). Both render the same menu items.
- * Uses onOpenFileExternal (not onOpenFile) from PlatformContext — when already
- * viewing a file in an overlay, "Open" should launch the system editor directly,
- * not re-trigger the in-app preview interceptor.
+ * 实现：在 Radix ContextMenu（右键触发）内包裹 Radix DropdownMenu（左键触发）。
+ * 两者渲染相同的菜单项。
+ * 使用 PlatformContext 的 onOpenFileExternal（而非 onOpenFile）——当已在浮层中
+ * 查看文件时，"打开"应直接启动系统编辑器，而非重新触发应用内预览拦截器。
  */
 function FilePathBadge({ filePath }: FilePathBadgeProps) {
   const { onOpenFileExternal, onRevealInFinder, fileManagerName } = usePlatform()
@@ -111,7 +110,7 @@ function FilePathBadge({ filePath }: FilePathBadgeProps) {
     onRevealInFinder?.(filePath)
   }, [onRevealInFinder, filePath])
 
-  // Shared menu items — same content rendered by both dropdown and context menu
+  // 共享菜单项——下拉菜单和上下文菜单渲染相同内容
   const hasMenuItems = !!onOpenFileExternal || !!onRevealInFinder
 
   const dropdownItems = (
@@ -150,18 +149,18 @@ function FilePathBadge({ filePath }: FilePathBadgeProps) {
 
   const display = displayPath(filePath)
 
-  // If no menu items available (e.g. web viewer), just show a static badge
+  // 无可用菜单项时（如 Web 查看器），仅显示静态徽标
   if (!hasMenuItems) {
     return <PreviewHeaderBadge label={display} title={filePath} shrinkable />
   }
 
-  // Wrap: ContextMenu (right-click) wraps DropdownMenu (left-click) wraps the badge
+  // 嵌套：ContextMenu（右键）包裹 DropdownMenu（左键）包裹徽标
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            {/* Badge that responds to left-click (dropdown) and right-click (context menu) */}
+            {/* 响应左键（下拉菜单）和右键（上下文菜单）的徽标 */}
             <button
               className={cn(
                 'flex items-center gap-1.5 h-[26px] px-2.5 rounded-[6px]',
@@ -216,7 +215,7 @@ export function FullscreenOverlayBaseHeader({
     }
   }, [copyContent])
 
-  // Built-in copy button + any custom header actions, rendered in PreviewHeader's right actions area
+  // 内置复制按钮 + 任何自定义头部操作，渲染在 PreviewHeader 的右侧操作区
   const rightActions = (
     <>
       {copyContent != null && (

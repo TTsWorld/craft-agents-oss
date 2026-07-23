@@ -7,11 +7,11 @@ import { Bold, Italic, Strikethrough, Code, Sigma } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { RICH_BLOCK_EDIT_EVENT } from './rich-block-events'
 
-// Custom event name used to signal "open inline math editor"
+// 用于发出"打开行内数学公式编辑器"信号的自定义事件名
 const INLINE_MATH_EDIT_EVENT = 'inlineMathEdit'
 
 // ============================================================================
-// Bubble menu toolbar button
+// 气泡菜单工具栏按钮
 // ============================================================================
 
 function BubbleButton({
@@ -41,7 +41,7 @@ function BubbleButton({
 }
 
 // ============================================================================
-// Text formatting bubble menu — Bold, Italic, Strike, Code
+// 文本格式化气泡菜单 —— 加粗、斜体、删除线、行内代码
 // ============================================================================
 
 function TextFormattingMenu({ editor }: { editor: Editor }) {
@@ -84,12 +84,12 @@ function TextFormattingMenu({ editor }: { editor: Editor }) {
         onClick={() => {
           const { from, to } = editor.state.selection
           const selectedText = editor.state.doc.textBetween(from, to)
-          // Delete selected text, then insert inlineMath node with that text as latex
+          // 删除选中文本,然后以该文本为 latex 插入 inlineMath 节点
           editor.chain().focus()
             .deleteSelection()
             .insertInlineMath({ latex: selectedText })
             .run()
-          // Open the edit popover on the newly created node
+          // 在新建节点上打开编辑浮层
           const newPos = editor.state.selection.from - 1
           const node = editor.state.doc.nodeAt(newPos)
           if (node?.type.name === 'inlineMath') {
@@ -106,7 +106,7 @@ function TextFormattingMenu({ editor }: { editor: Editor }) {
 }
 
 // ============================================================================
-// Code block edit bubble menu — edit popover for mermaid / latex blocks
+// 代码块编辑气泡菜单 —— mermaid / latex 块的编辑浮层
 // ============================================================================
 
 const VISUAL_LANGUAGES = new Set(['mermaid', 'latex', 'math', 'tex', 'katex'])
@@ -141,7 +141,7 @@ function getEditableBlockMeta(editor: Editor): { label: string; code: string; up
     return null
   }
 
-  // Legacy fallback while old docs/code paths still contain codeBlock language variants.
+  // 当旧文档/代码路径仍包含 codeBlock 的 language 变体时的兼容回退。
   const { $from } = selection
   for (let depth = $from.depth; depth >= 0; depth--) {
     const node = $from.node(depth)
@@ -226,7 +226,7 @@ function RichBlockEditMenu({ editor }: { editor: Editor }) {
     }
   }, [editor, isEditing])
 
-  // Auto-resize textarea
+  // textarea 自动调整高度
   React.useEffect(() => {
     if (isEditing && textareaRef.current) {
       textareaRef.current.focus()
@@ -234,7 +234,7 @@ function RichBlockEditMenu({ editor }: { editor: Editor }) {
       el.style.height = 'auto'
       el.style.height = `${el.scrollHeight}px`
 
-      // Content height changes after first render; force BubbleMenu to recalculate.
+      // 首次渲染后内容高度会变化;强制 BubbleMenu 重新计算定位。
       requestAnimationFrame(() => {
         if (editor.isDestroyed) return
         const tr = editor.state.tr.setMeta('richBlockEdit', 'updatePositionAfterResize')
@@ -243,8 +243,8 @@ function RichBlockEditMenu({ editor }: { editor: Editor }) {
     }
   }, [editor, isEditing, code])
 
-  // BubbleMenu positions on ProseMirror transactions/resize, not React-only state changes.
-  // Opening edit mode changes popover content size/anchor context, so force re-position.
+  // BubbleMenu 依据 ProseMirror transaction/resize 定位,而非仅靠 React state 变化。
+  // 进入编辑模式会改变浮层内容尺寸/锚点上下文,因此需要强制重新定位。
   React.useEffect(() => {
     if (!isEditing) return
 
@@ -255,7 +255,7 @@ function RichBlockEditMenu({ editor }: { editor: Editor }) {
         const tr = editor.state.tr.setMeta('richBlockEdit', 'updatePosition')
         editor.view.dispatch(tr)
 
-        // Reveal on the next frame so floating-ui has applied computed position.
+        // 下一帧再显示,以便 floating-ui 先应用计算好的位置。
         raf3 = requestAnimationFrame(() => {
           setPositionReady(true)
         })
@@ -309,7 +309,7 @@ function RichBlockEditMenu({ editor }: { editor: Editor }) {
 }
 
 // ============================================================================
-// Inline math edit menu — edit popover for $...$ math nodes
+// 行内数学公式编辑菜单 —— $...$ 数学节点的编辑浮层
 // ============================================================================
 
 function InlineMathEditMenu({ editor }: { editor: Editor }) {
@@ -318,11 +318,11 @@ function InlineMathEditMenu({ editor }: { editor: Editor }) {
   const [nodePos, setNodePos] = React.useState<number | null>(null)
   const inputRef = React.useRef<HTMLInputElement>(null)
 
-  // Listen for the custom "activate edit" event (fired by click handler and Enter key handler)
+  // 监听自定义的"激活编辑"事件(由点击处理器和 Enter 键处理器触发)
   React.useEffect(() => {
     const activate = () => {
       setEditActive(true)
-      // Sync latex value from the current selection
+      // 从当前选区同步 latex 值
       const { selection } = editor.state
       if (selection instanceof NodeSelection && selection.node.type.name === 'inlineMath') {
         setLatex(selection.node.attrs.latex as string)
@@ -336,7 +336,7 @@ function InlineMathEditMenu({ editor }: { editor: Editor }) {
     return () => { (editor as any).off(INLINE_MATH_EDIT_EVENT, activate) }
   }, [editor])
 
-  // Also sync latex/nodePos on selectionUpdate when active (e.g. if doc changes around the node)
+  // 激活时也在 selectionUpdate 时同步 latex/nodePos(例如节点周围的文档发生变化)
   React.useEffect(() => {
     if (!editActive) return
     const sync = () => {
@@ -391,7 +391,7 @@ function InlineMathEditMenu({ editor }: { editor: Editor }) {
             }
             return
           }
-          // Arrow left at start of input → commit and place cursor before the node
+          // 在输入起始处按左方向键 → 提交并把光标置于节点之前
           if (e.key === 'ArrowLeft' && inputRef.current?.selectionStart === 0) {
             e.preventDefault()
             if (nodePos != null && latex.trim().length > 0) {
@@ -404,7 +404,7 @@ function InlineMathEditMenu({ editor }: { editor: Editor }) {
             }
             return
           }
-          // Arrow right at end of input → commit and place cursor after the node
+          // 在输入末尾处按右方向键 → 提交并把光标置于节点之后
           if (e.key === 'ArrowRight' && inputRef.current?.selectionStart === latex.length) {
             e.preventDefault()
             commitEdit()
@@ -421,15 +421,15 @@ function InlineMathEditMenu({ editor }: { editor: Editor }) {
 }
 
 // ============================================================================
-// Exported composite: all bubble menus for the TipTap editor
+// 导出的组合组件:TipTap 编辑器的全部气泡菜单
 // ============================================================================
 
 export { INLINE_MATH_EDIT_EVENT }
 
 const TIPTAP_BUBBLE_MENU_Z_INDEX = 'var(--z-floating-menu, 400)'
 const TIPTAP_BUBBLE_MENU_BASE_OPTIONS = {
-  // Keep default positioning strategy/portal behavior.
-  // `fixed + appendTo(body)` can drift in nested/animated layouts on first show.
+  // 保持默认的定位策略/portal 行为。
+  // `fixed + appendTo(body)` 在嵌套/动画布局中首次显示时可能发生漂移。
   zIndex: TIPTAP_BUBBLE_MENU_Z_INDEX,
 }
 
@@ -442,7 +442,7 @@ export function TiptapBubbleMenus({ editor }: { editor: Editor }) {
     if (name !== 'mermaidBlock' && name !== 'latexBlock') return null
 
     const getRect = () => {
-      // Preferred path: edit button bounds inside selected node DOM.
+      // 首选路径:选中节点 DOM 内编辑按钮的边界。
       const selectedNodeDom = editor.view.nodeDOM(selection.from)
       if (selectedNodeDom instanceof HTMLElement) {
         const selectedButton = selectedNodeDom.querySelector('.rich-block-edit-button')
@@ -450,15 +450,15 @@ export function TiptapBubbleMenus({ editor }: { editor: Editor }) {
           return selectedButton.getBoundingClientRect()
         }
 
-        // Fallback: selected node wrapper rect.
+        // 回退:选中节点包裹元素的 rect。
         const nodeRect = selectedNodeDom.getBoundingClientRect()
         if (nodeRect.width > 0 && nodeRect.height > 0) {
           return nodeRect
         }
       }
 
-      // Final fallback: ProseMirror coords (always available once the selection exists).
-      // Use a tiny virtual rect near the top-left of the node as deterministic anchor.
+      // 最终回退:ProseMirror 坐标(只要选区存在就可用)。
+      // 用节点左上角附近的一个极小虚拟 rect 作为确定性锚点。
       const coords = editor.view.coordsAtPos(selection.from)
       return new DOMRect(coords.left, coords.top, 1, 1)
     }
@@ -471,7 +471,7 @@ export function TiptapBubbleMenus({ editor }: { editor: Editor }) {
 
   return (
     <>
-      {/* Text formatting — shows on text selection, hidden in code blocks */}
+      {/* 文本格式化 —— 选中文本时显示,代码块内隐藏 */}
       <BubbleMenu
         editor={editor}
         pluginKey="textFormatting"
@@ -488,7 +488,7 @@ export function TiptapBubbleMenus({ editor }: { editor: Editor }) {
         <TextFormattingMenu editor={editor} />
       </BubbleMenu>
 
-      {/* Rich block edit — shows for selected Mermaid/LaTeX rich blocks (and legacy codeBlock fallback). */}
+      {/* 富块编辑 —— 选中 Mermaid/LaTeX 富块时显示(含旧版 codeBlock 回退)。 */}
       <BubbleMenu
         editor={editor}
         pluginKey="richBlockEdit"
@@ -515,7 +515,7 @@ export function TiptapBubbleMenus({ editor }: { editor: Editor }) {
         <RichBlockEditMenu editor={editor} />
       </BubbleMenu>
 
-      {/* Inline math edit — always mounted when inlineMath selected; content visibility controlled by InlineMathEditMenu */}
+      {/* 行内数学公式编辑 —— 选中 inlineMath 时始终挂载;内容可见性由 InlineMathEditMenu 控制 */}
       <BubbleMenu
         editor={editor}
         pluginKey="inlineMathEdit"

@@ -1,5 +1,5 @@
 /**
- * Terminal output components for displaying command results.
+ * 用于展示命令结果的终端输出组件。
  */
 
 export { TerminalOutput, type TerminalOutputProps, type ToolType } from './TerminalOutput'

@@ -1,20 +1,20 @@
 import type { ModelRegistry as PiModelRegistry } from '@earendil-works/pi-coding-agent';
 
-// Re-export from shared so the auth-aware mini-model denylist has a single
-// source of truth (also used by `getMiniModel()` at selection time).
+// 从 shared 重新导出，让鉴权感知的 mini-model 黑名单有唯一真相源
+// （`getMiniModel()` 在选择时也用到它）。
 export { isDeniedMiniModelId } from '../../shared/src/config/llm-connections.ts';
 
-// Re-export the PiModel type used by callers
+// 重新导出调用方使用的 PiModel 类型
 type PiModel<T = any> = ReturnType<PiModelRegistry['find']>;
 
 /**
- * Resolve a Pi SDK model from the registry, with optional custom-endpoint precedence.
+ * 从注册表中解析 Pi SDK 模型，可选地让自定义 endpoint 优先。
  *
- * Resolution order:
- * 1. If `preferCustomEndpoint` is true, try `'custom-endpoint'` provider first
- * 2. Exact provider+model lookup via `piAuthProvider`
- * 3. Full `getAll()` scan by id/name
- * 4. Common provider fallback list (includes 'custom-endpoint')
+ * 解析顺序：
+ * 1. 若 `preferCustomEndpoint` 为 true，先尝试 `'custom-endpoint'` provider
+ * 2. 通过 `piAuthProvider` 做精确 provider+model 查找
+ * 3. 对 `getAll()` 结果按 id/name 全量扫描
+ * 4. 常用 provider 兜底列表（含 'custom-endpoint'）
  */
 export function resolvePiModel(
   modelRegistry: PiModelRegistry,
@@ -22,24 +22,24 @@ export function resolvePiModel(
   piAuthProvider?: string,
   preferCustomEndpoint?: boolean,
 ): PiModel | undefined {
-  // Strip Craft's pi/ prefix — Pi SDK uses bare model IDs (e.g. "claude-sonnet-4-6")
+  // 剥离 Craft 的 pi/ 前缀——Pi SDK 使用纯 model ID（例如 "claude-sonnet-4-6"）
   const bareId = modelId.startsWith('pi/') ? modelId.slice(3) : modelId;
 
-  // Custom-endpoint takes precedence when configured
+  // 已配置时自定义 endpoint 优先
   if (preferCustomEndpoint) {
     const custom = modelRegistry.find('custom-endpoint', bareId);
     if (custom) return custom;
   }
 
-  // If we know the auth provider, do an exact provider+model lookup first.
-  // This avoids the getAll() ambiguity where the same model ID exists under
-  // multiple providers (e.g., "gpt-5.2" under both "openai" and
-  // "azure-openai-responses") and the wrong one matches first.
+  // 已知鉴权 provider 时，先做精确 provider+model 查找。
+  // 这样能避免 getAll() 的歧义——同一 model ID 可能同时存在于多个 provider 下
+  // （例如 "gpt-5.2" 同时在 "openai" 和 "azure-openai-responses" 下），
+  // 否则可能先匹配到错误的那个。
   if (piAuthProvider) {
     const exact = modelRegistry.find(piAuthProvider, bareId);
     if (exact) {
-      // MiniMax CN API rejects model IDs with the 'MiniMax-' prefix (e.g. 500 for
-      // 'MiniMax-M2.5-highspeed') but accepts bare names ('M2.5-highspeed').
+      // MiniMax CN API 会拒绝带 'MiniMax-' 前缀的 model ID（例如对
+      // 'MiniMax-M2.5-highspeed' 返回 500），但接受纯名字（'M2.5-highspeed'）。
       if (piAuthProvider === 'minimax-cn' && exact.id.startsWith('MiniMax-')) {
         return { ...exact, id: exact.id.slice('MiniMax-'.length) };
       }
@@ -47,12 +47,11 @@ export function resolvePiModel(
     }
   }
 
-  // Fallback: search all available models.
-  // When piAuthProvider is set, only return models from the same provider
-  // (or 'custom-endpoint'). Without this guard, a model that exists under
-  // a different provider (e.g. "gpt-5.4" under "azure-openai-responses"
-  // when authed as "github-copilot") would be returned, and the Pi SDK
-  // would fail with "No API key found for <wrong-provider>".
+  // 兜底：扫描所有可用模型。
+  // 当 piAuthProvider 已设置时，只返回同一 provider（或 'custom-endpoint'）的模型。
+  // 没有这层保护，属于不同 provider 的模型（例如以 "github-copilot" 鉴权时
+  // "gpt-5.4" 却挂在 "azure-openai-responses" 下）也会被返回，导致 Pi SDK 报
+  // "No API key found for <wrong-provider>"。
   const allModels = modelRegistry.getAll();
   const match = allModels.find(m =>
     (m.id === bareId || m.name === bareId) &&
@@ -60,10 +59,10 @@ export function resolvePiModel(
   );
   if (match) return match;
 
-  // Try common providers with the model ID
+  // 用 model ID 在常用 provider 中逐一尝试
   const providers = ['custom-endpoint', 'anthropic', 'openai', 'google'];
   for (const provider of providers) {
-    // Skip providers incompatible with the authenticated provider
+    // 跳过与当前鉴权 provider 不兼容的 provider
     if (piAuthProvider && provider !== piAuthProvider && provider !== 'custom-endpoint') continue;
     const model = modelRegistry.find(provider, bareId);
     if (model) return model;
@@ -73,9 +72,9 @@ export function resolvePiModel(
 }
 
 /**
- * Returns true when an error message indicates the requested model is unavailable and a
- * different model should be tried. Matches both the standard OpenAI "model not found"
- * shapes and the ChatGPT-account Codex "… is not supported" refusal.
+ * 当错误信息表明请求的模型不可用、应换一个模型重试时返回 true。
+ * 同时匹配标准 OpenAI 的 "model not found" 形式和 ChatGPT 账号 Codex 的
+ * "… is not supported" 拒绝。
  */
 export function isModelNotFoundError(message: string): boolean {
   const normalized = message.toLowerCase();

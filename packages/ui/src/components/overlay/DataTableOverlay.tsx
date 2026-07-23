@@ -1,9 +1,9 @@
 /**
- * DataTableOverlay - Fullscreen/modal overlay for viewing data tables
+ * DataTableOverlay - 用于查看数据表的全屏/模态浮层
  *
- * Uses PreviewOverlay as the base for consistent modal/fullscreen behavior.
- * Renders children (typically a data table) without scroll constraints,
- * allowing the full table to be visible in an expanded view.
+ * 以 PreviewOverlay 为基础，保证一致的模态/全屏行为。
+ * 渲染子内容（通常为数据表）时无滚动约束，
+ * 允许在展开视图中完整展示表格。
  */
 
 import * as React from 'react'
@@ -12,21 +12,21 @@ import { Table2 } from 'lucide-react'
 import { PreviewOverlay, type BadgeVariant } from './PreviewOverlay'
 
 export interface DataTableOverlayProps {
-  /** Whether the overlay is visible */
+  /** 浮层是否可见 */
   isOpen: boolean
-  /** Callback when the overlay should close */
+  /** 浮层关闭时的回调 */
   onClose: () => void
-  /** Title for the overlay header (e.g., "Permissions", "Tools") */
+  /** 浮层头部标题（如"权限"、"工具"） */
   title: string
-  /** Optional subtitle (e.g., row count) */
+  /** 可选副标题（如行数） */
   subtitle?: string
-  /** Theme mode for dark/light styling (defaults to 'light') */
+  /** 暗色/亮色主题模式（默认 'light'） */
   theme?: 'light' | 'dark'
-  /** Badge variant for the header (default: gray) */
+  /** 头部徽标变体（默认：gray） */
   badgeVariant?: BadgeVariant
-  /** Actions to show in header right side (e.g., copy dropdown) */
+  /** 显示在头部右侧的操作（如复制下拉菜单） */
   headerActions?: ReactNode
-  /** The data table content to render */
+  /** 要渲染的数据表内容 */
   children: ReactNode
 }
 
@@ -54,7 +54,7 @@ export function DataTableOverlay({
       subtitle={subtitle}
       headerActions={headerActions}
     >
-      {/* Table content — scrolling is handled by the parent overlay's scroll container */}
+      {/* 表格内容——滚动由父级浮层的滚动容器处理 */}
       <div>
         {children}
       </div>

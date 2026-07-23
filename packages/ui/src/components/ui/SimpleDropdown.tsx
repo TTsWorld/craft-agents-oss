@@ -4,13 +4,13 @@ import * as ReactDOM from 'react-dom'
 import { cn } from '../../lib/utils'
 
 /**
- * SimpleDropdown - A lightweight dropdown menu without external dependencies
+ * SimpleDropdown - 无外部依赖的轻量下拉菜单
  *
- * Features:
- * - Click-outside detection
- * - Portal rendering for proper stacking
- * - Keyboard navigation (Escape/ArrowUp/ArrowDown/Enter)
- * - Position-aware (flips if near edge)
+ * 特性：
+ * - 点击外部检测
+ * - Portal 渲染以保证正确的层叠顺序
+ * - 键盘导航（Escape/ArrowUp/ArrowDown/Enter）
+ * - 位置自适应（靠近边缘时翻转）
  */
 
 interface SimpleDropdownContextValue {
@@ -23,19 +23,19 @@ interface SimpleDropdownContextValue {
 const SimpleDropdownContext = React.createContext<SimpleDropdownContextValue | null>(null)
 
 export interface SimpleDropdownItemProps {
-  /** Click handler */
+  /** 点击处理函数 */
   onClick: (e?: React.MouseEvent) => void
-  /** Item content */
+  /** 菜单项内容 */
   children: React.ReactNode
-  /** Optional icon (rendered before label) */
+  /** 可选图标（渲染在标签之前） */
   icon?: React.ReactNode
-  /** Destructive variant - red text */
+  /** 危险操作变体 - 红色文本 */
   variant?: 'default' | 'destructive'
-  /** Additional className */
+  /** 附加 className */
   className?: string
-  /** Optional ref callback to access the underlying button */
+  /** 可选的 ref 回调，用于访问底层 button 元素 */
   buttonRef?: (el: HTMLButtonElement | null) => void
-  /** Optional hover callback */
+  /** 可选的悬停回调 */
   onMouseEnter?: (e: React.MouseEvent<HTMLButtonElement>) => void
 }
 
@@ -97,19 +97,19 @@ export function SimpleDropdownItem({
 }
 
 export interface SimpleDropdownProps {
-  /** Trigger element */
+  /** 触发器元素 */
   trigger: React.ReactNode
-  /** Menu items */
+  /** 菜单项 */
   children: React.ReactNode
-  /** Alignment relative to trigger */
+  /** 相对于触发器的对齐方式 */
   align?: 'start' | 'end'
-  /** Additional className for the menu */
+  /** 菜单的附加 className */
   className?: string
-  /** Whether the dropdown is disabled */
+  /** 是否禁用下拉菜单 */
   disabled?: boolean
-  /** Callback when open state changes */
+  /** 打开状态变化时的回调 */
   onOpenChange?: (open: boolean) => void
-  /** Enable built-in ArrowUp/ArrowDown/Enter keyboard navigation (default: true) */
+  /** 是否启用内置的 ArrowUp/ArrowDown/Enter 键盘导航（默认：true） */
   keyboardNavigation?: boolean
 }
 
@@ -125,7 +125,7 @@ export function SimpleDropdown({
   const [isOpen, setIsOpen] = useState(false)
   const [highlightedId, setHighlightedId] = useState<string | null>(null)
 
-  // Notify parent of open state changes
+  // 通知父组件打开状态变化
   const setIsOpenWithCallback = useCallback((open: boolean | ((prev: boolean) => boolean)) => {
     setIsOpen(prev => {
       const newValue = typeof open === 'function' ? open(prev) : open
@@ -140,7 +140,7 @@ export function SimpleDropdown({
   const triggerRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  // Item registry (supports nested SimpleDropdownItem usage)
+  // 菜单项注册表（支持嵌套的 SimpleDropdownItem 用法）
   const itemRefs = useRef(new Map<string, HTMLButtonElement>())
   const itemOrder = useRef<string[]>([])
 
@@ -170,12 +170,12 @@ export function SimpleDropdown({
     if (!triggerRef.current) return
 
     const rect = triggerRef.current.getBoundingClientRect()
-    const menuWidth = 160 // Approximate menu width
+    const menuWidth = 160 // 菜单近似宽度
 
     let left = align === 'end' ? rect.right - menuWidth : rect.left
     const top = rect.bottom + 4
 
-    // Keep menu within viewport
+    // 使菜单保持在视口内
     if (left < 8) left = 8
     if (left + menuWidth > window.innerWidth - 8) {
       left = window.innerWidth - menuWidth - 8
@@ -189,7 +189,7 @@ export function SimpleDropdown({
     if (disabled) return
 
     if (!isOpen) {
-      // Calculate position before opening to prevent animation from wrong position
+      // 打开前先计算位置，避免从错误位置开始动画
       if (triggerRef.current) {
         const rect = triggerRef.current.getBoundingClientRect()
         const menuWidth = 160
@@ -209,14 +209,14 @@ export function SimpleDropdown({
     setIsOpenWithCallback(false)
   }, [setIsOpenWithCallback])
 
-  // Update position when opening (for edge cases like window resize)
+  // 打开时更新位置（处理窗口缩放等边缘情况）
   useEffect(() => {
     if (isOpen) {
       updatePosition()
     }
   }, [isOpen, updatePosition])
 
-  // Reset keyboard highlight when menu opens
+  // 菜单打开时重置键盘高亮
   useEffect(() => {
     if (!isOpen) {
       setHighlightedId(null)
@@ -232,13 +232,13 @@ export function SimpleDropdown({
     })
   }, [isOpen, getNavigableIds])
 
-  // Keep highlighted item visible when navigating by keyboard.
+  // 键盘导航时保持高亮项可见。
   useEffect(() => {
     if (!isOpen || !highlightedId) return
     itemRefs.current.get(highlightedId)?.scrollIntoView({ block: 'nearest' })
   }, [isOpen, highlightedId])
 
-  // Click outside detection + keyboard nav
+  // 点击外部检测 + 键盘导航
   useEffect(() => {
     if (!isOpen) return
 

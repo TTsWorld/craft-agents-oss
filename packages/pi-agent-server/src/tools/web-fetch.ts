@@ -39,20 +39,20 @@ const MIME_TO_EXT: Record<string, string> = {
 };
 
 // ============================================================
-// SSRF protection
+// SSRF 防护
 // ============================================================
 
 const PRIVATE_IP_PATTERNS = [
-  /^127\./,                                   // IPv4 loopback
-  /^10\./,                                    // Class A private
-  /^172\.(1[6-9]|2\d|3[01])\./,              // Class B private
-  /^192\.168\./,                              // Class C private
-  /^169\.254\./,                              // link-local
-  /^0\./,                                     // "this" network
-  /^100\.(6[4-9]|[7-9]\d|1[0-2]\d)\./,       // Carrier-grade NAT (100.64.0.0/10)
-  /^::1$/,                                    // IPv6 loopback
-  /^fe80:/i,                                  // IPv6 link-local
-  /^f[cd]/i,                                  // IPv6 unique local (fc00::/7)
+  /^127\./,                                   // IPv4 回环
+  /^10\./,                                    // A 类私网
+  /^172\.(1[6-9]|2\d|3[01])\./,              // B 类私网
+  /^192\.168\./,                              // C 类私网
+  /^169\.254\./,                              // 链路本地
+  /^0\./,                                     // "本"网络
+  /^100\.(6[4-9]|[7-9]\d|1[0-2]\d)\./,       // 运营商级 NAT (100.64.0.0/10)
+  /^::1$/,                                    // IPv6 回环
+  /^fe80:/i,                                  // IPv6 链路本地
+  /^f[cd]/i,                                  // IPv6 唯一本地 (fc00::/7)
 ];
 
 function isPrivateIp(ip: string): boolean {
@@ -60,15 +60,15 @@ function isPrivateIp(ip: string): boolean {
 }
 
 /**
- * Validate URL before fetching — blocks non-HTTP schemes and private/reserved IPs.
+ * 在抓取前校验 URL——拦截非 HTTP 协议和私网/保留 IP。
  *
- * Always resolves through dns.lookup() (getaddrinfo) to get the canonical IP form,
- * which normalizes IPv6 (0:0:0:0:0:0:0:1 → ::1) and platform-specific IPv4 forms
- * (octal 0177.0.0.1, hex 0x7f.0.0.1 → 127.0.0.1). This avoids regex-bypass attacks
- * using non-standard IP representations.
+ * 始终通过 dns.lookup()（getaddrinfo）解析为规范 IP 形式，
+ * 以归一化 IPv6（0:0:0:0:0:0:0:1 → ::1）和平台特定的 IPv4 形式
+ * （八进制 0177.0.0.1、十六进制 0x7f.0.0.1 → 127.0.0.1）。避免利用非标准 IP 表示
+ * 绕过正则的攻击。
  *
- * Note: there is an inherent TOCTOU gap between this DNS check and the subsequent
- * fetch(). This is defense-in-depth, not a complete SSRF mitigation.
+ * 注意：此处 DNS 校验与后续 fetch() 之间存在固有的 TOCTOU 窗口。
+ * 这是纵深防御，并非完整的 SSRF 缓解。
  */
 async function validateUrl(url: string): Promise<void> {
   const parsed = new URL(url);
@@ -79,7 +79,7 @@ async function validateUrl(url: string): Promise<void> {
 
   const hostname = parsed.hostname;
 
-  // Resolve to canonical IP — works for both hostnames and IP literals.
+  // 解析为规范 IP——对主机名和 IP 字面量都适用。
   try {
     const { address } = await lookup(hostname);
     if (isPrivateIp(address)) {
@@ -94,18 +94,17 @@ async function validateUrl(url: string): Promise<void> {
 }
 
 // ============================================================
-// Streaming size-limited reader
+// 流式带大小上限的读取器
 // ============================================================
 
 /**
- * Read the full response body while enforcing a byte-size limit.
- * Unlike checking Content-Length (which can be absent or lie),
- * this actually caps how many bytes we buffer.
+ * 在执行字节大小上限的同时读取完整响应体。
+ * 相比检查 Content-Length（可能缺失或不准），这能真正限制我们缓冲的字节数。
  */
 async function readResponseBytes(response: Response, maxSize: number): Promise<Buffer> {
   const reader = response.body?.getReader();
   if (!reader) {
-    // Fallback for runtimes without streaming body
+    // 无流式 body 的运行时下的兜底
     const ab = await response.arrayBuffer();
     if (ab.byteLength > maxSize) {
       throw new Error(`Response exceeded ${Math.round(maxSize / 1024 / 1024)}MB limit`);
@@ -140,7 +139,7 @@ async function readResponseBytes(response: Response, maxSize: number): Promise<B
 }
 
 /**
- * Read the full response body as text while enforcing a byte-size limit.
+ * 在执行字节大小上限的同时，把完整响应体作为文本读取。
  */
 async function readResponseText(response: Response, maxSize: number): Promise<string> {
   const buffer = await readResponseBytes(response, maxSize);
@@ -148,7 +147,7 @@ async function readResponseText(response: Response, maxSize: number): Promise<st
 }
 
 // ============================================================
-// Helpers
+// 辅助函数
 // ============================================================
 
 function result(text: string, isError = false): AgentToolResult<{ isError?: boolean }> {
@@ -165,12 +164,12 @@ function truncate(text: string, maxLen: number = MAX_TEXT_LENGTH): string {
 }
 
 // ============================================================
-// Content-type handlers
+// Content-type 处理器
 // ============================================================
 
 function ensurePdfjsPolyfills(): void {
-  // pdfjs-dist uses browser-only APIs at module scope (e.g. `const SCALE_MATRIX = new DOMMatrix()`).
-  // Provide minimal stubs so it can load in Node.js — only text extraction is used, not rendering.
+  // pdfjs-dist 在模块作用域使用了仅浏览器可用的 API（例如 `const SCALE_MATRIX = new DOMMatrix()`）。
+  // 提供最小桩实现，让它在 Node.js 下能加载——我们只用文本提取，不做渲染。
   if (typeof globalThis.DOMMatrix === 'undefined') {
     (globalThis as any).DOMMatrix = class DOMMatrix {
       a = 1; b = 0; c = 0; d = 1; e = 0; f = 0;
@@ -203,8 +202,8 @@ function ensurePdfjsPolyfills(): void {
 
 async function extractPdfText(buffer: Buffer): Promise<string> {
   ensurePdfjsPolyfills();
-  // Pre-load worker on the main thread so pdfjs-dist doesn't try to resolve
-  // pdf.worker.mjs from disk (fails when externalized via bun build).
+  // 在主线程预加载 worker，避免 pdfjs-dist 尝试从磁盘解析
+  // pdf.worker.mjs（经 bun build 外部化后会失败）。
   if (!(globalThis as any).pdfjsWorker) {
     (globalThis as any).pdfjsWorker = await import('pdfjs-dist/build/pdf.worker.mjs');
   }
@@ -273,7 +272,7 @@ function handleHtml(
   prompt: string | undefined,
 ): AgentToolResult<{ isError?: boolean }> {
   const root = parseHtml(html);
-  // Strip noise elements from the DOM before selecting mainContent.
+  // 在选取 mainContent 之前，先从 DOM 里移除噪声元素。
   root
     .querySelectorAll(NOISE_ELEMENTS.join(', '))
     .forEach((el) => el.remove());
@@ -313,7 +312,7 @@ function handleText(
 }
 
 // ============================================================
-// Factory
+// 工厂
 // ============================================================
 
 export function createWebFetchTool(
@@ -325,7 +324,7 @@ export function createWebFetchTool(
     const dir = join(sessionPath, 'long_responses');
     await mkdir(dir, { recursive: true });
     let urlName = '';
-    try { urlName = new URL(url).pathname.split('/').pop() || ''; } catch { /* malformed URL */ }
+    try { urlName = new URL(url).pathname.split('/').pop() || ''; } catch { /* URL 格式错误 */ }
     const safe =
       urlName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 40) || 'download';
     const file = `${randomUUID()}_${safe}${ext}`;
@@ -345,7 +344,7 @@ export function createWebFetchTool(
     async execute(toolCallId, params) {
       const { url, prompt } = params;
 
-      // SSRF protection: block non-HTTP schemes and private/reserved IPs
+      // SSRF 防护：拦截非 HTTP 协议和私网/保留 IP
       try {
         await validateUrl(url);
       } catch (err) {
@@ -380,7 +379,7 @@ export function createWebFetchTool(
         );
       }
 
-      // Use the final URL after redirects for all output messages
+      // 所有输出消息都用重定向后的最终 URL
       const finalUrl = response.url || url;
 
       const contentType = (response.headers.get('content-type') || '')
@@ -388,7 +387,7 @@ export function createWebFetchTool(
         .split(';')[0]
         .trim();
 
-      // Binary content types — stream with size limit
+      // 二进制内容类型——带大小上限的流式读取
       if (contentType === 'application/pdf') {
         const buffer = await readResponseBytes(response, MAX_DOWNLOAD_SIZE);
         return handlePdf(buffer, finalUrl, saveBinary);
@@ -399,7 +398,7 @@ export function createWebFetchTool(
         return handleImage(buffer, finalUrl, contentType, saveBinary);
       }
 
-      // Text content types — stream with size limit then decode
+      // 文本内容类型——带大小上限的流式读取后解码
       const text = await readResponseText(response, MAX_DOWNLOAD_SIZE);
 
       if (contentType.includes('html')) {

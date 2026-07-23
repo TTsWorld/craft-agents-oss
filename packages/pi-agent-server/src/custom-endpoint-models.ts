@@ -19,17 +19,16 @@ export type CustomEndpointModelConfig = string | {
   supportsImages?: boolean
 }
 
-/** Strip bare model IDs (remove pi/ prefix if present). */
+/** 剥离纯 model ID（如有 pi/ 前缀则去掉）。 */
 export function stripPiPrefix(id: string): string {
   return id.startsWith('pi/') ? id.slice(3) : id
 }
 
 /**
- * Normalize a user-configured custom endpoint model for Pi SDK registration.
+ * 将用户配置的自定义 endpoint 模型归一化，用于 Pi SDK 注册。
  *
- * Keep explicit per-model capability overrides intact. In particular,
- * `supportsImages: false` is meaningful because it can override a global
- * endpoint default of `supportsImages: true` for text-only models.
+ * 保留显式的逐模型能力覆盖。其中 `supportsImages: false` 尤其有意义——
+ * 它可以为纯文本模型覆盖全局 endpoint 默认的 `supportsImages: true`。
  */
 export function normalizeCustomEndpointModelEntry(model: CustomEndpointModelConfig): CustomEndpointModelEntry {
   if (typeof model === 'string') {
@@ -44,10 +43,9 @@ export function normalizeCustomEndpointModelEntry(model: CustomEndpointModelConf
 }
 
 /**
- * Build a synthetic model definition for a custom endpoint.
- * Uses reasonable defaults for context window and max tokens since we can't
- * query the endpoint for its actual capabilities. Image support must be
- * explicitly enabled either at the connection level or per-model.
+ * 为自定义 endpoint 构建一个合成的模型定义。
+ * 由于无法向 endpoint 查询真实能力，这里使用合理的 context window 和 max tokens 默认值。
+ * 图片支持必须在连接级别或逐模型级别显式开启。
  */
 export function buildCustomEndpointModelDef(
   id: string,

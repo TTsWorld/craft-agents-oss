@@ -15,7 +15,7 @@ function useAccentColor(): string {
   const [color, setColor] = useState(FALLBACK_COLOR)
 
   useEffect(() => {
-    // --accent-rgb is pre-computed as "R, G, B" integers — no oklch resolution needed
+    // --accent-rgb 已预计算为 "R, G, B" 整数 —— 无需解析 oklch
     const raw = getComputedStyle(document.documentElement).getPropertyValue('--accent-rgb').trim()
     if (!raw) return
     const parts = raw.split(',').map((s) => Number(s.trim()))
@@ -23,7 +23,7 @@ function useAccentColor(): string {
     const r = parts[0]!
     const g = parts[1]!
     const b = parts[2]!
-    if (isGreyscale(r, g, b)) return // keep blue fallback for greyscale accents
+    if (isGreyscale(r, g, b)) return // 灰度系强调色保留蓝色兜底
     setColor(rgbToHex(r, g, b))
   }, [])
 
@@ -37,7 +37,7 @@ export interface BrowserShaderProps {
   maskImage: string
   opacity?: number
 
-  // TurnCard+HDR shader params
+  // TurnCard+HDR 着色器参数
   colorBack?: string
   colorFront?: string
   shape?: 'warp' | 'simplex' | 'dots' | 'wave' | 'ripple' | 'swirl' | 'sphere'

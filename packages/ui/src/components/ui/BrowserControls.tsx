@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { Spinner } from './LoadingIndicator'
 
 /* ------------------------------------------------------------------ */
-/*  NavButton – small internal button matching TopBarButton styling   */
+/*  NavButton – 与 TopBarButton 样式一致的小型内部按钮               */
 /* ------------------------------------------------------------------ */
 
 interface NavButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -39,57 +39,56 @@ NavButton.displayName = 'NavButton'
 /* ------------------------------------------------------------------ */
 
 export interface BrowserControlsProps {
-  /** Current URL displayed in the address bar */
+  /** 地址栏中显示的当前 URL */
   url?: string
-  /** Whether page is loading (toggles Stop/Reload, shows progress) */
+  /** 页面是否正在加载（切换停止/刷新按钮，并显示进度） */
   loading?: boolean
-  /** Enable back button */
+  /** 是否启用后退按钮 */
   canGoBack?: boolean
-  /** Enable forward button */
+  /** 是否启用前进按钮 */
   canGoForward?: boolean
-  /** Called when user submits a URL */
+  /** 用户提交 URL 时调用 */
   onNavigate?: (url: string) => void
-  /** Back button click */
+  /** 后退按钮点击 */
   onGoBack?: () => void
-  /** Forward button click */
+  /** 前进按钮点击 */
   onGoForward?: () => void
-  /** Reload button click */
+  /** 刷新按钮点击 */
   onReload?: () => void
-  /** Stop button click */
+  /** 停止按钮点击 */
   onStop?: () => void
-  /** Controlled URL input change */
+  /** 受控的 URL 输入变化 */
   onUrlChange?: (url: string) => void
-  /** Compact layout variant */
+  /** 紧凑布局变体 */
   compact?: boolean
-  /** Content rendered before navigation buttons */
+  /** 渲染在导航按钮之前的内容 */
   leadingContent?: ReactNode
-  /** Content rendered after URL bar (e.g. label) */
+  /** 渲染在地址栏之后的内容（如标签） */
   trailingContent?: ReactNode
-  /** Show animated loading progress bar (default true) */
+  /** 是否显示动画加载进度条（默认 true） */
   showProgressBar?: boolean
-  /** Additional CSS classes on the URL bar group (reload + form) */
+  /** 地址栏组合（刷新 + 表单）上的附加 CSS 类 */
   urlBarClassName?: string
   /**
-   * Minimum left clearance in px. When set, enables window-center mode:
-   * back/forward are absolutely positioned and the reload + URL bar
-   * centers in the full component width via CSS max(), falling back
-   * to this clearance when the component is narrow.
+   * 最小左侧留白（px）。设置后启用窗口居中模式：
+   * 后退/前进按钮改为绝对定位，刷新按钮 + 地址栏通过 CSS max()
+   * 在组件完整宽度内居中；当组件较窄时回退到此留白值。
    */
   leftClearance?: number
   /**
-   * Website theme color (from `<meta name="theme-color">`).
-   * When set, tints the toolbar background like Safari/Chrome.
-   * Text and icons automatically adjust for contrast.
+   * 网站主题色（来自 `<meta name="theme-color">`）。
+   * 设置后会像 Safari/Chrome 那样为工具栏背景着色。
+   * 文本和图标会自动调整以保证对比度。
    */
   themeColor?: string | null
-  /** Additional CSS classes on the root element */
+  /** 根元素上的附加 CSS 类 */
   className?: string
 }
 
 /**
- * Validate a color string is safe for CSS interpolation.
- * Only allows hex, rgb/rgba, hsl/hsla, oklch, oklab, lch, lab, color() — rejects anything
- * that could break out of a CSS value context.
+ * 校验颜色字符串可安全用于 CSS 插值。
+ * 仅允许 hex、rgb/rgba、hsl/hsla、oklch、oklab、lch、lab、color() —— 拒绝任何
+ * 可能破坏 CSS 取值上下文的内容。
  */
 const SAFE_CSS_COLOR_RE = /^(#[0-9a-f]{3,8}|(?:rgba?|hsla?|oklch|oklab|lch|lab|color)\([^;{}]*\))$/i
 function safeCssColor(color: string | null | undefined): string | null {
@@ -100,9 +99,9 @@ function safeCssColor(color: string | null | undefined): string | null {
 }
 
 /**
- * Parse a CSS color to sRGB relative luminance (0–1).
- * Handles hex (#rgb, #rrggbb) and rgb/rgba (comma or space separated).
- * Returns null for unparseable formats (oklch, lch, etc.).
+ * 将 CSS 颜色解析为 sRGB 相对亮度（0–1）。
+ * 支持 hex（#rgb、#rrggbb）和 rgb/rgba（逗号或空格分隔）。
+ * 对无法解析的格式（oklch、lch 等）返回 null。
  */
 function colorLuminance(color: string): number | null {
   let r: number, g: number, b: number
@@ -124,7 +123,7 @@ function colorLuminance(color: string): number | null {
       return null
     }
   } else {
-    // rgb/rgba — comma or space separated
+    // rgb/rgba —— 逗号或空格分隔
     const rm = color.match(/rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/)
     if (!rm) return null
 
@@ -141,7 +140,7 @@ function colorLuminance(color: string): number | null {
   return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b)
 }
 
-/** Half of the default URL bar max-width (600px), used for CSS max() centering calc */
+/** 默认地址栏最大宽度（600px）的一半，用于 CSS max() 居中计算 */
 const HALF_MAX_WIDTH = 300
 
 export function BrowserControls({
@@ -169,7 +168,7 @@ export function BrowserControls({
   const [isFocused, setIsFocused] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Sync with controlled url when not focused
+  // 未聚焦时与受控 url 同步
   useEffect(() => {
     if (!isFocused && controlledUrl != null) {
       setLocalUrl(controlledUrl === 'about:blank' ? '' : controlledUrl)
@@ -223,7 +222,7 @@ export function BrowserControls({
   const isDarkBg = themeLum != null && themeLum < 0.4
   const useWindowCenter = leftClearance != null
 
-  /* Shared: reload / stop button */
+  /* 共用：刷新 / 停止按钮 */
   const reloadButton = (
     <NavButton
       aria-label={loading ? t('browser.stopLoading') : t('common.reload')}
@@ -237,7 +236,7 @@ export function BrowserControls({
     </NavButton>
   )
 
-  /* Shared: URL input form */
+  /* 共用：URL 输入表单 */
   const urlForm = (
     <form className="flex-1 min-w-0" onSubmit={handleSubmit}>
       <div className="relative">
@@ -281,7 +280,7 @@ export function BrowserControls({
     </form>
   )
 
-  /* Shared: progress bar */
+  /* 共用：进度条 */
   const progressBar = showProgressBar && (
     <AnimatePresence>
       {loading && (
@@ -303,7 +302,7 @@ export function BrowserControls({
     </AnimatePresence>
   )
 
-  /* ---- Layout ---- */
+  /* ---- 布局 ---- */
   return (
     <div
       className={cn(
@@ -325,7 +324,7 @@ export function BrowserControls({
         transition: 'background-color 200ms ease, border-color 200ms ease',
       } as React.CSSProperties}
     >
-      {/* Scoped hover styles for themed toolbar — buttons use --tb-hover */}
+      {/* 主题化工具栏的作用域悬停样式 —— 按钮使用 --tb-hover */}
       {safeThemeColor && (
         <style dangerouslySetInnerHTML={{ __html: `
           [data-themed] button:hover:not(:disabled) { background: var(--tb-hover) !important; }

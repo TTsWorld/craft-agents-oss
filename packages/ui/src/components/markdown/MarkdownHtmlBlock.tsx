@@ -1,17 +1,17 @@
 /**
- * MarkdownHtmlBlock - Renders ```html-preview code blocks as sandboxed HTML previews.
+ * MarkdownHtmlBlock - 将 ```html-preview 代码块渲染为沙箱化 HTML 预览。
  *
- * Loads HTML from file(s) (via `src` or `items` field) and renders in a sandboxed iframe.
- * Supports multiple items with a tab bar for switching between them.
+ * 通过 `src` 或 `items` 字段从文件加载 HTML,并在沙箱 iframe 中渲染。
+ * 支持多个 item,带 tab 栏用于切换。
  *
- * Expected JSON shapes:
- * Single item:
+ * 期望的 JSON 结构:
+ * 单个 item:
  * {
  *   "src": "/absolute/path/to/file.html",
  *   "title": "Optional title"
  * }
  *
- * Multiple items:
+ * 多个 item:
  * {
  *   "title": "Email Thread",
  *   "items": [
@@ -20,12 +20,11 @@
  *   ]
  * }
  *
- * Flash prevention: All cached items are rendered as hidden iframes (display:none/block).
- * Switching tabs toggles CSS visibility — no re-parse, no flash.
+ * 防闪烁:所有已缓存的 item 都作为隐藏 iframe 渲染(display:none/block)。
+ * 切换 tab 时仅切换 CSS 可见性 —— 无需重新解析,无闪烁。
  *
- * Security: iframe uses `sandbox` attribute without `allow-scripts`,
- * blocking all JavaScript execution. `allow-same-origin` is included
- * so CSS and images resolve correctly.
+ * 安全:iframe 使用不带 `allow-scripts` 的 `sandbox` 属性,
+ * 阻止一切 JavaScript 执行。包含 `allow-same-origin` 以便 CSS 和图片正确加载。
  */
 
 import * as React from 'react'
@@ -37,7 +36,7 @@ import { ItemNavigator } from '../overlay/ItemNavigator'
 import { usePlatform } from '../../context/PlatformContext'
 import { useTranslation } from 'react-i18next'
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// ── 类型 ────────────────────────────────────────────────────────────────────
 
 interface PreviewItem {
   src: string
@@ -50,7 +49,7 @@ interface HtmlPreviewSpec {
   items?: PreviewItem[]
 }
 
-// ── Error boundary ───────────────────────────────────────────────────────────
+// ── 错误边界 ───────────────────────────────────────────────────────────────
 
 class HtmlBlockErrorBoundary extends React.Component<
   { children: React.ReactNode; fallback: React.ReactNode },
@@ -67,13 +66,12 @@ class HtmlBlockErrorBoundary extends React.Component<
   }
 }
 
-// ── HTML preprocessing ───────────────────────────────────────────────────────
+// ── HTML 预处理 ───────────────────────────────────────────────────────────────
 
 /**
- * Inject `<base target="_top">` into HTML so link clicks navigate the top frame
- * instead of the iframe. Combined with `allow-top-navigation-by-user-activation`
- * in the sandbox, this lets Electron's `will-navigate` handler intercept the
- * navigation and open the URL in the system browser.
+ * 向 HTML 中注入 `<base target="_top">`,使链接点击时导航的是顶层 frame
+ * 而非 iframe。配合 sandbox 中的 `allow-top-navigation-by-user-activation`,
+ * Electron 的 `will-navigate` 处理器可以拦截导航并在系统浏览器中打开 URL。
  */
 function injectBaseTarget(html: string): string {
   if (/<base\s/i.test(html)) return html
@@ -86,7 +84,7 @@ function injectBaseTarget(html: string): string {
   return `<head><base target="_top"></head>${html}`
 }
 
-// ── Main component ───────────────────────────────────────────────────────────
+// ── 主组件 ───────────────────────────────────────────────────────────────────
 
 export interface MarkdownHtmlBlockProps {
   code: string
@@ -97,7 +95,7 @@ export function MarkdownHtmlBlock({ code, className }: MarkdownHtmlBlockProps) {
   const { t } = useTranslation()
   const { onReadFile } = usePlatform()
 
-  // Parse the JSON spec — supports single src or items array
+  // 解析 JSON spec —— 支持单个 src 或 items 数组
   const spec = React.useMemo<HtmlPreviewSpec | null>(() => {
     try {
       const raw = JSON.parse(code)
@@ -113,7 +111,7 @@ export function MarkdownHtmlBlock({ code, className }: MarkdownHtmlBlockProps) {
     }
   }, [code])
 
-  // Normalize to items array (backward compat)
+  // 归一化为 items 数组(向后兼容)
   const items = React.useMemo<PreviewItem[]>(() => {
     if (!spec) return []
     if (spec.items && spec.items.length > 0) return spec.items
@@ -124,7 +122,7 @@ export function MarkdownHtmlBlock({ code, className }: MarkdownHtmlBlockProps) {
   const [activeIndex, setActiveIndex] = React.useState(0)
   const [isFullscreen, setIsFullscreen] = React.useState(false)
 
-  // Content cache: src path → loaded HTML string
+  // 内容缓存:src 路径 → 已加载的 HTML 字符串
   const [contentCache, setContentCache] = React.useState<Record<string, string>>({})
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -132,7 +130,7 @@ export function MarkdownHtmlBlock({ code, className }: MarkdownHtmlBlockProps) {
   const activeItem = items[activeIndex]
   const activeHtml = activeItem ? contentCache[activeItem.src] : undefined
 
-  // Load active item's content when it changes
+  // 当 active item 变化时加载其内容
   React.useEffect(() => {
     if (!activeItem?.src || !onReadFile) return
     if (contentCache[activeItem.src]) {
@@ -151,7 +149,7 @@ export function MarkdownHtmlBlock({ code, className }: MarkdownHtmlBlockProps) {
       .finally(() => setLoading(false))
   }, [activeItem?.src, onReadFile, contentCache])
 
-  // Preprocess all cached HTML (inject base target for links)
+  // 预处理所有已缓存的 HTML(为链接注入 base target)
   const processedCache = React.useMemo(() => {
     const result: Record<string, string> = {}
     for (const [src, html] of Object.entries(contentCache)) {
@@ -163,7 +161,7 @@ export function MarkdownHtmlBlock({ code, className }: MarkdownHtmlBlockProps) {
   const hasCachedContent = Object.keys(contentCache).length > 0
   const hasMultiple = items.length > 1
 
-  // Stable onLoadContent callback for the overlay
+  // 提供给浮层的稳定 onLoadContent 回调
   const handleLoadContent = React.useCallback(async (src: string) => {
     if (contentCache[src]) return contentCache[src]
     if (!onReadFile) throw new Error('Cannot load content')
@@ -172,7 +170,7 @@ export function MarkdownHtmlBlock({ code, className }: MarkdownHtmlBlockProps) {
     return content
   }, [contentCache, onReadFile])
 
-  // Invalid spec → fall back to code block
+  // 无效 spec → 回退到代码块
   if (!spec || items.length === 0) {
     return <CodeBlock code={code} language="json" mode="full" className={className} />
   }
@@ -182,7 +180,7 @@ export function MarkdownHtmlBlock({ code, className }: MarkdownHtmlBlockProps) {
   return (
     <HtmlBlockErrorBoundary fallback={fallback}>
       <div className={cn('relative group rounded-[8px] overflow-hidden border bg-muted/10', className)}>
-        {/* Header */}
+        {/* 标题栏 */}
         <div className="px-3 py-2 bg-muted/50 border-b flex items-center gap-2">
           <Globe className="w-3.5 h-3.5 text-muted-foreground/50" />
           <span className="text-[12px] text-muted-foreground font-medium flex-1">
@@ -206,9 +204,9 @@ export function MarkdownHtmlBlock({ code, className }: MarkdownHtmlBlockProps) {
           </div>
         </div>
 
-        {/* Content area: hidden iframes for cached items + loading/error for uncached active */}
+        {/* 内容区:已缓存 item 作为隐藏 iframe + 未缓存 active item 的加载/错误态 */}
         <div className="relative max-h-[400px] overflow-hidden">
-          {/* Render all cached items as hidden iframes — prevents flash on tab switch */}
+          {/* 将所有已缓存 item 作为隐藏 iframe 渲染 —— 避免 tab 切换时的闪烁 */}
           {items.map((item, i) => {
             const processed = processedCache[item.src]
             if (!processed) return null
@@ -227,17 +225,17 @@ export function MarkdownHtmlBlock({ code, className }: MarkdownHtmlBlockProps) {
             )
           })}
 
-          {/* Loading state for uncached active item */}
+          {/* 未缓存 active item 的加载态 */}
           {!activeHtml && loading && (
             <div className="py-8 text-center text-muted-foreground text-[13px]">{t('common.loading')}</div>
           )}
 
-          {/* Error state for uncached active item */}
+          {/* 未缓存 active item 的错误态 */}
           {!activeHtml && !loading && error && (
             <div className="py-6 text-center text-destructive/70 text-[13px]">{error}</div>
           )}
 
-          {/* Bottom fade gradient */}
+          {/* 底部渐隐渐变 */}
           {hasCachedContent && (
             <div
               className="absolute bottom-0 left-0 right-0 h-8 pointer-events-none"
@@ -249,7 +247,7 @@ export function MarkdownHtmlBlock({ code, className }: MarkdownHtmlBlockProps) {
         </div>
       </div>
 
-      {/* Fullscreen overlay — passes items for multi-item navigation */}
+      {/* 全屏浮层 —— 传入 items 以支持多 item 导航 */}
       <HTMLPreviewOverlay
         isOpen={isFullscreen}
         onClose={() => setIsFullscreen(false)}

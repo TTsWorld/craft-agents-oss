@@ -1,16 +1,14 @@
 /**
- * PendingSendersStore — bounded record of senders the access-control layer
- * recently rejected.
+ * PendingSendersStore —— access-control 层最近拒绝的发送方的有界记录。
  *
- * Surfaces in the Settings UI as "Pending requests" so the operator can
- * promote a sender to the owners list with one click. Persisted to
- * `messaging/pending.json` per workspace.
+ * 在 Settings UI 里以「Pending requests」呈现，让运营者一键把某个发送方
+ * 提升为 owners 列表成员。每个 workspace 持久化到
+ * `messaging/pending.json`。
  *
- * Bounds:
- *  - LRU 50 entries per workspace (recency wins on overflow).
- *  - 7-day TTL — entries older than that are dropped on read/write.
- *  - File-backed best-effort. Losing the file is harmless: the next
- *    rejected attempt repopulates it.
+ * 边界：
+ *  - 每个 workspace LRU 最多 50 条（溢出时按最近性裁剪）。
+ *  - 7 天 TTL —— 超过的条目在读/写时被丢弃。
+ *  - 文件存储尽力而为。丢文件无害：下一次被拒的尝试会重新填充。
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -38,11 +36,11 @@ export interface RecordRejectionInput {
   senderName?: string
   senderUsername?: string
   /**
-   * Why the sender was rejected. Defaults to `'not-owner'` for callers
-   * that don't supply it (back-compat with the original signature).
+   * 发送方被拒的原因。未提供时默认为 `'not-owner'`
+   *（与原始签名的向后兼容）。
    */
   reason?: PendingRejectReason
-  /** Binding context for `'not-on-binding-allowlist'` rejects. */
+  /** `'not-on-binding-allowlist'` 拒绝时的 binding 上下文。 */
   bindingId?: string
   sessionId?: string
   channelId?: string
@@ -63,13 +61,13 @@ export class PendingSendersStore {
     this.load()
   }
 
-  /** Register a callback fired after any mutation is persisted. */
+  /** 注册一个回调，在任意变更被持久化后触发。 */
   onChange(fn: () => void): void {
     this.changeListener = fn
   }
 
   // -------------------------------------------------------------------------
-  // Query
+  // 查询
   // -------------------------------------------------------------------------
 
   list(platform?: PlatformType): PendingSender[] {
@@ -81,19 +79,18 @@ export class PendingSendersStore {
   }
 
   // -------------------------------------------------------------------------
-  // Mutation
+  // 变更
   // -------------------------------------------------------------------------
 
   /**
-   * Record a rejected attempt. Entries are keyed by
-   * `(platform, senderId, reason, bindingId)` — same sender hitting
-   * different bindings stays on separate rows so the operator can
-   * decide each one independently. A repeat attempt against the same
-   * key bumps `attemptCount` + `lastAttemptAt` and refreshes display
-   * metadata.
+   * 记录一次被拒的尝试。条目以
+   * `(platform, senderId, reason, bindingId)` 为键 —— 同一个发送方命中
+   * 不同 binding 会落在不同的行上，这样运营者可以独立决定每一行。
+   * 同一 key 的重复尝试会累加 `attemptCount`、刷新 `lastAttemptAt`
+   * 并更新显示元数据。
    *
-   * LRU eviction kicks in on insert overflow. Returns the merged entry
-   * so callers can log the current attemptCount without re-querying.
+   * 插入溢出时触发 LRU 驱逐。返回合并后的条目，
+   * 这样调用方无需重新查询就能记录当前 attemptCount。
    */
   recordRejection(input: RecordRejectionInput): PendingSender {
     const now = Date.now()
@@ -114,7 +111,7 @@ export class PendingSendersStore {
       const existing = this.entries[idx]!
       merged = {
         ...existing,
-        // Refresh metadata if the new attempt brought better info.
+        // 如果本次尝试带来了更好的信息，刷新显示元数据。
         displayName: input.senderName ?? existing.displayName,
         username: input.senderUsername ?? existing.username,
         lastAttemptAt: now,
@@ -152,14 +149,13 @@ export class PendingSendersStore {
   }
 
   /**
-   * Drop one or more entries matching the supplied key. With only
-   * `(platform, userId)` provided, every reason/binding row for that
-   * sender is dropped — used when the sender becomes a workspace owner
-   * via "Allow as workspace owner" so we don't leave stale rows behind.
-   * Specifying `reason` (and optionally `bindingId`) narrows the dismiss
-   * to a single row.
+   * 丢弃一条或多条匹配所提供 key 的条目。当只提供
+   * `(platform, userId)` 时，该发送方的所有 reason/binding 行都会被丢弃 ——
+   * 用于发送方通过「Allow as workspace owner」成为 workspace owner 后，
+   * 不在背后留下陈旧行。指定 `reason`（以及可选的 `bindingId`）
+   * 可把 dismiss 收窄到单行。
    *
-   * Returns true if anything was removed.
+   * 有任何条目被移除时返回 true。
    */
   dismiss(
     platform: PlatformType,
@@ -178,7 +174,7 @@ export class PendingSendersStore {
     return true
   }
 
-  /** Drop every entry for the platform. Used after disconnect/forget. */
+  /** 丢弃该平台的所有条目。断开/遗忘后使用。 */
   clearPlatform(platform: PlatformType): number {
     const before = this.entries.length
     this.entries = this.entries.filter((e) => e.platform !== platform)
@@ -188,7 +184,7 @@ export class PendingSendersStore {
   }
 
   // -------------------------------------------------------------------------
-  // Persistence
+  // 持久化
   // -------------------------------------------------------------------------
 
   private evictExpired(now: number): void {

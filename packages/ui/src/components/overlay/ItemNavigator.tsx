@@ -1,11 +1,11 @@
 /**
- * ItemNavigator - Shared arrow + dropdown navigation for overlay items.
+ * ItemNavigator - 浮层项目共享的箭头 + 下拉导航。
  *
- * Renders left/right arrows with a clickable label between them.
- * Clicking the label opens a dropdown listing all items for direct selection.
- * The active item shows a check icon.
+ * 渲染左右箭头，中间是可点击的标签。
+ * 点击标签打开下拉菜单列出所有项目供直接选择。
+ * 活动项目显示勾选图标。
  *
- * Uses StyledDropdown components for consistent popover styling (vibrancy, blur, sizing).
+ * 使用 StyledDropdown 组件保持一致的浮层样式（毛玻璃、模糊、尺寸）。
  */
 
 import { useCallback } from 'react'
@@ -27,7 +27,7 @@ export interface ItemNavigatorProps {
   items: NavigatorItem[]
   activeIndex: number
   onSelect: (index: number) => void
-  /** Size variant — 'sm' for inline blocks, 'md' for fullscreen overlays */
+  /** 尺寸变体 — 'sm' 用于行内块，'md' 用于全屏浮层 */
   size?: 'sm' | 'md'
 }
 

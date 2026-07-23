@@ -1,15 +1,15 @@
 /**
- * MessagingGatewayRegistry — owns per-workspace MessagingGateway instances.
+ * MessagingGatewayRegistry —— 持有各 workspace 的 MessagingGateway 实例。
  *
- * Responsibilities:
- *   - Satisfies IMessagingGatewayRegistry for the RPC handlers in server-core.
- *   - Acts as a single EventSink consumer fanning session events to the right gateway.
- *   - Owns the in-memory pairing code manager (shared across workspaces; codes are workspace-scoped).
- *   - Owns per-workspace MessagingConfig (messaging/config.json).
- *   - Owns platform adapter lifecycle (initialize/swap/destroy) via CredentialManager.
+ * 职责：
+ *   - 为 server-core 里的 RPC handler 实现 IMessagingGatewayRegistry。
+ *   - 作为单个 EventSink 消费者，把 session 事件扇出到正确的 gateway。
+ *   - 持有内存中的配对码管理器（跨 workspace 共享；配对码按 workspace 作用域）。
+ *   - 持有每个 workspace 的 MessagingConfig（messaging/config.json）。
+ *   - 通过 CredentialManager 负责平台 adapter 的生命周期（初始化/替换/销毁）。
  *
- * The registry is constructed once, wired into HandlerDeps, then populated with
- * gateways via initializeWorkspace() for every workspace that has messaging enabled.
+ * registry 构造一次、接入 HandlerDeps，然后通过 initializeWorkspace()
+ * 为每个启用了 messaging 的 workspace 填充 gateway。
  */
 
 import { existsSync, readdirSync, rmSync } from 'node:fs'
@@ -62,22 +62,22 @@ const consoleLogger: MessagingLogger = {
 export interface MessagingGatewayRegistryOptions {
   sessionManager: ISessionManager
   credentialManager: CredentialManager
-  /** Absolute path to the messaging storage directory for the given workspace. */
+  /** 给定 workspace 的 messaging 存储目录绝对路径。 */
   getMessagingDir: (workspaceId: string) => string
-  /** Optional legacy messaging dir (pre-relocation) for one-shot migration. */
+  /** 可选的 legacy messaging 目录（relocation 之前），用于一次性迁移。 */
   getLegacyMessagingDir?: (workspaceId: string) => string | undefined
-  /** Broadcasts an RPC push event to UI clients. No-op if undefined. */
+  /** 向 UI 客户端广播 RPC push 事件。undefined 时为 no-op。 */
   publishEvent?: (channel: string, target: PushTarget, ...args: unknown[]) => void
-  /** Optional WhatsApp worker config — required to enable the WhatsApp adapter. */
+  /** 可选的 WhatsApp worker 配置 —— 启用 WhatsApp adapter 必填。 */
   whatsapp?: {
-    /** Absolute path to the worker entry (packaged/unpacked from @craft-agent/messaging-whatsapp-worker). */
+    /** worker 入口的绝对路径（来自 @craft-agent/messaging-whatsapp-worker 的打包/解包产物）。 */
     workerEntry: string
-    /** Node binary override (defaults to process.execPath with ELECTRON_RUN_AS_NODE). */
+    /** Node 二进制覆盖（默认为 process.execPath 配合 ELECTRON_RUN_AS_NODE）。 */
     nodeBin?: string
-    /** Pairing flow: 'qr' or 'code'. Defaults to 'code' (phone-number based). */
+    /** 配对流程：'qr' 或 'code'。默认为 'code'（基于手机号）。 */
     pairingMode?: 'qr' | 'code'
   }
-  /** Optional logger — shared with the gateway and adapters. */
+  /** 可选 logger —— 与 gateway 和 adapter 共享。 */
   logger?: MessagingLogger
 }
 
@@ -99,10 +99,9 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   constructor(private readonly opts: MessagingGatewayRegistryOptions) {
     this.log = (opts.logger ?? consoleLogger).child({ component: 'registry' })
 
-    // Install the automation→topic binder hook on the SessionManager so
-    // executePromptAutomation can route topic-bound sessions without the
-    // SessionManager needing to import this package (avoids a package-level
-    // circular dependency).
+    // 在 SessionManager 上挂载 automation→topic 绑定 hook，让
+    // executePromptAutomation 能路由话题绑定的 session，而 SessionManager
+    // 无需 import 这个包（避免包级别的循环依赖）。
     opts.sessionManager.setAutomationBinder?.(async (input) => {
       const result = await this.bindAutomationSession(input)
       if (!result.ok) {
@@ -119,7 +118,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   // -------------------------------------------------------------------------
-  // Public registry lifecycle (called by the app bootstrap)
+  // 公共 registry 生命周期（由 app bootstrap 调用）
   // -------------------------------------------------------------------------
 
   async initializeWorkspace(workspaceId: string): Promise<void> {
@@ -218,7 +217,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   // -------------------------------------------------------------------------
-  // IMessagingGatewayRegistry — config
+  // IMessagingGatewayRegistry —— config
   // -------------------------------------------------------------------------
 
   getConfig(workspaceId: string): MessagingConfigInfo | null {
@@ -300,7 +299,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   // -------------------------------------------------------------------------
-  // IMessagingGatewayRegistry — bindings
+  // IMessagingGatewayRegistry —— bindings
   // -------------------------------------------------------------------------
 
   getBindings(workspaceId: string): MessagingBindingInfo[] {
@@ -327,7 +326,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   // -------------------------------------------------------------------------
-  // IMessagingGatewayRegistry — pairing
+  // IMessagingGatewayRegistry —— 配对
   // -------------------------------------------------------------------------
 
   generatePairingCode(
@@ -358,10 +357,9 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   /**
-   * Issue a workspace-supergroup pairing code. The user types
-   * `/pair <code>` from any topic of the desired Telegram supergroup; the
-   * bot captures `chat.id` and persists it as the workspace's accepted
-   * supergroup, after which the adapter starts accepting messages from it.
+   * 签发一个 workspace-超级群配对码。用户在目标 Telegram 超级群的任意话题里
+   * 输入 `/pair <code>`；机器人捕获 `chat.id` 并持久化为 workspace 接受的
+   * 超级群，之后 adapter 开始接收它的消息。
    */
   generateSupergroupPairingCode(
     workspaceId: string,
@@ -393,11 +391,10 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   /**
-   * Persist a paired supergroup at the workspace level and tell the running
-   * adapter to start accepting its messages. Called from the gateway's
-   * `pairingConsumer.bindWorkspaceSupergroup` hook after the user types
-   * `/pair <code>` in the group, and also reachable directly via RPC for
-   * future programmatic flows.
+   * 在 workspace 级别持久化配对到的超级群，并通知运行中的 adapter 开始接收
+   * 它的消息。在用户于群里输入 `/pair <code>` 后，由 gateway 的
+   * `pairingConsumer.bindWorkspaceSupergroup` hook 调用，
+   * 也可通过 RPC 直接访问，用于未来的程序化流程。
    */
   async bindWorkspaceSupergroup(
     workspaceId: string,
@@ -414,11 +411,10 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
       throw new Error('Telegram adapter is not running. Connect the bot first.')
     }
 
-    // Validate the chat is actually a forum supergroup before binding.
-    // Without this, `/pair` typed in a DM (or a basic group, or a regular
-    // supergroup without topics) "succeeds" at command level but breaks
-    // downstream when `createForumTopic` runs — Telegram returns
-    // `400: Bad Request: the chat is not a forum`.
+    // 绑定前校验该聊天确实是一个论坛超级群。没有这步，在 DM
+    //（或基础群、或没有开启话题的普通超级群）里输入 `/pair` 会在命令层
+    //「成功」，但 `createForumTopic` 执行时会在下游崩掉 —— Telegram 返回
+    // `400: Bad Request: the chat is not a forum`。
     const info = await adapter.getChatInfo(chatId)
     if (!info) {
       throw new Error(
@@ -462,10 +458,9 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   /**
-   * Forget the paired supergroup. Existing topic-bound bindings are kept on
-   * disk (they reference chatId only) but stop matching inbound updates
-   * because the adapter rejects messages from the chat. Reconnecting the
-   * same supergroup later restores routing.
+   * 遗忘已配对的超级群。已存在的话题绑定仍保留在磁盘上（它们只引用 chatId），
+   * 但不再匹配入站 update，因为 adapter 会拒绝来自该聊天的消息。
+   * 之后重新连接同一个超级群即可恢复路由。
    */
   async unbindWorkspaceSupergroup(workspaceId: string): Promise<void> {
     const state = this.workspaces.get(workspaceId)
@@ -474,9 +469,8 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
     const tg = cfg.platforms.telegram
     if (!tg?.supergroup) return
 
-    // Drop the supergroup field but keep owners / accessMode / enabled
-    // intact. JSON.stringify drops `undefined` values, so this is
-    // effectively a key-deletion.
+    // 去掉 supergroup 字段，但保留 owners / accessMode / enabled。
+    // JSON.stringify 会丢掉 `undefined` 值，所以这等效于删除 key。
     this.patchTelegramConfig(workspaceId, { supergroup: undefined })
 
     const adapter = state.gateway.getAdapter('telegram') as TelegramAdapter | undefined
@@ -487,7 +481,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
     })
   }
 
-  /** Read accessor for the current paired supergroup, if any. */
+  /** 当前已配对超级群的读访问器（如有）。 */
   getWorkspaceSupergroup(workspaceId: string): { chatId: string; title: string; capturedAt: number } | null {
     const state = this.workspaces.get(workspaceId) ?? this.bootstrapWorkspace(workspaceId)
     const sg = state.configStore.get().platforms.telegram?.supergroup
@@ -495,12 +489,11 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   /**
-   * Bind a freshly-spawned automation session to a Telegram forum topic in
-   * the workspace's paired supergroup. The topic is created on first use and
-   * reused thereafter.
+   * 把一个刚拉起的 automation session 绑定到 workspace 已配对超级群里的
+   * 一个 Telegram 论坛话题。话题首次使用时创建，之后复用。
    *
-   * Best-effort: returns a discriminated result instead of throwing so the
-   * caller (SessionManager) can log + continue without blocking the session.
+   * 尽力而为：返回一个可区分的结果而非抛出异常，这样调用方
+   *（SessionManager）可以记日志后继续，不阻塞 session。
    */
   async bindAutomationSession(args: {
     workspaceId: string
@@ -566,10 +559,9 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   /**
-   * Drop a cached topic entry. Does NOT delete the topic in Telegram (the
-   * bot has no signal that the user wants the history gone). Useful when
-   * an automation is renamed/removed and the user wants the next use of
-   * a topic name to create a fresh topic instead of reusing the cached one.
+   * 丢弃一个缓存的话题条目。不会删除 Telegram 里的那个话题
+   *（机器人无从得知用户是否想要保留历史）。适用于某个 automation 被重命名/移除、
+   * 用户希望下次用同名话题时新建一个，而不是复用缓存条目的场景。
    */
   async removeAutomationTopic(workspaceId: string, topicName: string): Promise<void> {
     const state = this.workspaces.get(workspaceId)
@@ -578,7 +570,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   // -------------------------------------------------------------------------
-  // IMessagingGatewayRegistry — platform lifecycle
+  // IMessagingGatewayRegistry —— 平台生命周期
   // -------------------------------------------------------------------------
 
   async testTelegramToken(
@@ -622,9 +614,9 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
     )
 
     const state = this.workspaces.get(workspaceId) ?? this.bootstrapWorkspace(workspaceId)
-    // Critical: must NOT replace platforms.telegram with `{ enabled: true }`
-    // — that would wipe owners / accessMode / supergroup. Patch only the
-    // `enabled` flag and let everything else survive.
+    // 关键：绝不能用 `{ enabled: true }` 整体替换 platforms.telegram
+    // —— 那会抹掉 owners / accessMode / supergroup。只 patch `enabled` 标志，
+    // 其余字段保持不动。
     this.patchTelegramConfig(workspaceId, { enabled: true }, { ensureMessagingEnabled: true })
 
     this.setPlatformRuntime(workspaceId, state, 'telegram', {
@@ -639,10 +631,9 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   /**
-   * Verify a Lark/Feishu App ID + App Secret pair by exchanging them for a
-   * tenant access token. The Open Platform returns a structured error code
-   * we forward to the user when the credentials are bad — saves a confused
-   * round-trip through "Invalid token" guesses.
+   * 校验一对 Lark/飞书 App ID + App Secret，把它们换成 tenant access token。
+   * 开放平台在凭据错误时会返回结构化的 error code，我们把它转给用户 ——
+   * 省去在「Invalid token」猜测之间来回兜圈子的困惑。
    */
   async testLarkCredentials(
     creds: LarkCredentials,
@@ -726,10 +717,9 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
     state.botUsernames[platform] = undefined
     this.pairing.clearWorkspace(workspaceId)
 
-    // Preserve per-platform fields (owners / accessMode / supergroup for
-    // telegram, selfChatMode for whatsapp, domain for lark) so reconnecting
-    // doesn't surprise the operator with a reset to public. Use
-    // `forgetPlatform` for the full wipe.
+    // 保留各平台字段（telegram 的 owners / accessMode / supergroup，
+    // whatsapp 的 selfChatMode，lark 的 domain），这样重连时不会让运营者
+    // 意外看到「重置为 public」。要彻底清空请用 `forgetPlatform`。
     const currentConfig = state.configStore.get()
     const currentPlatformConfig = currentConfig.platforms[platform] ?? { enabled: true }
     const nextPlatforms = {
@@ -782,7 +772,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   // -------------------------------------------------------------------------
-  // WhatsApp — subprocess lifecycle
+  // WhatsApp —— 子进程生命周期
   // -------------------------------------------------------------------------
 
   async startWhatsAppConnect(workspaceId: string): Promise<void> {
@@ -831,9 +821,8 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
     state.whatsapp = adapter
     state.whatsappOffEvent = adapter.onEvent((ev) => this.onWhatsAppEvent(workspaceId, ev))
 
-    // selfChatMode: default ON. Persisted to workspace config so it
-    // survives restart and can be toggled later if the user wants pure
-    // contact-only routing.
+    // selfChatMode：默认开启。持久化到 workspace config，这样重启后仍生效，
+    // 以后用户想要纯联系人路由时也可切换。
     const persistedCfg = state.configStore.get()
     const selfChatMode = persistedCfg.platforms.whatsapp?.selfChatMode ?? true
 
@@ -927,7 +916,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   // -------------------------------------------------------------------------
-  // EventSink-compatible callback
+  // EventSink 兼容的回调
   // -------------------------------------------------------------------------
 
   onSessionEvent: EventSinkFn = (channel: string, target: PushTarget, ...args: unknown[]) => {
@@ -950,7 +939,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   // -------------------------------------------------------------------------
-  // Internal helpers
+  // 内部辅助函数
   // -------------------------------------------------------------------------
 
   private bootstrapWorkspace(workspaceId: string): WorkspaceState {
@@ -992,7 +981,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
           return this.bindWorkspaceSupergroup(workspaceId, platform, chatId, fallbackTitle)
         },
       },
-      // Read live config so accessMode/owner toggles take effect immediately.
+      // 读取实时 config，让 accessMode/owner 切换立即生效。
       getWorkspaceConfig: () => configStore.get(),
       seedOwnerOnFirstPair: async (platform, candidate) =>
         this.seedFirstOwner(workspaceId, platform, candidate),
@@ -1072,7 +1061,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
         const info = await adapter.getBotInfo()
         state.botUsernames.lark = info?.name
       } catch {
-        // non-fatal
+        // 非致命
       }
 
       state.gateway.registerAdapter(adapter)
@@ -1139,7 +1128,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
         const info = await adapter.getBotInfo()
         state.botUsernames.telegram = info?.username
       } catch {
-        // non-fatal
+        // 非致命
       }
 
       state.gateway.registerAdapter(adapter)
@@ -1192,9 +1181,8 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   private emitPendingChanged(workspaceId: string): void {
-    // Channel name kept symmetric with BINDING_CHANGED. Phase 3 wires the
-    // RPC channel constant; for now this is a no-op when the constant is
-    // absent.
+    // 通道名与 BINDING_CHANGED 对称。Phase 3 会接上 RPC 通道常量；
+    // 目前常量缺失时这里是 no-op。
     const channel = (
       RPC_CHANNELS.messaging as Record<string, string | undefined>
     ).PENDING_CHANGED
@@ -1207,20 +1195,18 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   // -------------------------------------------------------------------------
-  // Access control — workspace owners + per-binding allow lists
+  // 权限控制 —— workspace owners + 每个 binding 的 allow list
   // -------------------------------------------------------------------------
 
   /**
-   * Patch the Telegram platform config preserving any fields the caller
-   * doesn't touch. Critical: every Telegram config write MUST go through
-   * this helper — direct `configStore.update({ platforms: { telegram: {...} } })`
-   * silently drops `owners` / `accessMode` / `supergroup` / `enabled` from
-   * the persisted state because `ConfigStore.update` shallow-merges
-   * `platforms` but replaces the per-platform value wholesale.
+   * 对 Telegram 平台配置做 patch，保留调用方未涉及的字段。
+   * 关键：每次 Telegram 配置写入都必须走这个 helper —— 直接
+   * `configStore.update({ platforms: { telegram: {...} } })` 会悄悄把
+   * 持久化状态里的 `owners` / `accessMode` / `supergroup` / `enabled` 丢掉，
+   * 因为 `ConfigStore.update` 对 `platforms` 做浅合并，但每个平台的值是整体替换。
    *
-   * `ensureMessagingEnabled` flips the top-level `enabled` flag to true
-   * (used by save-token / connect flows). When false, `enabled` is
-   * preserved as-is.
+   * `ensureMessagingEnabled` 会把顶层 `enabled` 标志置为 true
+   *（save-token / connect 流程使用）。为 false 时，`enabled` 保持原样。
    */
   private patchTelegramConfig(
     workspaceId: string,
@@ -1240,9 +1226,8 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   /**
-   * Append `candidate` to the platform's owners list iff the list is
-   * currently empty. Returns the (possibly unchanged) list. Used by the
-   * gateway's `/pair` flow to bootstrap the first owner.
+   * 当且仅当平台的 owners 列表当前为空时，把 `candidate` 追加进去。
+   * 返回（可能未变的）列表。gateway 的 `/pair` 流程用它来引导第一个 owner。
    */
   private async seedFirstOwner(
     workspaceId: string,
@@ -1256,9 +1241,9 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
     if (currentOwners.length > 0) return currentOwners
 
     const nextOwners: PlatformOwner[] = [candidate]
-    // Workspaces that haven't picked an explicit access mode default
-    // to `owner-only` once an owner exists. Existing 'open' workspaces
-    // are respected (the operator chose to stay public).
+    // 没有显式选择 access mode 的 workspace，一旦有了 owner 就默认为
+    // `owner-only`。已存在的 'open' workspace 会被尊重
+    //（运营者选择保持公开）。
     this.patchTelegramConfig(workspaceId, {
       accessMode: cfg.platforms.telegram?.accessMode ?? 'owner-only',
       owners: nextOwners,
@@ -1308,11 +1293,9 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
     }
     this.patchTelegramConfig(workspaceId, { accessMode: mode })
 
-    // Lock-down semantics: switching the workspace to `owner-only` must
-    // also close any binding that's still in `open` mode, otherwise the
-    // operator clicks "Lock down", the banner disappears, but legacy
-    // bindings remain public — exactly the false-sense-of-security UX
-    // the feature is supposed to prevent.
+    // 锁定语义：把 workspace 切到 `owner-only` 时，必须同时关闭任何仍处于
+    // `open` 模式的 binding，否则运营者点了「锁定」、banner 消失，
+    // 但旧 binding 仍是公开的 —— 这正是该功能要防止的「虚假安全感」UX。
     if (mode === 'owner-only') {
       this.migrateOpenBindingsToInherit(workspaceId)
     }
@@ -1321,9 +1304,9 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   /**
-   * Walk all Telegram bindings and flip any with `accessMode === 'open'`
-   * to `inherit` (the safe default). Used when locking down the workspace.
-   * Telegram-only — other platforms don't yet have per-binding access.
+   * 遍历所有 Telegram binding，把 `accessMode === 'open'` 的都翻成
+   * `inherit`（安全默认值）。锁定 workspace 时使用。
+   * 仅 Telegram —— 其他平台还没有按 binding 的 access 控制。
    */
   private migrateOpenBindingsToInherit(workspaceId: string): void {
     const state = this.workspaces.get(workspaceId)
@@ -1336,7 +1319,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
     }
   }
 
-  /** Pending senders surface in Settings → Messaging as "Pending requests". */
+  /** pending senders 在 Settings → Messaging 里以「Pending requests」呈现。 */
   getPendingSenders(workspaceId: string, platform?: PlatformType): PendingSender[] {
     const state = this.workspaces.get(workspaceId)
     if (!state) return []
@@ -1354,21 +1337,18 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   }
 
   /**
-   * Allow a pending sender. Behaviour depends on why the sender was
-   * rejected:
+   * 允许一个 pending sender。行为取决于发送方被拒的原因：
    *
-   * - `'not-owner'` (workspace-level reject) → add to platform `owners`.
-   *   Result: sender can run pre-binding commands and inherits binding
-   *   access for `accessMode === 'inherit'` bindings.
-   * - `'not-on-binding-allowlist'` (binding-level reject) → append to
-   *   that binding's `allowedSenderIds`. Workspace owners list is NOT
-   *   touched — closing the privilege-escalation footgun where a Bob
-   *   denied by a single sensitive binding would have been promoted to
-   *   workspace owner.
+   * - `'not-owner'`（workspace 级拒绝）→ 加入平台 `owners`。
+   *   结果：发送方可执行 pre-binding 命令，并对
+   *   `accessMode === 'inherit'` 的 binding 继承访问权。
+   * - `'not-on-binding-allowlist'`（binding 级拒绝）→ 追加到
+   *   该 binding 的 `allowedSenderIds`。不动 workspace owners 列表 ——
+   *   这堵住了权限提升的隐患：否则被某个敏感 binding 拒绝的 Bob
+   *   会被提升为 workspace owner。
    *
-   * `entryKey` identifies the specific pending row (a sender may have
-   * multiple — one per reason/binding combination). When omitted, the
-   * earliest matching entry for the sender is used.
+   * `entryKey` 标识具体的 pending 行（一个发送方可能有多行 ——
+   * 每个 reason/binding 组合一行）。省略时，取该发送方最早的一条匹配条目。
    */
   allowPendingSender(
     workspaceId: string,
@@ -1394,7 +1374,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
     const reason = match.reason ?? 'not-owner'
 
     if (reason === 'not-on-binding-allowlist') {
-      // Append to that specific binding's allow-list. Don't touch owners.
+      // 追加到该具体 binding 的 allow-list。不动 owners。
       const bindingId = match.bindingId
       if (!bindingId) {
         throw new Error('Pending entry is binding-scoped but has no bindingId.')
@@ -1402,10 +1382,9 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
       const store = state.gateway.getBindingStore()
       const binding = store.getAll().find((b) => b.id === bindingId)
       if (!binding) {
-        // Binding was unbound between reject and Allow. Drop the stale
-        // entry and surface a meaningful error so the operator knows to
-        // re-pair if needed.
-        store // (intentional no-op; keep store reference alive for tooling)
+        // binding 在 reject 与 Allow 之间被解绑了。丢弃陈旧条目，
+        // 并抛出一个有意义的错误，让运营者知道必要时需要重新配对。
+        store //（故意的 no-op；为工具保留 store 引用）
         state.gateway.getPendingStore().dismiss(platform, userId, {
           reason: 'not-on-binding-allowlist',
           bindingId,
@@ -1415,9 +1394,8 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
       const next = Array.from(new Set([...binding.config.allowedSenderIds, userId]))
       store.updateBindingConfig(bindingId, {
         allowedSenderIds: next,
-        // Defensive: ensure the binding is in allow-list mode after
-        // promotion. Otherwise a binding that was 'inherit' would still
-        // ignore the new allowedSenderIds entry.
+        // 防御性：提升后确保 binding 处于 allow-list 模式。
+        // 否则一个原来是 'inherit' 的 binding 仍会忽略新的 allowedSenderIds 条目。
         accessMode: binding.config.accessMode === 'allow-list' ? 'allow-list' : 'allow-list',
       })
       state.gateway.getPendingStore().dismiss(platform, userId, {
@@ -1429,7 +1407,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
       return { owners, bindingId }
     }
 
-    // reason === 'not-owner': promote to workspace owner.
+    // reason === 'not-owner'：提升为 workspace owner。
     const cfg = state.configStore.get()
     const existing = cfg.platforms.telegram?.owners ?? []
     if (existing.some((o) => o.userId === userId)) {
@@ -1450,19 +1428,17 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
       owners: nextOwners,
       accessMode: tg?.accessMode ?? 'owner-only',
     })
-    // Dismiss every pending row for this sender — they're now an owner,
-    // so any binding-allow-list rejects pending against them have been
-    // superseded by the inherit path.
+    // 清掉该发送方的所有 pending 行 —— 他已经是 owner，
+    // 所以针对他的任何 binding-allow-list 拒绝都已被 inherit 路径取代。
     state.gateway.getPendingStore().dismiss(platform, userId)
     this.emitBindingChanged(workspaceId)
     return { owners: nextOwners }
   }
 
   /**
-   * Update the access policy on a single binding. Uses the in-place
-   * `updateBindingConfig` method so the binding's `id` and `createdAt`
-   * survive — anything keyed on bindingId (audit logs, deep links, stale
-   * renderer closures) keeps working.
+   * 更新单个 binding 的 access 策略。用原地更新的 `updateBindingConfig`
+   * 方法，这样 binding 的 `id` 和 `createdAt` 得以保留 ——
+   * 任何以 bindingId 为键的东西（审计日志、深链、陈旧的 renderer 闭包）都能继续工作。
    */
   setBindingAccess(
     workspaceId: string,
@@ -1511,7 +1487,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助函数
 // ---------------------------------------------------------------------------
 
 function toBindingInfo(b: ChannelBinding): MessagingBindingInfo {

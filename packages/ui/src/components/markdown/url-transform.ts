@@ -5,11 +5,11 @@ export const markdownUrlTransform: UrlTransform = (value, key, node) => {
     ? String((node as { tagName?: unknown }).tagName)
     : ''
 
-  // ReactMarkdown's default transform strips file:/javascript:/data: before
-  // custom components receive props. For anchors, preserve the original target
-  // so our custom <a> can route normal clicks through onFileClick/onUrlClick
-  // while still writing a separately sanitized DOM href. Keep default
-  // sanitization for images and every other URL-bearing attribute.
+  // ReactMarkdown 的默认转换会在自定义组件接收 props 之前
+  // 去除 file:/javascript:/data:。对于锚点，保留原始目标，
+  // 以便自定义 <a> 能通过 onFileClick/onUrlClick 路由常规点击，
+  // 同时仍写入单独净化过的 DOM href。对图片和其他所有承载 URL 的属性
+  // 保持默认净化。
   if (key === 'href' && tagName === 'a') return value
   return defaultUrlTransform(value)
 }

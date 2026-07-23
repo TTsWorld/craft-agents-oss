@@ -1,22 +1,23 @@
 /**
- * @craft-agent/ui - Shared React UI components for Craft Agent
+ * @craft-agent/ui - Craft Agent 的共享 React UI 组件
  *
- * This package provides platform-agnostic UI components that work in both:
- * - Electron desktop app (full interactive mode)
- * - Web session viewer (read-only mode)
+ * 该包提供平台无关的 UI 组件，可同时运行于：
+ * - Electron 桌面应用（完整交互模式）
+ * - Web 会话查看器（只读模式）
  *
- * Key components:
- * - SessionViewer: Read-only session transcript viewer (used by web viewer)
- * - TurnCard: Email-like display for assistant turns
- * - Markdown: Customizable markdown renderer with syntax highlighting
+ * 核心组件：
+ * - SessionViewer：只读会话记录查看器（供 Web 查看器使用）
+ * - TurnCard：类邮件形式的助手 turn 展示
+ * - Markdown：可定制的 Markdown 渲染器，支持语法高亮
  *
- * Platform abstraction:
- * - PlatformProvider/usePlatform: Inject platform-specific actions
+ * 平台抽象：
+ * - PlatformProvider/usePlatform：注入平台特定操作
  */
 
 // Context
 export {
   PlatformProvider,
+  usePlatform,
   usePlatform,
   type PlatformActions,
   type PlatformProviderProps,
@@ -41,7 +42,7 @@ export {
   isAnnotationFollowUpSent,
   extractAnnotationSelectedText,
   normalizeFollowUpText,
-  // Inline execution for EditPopover
+  // 供 EditPopover 使用的内联执行
   InlineExecution,
   mapToolEventToActivity,
   SIZE_CONFIG,
@@ -185,7 +186,7 @@ export {
 
 // Overlay components
 export {
-  // Base overlay components
+  // 基础浮层组件
   FullscreenOverlayBase,
   FullscreenOverlayBaseHeader,
   PreviewOverlay,
@@ -198,7 +199,7 @@ export {
   type ContentFrameProps,
   type BadgeVariant,
   type CopyButtonProps,
-  // Specialized overlays
+  // 专用浮层
   CodePreviewOverlay,
   MultiDiffPreviewOverlay,
   TerminalPreviewOverlay,
@@ -225,7 +226,7 @@ export {
   type ActivityCardsOverlayProps,
 } from './components/overlay'
 
-// File classification (for link interceptor)
+// 文件分类（供链接拦截器使用）
 export {
   classifyFile,
   type FilePreviewType,
@@ -247,7 +248,7 @@ export {
   type DismissibleLayerType,
 } from './lib/dismissible-layer-bridge'
 
-// Layout constants and hooks
+// 布局常量与 hooks
 export {
   CHAT_LAYOUT,
   CHAT_CLASSES,
@@ -256,7 +257,7 @@ export {
   type OverlayMode,
 } from './lib/layout'
 
-// Tool result parsers
+// 工具结果解析器
 export {
   parseReadResult,
   parseBashResult,
@@ -277,7 +278,7 @@ export {
   type OverlayCard,
 } from './lib/tool-parsers'
 
-// Turn utilities (pure functions)
+// Turn 工具函数（纯函数）
 export * from './components/chat/turn-utils'
 
 // Icons

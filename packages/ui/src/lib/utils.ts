@@ -1,12 +1,12 @@
 /**
- * Utility functions for @craft-agent/ui
+ * @craft-agent/ui 的工具函数
  */
 
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 
 /**
- * Merge class names with Tailwind CSS conflict resolution
+ * 合并 class 名称，并解决 Tailwind CSS 冲突
  */
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))

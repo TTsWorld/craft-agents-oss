@@ -1,18 +1,17 @@
 /**
- * IPC protocol between the main process (WhatsAppAdapter) and the
- * whatsapp worker subprocess.
+ * 主进程（WhatsAppAdapter）与 WhatsApp worker 子进程之间的 IPC 协议。
  *
- * Transport: newline-delimited JSON (NDJSON) over the worker's stdin/stdout.
- * - Main → Worker: one WorkerCommand per line (stdin).
- * - Worker → Main: one WorkerEvent per line (stdout).
- * - Worker stderr is reserved for free-form logs (not parsed).
+ * 传输方式：通过 worker 的 stdin/stdout 传递换行分隔的 JSON（NDJSON）。
+ * - 主进程 → Worker：每行一条 WorkerCommand（经 stdin）。
+ * - Worker → 主进程：每行一条 WorkerEvent（经 stdout）。
+ * - Worker 的 stderr 保留给自由格式的日志（不做解析）。
  *
- * The protocol is intentionally small — the worker owns all Baileys state;
- * the main process only drives lifecycle and relays incoming/outgoing messages.
+ * 协议刻意保持精简——worker 持有所有 Baileys 状态；
+ * 主进程只负责驱动生命周期并转发收发消息。
  */
 
 // ---------------------------------------------------------------------------
-// Commands (main → worker)
+// 命令（主进程 → worker）
 // ---------------------------------------------------------------------------
 
 export type WorkerCommand =
@@ -24,33 +23,29 @@ export type WorkerCommand =
 
 export interface StartCommand {
   type: 'start'
-  /** Absolute path for persisted Baileys multi-file auth state. */
+  /** 持久化 Baileys 多文件认证状态的绝对路径。 */
   authStateDir: string
-  /** Optional: use pairing-code mode instead of QR mode. */
+  /** 可选：使用配对码模式而非二维码模式。 */
   pairingMode?: 'qr' | 'code'
   /**
-   * When true, messages sent from OTHER devices on this account to the
-   * self-JID (user's own number) are treated as incoming user input.
-   * Defaults to `false` (preserves the original behaviour of dropping all
-   * `fromMe` traffic).
+   * 为 true 时，本账号在其他设备上发往 self-JID（用户自己的号码）的消息
+   * 会被当作用户输入处理。默认 `false`（保持原有的丢弃所有 `fromMe` 流量的行为）。
    *
-   * The worker filters its own echoes two ways: by tracking the IDs it
-   * sent and by checking for the `responsePrefix` in the message text.
+   * Worker 用两种方式过滤自己的回声：一是追踪自己发送过的 ID，
+   * 二是在消息文本里检查 `responsePrefix`。
    */
   selfChatMode?: boolean
   /**
-   * Prefix prepended to outbound messages when self-chat mode is active and
-   * the channel is the self-JID. Serves as a visual distinction in the
-   * self-chat AND a robust echo filter for cases where the worker restart
-   * wiped the sent-ID tracking set. Defaults to 🤖 when
-   * self-chat is on. Empty/missing → fall back to default.
+   * 自聊模式开启且通道为 self-JID 时，追加到出站消息前的前缀。
+   * 既用于在自聊会话里做视觉区分，也是在 worker 重启导致 sent-ID 追踪集合丢失时
+   * 的稳健回声过滤器。自聊开启时默认为 🤖。为空或缺省 → 回退到默认值。
    */
   responsePrefix?: string
 }
 
 export interface SubmitPairingPhoneCommand {
   type: 'submit_pairing_phone'
-  /** E.164 format, digits only (Baileys accepts the number without '+'). */
+  /** E.164 格式，纯数字（Baileys 接受不带 '+' 的号码）。 */
   phoneNumber: string
 }
 
@@ -65,7 +60,7 @@ export interface SendFileCommand {
   id: string
   type: 'send_file'
   channelId: string
-  /** Base64-encoded file bytes. */
+  /** Base64 编码的文件字节。 */
   dataBase64: string
   filename: string
   caption?: string
@@ -77,7 +72,7 @@ export interface ShutdownCommand {
 }
 
 // ---------------------------------------------------------------------------
-// Events (worker → main)
+// 事件（worker → 主进程）
 // ---------------------------------------------------------------------------
 
 export type WorkerEvent =
@@ -93,17 +88,17 @@ export type WorkerEvent =
 
 export interface ReadyEvent {
   type: 'ready'
-  /** Baileys version reported by the worker, informational. */
+  /** Worker 上报的 Baileys 版本，仅供参考。 */
   baileysVersion?: string
-  /** ISO timestamp the worker bundle was produced. Informational. */
+  /** worker bundle 构建产物的 ISO 时间戳，仅供参考。 */
   buildId?: string
-  /** Short git SHA (or `unknown`/`dev-unbundled`) the bundle was built from. */
+  /** bundle 构建来源的 git 短 SHA（或 `unknown`/`dev-unbundled`）。 */
   gitSha?: string
 }
 
 export interface QrEvent {
   type: 'qr'
-  /** The raw QR string as emitted by Baileys (encode to QR code on the UI side). */
+  /** Baileys 原始 QR 字符串（在 UI 侧再编码成二维码）。 */
   qr: string
 }
 
@@ -120,22 +115,21 @@ export interface ConnectedEvent {
 
 export interface DisconnectedEvent {
   type: 'disconnected'
-  /** `true` when the session was lost permanently (logged out, banned). */
+  /** 会话被永久丢失（被登出、被封禁）时为 `true`。 */
   loggedOut: boolean
   reason?: string
 }
 
 /**
- * Media attachment carried over the wire. The worker downloads the bytes,
- * writes them to a temp file, and reports the absolute path. The adapter on
- * the main side translates this into a gateway `IncomingAttachment`.
+ * 通过线路传输的媒体附件。Worker 下载字节、写入临时文件，
+ * 并上报绝对路径。主进程侧的适配器会把它转换成 gateway 的 `IncomingAttachment`。
  */
 export interface WorkerIncomingAttachment {
   type: 'photo' | 'document' | 'voice' | 'video' | 'audio'
   fileName?: string
   mimeType?: string
   fileSize?: number
-  /** Absolute path of the temp file the worker wrote the media to. */
+  /** worker 写入媒体的临时文件绝对路径。 */
   localPath: string
 }
 
@@ -152,7 +146,7 @@ export interface IncomingEvent {
 
 export interface SendResultEvent {
   type: 'send_result'
-  /** Correlates with SendTextCommand/SendFileCommand `id`. */
+  /** 与 SendTextCommand/SendFileCommand 的 `id` 关联。 */
   id: string
   ok: boolean
   messageId?: string
@@ -161,27 +155,27 @@ export interface SendResultEvent {
 
 export interface ErrorEvent {
   type: 'error'
-  /** Non-fatal — the worker is still running. */
+  /** 非致命——worker 仍在运行。 */
   message: string
 }
 
 export interface UnavailableEvent {
   type: 'unavailable'
   /**
-   * Fatal error — worker can't proceed (either startup or post-connect).
+   * 致命错误——worker 无法继续（可能发生在启动阶段或连接后）。
    *
-   * `reason`:
-   * - `baileys_load_failed`   — bundled Baileys threw during init (rare)
-   * - `auth_state_error`      — failed to read/write auth state dir
-   * - `reconnect_exhausted`   — repeated non-logout closes hit the retry cap
-   * - `unknown`               — check `message`
+   * `reason`：
+   * - `baileys_load_failed`   — 打包进来的 Baileys 在初始化时抛错（罕见）
+   * - `auth_state_error`      — 读写认证状态目录失败
+   * - `reconnect_exhausted`   — 反复非登出关闭达到重试上限
+   * - `unknown`               — 查看 `message`
    */
   reason: 'baileys_load_failed' | 'auth_state_error' | 'reconnect_exhausted' | 'unknown'
   message: string
 }
 
 // ---------------------------------------------------------------------------
-// NDJSON helpers
+// NDJSON 辅助函数
 // ---------------------------------------------------------------------------
 
 export function encodeMessage(msg: WorkerCommand | WorkerEvent): string {
@@ -189,8 +183,7 @@ export function encodeMessage(msg: WorkerCommand | WorkerEvent): string {
 }
 
 /**
- * Parse a newline-delimited JSON stream incrementally. Returns parsed
- * messages and the residual unparsed tail for the next chunk.
+ * 增量解析换行分隔的 JSON 流。返回解析出的消息以及留给下一个数据块的未解析尾部。
  */
 export function parseFrames<T>(buffer: string): { messages: T[]; rest: string } {
   const messages: T[] = []
@@ -204,8 +197,8 @@ export function parseFrames<T>(buffer: string): { messages: T[]; rest: string } 
     try {
       messages.push(JSON.parse(line) as T)
     } catch {
-      // Skip malformed lines — worker stderr leakage is already filtered,
-      // but be defensive so a single bad line doesn't kill the stream.
+      // 跳过格式错误的行——worker stderr 泄漏虽然已被过滤，
+      // 但仍然防御性处理，避免单行坏数据导致整个流挂掉。
     }
   }
   return { messages, rest }

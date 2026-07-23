@@ -1,15 +1,15 @@
 /**
- * Tool Result Parsers
+ * 工具结果解析器
  *
- * Shared utilities for parsing tool results from Claude Code SDK tools.
- * Used by both Electron and viewer apps for consistent overlay display.
+ * 用于解析 Claude Code SDK 工具结果的共享工具集。
+ * 供 Electron 和查看器应用共同使用，以保证浮层展示的一致性。
  */
 
 import type { ActivityItem } from '../components/chat/TurnCard'
 import type { ToolType } from '../components/terminal/TerminalOutput'
 
 // ============================================================================
-// Individual Tool Parsers
+// 各工具解析器
 // ============================================================================
 
 export interface ReadResult {
@@ -20,7 +20,7 @@ export interface ReadResult {
 }
 
 /**
- * Parse Read tool JSON result to extract file content and metadata.
+ * 解析 Read 工具的 JSON 结果，提取文件内容与元数据。
  */
 export function parseReadResult(rawContent: string): ReadResult {
   try {
@@ -34,7 +34,7 @@ export function parseReadResult(rawContent: string): ReadResult {
       }
     }
   } catch {
-    // Not JSON, use as plain text
+    // 非 JSON，按纯文本处理
   }
   return { content: rawContent }
 }
@@ -45,7 +45,7 @@ export interface BashResult {
 }
 
 /**
- * Parse Bash tool JSON result to extract output and exit code.
+ * 解析 Bash 工具的 JSON 结果，提取输出与退出码。
  */
 export function parseBashResult(rawContent: string): BashResult {
   try {
@@ -59,7 +59,7 @@ export function parseBashResult(rawContent: string): BashResult {
       }
     }
   } catch {
-    // Not JSON, try to extract exit code from text
+    // 非 JSON，尝试从文本中提取退出码
     const exitMatch = rawContent.match(/Exit code: (\d+)/)
     if (exitMatch && exitMatch[1]) {
       return { output: rawContent, exitCode: parseInt(exitMatch[1], 10) }
@@ -75,7 +75,7 @@ export interface GrepResult {
 }
 
 /**
- * Parse Grep tool JSON result to extract search results.
+ * 解析 Grep 工具的 JSON 结果，提取搜索结果。
  */
 export function parseGrepResult(
   rawContent: string,
@@ -94,12 +94,12 @@ export function parseGrepResult(
         description = `Search for "${pattern}" (${parsed.numFiles} files, ${parsed.numLines || 0} lines)`
       }
     } else if (parsed.filenames) {
-      // files_with_matches mode returns filenames array
+      // files_with_matches 模式返回文件名数组
       output = parsed.filenames.join('\n')
       description = `Search for "${pattern}" (${parsed.filenames.length} files)`
     }
   } catch {
-    // Not JSON, use as plain text
+    // 非 JSON，按纯文本处理
   }
 
   const command = `grep "${pattern}" ${searchPath} --${outputMode}`
@@ -113,7 +113,7 @@ export interface GlobResult {
 }
 
 /**
- * Parse Glob tool JSON result to extract file list.
+ * 解析 Glob 工具的 JSON 结果，提取文件列表。
  */
 export function parseGlobResult(
   rawContent: string,
@@ -126,17 +126,17 @@ export function parseGlobResult(
   try {
     const parsed = JSON.parse(rawContent)
     if (parsed.filenames && Array.isArray(parsed.filenames)) {
-      // Standard Glob result format: { filenames: [...], numFiles, durationMs, truncated }
+      // 标准 Glob 结果格式：{ filenames: [...], numFiles, durationMs, truncated }
       output = parsed.filenames.join('\n')
       const truncated = parsed.truncated ? ' (truncated)' : ''
       description = `Find files matching "${pattern}" (${parsed.numFiles || parsed.filenames.length} files${truncated})`
     } else if (Array.isArray(parsed)) {
-      // Simple array format
+      // 简单数组格式
       output = parsed.join('\n')
       description = `Find files matching "${pattern}" (${parsed.length} matches)`
     }
   } catch {
-    // Not JSON, use as plain text
+    // 非 JSON，按纯文本处理
   }
 
   const command = `glob "${pattern}" in ${searchPath}`
@@ -144,18 +144,18 @@ export function parseGlobResult(
 }
 
 /**
- * Parse WebSearch tool result to format embedded JSON links properly.
- * Converts raw JSON arrays in "Links: [...]" to formatted markdown lists.
- * Handles multiple Links sections in a single result.
+ * 解析 WebSearch 工具结果，将其中内嵌的 JSON 链接正确格式化。
+ * 将 "Links: [...]" 中的原始 JSON 数组转换为格式化的 markdown 列表。
+ * 处理单个结果中的多个 Links 段落。
  */
 export function parseWebSearchResult(rawContent: string): string {
-  // Find all Links: [...] patterns (may span multiple lines)
-  // Use a function replacer to process each match individually
+  // 查找所有 Links: [...] 模式（可能跨多行）
+  // 使用函数替换器逐个处理每个匹配
   return rawContent.replace(/Links: (\[[\s\S]*?\])(?=\n|$)/g, (match, jsonArray) => {
     try {
       const links = JSON.parse(jsonArray) as Array<{ title: string; url: string }>
 
-      // Format as markdown list with domain prefix
+      // 格式化为带域名前缀的 markdown 列表
       const linksList = links.map(link => {
         const domain = new URL(link.url).hostname.replace(/^www\./, '')
         return `- [${domain} - ${link.title}](${link.url})`
@@ -163,14 +163,14 @@ export function parseWebSearchResult(rawContent: string): string {
 
       return `**Links:**\n${linksList}`
     } catch {
-      // If JSON parsing fails, wrap in code block instead
+      // JSON 解析失败时，改为包裹在代码块中
       return `Links:\n\`\`\`json\n${jsonArray}\n\`\`\``
     }
   })
 }
 
 // ============================================================================
-// Overlay Data Types
+// 浮层数据类型
 // ============================================================================
 
 export interface CodeOverlayData {
@@ -182,7 +182,7 @@ export interface CodeOverlayData {
   totalLines?: number
   numLines?: number
   error?: string
-  /** Original shell command (for Codex reads) - displayed in overlay */
+  /** 原始 shell 命令（用于 Codex 读取）- 在浮层中展示 */
   command?: string
 }
 
@@ -211,37 +211,37 @@ export interface JSONOverlayData {
   error?: string
 }
 
-/** Rendered markdown document — used for Write tool results on .md/.txt files */
+/** 渲染后的 markdown 文档 —— 用于 .md/.txt 文件的 Write 工具结果 */
 export interface DocumentOverlayData {
   type: 'document'
   content: string
   filePath: string
-  /** Tool that produced this content (e.g. "Write") — used for the header type badge */
+  /** 产生该内容的工具（如 "Write"）—— 用于头部类型徽章 */
   toolName: string
   error?: string
 }
 
 export type OverlayData = CodeOverlayData | TerminalOverlayData | GenericOverlayData | JSONOverlayData | DocumentOverlayData
 
-/** Generic overlay card model (tab item) for activity details. */
+/** 用于 activity 详情的通用浮层卡片模型（标签页项）。 */
 export interface OverlayCard {
-  /** Stable card identifier (e.g. input, output, metadata) */
+  /** 稳定的卡片标识（如 input、output、metadata） */
   id: string
-  /** Display label shown in card navigator */
+  /** 在卡片导航器中展示的标签 */
   label: string
-  /** Card payload rendered by overlay */
+  /** 由浮层渲染的卡片数据 */
   data: OverlayData
-  /** Optional CLI-style command preview (shown on Input cards) */
+  /** 可选的 CLI 风格命令预览（在 Input 卡片上展示） */
   commandPreview?: string
 }
 
 // ============================================================================
-// Main Extraction Function
+// 主提取函数
 // ============================================================================
 
 /**
- * Extract overlay data from an activity item.
- * Returns typed data for rendering the appropriate overlay component.
+ * 从 activity 项中提取浮层数据。
+ * 返回类型化数据以渲染对应的浮层组件。
  */
 export function extractOverlayData(activity: ActivityItem): OverlayData | null {
   if (!activity) return null
@@ -250,10 +250,10 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
   const rawContent = activity.content || ''
   const toolName = activity.toolName?.toLowerCase() || ''
 
-  // Get file path from various input formats
+  // 从各种输入格式中获取文件路径
   const filePath = (input?.file_path as string) || (input?.path as string) || 'file'
 
-  // Read tool → Code overlay (read mode)
+  // Read 工具 → Code 浮层（读取模式）
   if (toolName === 'read') {
     const parsed = parseReadResult(rawContent)
     return {
@@ -265,12 +265,12 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
       totalLines: parsed.totalLines,
       numLines: parsed.numLines,
       error: activity.error,
-      // Pass through command if present (Codex reads via shell commands)
+      // 若存在命令则透传（Codex 通过 shell 命令读取）
       command: input?._command as string | undefined,
     }
   }
 
-  // Write tool → Document overlay for .md/.txt (rendered markdown), Code overlay for everything else
+  // Write 工具 → .md/.txt 走 Document 浮层（渲染 markdown），其余走 Code 浮层
   if (toolName === 'write') {
     const content = (input?.content as string) || rawContent
     const ext = filePath.split('.').pop()?.toLowerCase()
@@ -292,10 +292,10 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
     }
   }
 
-  // Edit/Write tools are handled directly by the click handler (multi-diff overlay)
-  // so they fall through to the generic handler if they reach here
+  // Edit/Write 工具由点击处理器直接处理（多 diff 浮层）
+  // 因此如果执行到这里，会回落到通用处理器
 
-  // Bash tool → Terminal overlay
+  // Bash 工具 → Terminal 浮层
   if (toolName === 'bash') {
     const parsed = parseBashResult(rawContent)
     return {
@@ -309,7 +309,7 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
     }
   }
 
-  // Grep tool → Terminal overlay
+  // Grep 工具 → Terminal 浮层
   if (toolName === 'grep') {
     const pattern = (input?.pattern as string) || ''
     const searchPath = (input?.path as string) || '.'
@@ -325,7 +325,7 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
     }
   }
 
-  // Glob tool → Terminal overlay
+  // Glob 工具 → Terminal 浮层
   if (toolName === 'glob') {
     const pattern = (input?.pattern as string) || '*'
     const searchPath = (input?.path as string) || '.'
@@ -340,7 +340,7 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
     }
   }
 
-  // WebSearch tool → Document overlay with formatted links
+  // WebSearch 工具 → 带格式化链接的 Document 浮层
   if (toolName === 'websearch') {
     const formattedContent = parseWebSearchResult(rawContent)
     return {
@@ -352,7 +352,7 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
     }
   }
 
-  // LLM Query tool (call_llm) → Document overlay with input prompt + output response
+  // LLM Query 工具（call_llm）→ 带输入 prompt + 输出响应的 Document 浮层
   if (toolName === 'mcp__session__call_llm') {
     const prompt = (input?.prompt as string) || ''
     const model = input?.model as string | undefined
@@ -363,10 +363,10 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
 
     const sections: string[] = []
 
-    // Input section
+    // 输入段落
     sections.push('## Prompt')
 
-    // Metadata (only show when present)
+    // 元数据（仅当存在时展示）
     const meta: string[] = []
     if (model) meta.push(`**Model:** ${model}`)
     if (systemPrompt) meta.push(`**System Prompt:** ${systemPrompt}`)
@@ -384,7 +384,7 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
 
     sections.push(prompt)
 
-    // Output section
+    // 输出段落
     if (rawContent) {
       sections.push('---')
       sections.push('## Response')
@@ -400,8 +400,8 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
     }
   }
 
-  // Try to detect JSON content for unknown tools (MCP tools, WebFetch, etc.)
-  // JSON objects/arrays get interactive tree viewer, other content falls through to generic
+  // 尝试为未知工具（MCP 工具、WebFetch 等）检测 JSON 内容
+  // JSON 对象/数组使用交互式树形查看器，其他内容回落到通用展示
   const trimmedContent = rawContent.trim()
   if ((trimmedContent.startsWith('{') && trimmedContent.endsWith('}')) ||
       (trimmedContent.startsWith('[') && trimmedContent.endsWith(']'))) {
@@ -415,11 +415,11 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
         error: activity.error,
       }
     } catch {
-      // Not valid JSON, fall through to generic
+      // 非合法 JSON，回落到通用展示
     }
   }
 
-  // Fallback for unknown tools - plain text/markdown content
+  // 未知工具的兜底 - 纯文本/markdown 内容
   return {
     type: 'generic',
     content: rawContent || (input ? JSON.stringify(input, null, 2) : ''),
@@ -444,7 +444,7 @@ function formatCliValue(value: unknown): string {
   return JSON.stringify(value)
 }
 
-/** Build a deterministic, Bash-like command preview from tool name + input. */
+/** 根据工具名称 + 输入构建确定性、类 Bash 的命令预览。 */
 export function formatToolCommandPreview(
   toolName: string | undefined,
   input: Record<string, unknown> | undefined,
@@ -456,7 +456,7 @@ export function formatToolCommandPreview(
     return normalized
   }
 
-  // Wrapper commands pass through the raw CLI input for best fidelity.
+  // 包装类命令直接透传原始 CLI 输入以获得最佳还原度。
   if (normalized === 'browser_tool' && typeof input.command === 'string' && input.command.trim()) {
     return input.command.trim()
   }
@@ -474,14 +474,14 @@ export function formatToolCommandPreview(
 }
 
 /**
- * Extract one or more overlay cards from an activity.
+ * 从 activity 中提取一个或多个浮层卡片。
  *
- * Current cards:
- * - Input: toolInput (when present)
- * - Output: parsed tool result/content (when meaningful)
+ * 当前卡片：
+ * - Input：toolInput（存在时）
+ * - Output：解析后的工具结果/内容（有意义时）
  *
- * This intentionally returns an array to support future card types
- * without changing the overlay contract.
+ * 这里有意返回数组，以便在不改变浮层契约的前提下
+ * 支持未来的卡片类型。
  */
 export function extractOverlayCards(activity: ActivityItem): OverlayCard[] {
   if (!activity) return []
@@ -490,7 +490,7 @@ export function extractOverlayCards(activity: ActivityItem): OverlayCard[] {
   const input = activity.toolInput as Record<string, unknown> | undefined
   const hasInput = !!input && Object.keys(input).length > 0
 
-  // Input card (JSON-first, generic fallback)
+  // Input 卡片（优先 JSON，通用兜底）
   let inputJson = ''
   const commandPreview = formatToolCommandPreview(activity.toolName, input)
   if (hasInput) {
@@ -521,7 +521,7 @@ export function extractOverlayCards(activity: ActivityItem): OverlayCard[] {
     }
   }
 
-  // Output card (always present for consistent Input/Output UX)
+  // Output 卡片（始终存在以保证一致的 Input/Output 体验）
   const output = extractOverlayData(activity)
   const rawContent = (activity.content || '').trim()
   const isInputMirrorFallback =
@@ -551,7 +551,7 @@ export function extractOverlayCards(activity: ActivityItem): OverlayCard[] {
     data: outputData,
   })
 
-  // Last-resort fallback (kept for defensive safety)
+  // 最后兜底（保留以做防御性保护）
   if (cards.length === 0) {
     cards.push({
       id: 'output',

@@ -1,11 +1,11 @@
 /**
- * PDFPreviewOverlay - In-app PDF preview using Mozilla's pdf.js via react-pdf.
+ * PDFPreviewOverlay - 使用 Mozilla pdf.js 经由 react-pdf 的应用内 PDF 预览。
  *
- * Renders PDFs using the react-pdf library, which wraps pdfjs-dist.
- * Supports multiple items with arrow navigation in the header.
+ * 使用 react-pdf 库（封装 pdfjs-dist）渲染 PDF。
+ * 支持多个项目，头部带箭头导航。
  *
- * The PDF is loaded from a Uint8Array (via IPC) and rendered to canvas.
- * The pdf.js worker handles decoding and rendering in a background thread.
+ * PDF 从 Uint8Array（经由 IPC）加载并渲染到 canvas。
+ * pdf.js worker 在后台线程处理解码和渲染。
  */
 
 import { useState, useCallback, useMemo, useEffect } from 'react'
@@ -18,7 +18,7 @@ import { ItemNavigator } from './ItemNavigator'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
 
-// Configure pdf.js worker using Vite's ?url import for cross-platform dev/prod compatibility
+// 使用 Vite 的 ?url 导入配置 pdf.js worker，以实现跨平台开发/生产兼容
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
@@ -30,13 +30,13 @@ interface PreviewItem {
 export interface PDFPreviewOverlayProps {
   isOpen: boolean
   onClose: () => void
-  /** Absolute file path for the PDF (single item / backward compat) */
+  /** PDF 的绝对文件路径（单项 / 向后兼容） */
   filePath: string
-  /** Multiple items for arrow navigation */
+  /** 用于箭头导航的多个项目 */
   items?: PreviewItem[]
-  /** Initial active item index (defaults to 0) */
+  /** 初始活动项目索引（默认 0） */
   initialIndex?: number
-  /** Async loader that returns PDF data as Uint8Array */
+  /** 返回 PDF 数据为 Uint8Array 的异步加载器 */
   loadPdfData: (path: string) => Promise<Uint8Array>
   theme?: 'light' | 'dark'
 }
@@ -52,7 +52,7 @@ export function PDFPreviewOverlay({
 }: PDFPreviewOverlayProps) {
   const { t } = useTranslation()
 
-  // Normalize: items array or single filePath
+  // 归一化：items 数组或单个 filePath
   const resolvedItems = useMemo<PreviewItem[]>(() => {
     if (items && items.length > 0) return items
     return [{ src: filePath }]
@@ -66,14 +66,14 @@ export function PDFPreviewOverlay({
 
   const activeItem = resolvedItems[activeIdx]
 
-  // Reset index when overlay opens
+  // 浮层打开时重置索引
   useEffect(() => {
     if (isOpen) {
       setActiveIdx(initialIndex)
     }
   }, [isOpen, initialIndex])
 
-  // Load PDF data when overlay opens or active item changes
+  // 浮层打开或活动项目变化时加载 PDF 数据
   useEffect(() => {
     if (!isOpen || !activeItem?.src) return
 
@@ -108,13 +108,13 @@ export function PDFPreviewOverlay({
     setError(`Failed to load PDF: ${error.message}`)
   }, [])
 
-  // Memoize file object to prevent unnecessary re-renders (react-pdf uses === equality)
+  // 记忆化文件对象以防止不必要的重渲染（react-pdf 使用 === 相等性比较）
   const fileObj = useMemo(() =>
     pdfData ? { data: pdfData } : null,
     [pdfData]
   )
 
-  // Header actions: item navigation + copy button
+  // 头部操作：项目导航 + 复制按钮
   const headerActions = (
     <div className="flex items-center gap-2">
       <ItemNavigator items={resolvedItems} activeIndex={activeIdx} onSelect={setActiveIdx} size="md" />

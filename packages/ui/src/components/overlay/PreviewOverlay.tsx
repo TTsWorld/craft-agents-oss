@@ -1,18 +1,18 @@
 /**
- * PreviewOverlay - Base component for all preview overlays
+ * PreviewOverlay - 所有预览浮层的基础组件
  *
- * Provides unified presentation logic for modal/fullscreen overlays:
- * - Portal rendering to document.body (via FullscreenOverlayBase for fullscreen mode)
- * - Responsive modal (>=1200px) vs fullscreen (<1200px) modes
- * - Escape key to close
- * - Backdrop click to close (modal mode)
- * - Consistent header layout with badges, close button
- * - Optional error banner
+ * 为模态/全屏浮层提供统一的展示逻辑：
+ * - Portal 渲染到 document.body（全屏模式经由 FullscreenOverlayBase）
+ * - 响应式模态（>=1200px）vs 全屏（<1200px）模式
+ * - ESC 键关闭
+ * - 点击背景关闭（模态模式）
+ * - 一致的头部布局，带徽标、关闭按钮
+ * - 可选错误横幅
  *
- * Header is delegated to FullscreenOverlayBase in fullscreen mode (which renders
- * FullscreenOverlayBaseHeader). In modal/embedded mode, renders the header directly.
+ * 全屏模式下头部委托给 FullscreenOverlayBase（由其渲染
+ * FullscreenOverlayBaseHeader）。模态/内联模式下直接渲染头部。
  *
- * Used by: CodePreviewOverlay, TerminalPreviewOverlay, GenericOverlay, etc.
+ * 使用者：CodePreviewOverlay、TerminalPreviewOverlay、GenericOverlay 等。
  */
 
 import { useEffect, type ReactNode } from 'react'
@@ -24,52 +24,52 @@ import { FullscreenOverlayBaseHeader } from './FullscreenOverlayBaseHeader'
 import { OverlayErrorBanner } from './OverlayErrorBanner'
 import type { PreviewBadgeVariant } from '../ui/PreviewHeader'
 
-/** Badge color variants - re-export for backwards compatibility */
+/** 徽标颜色变体 - 重新导出以向后兼容 */
 export type BadgeVariant = PreviewBadgeVariant
 
-/** Shared background class for all overlay modes - single source of truth */
+/** 所有浮层模式共享的背景类 - 单一来源 */
 const OVERLAY_BG = 'bg-background'
 
 export interface PreviewOverlayProps {
-  /** Whether the overlay is visible */
+  /** 浮层是否可见 */
   isOpen: boolean
-  /** Callback when the overlay should close */
+  /** 浮层关闭时的回调 */
   onClose: () => void
-  /** Theme mode */
+  /** 主题模式 */
   theme?: 'light' | 'dark'
 
-  /** Type badge configuration — tool/format indicator */
+  /** 类型徽标配置 — 工具/格式指示器 */
   typeBadge: {
     icon: LucideIcon
     label: string
     variant: BadgeVariant
   }
 
-  /** File path — shows dual-trigger menu badge with "Open" + "Reveal in {file manager}" */
+  /** 文件路径 — 显示带"打开"+"在{文件管理器}中显示"的双触发菜单徽标 */
   filePath?: string
-  /** Title — displayed as badge. Fallback when no file path. */
+  /** 标题 — 显示为徽标。无文件路径时的回退。 */
   title?: string
-  /** Callback when title badge is clicked (only used when no filePath) */
+  /** 标题徽标点击回调（仅在无 filePath 时使用） */
   onTitleClick?: () => void
-  /** Optional subtitle (e.g., line range info) */
+  /** 可选副标题（如行范围信息） */
   subtitle?: string
 
-  /** Optional error state */
+  /** 可选错误状态 */
   error?: {
     label: string
     message: string
   }
 
-  /** Actions to show in header right side */
+  /** 头部右侧显示的操作 */
   headerActions?: ReactNode
 
-  /** Main content */
+  /** 主内容 */
   children: ReactNode
 
-  /** Render inline (no dialog/portal) — for embedding in design system playground */
+  /** 内联渲染（无对话框/portal）— 用于嵌入设计系统 playground */
   embedded?: boolean
 
-  /** Custom class names for the overlay container (e.g., to override bg-background) */
+  /** 浮层容器的自定义类名（如覆盖 bg-background） */
   className?: string
 }
 
@@ -88,12 +88,12 @@ export function PreviewOverlay({
   embedded = false,
   className,
 }: PreviewOverlayProps) {
-  // Use custom className if provided, otherwise fall back to default bg
+  // 若提供自定义 className 则使用，否则回退到默认背景
   const bgClass = className || OVERLAY_BG
   const responsiveMode = useOverlayMode()
   const isModal = responsiveMode === 'modal'
 
-  // Handle Escape key for modal mode only (fullscreen mode uses FullscreenOverlayBase which handles ESC)
+  // 仅模态模式处理 ESC 键（全屏模式由 FullscreenOverlayBase 处理 ESC）
   useEffect(() => {
     if (!isOpen || !isModal) return
 
@@ -109,7 +109,7 @@ export function PreviewOverlay({
 
   if (!isOpen && !embedded) return null
 
-  // Header rendered in modal/embedded mode (fullscreen delegates to FullscreenOverlayBase)
+  // 模态/内联模式下渲染的头部（全屏模式委托给 FullscreenOverlayBase）
   const header = (
     <FullscreenOverlayBaseHeader
       onClose={onClose}
@@ -122,17 +122,17 @@ export function PreviewOverlay({
     />
   )
 
-  // Error banner — uses shared OverlayErrorBanner with tinted-shadow styling.
-  // Rendered inside the centering wrapper so error + content are centered together.
+  // 错误横幅 — 使用共享的 OverlayErrorBanner 带着色阴影样式。
+  // 渲染在居中包装器内，使错误 + 内容一起居中。
   const errorBanner = error && (
     <div className="px-6 pb-4">
       <OverlayErrorBanner label={error.label} message={error.message} />
     </div>
   )
 
-  // Gradient fade mask for modal/embedded modes — mirrors FullscreenOverlayBase's
-  // scroll container structure so children (ContentFrame, etc.) work identically
-  // in all modes using flow-based layout inside a scrollable, masked viewport.
+  // 模态/内联模式的渐变淡出遮罩 — 镜像 FullscreenOverlayBase 的
+  // 滚动容器结构，使子组件（ContentFrame 等）在所有模式下
+  // 于可滚动、带遮罩的视口内使用流式布局时表现一致。
   const FADE_SIZE = 24
   const FADE_MASK = `linear-gradient(to bottom, transparent 0%, black ${FADE_SIZE}px, black calc(100% - ${FADE_SIZE}px), transparent 100%)`
 
@@ -145,7 +145,7 @@ export function PreviewOverlay({
         className="absolute inset-0 overflow-y-auto"
         style={{ paddingTop: FADE_SIZE, paddingBottom: FADE_SIZE, scrollPaddingTop: FADE_SIZE }}
       >
-        {/* Centering wrapper — error + content are vertically centered together when small */}
+        {/* 居中包装器 — 内容小时错误 + 内容一起垂直居中 */}
         <div className="min-h-full flex flex-col justify-center">
           {errorBanner}
           {children}
@@ -154,7 +154,7 @@ export function PreviewOverlay({
     </div>
   )
 
-  // Embedded mode — renders inline without dialog/portal, for design system playground
+  // 内联模式 — 无对话框/portal 内联渲染，用于设计系统 playground
   if (embedded) {
     return (
       <div className={`flex flex-col ${bgClass} h-full w-full overflow-hidden rounded-lg border border-foreground/5`}>
@@ -164,8 +164,8 @@ export function PreviewOverlay({
     )
   }
 
-  // Fullscreen mode — FullscreenOverlayBase renders the header via structured props
-  // and owns the masked scroll container. Children are rendered directly inside it.
+  // 全屏模式 — FullscreenOverlayBase 通过结构化 props 渲染头部
+  // 并拥有带遮罩的滚动容器。子组件直接渲染在其中。
   if (!isModal) {
     return (
       <FullscreenOverlayBase
@@ -184,7 +184,7 @@ export function PreviewOverlay({
     )
   }
 
-  // Modal mode - uses its own portal with backdrop click to close
+  // 模态模式 - 使用自己的 portal，点击背景关闭
   return ReactDOM.createPortal(
     <div
       className={`fixed inset-0 z-50 flex items-center justify-center ${OVERLAY_LAYOUT.modalBackdropClass}`}

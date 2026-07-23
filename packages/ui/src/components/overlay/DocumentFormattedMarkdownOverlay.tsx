@@ -1,14 +1,14 @@
 /**
- * DocumentFormattedMarkdownOverlay - Fullscreen view for reading AI responses and plans
+ * DocumentFormattedMarkdownOverlay - 用于阅读 AI 回复和计划的全屏视图
  *
- * Renders markdown content in a document-like format with:
- * - Centered content card with max-width
- * - Copy button via FullscreenOverlayBase's built-in copyContent prop
- * - Optional "Plan" header variant
- * - Optional filePath badge with dual-trigger menu (Open / Reveal in {file manager})
+ * 以文档化格式渲染 markdown 内容，包括：
+ * - 带最大宽度的居中内容卡片
+ * - 通过 FullscreenOverlayBase 内置的 copyContent 属性提供复制按钮
+ * - 可选的"计划"头部变体
+ * - 可选的 filePath 徽标，带双触发菜单（打开 / 在 {文件管理器} 中显示）
  *
- * Background and scenic blur are provided by FullscreenOverlayBase.
- * Uses FullscreenOverlayBase for portal, traffic lights, ESC handling, and header.
+ * 背景和景深模糊由 FullscreenOverlayBase 提供。
+ * 使用 FullscreenOverlayBase 处理 portal、交通灯按钮、ESC 键和头部。
  */
 
 import { ListTodo } from 'lucide-react'
@@ -20,41 +20,41 @@ import type { OverlayTypeBadge } from './FullscreenOverlayBaseHeader'
 import { AnnotatableMarkdownDocument } from './AnnotatableMarkdownDocument'
 
 export interface DocumentFormattedMarkdownOverlayProps {
-  /** The content to display (markdown) */
+  /** 要显示的内容（markdown） */
   content: string
-  /** Whether the overlay is open */
+  /** 浮层是否打开 */
   isOpen: boolean
-  /** Called when overlay should close */
+  /** 浮层关闭时的回调 */
   onClose: () => void
-  /** Variant: 'response' (default) or 'plan' (shows header) */
+  /** 变体：'response'（默认）或 'plan'（显示头部） */
   variant?: 'response' | 'plan'
-  /** Callback for URL clicks */
+  /** URL 点击回调 */
   onOpenUrl?: (url: string) => void
-  /** Callback for file path clicks */
+  /** 文件路径点击回调 */
   onOpenFile?: (path: string) => void
-  /** Optional file path — shows badge with "Open" / "Reveal in {file manager}" menu */
+  /** 可选文件路径——显示带"打开"/"在 {文件管理器} 中显示"菜单的徽标 */
   filePath?: string
-  /** Optional type badge — tool/format indicator (e.g. "Write") shown in header */
+  /** 可选类型徽标——工具/格式标识（如"Write"），显示在头部 */
   typeBadge?: OverlayTypeBadge
-  /** Optional error message — renders a tinted error banner above the content card */
+  /** 可选错误信息——在内容卡片上方渲染带色调的错误横幅 */
   error?: string
-  /** Optional session id used for annotation payload source metadata */
+  /** 可选会话 id，用于标注负载的来源元数据 */
   sessionId?: string
-  /** Optional message id; when present with callbacks, overlay becomes annotatable */
+  /** 可选消息 id；与回调同时存在时，浮层变为可标注 */
   messageId?: string
-  /** Persisted annotations for the message */
+  /** 该消息的持久化标注 */
   annotations?: AnnotationV1[]
-  /** Callback to add annotation */
+  /** 添加标注的回调 */
   onAddAnnotation?: (messageId: string, annotation: AnnotationV1) => void
-  /** Callback to remove annotation */
+  /** 删除标注的回调 */
   onRemoveAnnotation?: (messageId: string, annotationId: string) => void
-  /** Callback to update annotation */
+  /** 更新标注的回调 */
   onUpdateAnnotation?: (messageId: string, annotationId: string, patch: Partial<AnnotationV1>) => void
-  /** Input send key behavior used by follow-up editor */
+  /** 追问编辑器使用的输入发送键行为 */
   sendMessageKey?: 'enter' | 'cmd-enter'
-  /** Whether source content is currently streaming (affects annotation eligibility parity) */
+  /** 源内容是否正在流式输出（影响标注资格的一致性） */
   isStreaming?: boolean
-  /** Optional external request to open a specific annotation */
+  /** 可选的外部打开特定标注的请求 */
   openAnnotationRequest?: ExternalOpenAnnotationRequest | null
 }
 
@@ -87,12 +87,12 @@ export function DocumentFormattedMarkdownOverlay({
       copyContent={content}
       error={error ? { label: 'Write Failed', message: error } : undefined}
     >
-      {/* Content wrapper — min-h-full for vertical centering within FullscreenOverlayBase's scroll container.
-          Scrolling and gradient fade mask are handled by FullscreenOverlayBase. */}
+      {/* 内容包裹层——min-h-full 用于在 FullscreenOverlayBase 的滚动容器中垂直居中。
+          滚动和渐变遮罩由 FullscreenOverlayBase 处理。 */}
       <div className="min-h-full flex flex-col justify-center px-6 py-16">
-        {/* Content card - my-auto centers vertically when content is small, flows naturally when large */}
+        {/* 内容卡片——内容较小时通过 my-auto 垂直居中，内容较大时自然流动 */}
         <div className="bg-background rounded-[16px] shadow-strong w-full max-w-[960px] h-fit mx-auto my-auto">
-          {/* Plan header (variant="plan" only) */}
+          {/* 计划头部（仅 variant="plan" 时） */}
           {variant === 'plan' && (
             <div className="px-4 py-2 border-b border-border/30 flex items-center gap-2 bg-success/5 rounded-t-[16px]">
               <ListTodo className="w-3 h-3 text-success" />
@@ -100,7 +100,7 @@ export function DocumentFormattedMarkdownOverlay({
             </div>
           )}
 
-          {/* Content area */}
+          {/* 内容区 */}
           <div className="px-10 pt-8 pb-8">
             <div className="text-sm">
               {messageId && onAddAnnotation ? (

@@ -1,5 +1,5 @@
 /**
- * Code viewer components for syntax highlighting and diff display.
+ * 代码查看器组件,用于语法高亮和 diff 展示。
  */
 
 export { ShikiCodeViewer, type ShikiCodeViewerProps } from './ShikiCodeViewer'

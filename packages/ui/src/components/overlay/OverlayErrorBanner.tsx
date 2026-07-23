@@ -1,20 +1,20 @@
 /**
- * OverlayErrorBanner - Shared error banner for preview overlays
+ * OverlayErrorBanner - 预览浮层的共享错误横幅
  *
- * Styled to match the TurnCard tinted-shadow pattern:
- * - 5% destructive color-mixed background
- * - shadow-tinted with --shadow-color: var(--destructive-rgb)
- * - Center-aligned, max-width matching ContentFrame card (850px)
+ * 样式匹配 TurnCard 的着色阴影模式：
+ * - 5% destructive color-mixed 背景
+ * - shadow-tinted 配合 --shadow-color: var(--destructive-rgb)
+ * - 居中对齐，最大宽度与 ContentFrame 卡片一致（850px）
  *
- * Rendered ABOVE the content container in each overlay.
+ * 在每个浮层中渲染在内容容器之上。
  */
 
 import type React from 'react'
 
 export interface OverlayErrorBannerProps {
-  /** Short label describing the error type (e.g. "Write Failed", "Read Failed") */
+  /** 描述错误类型的简短标签（如"Write Failed"、"Read Failed"） */
   label: string
-  /** Full error message */
+  /** 完整错误消息 */
   message: string
 }
 

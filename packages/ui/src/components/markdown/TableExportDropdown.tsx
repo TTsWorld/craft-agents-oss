@@ -1,7 +1,7 @@
 /**
- * TableExportDropdown - Copy/export dropdown for datatable & spreadsheet overlays
+ * TableExportDropdown - 用于 datatable 和 spreadsheet 浮层的复制/导出下拉菜单
  *
- * Uses shared StyledDropdown components for consistent styling with the rest of the app.
+ * 使用共享的 StyledDropdown 组件,以与应用其余部分保持一致样式。
  */
 
 import { useState, useCallback } from 'react'
@@ -19,7 +19,7 @@ import { tableToMarkdown, tableToCsv, tableToXlsx, type ExportColumn } from './t
 export interface TableExportDropdownProps {
   columns: ExportColumn[]
   rows: Record<string, unknown>[]
-  /** Filename for XLSX download (without extension) */
+  /** XLSX 下载的文件名(不含扩展名) */
   filename: string
 }
 

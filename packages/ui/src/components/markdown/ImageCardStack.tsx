@@ -14,7 +14,7 @@ export interface ImageCardStackItem {
   src: string
   label?: string
   alt?: string
-  /** Optional image ratio (width / height). Defaults to 4/3. */
+  /** 可选的图片宽高比(width / height)。默认为 4/3。 */
   ratio?: number
 }
 
@@ -26,11 +26,11 @@ export interface ImageCardStackProps {
   maxRotate?: number
   minSwipeDistanceRatio?: number
   minSwipeVelocity?: number
-  /** Max stack height in px. Defaults to 320. */
+  /** 卡片堆叠最大高度(px)。默认为 320。 */
   maxHeight?: number
-  /** Fraction of container size used by cards (0..1). Defaults to 0.8. */
+  /** 卡片占容器尺寸的比例(0..1)。默认为 0.8。 */
   stackScale?: number
-  /** Called when the top card is tapped/clicked. */
+  /** 顶层卡片被点击/轻触时的回调。 */
   onTopCardTap?: () => void
 }
 
@@ -163,7 +163,7 @@ function StackImage({
 
   const depthProgress = totalImages > 1 ? stackPosition / (totalImages - 1) : 0
 
-  // Keep every card fully opaque; depth is expressed via scale and vertical offset.
+  // 所有卡片保持完全不透明;深度通过 scale 和垂直偏移来表达。
   const opacity = 1
   const scale = mix(1, 0.84, easeIn(depthProgress))
   const depthStep = 12

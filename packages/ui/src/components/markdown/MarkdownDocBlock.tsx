@@ -1,18 +1,17 @@
 /**
- * MarkdownDocBlock - Renders ```markdown-preview code blocks as inline rendered markdown.
+ * MarkdownDocBlock - 将 ```markdown-preview 代码块渲染为内联渲染的 markdown。
  *
- * Loads markdown content from file(s) (via `src` or `items` field) and renders
- * it through the shared `Markdown` component. Supports multiple items with a
- * tab bar for switching between them.
+ * 通过 `src` 或 `items` 字段从文件加载 markdown 内容,并经由共享的
+ * `Markdown` 组件渲染。支持多个 item,带 tab 栏用于切换。
  *
- * Expected JSON shapes:
- * Single item:
+ * 期望的 JSON 结构:
+ * 单个 item:
  * {
  *   "src": "/absolute/path/to/file.md",
  *   "title": "Optional title"
  * }
  *
- * Multiple items:
+ * 多个 item:
  * {
  *   "title": "Spec drafts",
  *   "items": [
@@ -21,10 +20,10 @@
  *   ]
  * }
  *
- * Recursion guard: the inner `Markdown` invocation passes
- * `disablePreviewBlocks={new Set(['markdown-preview'])}` so a nested
- * `markdown-preview` fence falls through to a regular code block instead of
- * recursing forever. Other preview blocks (datatable, mermaid, …) still work.
+ * 递归防护:内部的 `Markdown` 调用传入了
+ * `disablePreviewBlocks={new Set(['markdown-preview'])}`,使嵌套的
+ * `markdown-preview` 围栏回退为普通代码块,而不是无限递归。
+ * 其他 preview block(datatable、mermaid 等)仍正常工作。
  */
 
 import * as React from 'react'

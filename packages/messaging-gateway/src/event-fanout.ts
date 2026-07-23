@@ -1,10 +1,10 @@
 /**
- * EventSink fan-out utility.
+ * EventSink 扇出工具。
  *
- * Composes multiple EventSink callbacks into a single one.
- * Used to wire the MessagingGateway alongside the existing WsRpcServer push.
+ * 把多个 EventSink 回调组合成单个回调。
+ * 用于把 MessagingGateway 和现有的 WsRpcServer push 接在一起。
  *
- * Usage in bootstrap:
+ * bootstrap 中的用法：
  * ```ts
  * import { createFanOutSink } from '@craft-agent/messaging-gateway'
  *
@@ -20,8 +20,8 @@ import type { PushTarget } from '@craft-agent/shared/protocol'
 export type EventSinkFn = (channel: string, target: PushTarget, ...args: any[]) => void
 
 /**
- * Create a fan-out EventSink that forwards events to multiple sinks.
- * Errors in one sink do not block others.
+ * 创建一个扇出 EventSink，把事件转发给多个 sink。
+ * 其中一个 sink 出错不会阻塞其他 sink。
  */
 export function createFanOutSink(...sinks: EventSinkFn[]): EventSinkFn {
   return (channel: string, target: PushTarget, ...args: any[]) => {
@@ -29,7 +29,7 @@ export function createFanOutSink(...sinks: EventSinkFn[]): EventSinkFn {
       try {
         sink(channel, target, ...args)
       } catch {
-        // One sink failing must not break others
+        // 一个 sink 失败不能影响其他 sink
       }
     }
   }

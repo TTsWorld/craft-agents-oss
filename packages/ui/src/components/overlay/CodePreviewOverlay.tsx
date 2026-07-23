@@ -1,8 +1,8 @@
 /**
- * CodePreviewOverlay - Overlay for code file preview (Read/Write tools)
+ * CodePreviewOverlay - 代码文件预览浮层（Read/Write 工具）
  *
- * Uses PreviewOverlay for presentation and ShikiCodeViewer for syntax highlighting.
- * File path badge provides "Open" / "Reveal in {file manager}" via PlatformContext.
+ * 使用 PreviewOverlay 进行展示，ShikiCodeViewer 提供语法高亮。
+ * 文件路径徽标通过 PlatformContext 提供"打开"/"在 {文件管理器} 中显示"功能。
  */
 
 import * as React from 'react'
@@ -13,31 +13,31 @@ import { ContentFrame } from './ContentFrame'
 import { ShikiCodeViewer } from '../code-viewer/ShikiCodeViewer'
 
 export interface CodePreviewOverlayProps {
-  /** Whether the overlay is visible */
+  /** 浮层是否可见 */
   isOpen: boolean
-  /** Callback when the overlay should close */
+  /** 浮层关闭时的回调 */
   onClose: () => void
-  /** The code content to display */
+  /** 要显示的代码内容 */
   content: string
-  /** File path for language detection and display */
+  /** 文件路径，用于语言检测和展示 */
   filePath: string
-  /** Language for syntax highlighting (auto-detected if not provided) */
+  /** 语法高亮使用的语言（未提供时自动检测） */
   language?: string
-  /** Mode: 'read' or 'write' */
+  /** 模式：'read' 或 'write' */
   mode?: 'read' | 'write'
-  /** Starting line number (default: 1) */
+  /** 起始行号（默认：1） */
   startLine?: number
-  /** Total lines in original file (for display) */
+  /** 原始文件总行数（用于展示） */
   totalLines?: number
-  /** Number of lines shown */
+  /** 显示的行数 */
   numLines?: number
-  /** Theme mode */
+  /** 主题模式 */
   theme?: 'light' | 'dark'
-  /** Error message if tool failed */
+  /** 工具执行失败时的错误信息 */
   error?: string
-  /** Render inline without dialog (for playground) */
+  /** 内联渲染，不使用对话框（用于 playground） */
   embedded?: boolean
-  /** Original shell command (for Codex reads) - shown above code */
+  /** 原始 shell 命令（用于 Codex 读取）- 显示在代码上方 */
   command?: string
 }
 
@@ -58,7 +58,7 @@ export function CodePreviewOverlay({
 }: CodePreviewOverlayProps) {
   const { t } = useTranslation()
 
-  // Build subtitle with line info
+  // 构建带行号信息的副标题
   const subtitle =
     startLine !== undefined && totalLines !== undefined && numLines !== undefined
       ? `Lines ${startLine}–${startLine + numLines - 1} of ${totalLines}`
@@ -80,7 +80,7 @@ export function CodePreviewOverlay({
       embedded={embedded}
       className="bg-foreground-3"
     >
-      {/* Show command if present (Codex reads via shell commands) */}
+      {/* 存在命令时显示（Codex 通过 shell 命令读取） */}
       {command && (
         <div className="px-6 mb-4">
           <div className="w-full max-w-[850px] mx-auto">

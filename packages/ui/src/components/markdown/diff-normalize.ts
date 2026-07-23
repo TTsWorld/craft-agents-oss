@@ -53,12 +53,12 @@ function containsUnifiedFileBreakCandidate(lines: string[]): boolean {
 }
 
 /**
- * Normalize a raw diff body (as found in a ```diff markdown code block) into a
- * unified diff shape that @pierre/diffs' PatchDiff can parse.
+ * 将原始 diff 正文(即 ```diff markdown 代码块中的内容)规范化为
+ * @pierre/diffs 的 PatchDiff 可解析的 unified diff 形态。
  *
- * - Already-valid single-file unified/git diffs are returned byte-identically.
- * - Valid numbered hunks without file headers get placeholder headers prepended.
- * - Bare or malformed @@ marker lines are collapsed into a single synthetic hunk.
+ * - 已合法的单文件 unified/git diff 原样逐字节返回。
+ * - 合法的带行号 hunk 但无文件头时,前补占位文件头。
+ * - 裸的或格式错误的 @@ 标记行会被折叠为单个合成的 hunk。
  */
 export function ensureUnifiedDiffFormat(raw: string): string {
   const lines = raw.split('\n')
@@ -71,20 +71,17 @@ export function ensureUnifiedDiffFormat(raw: string): string {
   const fileHeaderPairIndex = findFileHeaderPairBefore(lines, hunkSearchEnd)
   const hasFileIdentity = hasGitHeader || fileHeaderPairIndex !== -1
 
-  // PatchDiff only accepts a single file. Preserve multi-file patches unchanged
-  // so the existing error boundary can fall back to CodeBlock rather than
-  // pretending several files are one synthetic file.
+  // PatchDiff 只接受单个文件。多文件 patch 原样保留,
+  // 以便已有的错误边界能回退到 CodeBlock,而不是把多个文件伪装成一个合成文件。
   const isMultiFile = countGitHeaders(lines) > 1
   if (isMultiFile) return raw
 
-  // Fast path for parse-ready diffs: valid hunks plus file identity are already
-  // in the shape @pierre/diffs expects.
+  // 可直接解析的 diff 走快速路径:合法 hunk 加文件身份,已是 @pierre/diffs 期望的形态。
   if (allHunksValid && hasFileIdentity) return raw
 
-  // Valid hunk-only diffs only need placeholder file headers. Preserve their
-  // original hunk line metadata and multi-hunk structure. If the body contains
-  // a deletion line that looks like a unified file header (`--- ...`), add a
-  // synthetic git header so @pierre/diffs doesn't split it as a second file.
+  // 仅含合法 hunk 的 diff 只需补占位文件头。保留原始 hunk 行元数据和多 hunk 结构。
+  // 若正文中包含形似 unified 文件头的删除行(`--- ...`),则补一个合成 git 头,
+  // 以免 @pierre/diffs 把它当作第二个文件切分。
   if (allHunksValid) {
     const prefixLines = ['--- a/file', '+++ b/file']
     const outputPrefixLines = containsUnifiedFileBreakCandidate(lines)
@@ -93,9 +90,9 @@ export function ensureUnifiedDiffFormat(raw: string): string {
     return [...outputPrefixLines, raw].join('\n')
   }
 
-  // For malformed/bare markers, preserve the leading file metadata/header prefix
-  // if one exists. With hunks present, everything before the first hunk is prefix.
-  // Without hunks, preserve a leading unified header pair if present.
+  // 针对格式错误/裸标记的情况:若存在前导文件元数据/头前缀,则保留。
+  // 有 hunk 时,第一个 hunk 之前的所有内容都算前缀。
+  // 无 hunk 时,若存在前导 unified 头对则保留。
   let prefixEnd = 0
   if (hasFileIdentity && firstHunkIndex !== -1) {
     prefixEnd = firstHunkIndex

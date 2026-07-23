@@ -1,29 +1,29 @@
 /**
- * MarkdownDatatableBlock - Interactive data table for markdown ```datatable code blocks
+ * MarkdownDatatableBlock - 用于 markdown ```datatable 代码块的交互式数据表
  *
- * Renders structured JSON as a sortable table with fullscreen expand.
- * No TanStack dependency — uses native HTML table + React state for lightweight
- * portability across Electron and the web viewer.
+ * 将结构化 JSON 渲染为可排序表格,支持全屏展开。
+ * 不依赖 TanStack —— 使用原生 HTML 表格 + React state,以便在 Electron
+ * 和 web 查看器之间轻量移植。
  *
- * Expected JSON shape (inline):
+ * 期望的 JSON 结构(内联):
  * {
  *   "title": "Sales by Region",
  *   "columns": [{ "key": "region", "label": "Region", "type": "text" }],
  *   "rows": [{ "region": "North America" }]
  * }
  *
- * File-backed shape (src field):
+ * 文件承载结构(src 字段):
  * {
  *   "src": "data/transactions.json",
  *   "title": "Transactions",
  *   "columns": [{ "key": "id", "label": "ID", "type": "text" }]
  * }
  *
- * When `src` is present, rows are loaded from the file via PlatformContext.onReadFile.
- * The file can contain full {title, columns, rows} or just a rows array [...].
- * Inline title/columns take precedence over file values.
+ * 当存在 `src` 时,通过 PlatformContext.onReadFile 从文件加载 rows。
+ * 文件可以是完整的 {title, columns, rows},也可以只是一个 rows 数组 [...]。
+ * 内联的 title/columns 优先于文件中的值。
  *
- * Falls back to CodeBlock if JSON parsing fails.
+ * 若 JSON 解析失败则回退到 CodeBlock。
  */
 
 import * as React from 'react'
@@ -47,7 +47,7 @@ import {
 } from '../ui/StyledDropdown'
 import { useTranslation } from 'react-i18next'
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// ── 类型 ────────────────────────────────────────────────────────────────────
 
 interface ColumnDef {
   key: string
@@ -71,7 +71,7 @@ interface DatatableSpec {
 
 type SortDir = 'asc' | 'desc' | null
 
-// ── Cell formatting ──────────────────────────────────────────────────────────
+// ── 单元格格式化 ──────────────────────────────────────────────────────────
 
 function formatCell(value: unknown, type?: ColumnDef['type']): React.ReactNode {
   if (value === null || value === undefined) return <span className="text-muted-foreground/40">—</span>
@@ -115,7 +115,7 @@ function colAlign(type?: ColumnDef['type'], explicit?: string): string {
   return 'text-left'
 }
 
-// ── Sort icon ────────────────────────────────────────────────────────────────
+// ── 排序图标 ────────────────────────────────────────────────────────────────
 
 function SortIcon({ dir }: { dir: SortDir }) {
   return (
@@ -134,7 +134,7 @@ function SortIcon({ dir }: { dir: SortDir }) {
   )
 }
 
-// ── Grouping granularity ─────────────────────────────────────────────────
+// ── 分组粒度 ─────────────────────────────────────────────────────────
 
 interface GranularityOption {
   label: string
@@ -223,7 +223,7 @@ function computeGranularityOptions(data: DatatableData): Map<string, Granularity
       const opts = computeNumericGranularities(nums, col.type)
       if (opts.length > 0) result.set(col.key, opts)
     }
-    // text, badge, boolean → no entry → no sub-menu
+    // text、badge、boolean → 无对应项 → 无子菜单
   }
   return result
 }
@@ -265,11 +265,11 @@ function bucketValue(value: unknown, type: ColumnDef['type'], granularity: strin
 function defaultGranularity(type: ColumnDef['type'], options: GranularityOption[]): string {
   if (!options.length) return 'exact'
   if (type === 'date') return options.find((o) => o.value === 'day')?.value ?? options[0]!.value
-  // For numeric: pick the second option (first non-Exact) if available
+  // 数值类型:若可用,选第二个选项(第一个非"精确"项)
   return options.length > 1 ? options[1]!.value : options[0]!.value
 }
 
-// ── Error boundary ───────────────────────────────────────────────────────────
+// ── 错误边界 ───────────────────────────────────────────────────────────────
 
 class DatatableErrorBoundary extends React.Component<
   { children: React.ReactNode; fallback: React.ReactNode },
@@ -286,7 +286,7 @@ class DatatableErrorBoundary extends React.Component<
   }
 }
 
-// ── Main component ───────────────────────────────────────────────────────────
+// ── 主组件 ───────────────────────────────────────────────────────────────────
 
 export interface MarkdownDatatableBlockProps {
   code: string
@@ -297,11 +297,11 @@ export function MarkdownDatatableBlock({ code, className }: MarkdownDatatableBlo
   const { t } = useTranslation()
   const { onReadFile } = usePlatform()
 
-  // Parse the inline JSON spec (may have src field for file-backed data)
+  // 解析内联 JSON spec(可能包含用于文件承载数据的 src 字段)
   const spec = React.useMemo<DatatableSpec | null>(() => {
     try {
       const raw = JSON.parse(code)
-      // Valid if it has inline data OR a src reference
+      // 当包含内联数据或 src 引用时视为合法
       if (raw.src || (Array.isArray(raw.columns) && Array.isArray(raw.rows))) {
         return raw as DatatableSpec
       }
@@ -311,7 +311,7 @@ export function MarkdownDatatableBlock({ code, className }: MarkdownDatatableBlo
     }
   }, [code])
 
-  // Load file data when src is present
+  // 当存在 src 时加载文件数据
   const [fileData, setFileData] = React.useState<DatatableData | null>(null)
   const [fileError, setFileError] = React.useState<string | null>(null)
   const [fileLoading, setFileLoading] = React.useState(false)
@@ -324,7 +324,7 @@ export function MarkdownDatatableBlock({ code, className }: MarkdownDatatableBlo
       .then((content) => {
         try {
           const raw = JSON.parse(content)
-          // File can be full {title, columns, rows} or just a rows array
+          // 文件可以是完整的 {title, columns, rows},也可以只是一个 rows 数组
           if (Array.isArray(raw)) {
             setFileData({ rows: raw, columns: [], title: undefined })
           } else if (raw && typeof raw === 'object') {
@@ -346,18 +346,18 @@ export function MarkdownDatatableBlock({ code, className }: MarkdownDatatableBlo
       .finally(() => setFileLoading(false))
   }, [spec?.src, onReadFile])
 
-  // Merge: inline spec takes precedence, file provides rows
+  // 合并:内联 spec 优先,文件提供 rows
   const parsed = React.useMemo<DatatableData | null>(() => {
     if (!spec) return null
     if (spec.src) {
-      if (!fileData) return null // Still loading or error
+      if (!fileData) return null // 仍在加载或出错
       return {
         title: spec.title ?? fileData.title,
         columns: (spec.columns && spec.columns.length > 0) ? spec.columns : fileData.columns,
         rows: fileData.rows,
       }
     }
-    // Inline data - must have columns and rows
+    // 内联数据 - 必须包含 columns 和 rows
     if (!Array.isArray(spec.columns) || !Array.isArray(spec.rows)) return null
     return { title: spec.title, columns: spec.columns, rows: spec.rows }
   }, [spec, fileData])
@@ -381,7 +381,7 @@ export function MarkdownDatatableBlock({ code, className }: MarkdownDatatableBlo
   const processedRows = React.useMemo(() => {
     if (!parsed) return []
     let rows = [...parsed.rows]
-    // Sort
+    // 排序
     if (sortKey && sortDir) {
       rows.sort((a, b) => {
         const av = a[sortKey]
@@ -438,7 +438,7 @@ export function MarkdownDatatableBlock({ code, className }: MarkdownDatatableBlo
     setCollapsedGroups(new Set())
   }, [])
 
-  // Loading state for file-backed datatable
+  // 文件承载数据表的加载态
   if (spec?.src && fileLoading) {
     return (
       <div className={cn('rounded-[8px] overflow-hidden border bg-muted/10', className)}>
@@ -450,7 +450,7 @@ export function MarkdownDatatableBlock({ code, className }: MarkdownDatatableBlo
     )
   }
 
-  // Error state for file-backed datatable
+  // 文件承载数据表的错误态
   if (spec?.src && fileError) {
     return (
       <div className={cn('rounded-[8px] overflow-hidden border bg-muted/10', className)}>
@@ -558,7 +558,7 @@ export function MarkdownDatatableBlock({ code, className }: MarkdownDatatableBlo
         </button>
       </DropdownMenuTrigger>
       <StyledDropdownMenuContent sideOffset={6} align="end" className="min-w-36" style={{ zIndex: 'var(--z-floating-menu, 400)' }}>
-        {/* Sort sub-menu */}
+        {/* 排序子菜单 */}
         <DropdownMenuSub>
           <StyledDropdownMenuSubTrigger>
             <ArrowUpDown />
@@ -580,7 +580,7 @@ export function MarkdownDatatableBlock({ code, className }: MarkdownDatatableBlo
             })}
           </StyledDropdownMenuSubContent>
         </DropdownMenuSub>
-        {/* Group sub-menu */}
+        {/* 分组子菜单 */}
         <DropdownMenuSub>
           <StyledDropdownMenuSubTrigger>
             <Group />
@@ -592,7 +592,7 @@ export function MarkdownDatatableBlock({ code, className }: MarkdownDatatableBlo
               const isActive = groupKey === col.key
               const opts = granularityOptions.get(col.key)
 
-              // Typed column with granularity options → nested sub-menu
+              // 带粒度选项的类型化列 → 嵌套子菜单
               if (opts && opts.length > 0) {
                 return (
                   <DropdownMenuSub key={`group-${col.key}`}>
@@ -627,7 +627,7 @@ export function MarkdownDatatableBlock({ code, className }: MarkdownDatatableBlo
                 )
               }
 
-              // Plain column (text, badge, boolean) → direct click
+              // 普通列(text、badge、boolean) → 直接点击
               return (
                 <StyledDropdownMenuItem
                   key={`group-${col.key}`}
@@ -649,7 +649,7 @@ export function MarkdownDatatableBlock({ code, className }: MarkdownDatatableBlo
             })}
           </StyledDropdownMenuSubContent>
         </DropdownMenuSub>
-        {/* Clear */}
+        {/* 清除 */}
         {hasActiveControls && (
           <>
             <StyledDropdownMenuSeparator />
@@ -665,12 +665,12 @@ export function MarkdownDatatableBlock({ code, className }: MarkdownDatatableBlo
   return (
     <DatatableErrorBoundary fallback={fallback}>
       <div className={cn('relative group rounded-[8px] overflow-hidden border bg-muted/10', className)}>
-        {/* Control button */}
+        {/* 控制按钮 */}
         <div className="absolute top-[7px] right-10 z-10">
           {renderControlsDropdown()}
         </div>
 
-        {/* Expand button */}
+        {/* 展开按钮 */}
         <button
           onClick={() => setIsFullscreen(true)}
           className={cn(
@@ -685,18 +685,18 @@ export function MarkdownDatatableBlock({ code, className }: MarkdownDatatableBlo
           <Maximize2 className="w-3.5 h-3.5" />
         </button>
 
-        {/* Header */}
+        {/* 标题栏 */}
         <div className="px-3 py-2 bg-muted/50 border-b">
           <span className="text-[12px] text-muted-foreground font-medium">
             {parsed.title || t('datatable.defaultTitle')}
           </span>
         </div>
 
-        {/* Table with max height and scroll fade */}
+        {/* 带最大高度和滚动渐隐的表格 */}
         {tableContent(true, true)}
       </div>
 
-      {/* Fullscreen overlay */}
+      {/* 全屏浮层 */}
       <DataTableOverlay
         isOpen={isFullscreen}
         onClose={() => setIsFullscreen(false)}

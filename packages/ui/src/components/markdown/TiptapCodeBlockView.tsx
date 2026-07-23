@@ -94,9 +94,9 @@ function getLanguageLabel(language: string | null | undefined): string {
 }
 
 /**
- * React NodeView for regular code blocks only.
+ * 仅用于普通代码块的 React NodeView。
  *
- * Mermaid/LaTeX use dedicated rich block node types:
+ * Mermaid/LaTeX 使用专门的富块节点类型:
  * - mermaidBlock
  * - latexBlock
  */
@@ -280,16 +280,16 @@ function TiptapCodeBlockView({ node, updateAttributes }: TiptapCodeBlockViewProp
 }
 
 /**
- * Extended CodeBlockShiki with React NodeView for regular code blocks.
+ * 扩展自 CodeBlockShiki,为普通代码块提供 React NodeView。
  */
 export const tiptapCodeBlock = CodeBlockShiki.extend({
-  // Official @tiptap/markdown integration for fenced code blocks.
+  // 官方 @tiptap/markdown 对围栏代码块的集成。
   markdownTokenName: 'code',
 
   parseMarkdown: (token: any, helpers: any) => {
     const lang = (token.lang ?? '').toLowerCase()
 
-    // Dedicated rich block nodes handle these fenced languages.
+    // 这些围栏语言由专门的富块节点处理。
     if (lang === 'mermaid' || lang === 'latex' || lang === 'math' || lang === 'tex' || lang === 'katex') {
       return []
     }

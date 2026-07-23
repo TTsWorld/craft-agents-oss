@@ -1,17 +1,17 @@
 /**
- * MarkdownImageBlock - Renders ```image-preview code blocks as inline image previews.
+ * MarkdownImageBlock - 将 ```image-preview 代码块渲染为内联图片预览。
  *
- * Loads image(s) from file(s) (via `src` or `items` field) using data URLs.
- * Supports multiple items with a swipeable card stack preview.
+ * 通过 `src` 或 `items` 字段从文件加载图片,使用 data URL。
+ * 支持多个 item,带可滑动的卡片堆叠预览。
  *
- * Expected JSON shapes:
- * Single item:
+ * 期望的 JSON 结构:
+ * 单个 item:
  * {
  *   "src": "/absolute/path/to/image.png",
  *   "title": "Optional title"
  * }
  *
- * Multiple items:
+ * 多个 item:
  * {
  *   "title": "Before/After",
  *   "items": [
@@ -107,9 +107,9 @@ export function MarkdownImageBlock({ code, className, onCreateRegionAnnotation: 
   const [activeIndex, setActiveIndex] = React.useState(0)
   const [isFullscreen, setIsFullscreen] = React.useState(false)
 
-  // Content cache: src path → data URL string
+  // 内容缓存:src 路径 → data URL 字符串
   const [contentCache, setContentCache] = React.useState<Record<string, string>>({})
-  // Ratio cache: src path → intrinsic width/height ratio
+  // 宽高比缓存:src 路径 → 内在宽高比
   const [ratioCache, setRatioCache] = React.useState<Record<string, number>>({})
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)

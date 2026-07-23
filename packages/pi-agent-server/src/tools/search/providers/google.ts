@@ -1,9 +1,9 @@
 /**
- * Google search provider — uses Gemini API with native Google Search grounding.
+ * Google 搜索 provider——用 Gemini API 配合原生 Google Search grounding。
  *
- * Makes a separate Gemini API call with `{ googleSearch: {} }` as a tool.
- * The Gemini API doesn't allow combining `googleSearch` grounding with function
- * calling in the same request, so this runs as a side-call.
+ * 发起一次独立的 Gemini API 调用，把 `{ googleSearch: {} }` 作为工具。
+ * Gemini API 不允许在同一请求里把 `googleSearch` grounding 和函数调用混用，
+ * 因此这里作为旁路调用。
  */
 
 import type { WebSearchProvider, WebSearchResult } from '../types.ts';
@@ -52,13 +52,13 @@ export class GoogleSearchProvider implements WebSearchProvider {
       throw new Error(`Google Search returned no results for "${query}"`);
     }
 
-    // Extract the grounded text response
+    // 提取带 grounding 的文本响应
     const text = candidate.content.parts
       .map((p: any) => p.text || '')
       .join('')
       .trim();
 
-    // Extract source citations from grounding metadata
+    // 从 grounding 元数据里提取来源引用
     const metadata: GroundingMetadata | undefined = candidate.groundingMetadata;
     const chunks = metadata?.groundingChunks?.filter(
       (c: GroundingChunk) => c.web?.uri,
@@ -72,7 +72,7 @@ export class GoogleSearchProvider implements WebSearchProvider {
       }));
     }
 
-    // Fallback: return the grounded text as a single result
+    // 兜底：把带 grounding 的文本作为单条结果返回
     return [
       {
         title: `Search results for "${query}"`,

@@ -2,23 +2,20 @@
 /**
  * Session MCP Server
  *
- * This MCP server provides session-scoped tools to Codex via stdio transport.
- * It uses the shared handlers from @craft-agent/session-tools-core to ensure
- * feature parity with Claude's session-scoped tools.
+ * 这个 MCP server 通过 stdio 传输向 Codex 提供会话级工具。
+ * 复用 @craft-agent/session-tools-core 里的共享 handler，确保与 Claude 的会话级工具功能对齐。
  *
- * Callback Communication:
- * Tools that need to communicate with the main Electron process (e.g., SubmitPlan
- * triggering a plan display, OAuth triggers pausing execution) send structured
- * JSON messages to stderr with a "__CALLBACK__" prefix. The main process monitors
- * stderr and handles these callbacks.
+ * 回调通信：
+ * 需要与 Electron 主进程通信的工具（例如 SubmitPlan 触发计划展示、OAuth 触发暂停执行），
+ * 会以 "__CALLBACK__" 前缀向 stderr 发送结构化 JSON 消息。主进程监听 stderr 并处理这些回调。
  *
- * Usage:
+ * 用法：
  *   node session-mcp-server.js --session-id <id> --workspace-root <path> --plans-folder <path>
  *
- * Arguments:
- *   --session-id: Unique session identifier
- *   --workspace-root: Path to workspace folder (~/.craft-agent/workspaces/{id})
- *   --plans-folder: Path to session's plans folder
+ * 参数：
+ *   --session-id: 唯一会话标识
+ *   --workspace-root: workspace 文件夹路径（~/.craft-agent/workspaces/{id}）
+ *   --plans-folder: 会话的 plans 文件夹路径
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -33,7 +30,7 @@ import {
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeveloperFeedbackEnabled } from '@craft-agent/shared/feature-flags';
-// Import from session-tools-core
+// 从 session-tools-core 导入
 import {
   type SessionToolContext,
   type CallbackMessage,
@@ -50,7 +47,7 @@ import {
 } from '@craft-agent/session-tools-core';
 
 // ============================================================
-// Types
+// 类型
 // ============================================================
 
 interface SessionConfig {
@@ -63,25 +60,25 @@ interface SessionConfig {
 const CALLBACK_TOOL_TIMEOUT_MS = 120000;
 
 // ============================================================
-// Callback Communication
+// 回调通信
 // ============================================================
 
 /**
- * Send a callback message to the main process via stderr.
- * These messages are parsed by the main process to trigger UI actions.
+ * 通过 stderr 向主进程发送回调消息。
+ * 主进程解析这些消息以触发 UI 动作。
  */
 function sendCallback(callback: CallbackMessage): void {
-  // Write to stderr as a single line JSON (main process parses this)
+  // 以单行 JSON 写到 stderr（主进程会解析它）
   console.error(`__CALLBACK__${JSON.stringify(callback)}`);
 }
 
 // ============================================================
-// Credential Cache Access
+// 凭证缓存访问
 // ============================================================
 
 /**
- * Credential cache entry format (matches main process format).
- * Written by Electron main process, read by this server.
+ * 凭证缓存条目格式（与主进程格式一致）。
+ * 由 Electron 主进程写入，本 server 读取。
  */
 interface CredentialCacheEntry {
   value: string;
@@ -89,16 +86,16 @@ interface CredentialCacheEntry {
 }
 
 /**
- * Get the path to a source's credential cache file.
- * The main process writes decrypted credentials to these files.
+ * 获取某个 source 的凭证缓存文件路径。
+ * 主进程把解密后的凭证写入这些文件。
  */
 function getCredentialCachePath(workspaceRootPath: string, sourceSlug: string): string {
   return join(workspaceRootPath, 'sources', sourceSlug, '.credential-cache.json');
 }
 
 /**
- * Read credentials from the cache file for a source.
- * Returns null if the cache doesn't exist or is expired.
+ * 从某个 source 的缓存文件读取凭证。
+ * 缓存不存在或已过期时返回 null。
  */
 function readCredentialCache(workspaceRootPath: string, sourceSlug: string): string | null {
   const cachePath = getCredentialCachePath(workspaceRootPath, sourceSlug);
@@ -111,7 +108,7 @@ function readCredentialCache(workspaceRootPath: string, sourceSlug: string): str
     const content = readFileSync(cachePath, 'utf-8');
     const cache = JSON.parse(content) as CredentialCacheEntry;
 
-    // Check expiry if set
+    // 设置了过期时间时检查是否过期
     if (cache.expiresAt && Date.now() > cache.expiresAt) {
       return null;
     }
@@ -123,8 +120,8 @@ function readCredentialCache(workspaceRootPath: string, sourceSlug: string): str
 }
 
 /**
- * Create a credential manager that reads from credential cache files.
- * This allows the session-mcp-server to access credentials without keychain access.
+ * 创建一个从凭证缓存文件读取的凭证管理器。
+ * 这样 session-mcp-server 无需访问 keychain 也能获取凭证。
  */
 function createCredentialManager(workspaceRootPath: string): CredentialManagerInterface {
   return {
@@ -138,24 +135,24 @@ function createCredentialManager(workspaceRootPath: string): CredentialManagerIn
     },
 
     refresh: async (_source: LoadedSource): Promise<string | null> => {
-      // Cannot refresh from subprocess - would need main process
+      // 子进程无法刷新——需要主进程才能做
       return null;
     },
   };
 }
 
 // ============================================================
-// Codex Context Factory
+// Codex Context 工厂
 // ============================================================
 
 /**
- * Create a SessionToolContext for the Codex MCP server.
- * This provides the context needed by all handlers.
+ * 为 Codex MCP server 创建 SessionToolContext。
+ * 为所有 handler 提供所需的上下文。
  */
 function createCodexContext(config: SessionConfig): SessionToolContext {
   const { sessionId, workspaceRootPath, plansFolderPath } = config;
 
-  // File system implementation
+  // 文件系统实现
   const fs = {
     exists: (path: string) => existsSync(path),
     readFile: (path: string) => readFileSync(path, 'utf-8'),
@@ -172,7 +169,7 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
     },
   };
 
-  // Callback implementation using stderr
+  // 基于 stderr 的回调实现
   const callbacks = {
     onPlanSubmitted: (planPath: string) => {
       sendCallback({
@@ -189,14 +186,14 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
     },
   };
 
-  // Create credential manager that reads from cache files
+  // 创建从缓存文件读取的凭证管理器
   const credentialManager = createCredentialManager(workspaceRootPath);
 
-  // Session paths for transform_data / render_template
+  // transform_data / render_template 使用的会话路径
   const sessionsDir = join(workspaceRootPath, 'sessions', sessionId);
   const sessionDataDir = join(sessionsDir, 'data');
 
-  // Build context
+  // 构建 context
   return {
     sessionId,
     workspacePath: workspaceRootPath,
@@ -211,12 +208,12 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
       return loadSourceConfigFromHelpers(workspaceRootPath, sourceSlug);
     },
 
-    // Credential manager reads from cache files written by main process
+    // 凭证管理器从主进程写入的缓存文件读取
     credentialManager,
 
-    // Preferences: write directly to preferences.json
+    // 偏好设置：直接写入 preferences.json
     updatePreferences: (updates: Record<string, unknown>) => {
-      // Resolve preferences path from config dir (parent of workspaces dir)
+      // 从 config 目录（workspaces 目录的父目录）解析 preferences 路径
       // workspaceRootPath = ~/.craft-agent/workspaces/{id}
       // preferencesPath = ~/.craft-agent/preferences.json
       const configDir = join(workspaceRootPath, '..', '..');
@@ -240,7 +237,7 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
       }
     },
 
-    // Developer feedback: write one JSON file per entry to {configDir}/feedback/
+    // 开发者反馈：每条写一个 JSON 文件到 {configDir}/feedback/
     submitFeedback: (feedback) => {
       const configDir = process.env.CRAFT_CONFIG_DIR || join(workspaceRootPath, '..', '..');
       const feedbackDir = join(configDir, 'feedback');
@@ -249,13 +246,13 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
       writeFileSync(filePath, JSON.stringify(feedback, null, 2), 'utf-8');
     },
 
-    // Note: saveSourceConfig, validators, renderMermaid
-    // are not available in Codex context (require Electron internals)
+    // 注意：saveSourceConfig、validators、renderMermaid
+    // 在 Codex context 里不可用（需要 Electron 内部能力）
   };
 }
 
 // ============================================================
-// Tool Definitions (from canonical registry)
+// 工具定义（来自规范注册表）
 // ============================================================
 
 function createSessionTools(includeDeveloperFeedback: boolean): Tool[] {
@@ -269,18 +266,18 @@ function createSessionTools(includeDeveloperFeedback: boolean): Tool[] {
 }
 
 // ============================================================
-// Craft Agents Docs Upstream Proxy
+// Craft Agents Docs 上游代理
 // ============================================================
 
 const DOCS_MCP_URL = 'https://agents.craft.do/docs/mcp';
 
-/** Cached upstream client + tool list */
+/** 缓存的上游 client + 工具列表 */
 let docsClient: Client | null = null;
 let docsTools: Tool[] = [];
 
 /**
- * Connect to the craft-agents-docs MCP server and fetch its tool definitions.
- * Falls back gracefully if the server is unreachable (tools will just be empty).
+ * 连接 craft-agents-docs MCP server 并获取其工具定义。
+ * server 不可达时优雅降级（工具列表会是空的）。
  */
 async function connectDocsUpstream(): Promise<void> {
   try {
@@ -305,7 +302,7 @@ async function connectDocsUpstream(): Promise<void> {
 }
 
 /**
- * Route a tool call to the upstream docs client.
+ * 把工具调用路由到上游 docs client。
  */
 async function callDocsUpstream(
   name: string,
@@ -317,7 +314,7 @@ async function callDocsUpstream(
 
   try {
     const result = await docsClient.callTool({ name, arguments: args });
-    // Convert MCP result to our format
+    // 把 MCP 结果转换成我们的格式
     const textContent = (result.content as Array<{ type: string; text?: string }> || [])
       .filter(c => c.type === 'text' && c.text)
       .map(c => ({ type: 'text' as const, text: c.text! }));
@@ -331,20 +328,20 @@ async function callDocsUpstream(
   }
 }
 
-/** Check if a tool name belongs to the docs upstream */
+/** 判断某工具名是否属于 docs 上游 */
 function isDocsUpstreamTool(name: string): boolean {
   return docsTools.some(t => t.name === name);
 }
 
 // ============================================================
-// call_llm Handler (backend-specific)
+// call_llm 处理器（后端专属）
 // ============================================================
 
 async function handleCallLlm(
   args: Record<string, unknown>,
   config: SessionConfig,
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
-  // Primary path: PreToolUse intercept injects _precomputedResult (works on Codex).
+  // 主路径：PreToolUse 拦截注入 _precomputedResult（在 Codex 上生效）。
   const precomputed = args?._precomputedResult as string | undefined;
 
   if (precomputed) {
@@ -364,8 +361,8 @@ async function handleCallLlm(
     }
   }
 
-  // Fallback path: HTTP callback to agent (for Copilot where PreToolUse doesn't fire for MCP tools).
-  // Uses callbackPort from CLI arg (--callback-port) or env var (CRAFT_LLM_CALLBACK_PORT).
+  // 兜底路径：对 agent 发 HTTP 回调（适用于 MCP 工具上 PreToolUse 不触发的 Copilot）。
+  // callbackPort 取自 CLI 参数（--callback-port）或环境变量（CRAFT_LLM_CALLBACK_PORT）。
   if (config.callbackPort) {
     try {
       const resp = await fetch(`http://127.0.0.1:${config.callbackPort}/call-llm`, {
@@ -393,14 +390,14 @@ async function handleCallLlm(
 }
 
 // ============================================================
-// spawn_session Handler (backend-specific)
+// spawn_session 处理器（后端专属）
 // ============================================================
 
 async function handleSpawnSession(
   args: Record<string, unknown>,
   config: SessionConfig,
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
-  // Primary path: PreToolUse intercept injects _precomputedResult (works on Codex).
+  // 主路径：PreToolUse 拦截注入 _precomputedResult（在 Codex 上生效）。
   const precomputed = args?._precomputedResult as string | undefined;
 
   if (precomputed) {
@@ -409,7 +406,7 @@ async function handleSpawnSession(
       if (parsed.error) {
         return errorResponse(`spawn_session failed: ${parsed.error}`);
       }
-      // Return the full result (could be help info or spawn result)
+      // 返回完整结果（可能是帮助信息或 spawn 结果）
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(parsed, null, 2) }],
       };
@@ -418,7 +415,7 @@ async function handleSpawnSession(
     }
   }
 
-  // Fallback path: HTTP callback to agent (for Copilot where PreToolUse doesn't fire for MCP tools).
+  // 兜底路径：对 agent 发 HTTP 回调（适用于 MCP 工具上 PreToolUse 不触发的 Copilot）。
   if (config.callbackPort) {
     try {
       const resp = await fetch(`http://127.0.0.1:${config.callbackPort}/spawn-session`, {
@@ -446,7 +443,7 @@ async function handleSpawnSession(
 }
 
 // ============================================================
-// MCP Server Setup
+// MCP Server 设置
 // ============================================================
 
 function setupSignalHandlers(): void {
@@ -466,7 +463,7 @@ function setupSignalHandlers(): void {
 async function main() {
   setupSignalHandlers();
 
-  // Parse command line arguments
+  // 解析命令行参数
   const args = process.argv.slice(2);
   let sessionId: string | undefined;
   let workspaceRootPath: string | undefined;
@@ -498,17 +495,17 @@ async function main() {
     sessionId,
     workspaceRootPath,
     plansFolderPath,
-    // CLI arg takes priority, env var as fallback (Copilot CLI may not forward env to subprocesses)
+    // CLI 参数优先，环境变量兜底（Copilot CLI 可能不把 env 透传给子进程）
     callbackPort: callbackPort || process.env.CRAFT_LLM_CALLBACK_PORT,
   };
 
-  // Create the Codex context
+  // 创建 Codex context
   const ctx = createCodexContext(config);
 
   const includeDeveloperFeedback = isDeveloperFeedbackEnabled();
   const sessionToolRegistry = getSessionToolRegistry({ includeDeveloperFeedback });
 
-  // Create MCP server
+  // 创建 MCP server
   const server = new Server(
     {
       name: 'craft-agent-session',
@@ -521,36 +518,36 @@ async function main() {
     }
   );
 
-  // Connect to upstream docs server (non-blocking, best-effort)
+  // 连接上游 docs server（非阻塞，尽力而为）
   await connectDocsUpstream();
 
-  // Handle tool listing — session tools + docs upstream tools
+  // 处理工具列表 —— session 工具 + docs 上游工具
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [...createSessionTools(includeDeveloperFeedback), ...docsTools],
   }));
 
-  // Handle tool calls — route via canonical registry, call_llm, or docs upstream
+  // 处理工具调用 —— 经规范注册表、call_llm 或 docs 上游路由
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: toolArgs } = request.params;
 
     try {
-      // call_llm has backend-specific execution (precomputed result / HTTP callback)
+      // call_llm 有后端专属执行逻辑（预计算结果 / HTTP 回调）
       if (name === 'call_llm') {
         return await handleCallLlm(toolArgs as Record<string, unknown>, config);
       }
 
-      // spawn_session has backend-specific execution (precomputed result / HTTP callback)
+      // spawn_session 有后端专属执行逻辑（预计算结果 / HTTP 回调）
       if (name === 'spawn_session') {
         return await handleSpawnSession(toolArgs as Record<string, unknown>, config);
       }
 
-      // Check canonical session tool registry first (feature-filtered)
+      // 先查规范的 session 工具注册表（已按 feature 过滤）
       const def = sessionToolRegistry.get(name);
       if (def?.handler) {
         return await def.handler(ctx, toolArgs);
       }
 
-      // Route to docs upstream if it's a docs tool
+      // 若是 docs 工具则路由到 docs 上游
       if (isDocsUpstreamTool(name)) {
         return await callDocsUpstream(name, toolArgs as Record<string, unknown>);
       }
@@ -563,7 +560,7 @@ async function main() {
     }
   });
 
-  // Start server with stdio transport
+  // 以 stdio 传输启动 server
   const transport = new StdioServerTransport();
   await server.connect(transport);
 

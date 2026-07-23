@@ -3,9 +3,9 @@ import * as React from 'react'
 const DEFAULT_FADE_SIZE = 32
 
 /**
- * Hook for horizontal scroll containers with CSS mask fade indicators.
- * Tracks scroll position and produces a maskImage gradient that fades
- * edges when content overflows — same pattern used in Mermaid diagrams.
+ * 用于带 CSS 遮罩淡入淡出指示器的水平滚动容器的 Hook。
+ * 跟踪滚动位置并生成在内容溢出时淡入淡出边缘的 maskImage 渐变——
+ * 与 Mermaid 图示中使用的模式相同。
  */
 export function useScrollFade(fadeSize = DEFAULT_FADE_SIZE) {
   const scrollRef = React.useRef<HTMLDivElement>(null)

@@ -1,26 +1,26 @@
 /**
- * ChatGPT backend search provider — for ChatGPT Plus / OpenAI OAuth users.
+ * ChatGPT 后端搜索 provider——面向 ChatGPT Plus / OpenAI OAuth 用户。
  *
- * Uses the same Responses API format as the public OpenAI API, but hits the
- * ChatGPT backend endpoint which accepts OAuth access tokens instead of API keys.
+ * 使用与公开 OpenAI API 相同的 Responses API 格式，但请求的是
+ * ChatGPT 后端 endpoint，它接受 OAuth access token 而非 API key。
  *
- * Auth flow mirrors the Pi SDK's `openai-codex-responses.js`:
- *   - Bearer token: the OAuth access token
- *   - chatgpt-account-id: extracted from the JWT's claims
+ * 鉴权流程与 Pi SDK 的 `openai-codex-responses.js` 一致：
+ *   - Bearer token：OAuth access token
+ *   - chatgpt-account-id：从 JWT 的 claims 里提取
  */
 
 import type { WebSearchProvider, WebSearchResult } from '../types.ts';
 import { parseResponsesApiResults, type ResponsesApiResponse } from './responses-api-parser.ts';
 
 /**
- * Codex backend request contract (search path):
+ * Codex 后端请求契约（搜索路径）：
  * - model: gpt-5.3-codex
  * - store: false
- * - stream: true (backend may return JSON or SSE)
+ * - stream: true（后端可能返回 JSON 或 SSE）
  * - instructions + tool_choice + text.verbosity
- * - OpenAI-Beta: responses=experimental header
+ * - OpenAI-Beta: responses=experimental 头
  *
- * If this payload changes, update:
+ * 如果这个 payload 有变更，请同步更新：
  *   - ./chatgpt.test.ts
  *   - ../SEARCH_PAYLOAD_CONTRACT.md
  */
@@ -42,8 +42,8 @@ const SEARCH_ATTEMPTS: SearchAttempt[] = [
 ];
 
 /**
- * Extract the `chatgpt_account_id` from a ChatGPT OAuth access token (JWT).
- * Returns null if the token is malformed or the claim is missing.
+ * 从 ChatGPT OAuth access token (JWT) 里提取 `chatgpt_account_id`。
+ * token 格式错误或 claim 缺失时返回 null。
  */
 export function extractChatGptAccountId(accessToken: string): string | null {
   try {
@@ -135,7 +135,7 @@ export class ChatGPTBackendSearchProvider implements WebSearchProvider {
         `${attempt.label} failed (HTTP ${response.status}) [${requestFingerprint}, content-type=${contentType}]: ${compactError}`,
       );
 
-      // Retry only for likely schema/tool incompatibility (400).
+      // 仅在疑似 schema/tool 不兼容（400）时重试。
       const canRetry = response.status === 400;
       if (!(canRetry && hasMoreAttempts)) {
         throw new Error(`ChatGPT search failed: ${attemptErrors.join('; ')}`);

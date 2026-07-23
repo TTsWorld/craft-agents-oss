@@ -21,17 +21,17 @@ export interface IslandContentViewProps {
   anchorY?: AnchorY
   className?: string
   morphFrom?: IslandMorphTarget | null
-  /** Locks document scrolling while this view is active and visible (dialog-like behavior). */
+  /** 在此视图激活且可见时锁定文档滚动（类对话框行为）。 */
   lockScroll?: boolean
-  /** Renders a full-viewport capture layer that blocks pointer interaction outside the island. Implies lockScroll. */
+  /** 渲染覆盖整个视口的捕获层，屏蔽 island 外部的指针交互。隐含 lockScroll。 */
   blockOutsideInteraction?: boolean
   children: React.ReactNode
 }
 
 /**
- * Marker component for Island child views.
+ * Island 子视图的标记组件。
  *
- * Usage:
+ * 用法：
  * <Island activeViewId="compact">
  *   <IslandContentView id="compact">...</IslandContentView>
  *   <IslandContentView id="confirm">...</IslandContentView>
@@ -43,17 +43,17 @@ export function IslandContentView({ children }: IslandContentViewProps) {
 IslandContentView.displayName = 'IslandContentView'
 
 export interface IslandTransitionConfig {
-  /** Master duration used by both shell and content animations */
+  /** 外壳与内容动画共用的主时长 */
   duration?: number
-  /** Spring bounce for the shell layout animation */
+  /** 外壳布局动画的弹性回弹 */
   bounce?: number
-  /** Enter/exit blur radius in px for content crossfade */
+  /** 内容交叉淡入淡出时的进入/退出模糊半径（px） */
   blurPx?: number
-  /** Direction in degrees for directional enter/exit offset (0 = from right, 90 = from bottom). */
+  /** 进入/退出方向偏移的角度（度），0 = 从右侧进入，90 = 从底部进入。 */
   entryAngleDeg?: number
-  /** Directional travel distance in pixels for enter/exit offset. */
+  /** 进入/退出方向偏移的位移距离（像素）。 */
   entryDistancePx?: number
-  /** Start scale used when no morph target scale is available. */
+  /** 当无 morph 目标缩放可用时使用的起始缩放。 */
   entryStartScale?: number
 }
 
@@ -70,25 +70,25 @@ export interface IslandProps {
   radius?: number
   transitionConfig?: IslandTransitionConfig
   onActiveViewSizeChange?: (size: IslandActiveViewSize) => void
-  /** Controls shell presence animation. Defaults to true for backward compatibility. */
+  /** 控制外壳的显隐动画。默认为 true 以保持向后兼容。 */
   isVisible?: boolean
-  /** Called after hide animation settles. Parent can unmount safely here. */
+  /** 隐藏动画结束后调用。父组件可在此安全卸载。 */
   onExitComplete?: () => void
-  /** Calls onRequestClose when pointer-down happens outside the island shell while visible. */
+  /** 可见时若在 island 外壳之外发生 pointer-down，则调用 onRequestClose。 */
   dismissOnPointerDownOutside?: boolean
-  /** Consumer callback for close/dismiss requests (outside tap, escape, etc.). */
+  /** 关闭/消除请求（外部点击、Esc 等）的消费者回调。 */
   onRequestClose?: () => void
-  /** Consumer callback for back navigation requests. Return true when handled. */
+  /** 返回导航请求的消费者回调。返回 true 表示已处理。 */
   onRequestBack?: () => boolean
-  /** Dialog semantics for Escape handling while visible. */
+  /** 可见时处理 Esc 键的对话框语义。 */
   dialogBehavior?: IslandDialogBehavior
-  /** Locks document scrolling while the island is visible, regardless of active view-level lockScroll flags. */
+  /** island 可见时锁定文档滚动，无视当前激活视图的 lockScroll 设置。 */
   lockScrollWhileVisible?: boolean
-  /** Force entry animation replay when this value changes (show(animated:true)-style control). */
+  /** 当此值变化时强制重播进入动画（类似 show(animated:true) 的控制方式）。 */
   replayEntryKey?: string | number
-  /** Controls whether visible transitions always run through an internal priming frame for deterministic entry replay. */
+  /** 控制可见过渡是否始终经过内部预热帧，以保证进入重播的确定性。 */
   replayOnVisible?: 'auto' | 'always'
-  /** z-index for the blockOutsideInteraction overlay (portaled to body). Set to containerZIndex − 1. */
+  /** blockOutsideInteraction 覆盖层的 z-index（portal 到 body）。设为 containerZIndex − 1。 */
   overlayZIndex?: React.CSSProperties['zIndex']
 }
 
@@ -114,7 +114,7 @@ export interface HandleIslandEscapeParams {
 }
 
 /**
- * Apply Island Escape behavior. Returns true when Escape was handled.
+ * 应用 Island 的 Esc 键行为。当 Esc 已被处理时返回 true。
  */
 export function handleIslandEscape({
   dialogBehavior,
@@ -263,10 +263,10 @@ function computeMorphDelta(
 }
 
 /**
- * Animated shell that morphs between registered IslandContentView children.
+ * 在已注册的 IslandContentView 子视图之间进行 morph 变形的动画外壳。
  *
- * - Outer shell: layout spring + optional morph from/to target
- * - Inner content: parallel enter/exit crossfade + blur
+ * - 外壳：布局弹簧动画 + 可选的从/向目标 morph
+ * - 内部内容：并行的进入/退出交叉淡入淡出 + 模糊
  */
 export function Island({
   activeViewId,
@@ -333,7 +333,7 @@ export function Island({
     React.Children.forEach(children, (child) => {
       if (!React.isValidElement(child)) return
 
-      // Primary path: explicit IslandContentView marker component
+      // 主路径：显式的 IslandContentView 标记组件
       if (child.type === IslandContentView) {
         const props = child.props as IslandContentViewProps
         entries.push({
@@ -349,7 +349,7 @@ export function Island({
         return
       }
 
-      // Flexible path: wrapped view components pass id/anchor props and render their own content.
+      // 灵活路径：被包裹的视图组件传入 id/anchor 等属性并自行渲染内容。
       const props = child.props as Partial<IslandContentViewProps>
       if (typeof props.id === 'string') {
         entries.push({
@@ -388,8 +388,8 @@ export function Island({
     const layoutWidth = shell.offsetWidth
     const layoutHeight = shell.offsetHeight
 
-    // Keep last valid delta during transient zero-size frames (mount/layout handoff).
-    // This keeps enter/exit symmetry instead of collapsing to fallback scale only on show.
+    // 在瞬态零尺寸帧（挂载/布局交接）期间保留上一个有效 delta。
+    // 这样可保持进入/退出对称，避免仅在显示时退化为兜底缩放。
     if (rect.width <= 0 || rect.height <= 0 || layoutWidth <= 0 || layoutHeight <= 0) {
       return
     }
@@ -478,8 +478,8 @@ export function Island({
       return
     }
 
-    // If we're already unprimed (e.g. StrictMode cancelled the first RAF),
-    // keep scheduling a priming RAF until we reach the visible state.
+    // 若已处于未预热状态（例如 StrictMode 取消了首个 RAF），
+    // 则持续调度预热 RAF，直至到达可见状态。
     const needsPriming = becameVisible || replayKeyChangedWhileVisible || !isVisibilityPrimed
     if (!needsPriming) {
       return
@@ -562,7 +562,7 @@ export function Island({
       event.stopPropagation()
     }
 
-    // Bubble phase so nested controls can consume Escape first.
+    // 使用冒泡阶段，以便嵌套控件能优先消费 Esc。
     window.addEventListener('keydown', onKeyDown)
     return () => {
       window.removeEventListener('keydown', onKeyDown)
@@ -673,8 +673,8 @@ export function Island({
     if (!shouldMorph || !morphDelta) return false
     if (typeof window === 'undefined') return true
 
-    // Guard against transiently bad frame calculations on first open.
-    // If delta is implausibly large, prefer in-place scale morph for that frame.
+    // 防范首次打开时瞬态错误的帧计算。
+    // 若 delta 大得不合理，则该帧优先使用原位缩放 morph。
     const maxX = window.innerWidth * 0.75
     const maxY = window.innerHeight * 0.75
     return Math.abs(morphDelta.x) <= maxX && Math.abs(morphDelta.y) <= maxY
@@ -710,13 +710,13 @@ export function Island({
     const isFirstVisibleFrame = isVisible && spawnHiddenPoseRef.current == null
     const becameVisible = !prevIsVisibleRef.current && isVisible
     if (isFirstVisibleFrame || becameVisible) {
-      // Remember the original spawn rectangle/pose so hide can always animate back to it
-      // even if content/view dimensions changed while the island was open.
+      // 记录原始生成矩形/姿态，以便隐藏时始终能动画回到该位置，
+      // 即使 island 打开期间内容/视图尺寸已发生变化。
       spawnHiddenPoseRef.current = { ...hiddenPose }
     }
 
     if (!isVisible) {
-      // Keep last captured spawn pose for exit animation.
+      // 保留上一次捕获的生成姿态，用于退出动画。
       prevIsVisibleRef.current = false
       return
     }

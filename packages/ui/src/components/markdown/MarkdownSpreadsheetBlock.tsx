@@ -1,10 +1,10 @@
 /**
- * MarkdownSpreadsheetBlock - Excel-style grid for markdown ```spreadsheet code blocks
+ * MarkdownSpreadsheetBlock - 用于 markdown ```spreadsheet 代码块的 Excel 风格网格
  *
- * Renders structured JSON as a spreadsheet with column letters, row numbers,
- * and type-aware cell formatting. No external dependencies beyond React.
+ * 将结构化 JSON 渲染为电子表格,带列字母、行号和类型感知的单元格格式化。
+ * 除 React 外无其他外部依赖。
  *
- * Expected JSON shape (inline):
+ * 期望的 JSON 结构(内联):
  * {
  *   "filename": "Q1_Revenue.xlsx",
  *   "sheetName": "Summary",
@@ -12,14 +12,14 @@
  *   "rows": [{ "region": "North" }]
  * }
  *
- * File-backed shape (src field):
+ * 文件承载结构(src 字段):
  * {
  *   "src": "data/revenue.json",
  *   "filename": "Q1_Revenue.xlsx",
  *   "columns": [{ "key": "region", "label": "Region", "type": "text" }]
  * }
  *
- * Falls back to CodeBlock if JSON parsing fails.
+ * 若 JSON 解析失败则回退到 CodeBlock。
  */
 
 import * as React from 'react'
@@ -32,7 +32,7 @@ import { TableExportDropdown } from './TableExportDropdown'
 import { usePlatform } from '../../context/PlatformContext'
 import { useTranslation } from 'react-i18next'
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// ── 类型 ────────────────────────────────────────────────────────────────────
 
 interface ColumnDef {
   key: string
@@ -55,7 +55,7 @@ interface SpreadsheetSpec {
   rows?: Record<string, unknown>[]
 }
 
-// ── Cell formatting ──────────────────────────────────────────────────────────
+// ── 单元格格式化 ──────────────────────────────────────────────────────────
 
 function formatCell(value: unknown, type?: ColumnDef['type']): React.ReactNode {
   if (value === null || value === undefined) return <span className="text-muted-foreground/40">—</span>
@@ -93,7 +93,7 @@ function isNumericValue(v: unknown): boolean {
   return false
 }
 
-// ── Error boundary ───────────────────────────────────────────────────────────
+// ── 错误边界 ───────────────────────────────────────────────────────────────
 
 class SpreadsheetErrorBoundary extends React.Component<
   { children: React.ReactNode; fallback: React.ReactNode },
@@ -110,7 +110,7 @@ class SpreadsheetErrorBoundary extends React.Component<
   }
 }
 
-// ── Main component ───────────────────────────────────────────────────────────
+// ── 主组件 ───────────────────────────────────────────────────────────────────
 
 export interface MarkdownSpreadsheetBlockProps {
   code: string
@@ -121,7 +121,7 @@ export function MarkdownSpreadsheetBlock({ code, className }: MarkdownSpreadshee
   const { t } = useTranslation()
   const { onReadFile } = usePlatform()
 
-  // Parse the inline JSON spec (may have src field for file-backed data)
+  // 解析内联 JSON spec(可能包含用于文件承载数据的 src 字段)
   const spec = React.useMemo<SpreadsheetSpec | null>(() => {
     try {
       const raw = JSON.parse(code)
@@ -134,7 +134,7 @@ export function MarkdownSpreadsheetBlock({ code, className }: MarkdownSpreadshee
     }
   }, [code])
 
-  // Load file data when src is present
+  // 当存在 src 时加载文件数据
   const [fileData, setFileData] = React.useState<SpreadsheetData | null>(null)
   const [fileError, setFileError] = React.useState<string | null>(null)
   const [fileLoading, setFileLoading] = React.useState(false)
@@ -169,7 +169,7 @@ export function MarkdownSpreadsheetBlock({ code, className }: MarkdownSpreadshee
       .finally(() => setFileLoading(false))
   }, [spec?.src, onReadFile])
 
-  // Merge: inline spec takes precedence, file provides rows
+  // 合并:内联 spec 优先,文件提供 rows
   const parsed = React.useMemo<SpreadsheetData | null>(() => {
     if (!spec) return null
     if (spec.src) {
@@ -188,7 +188,7 @@ export function MarkdownSpreadsheetBlock({ code, className }: MarkdownSpreadshee
   const [isFullscreen, setIsFullscreen] = React.useState(false)
   const { scrollRef, maskImage } = useScrollFade()
 
-  // Loading state for file-backed spreadsheet
+  // 文件承载电子表格的加载态
   if (spec?.src && fileLoading) {
     const loadingLabel = [spec.filename, spec.sheetName].filter(Boolean).join(' — ') || t('spreadsheet.defaultTitle')
     return (
@@ -201,7 +201,7 @@ export function MarkdownSpreadsheetBlock({ code, className }: MarkdownSpreadshee
     )
   }
 
-  // Error state for file-backed spreadsheet
+  // 文件承载电子表格的错误态
   if (spec?.src && fileError) {
     const errorLabel = [spec.filename, spec.sheetName].filter(Boolean).join(' — ') || t('spreadsheet.defaultTitle')
     return (
@@ -233,7 +233,7 @@ export function MarkdownSpreadsheetBlock({ code, className }: MarkdownSpreadshee
       } : { overflowX: 'auto' }}
     >
       <table className="w-max min-w-full text-[13px]">
-        {/* Column letter headers */}
+        {/* 列字母表头 */}
         <thead>
           <tr className="border-b border-foreground/[0.08] bg-foreground/[0.03]">
             <th className="text-center py-1 px-2 font-normal text-muted-foreground/40 w-10 border-r border-foreground/[0.06] text-[11px]" />
@@ -241,7 +241,7 @@ export function MarkdownSpreadsheetBlock({ code, className }: MarkdownSpreadshee
               <th key={letter} className="text-center py-1 px-3 font-normal text-muted-foreground/40 border-r border-foreground/[0.06] last:border-0 text-[11px]">{letter}</th>
             ))}
           </tr>
-          {/* Row 1: column labels */}
+          {/* 第 1 行:列标签 */}
           <tr className="border-b border-foreground/[0.06] bg-foreground/[0.02]">
             <td className="text-center py-1.5 px-2 text-muted-foreground/40 border-r border-foreground/[0.06] text-[11px] font-mono">1</td>
             {parsed.columns.map((col) => (
@@ -276,7 +276,7 @@ export function MarkdownSpreadsheetBlock({ code, className }: MarkdownSpreadshee
   return (
     <SpreadsheetErrorBoundary fallback={fallback}>
       <div className={cn('relative group rounded-[8px] overflow-hidden border bg-muted/10', className)}>
-        {/* Expand button */}
+        {/* 展开按钮 */}
         <button
           onClick={() => setIsFullscreen(true)}
           className={cn(
@@ -291,16 +291,16 @@ export function MarkdownSpreadsheetBlock({ code, className }: MarkdownSpreadshee
           <Maximize2 className="w-3.5 h-3.5" />
         </button>
 
-        {/* Header */}
+        {/* 标题栏 */}
         <div className="px-3 py-2 bg-muted/50 border-b">
           <span className="text-[12px] text-muted-foreground font-medium">{label}</span>
         </div>
 
-        {/* Table with max height and scroll fade */}
+        {/* 带最大高度和滚动渐隐的表格 */}
         {tableContent(true, true)}
       </div>
 
-      {/* Fullscreen overlay */}
+      {/* 全屏浮层 */}
       <DataTableOverlay
         isOpen={isFullscreen}
         onClose={() => setIsFullscreen(false)}

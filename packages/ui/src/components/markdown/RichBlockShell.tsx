@@ -17,7 +17,7 @@ export function RichBlockShell({ children, onEdit, editTitle = 'Edit block', cla
         <TiptapHoverActions>
           <TiptapHoverActionButton
             onMouseDown={(event) => {
-              // Keep focus/selection in ProseMirror so BubbleMenu anchor is stable on first open.
+              // 保持焦点/选区在 ProseMirror 内,使 BubbleMenu 锚点在首次打开时稳定。
               event.preventDefault()
               event.stopPropagation()
             }}

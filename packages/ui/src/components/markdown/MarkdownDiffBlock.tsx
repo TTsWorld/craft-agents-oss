@@ -1,17 +1,16 @@
 /**
- * MarkdownDiffBlock - Renders diff code blocks using @pierre/diffs
+ * MarkdownDiffBlock - 使用 @pierre/diffs 渲染 diff 代码块
  *
- * When the markdown viewer encounters a ```diff code block, this component
- * renders it with the same pierre/diffs setup (PatchDiff) and styling used
- * in the full-screen diff overlay (ShikiDiffViewer), instead of plain
- * Shiki syntax highlighting.
+ * 当 markdown 查看器遇到 ```diff 代码块时,本组件用与全屏 diff 浮层
+ * (ShikiDiffViewer)相同的 pierre/diffs 配置(PatchDiff)和样式来渲染,
+ * 而不是使用普通的 Shiki 语法高亮。
  *
- * Handles common diff code block formats:
- * 1. Proper unified diffs (with --- / +++ / @@ headers) — passed directly
- * 2. Numbered hunks without file headers — synthetic file headers are prepended
- * 3. Bare diff content or bare @@ markers — synthetic headers are prepended
+ * 处理常见的 diff 代码块格式:
+ * 1. 标准的 unified diff(带 --- / +++ / @@ 头) — 直接传入
+ * 2. 带行号但无文件头的 hunk — 前补合成的文件头
+ * 3. 裸 diff 内容或裸 @@ 标记 — 前补合成的文件头
  *
- * Falls back to the regular CodeBlock if PatchDiff rendering fails.
+ * 若 PatchDiff 渲染失败,则回退到普通 CodeBlock。
  */
 
 import * as React from 'react'
@@ -22,8 +21,8 @@ import { CodeBlock } from './CodeBlock'
 import { ensureUnifiedDiffFormat } from './diff-normalize'
 import { registerCraftShikiThemes } from '../code-viewer/registerShikiThemes'
 
-// ── Custom element + theme registration (same as ShikiDiffViewer) ──────────
-// Idempotent: safe to run even if ShikiDiffViewer already registered these.
+// ── 自定义元素 + 主题注册(与 ShikiDiffViewer 一致) ──────────
+// 幂等:即使 ShikiDiffViewer 已注册过,重复运行也安全。
 
 if (typeof HTMLElement !== 'undefined' && !customElements.get(DIFFS_TAG_NAME)) {
   class FileDiffContainer extends HTMLElement {
@@ -36,29 +35,29 @@ if (typeof HTMLElement !== 'undefined' && !customElements.get(DIFFS_TAG_NAME)) {
   customElements.define(DIFFS_TAG_NAME, FileDiffContainer)
 }
 
-// Register custom themes once per runtime.
+// 每个运行时注册一次自定义主题。
 registerCraftShikiThemes()
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── 辅助函数 ────────────────────────────────────────────────────────────────
 
 /**
- * Detect whether we're in dark mode by checking the DOM class list.
- * Mirrors the fallback logic in CodeBlock.
+ * 通过检查 DOM class list 判断是否处于暗色模式。
+ * 与 CodeBlock 中的回退逻辑保持一致。
  */
 function isDarkMode(): boolean {
   if (typeof document === 'undefined') return false
   return document.documentElement.classList.contains('dark')
 }
 
-// ── Error boundary ────────────────────────────────────────────────────────
+// ── 错误边界 ────────────────────────────────────────────────────────────────
 
 interface ErrorBoundaryState {
   hasError: boolean
 }
 
 /**
- * Lightweight error boundary so a PatchDiff failure doesn't crash the whole
- * message — we fall back to the regular CodeBlock instead.
+ * 轻量错误边界,使 PatchDiff 失败时不会让整条消息崩溃 —— 而是回退到
+ * 普通 CodeBlock。
  */
 class DiffErrorBoundary extends React.Component<
   { children: React.ReactNode; fallback: React.ReactNode },
@@ -80,10 +79,10 @@ class DiffErrorBoundary extends React.Component<
   }
 }
 
-// ── Main component ────────────────────────────────────────────────────────
+// ── 主组件 ────────────────────────────────────────────────────────────────
 
 export interface MarkdownDiffBlockProps {
-  /** Raw diff text from the markdown code block */
+  /** 来自 markdown 代码块的原始 diff 文本 */
   code: string
   className?: string
 }
@@ -92,7 +91,7 @@ export function MarkdownDiffBlock({ code, className }: MarkdownDiffBlockProps) {
   const dark = isDarkMode()
   const themeName = dark ? 'craft-dark' : 'craft-light'
 
-  // Build the same options used in ShikiDiffViewer for visual consistency
+  // 构造与 ShikiDiffViewer 相同的 options,以保持视觉一致性
   const options: PatchDiffProps<undefined>['options'] = React.useMemo(() => ({
     theme: themeName,
     diffStyle: 'unified' as const,

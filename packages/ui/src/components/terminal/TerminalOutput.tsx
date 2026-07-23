@@ -1,11 +1,11 @@
 /**
- * TerminalOutput - Terminal-style display for command output
+ * TerminalOutput - 终端风格的命令输出展示组件
  *
- * Platform-agnostic component for displaying terminal output with:
- * - ANSI color code support
- * - Grep output line number highlighting
- * - Light/dark theme support
- * - Copy functionality
+ * 跨平台组件，用于展示终端输出，具备：
+ * - ANSI 颜色码支持
+ * - grep 输出行号高亮
+ * - 亮色/暗色主题支持
+ * - 复制功能
  */
 
 import * as React from 'react'
@@ -18,24 +18,24 @@ import { parseAnsi, stripAnsi, isGrepContentOutput, parseGrepOutput } from './an
 export type ToolType = 'bash' | 'grep' | 'glob'
 
 export interface TerminalOutputProps {
-  /** The command that was executed */
+  /** 执行的命令 */
   command: string
-  /** The output from the command */
+  /** 命令的输出内容 */
   output: string
-  /** Exit code (0 = success) */
+  /** 退出码（0 = 成功） */
   exitCode?: number
-  /** Tool type for display styling */
+  /** 工具类型，用于展示样式 */
   toolType?: ToolType
-  /** Optional description of what the command does */
+  /** 可选的命令用途说明 */
   description?: string
-  /** Theme mode */
+  /** 主题模式 */
   theme?: 'light' | 'dark'
-  /** Additional class names */
+  /** 附加的类名 */
   className?: string
 }
 
 /**
- * TerminalOutput - Display terminal command and output with ANSI colors
+ * TerminalOutput - 以 ANSI 颜色展示终端命令及输出
  */
 export function TerminalOutput({
   command,
@@ -51,15 +51,15 @@ export function TerminalOutput({
 
   const isDark = theme === 'dark'
 
-  // Theme-aware colors for inner elements (outer bg inherits from overlay's bg-background)
+  // 随主题变化的内部元素颜色（外层背景继承自浮层的 bg-background）
   const textColor = isDark ? '#e4e4e4' : '#1a1a1a'
   const mutedColor = isDark ? '#888888' : '#666666'
-  const matchColor = '#22c55e' // Green for grep matches
-  const cmdColor = isDark ? '#60a5fa' : '#2563eb' // Blue for command
+  const matchColor = '#22c55e' // 绿色，用于 grep 匹配项
+  const cmdColor = isDark ? '#60a5fa' : '#2563eb' // 蓝色，用于命令
   const codeBg = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)'
   const outputBg = isDark ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.03)'
 
-  // Copy to clipboard (strip ANSI codes for clean text)
+  // 复制到剪贴板（去除 ANSI 码以获得纯净文本）
   const copyToClipboard = useCallback(async (text: string, type: 'command' | 'output') => {
     try {
       await navigator.clipboard.writeText(stripAnsi(text))
@@ -70,19 +70,19 @@ export function TerminalOutput({
     }
   }, [])
 
-  // Memoize ANSI-parsed output for performance
+  // 出于性能考虑，对 ANSI 解析结果进行记忆化
   const parsedOutput = useMemo(() => {
     if (!output) return []
     return parseAnsi(output)
   }, [output])
 
-  // Check if this looks like grep content output
+  // 判断输出是否疑似 grep 内容输出
   const isGrepOutput = useMemo(() => {
     if (!output) return false
     return isGrepContentOutput(output)
   }, [output])
 
-  // Parse grep output if applicable
+  // 若适用，则解析 grep 输出
   const grepLines = useMemo(() => {
     if (!isGrepOutput || !output) return []
     return parseGrepOutput(output)
@@ -93,7 +93,7 @@ export function TerminalOutput({
       className={cn('h-full w-full overflow-auto px-5 py-4 font-mono text-sm', className)}
       style={{ fontFamily: '"JetBrains Mono", monospace' }}
     >
-      {/* Command section */}
+      {/* 命令区块 */}
       <div className="mb-4">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2 text-xs" style={{ color: mutedColor }}>
@@ -120,7 +120,7 @@ export function TerminalOutput({
         </div>
       </div>
 
-      {/* Output section */}
+      {/* 输出区块 */}
       <div>
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2 text-xs" style={{ color: mutedColor }}>
@@ -157,7 +157,7 @@ export function TerminalOutput({
           className="overflow-auto"
           style={{ color: textColor }}
         >
-          {/* Grep output with line number highlighting */}
+          {/* 带行号高亮的 grep 输出 */}
           {isGrepOutput && grepLines.length > 0 ? (
             <div className="space-y-0">
               {grepLines.map((line, i) => (
@@ -168,7 +168,7 @@ export function TerminalOutput({
                     backgroundColor: line.isMatch ? 'rgba(34, 197, 94, 0.08)' : undefined,
                   }}
                 >
-                  {/* Line number */}
+                  {/* 行号 */}
                   {line.lineNum && (
                     <span
                       className="select-none pr-3 text-right shrink-0"
@@ -183,7 +183,7 @@ export function TerminalOutput({
                       </span>
                     </span>
                   )}
-                  {/* Content */}
+                  {/* 内容 */}
                   <span
                     className="whitespace-pre-wrap break-words"
                     style={{ color: line.isMatch ? textColor : mutedColor }}
@@ -194,7 +194,7 @@ export function TerminalOutput({
               ))}
             </div>
           ) : parsedOutput.length > 0 ? (
-            /* ANSI-colored output */
+            /* ANSI 着色输出 */
             <div className="whitespace-pre-wrap break-words">
               {parsedOutput.map((span, i) => (
                 <span
@@ -203,7 +203,7 @@ export function TerminalOutput({
                     color: span.fg,
                     backgroundColor: span.bg,
                     fontWeight: span.bold ? 'bold' : undefined,
-                    // Add padding for background colors
+                    // 为背景色添加内边距
                     padding: span.bg ? '0 2px' : undefined,
                     borderRadius: span.bg ? '2px' : undefined,
                   }}
