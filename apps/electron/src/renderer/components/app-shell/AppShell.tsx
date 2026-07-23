@@ -1,8 +1,3 @@
-/**
- * AppShell — React 组件
- * 
- * 所属目录：app-shell
- */
 import * as React from "react"
 import { useTranslation, Trans } from "react-i18next"
 import { useRef, useState, useEffect, useCallback, useMemo } from "react"
@@ -39,7 +34,7 @@ import {
   MailOpen,
   FolderKanban,
 } from "lucide-react"
-// 
+// SessionStatusIcons no longer used - icons come from dynamic sessionStatuses
 import { SourceAvatar } from "@/components/ui/source-avatar"
 import { TopBar } from "./TopBar"
 import { SquarePenRounded } from "../icons/SquarePenRounded"
@@ -154,30 +149,33 @@ import { clearSourceIconCaches } from "@/lib/icon-cache"
 import { dispatchFocusInputEvent } from "./input/focus-input-events"
 
 /**
+ * AppShellProps - Minimal props interface for AppShell component
+ *
+ * Data and callbacks come via contextValue (AppShellContextType).
+ * Only UI-specific state is passed as separate props.
+ *
+ * Adding new features:
+ * 1. Add to AppShellContextType in context/AppShellContext.tsx
+ * 2. Update App.tsx to include in contextValue
+ * 3. Use via useAppShellContext() hook in child components
  */
 interface AppShellProps {
-  /**
-   * 所有数据和回调 - 直接传递给 AppShellProvider  
-   */
+  /** All data and callbacks - passed directly to AppShellProvider */
   contextValue: AppShellContextType
-  /**
-   */
+  /** UI-specific props */
   defaultLayout?: number[]
   defaultCollapsed?: boolean
   menuNewChatTrigger?: number
-  /**
-   */
+  /** Focused mode - hides sidebars, shows only the chat content */
   isFocusedMode?: boolean
 }
 
-/**
- */
+/** Filter mode for tri-state filtering: include shows only matching, exclude hides matching */
 type FilterMode = 'include' | 'exclude'
 
 const altClickTooltipLabel = isMac ? '⌥ click to exclude' : 'Alt click to exclude'
 
-/**
- */
+/** Wraps children in a Tooltip that shows instantly on hover — only rendered when `show` is true. */
 function AltExcludeTooltip({ show, children }: { show: boolean; children: React.ReactNode }) {
   if (!show) return children
   return (
@@ -189,6 +187,10 @@ function AltExcludeTooltip({ show, children }: { show: boolean; children: React.
 }
 
 /**
+ * FilterModeBadge - Display-only badge showing the current filter mode.
+ * Shows a checkmark for 'include' and an X for 'exclude'. Used as a visual
+ * indicator inside DropdownMenuSubTrigger rows (the actual mode switching
+ * happens via the sub-menu content, not this badge).
  */
 function FilterModeBadge({ mode }: { mode: FilterMode }) {
   return (
@@ -207,6 +209,10 @@ function FilterModeBadge({ mode }: { mode: FilterMode }) {
 }
 
 /**
+ * FilterModeSubMenuItems - Shared sub-menu content for switching filter mode.
+ * Renders Include / Exclude / Remove options using StyledDropdownMenuItem for
+ * consistent styling. Used inside StyledDropdownMenuSubContent by both leaf
+ * and group label items when they have an active filter mode.
  */
 function FilterModeSubMenuItems({
   mode,
@@ -246,6 +252,8 @@ function FilterModeSubMenuItems({
 }
 
 /**
+ * FilterMenuRow - Consistent layout for filter menu items.
+ * Enforces: [icon 14px box] [label flex] [accessory 12px box]
  */
 function FilterMenuRow({
   icon,
@@ -258,33 +266,17 @@ function FilterMenuRow({
   icon: React.ReactNode
   label: React.ReactNode
   accessory?: React.ReactNode
-  /**
-   * 图标容器的附加类（例如，状态图标缩放）  
-   */
+  /** Additional classes for icon container (e.g., for status icon scaling) */
   iconClassName?: string
-  /**
-   * 图标容器的样式（例如，状态图标颜色）  
-   */
+  /** Style for icon container (e.g., for status icon color) */
   iconStyle?: React.CSSProperties
-  /**
-   * 如果为 True，则跳过图标容器（对于具有自己的容器的图标）  
-   * Cmd+F 激活搜索
-   * 使用 setTimeout 延迟打开，直到上下文菜单关闭后，
-   * 因此代理知道“将其设为红色”或“在其下方添加”等命令的目标
-   * 在多面板中，定位焦点面板的会话
-   * 搜索突出显示
-   * 订阅实时技能更新（动态添加/删除技能时）
-   * 从导航状态派生源过滤器（仅当在源导航器中时）
-   * 键盘快捷键
-   * 编辑弹出窗口状态
-   * 可选的 sourceType 参数允许过滤器感知上下文（来自子类别菜单或过滤视图）
-   */
+  /** When true, skip the icon container (for icons that have their own container) */
   noIconContainer?: boolean
 }) {
   return (
     <>
       {noIconContainer ? (
-        // 
+        // Wrapper for color inheritance. Clone icon to add bare prop (removes EntityIcon container).
         <span style={iconStyle}>
           {React.isValidElement(icon) ? React.cloneElement(icon as React.ReactElement<{ bare?: boolean }>, { bare: true }) : icon}
         </span>
@@ -303,6 +295,16 @@ function FilterMenuRow({
 }
 
 /**
+ * FilterLabelItems - Recursive component for rendering label tree in the filter dropdown.
+ *
+ * Rendering rules by label state:
+ * - **Inactive leaf**: StyledDropdownMenuItem — click to add as 'include'
+ * - **Active leaf**: DropdownMenuSub — SubTrigger shows label + mode badge, SubContent
+ *   has Include/Exclude/Remove options (uses Radix's built-in safe-triangle hover)
+ * - **Group (with children)**: Always a DropdownMenuSub. When active, SubContent shows
+ *   mode options first, then separator, then children. When inactive, shows a self-toggle
+ *   item, then separator, then children.
+ * - **Pinned labels**: Shown with a check mark, non-interactive (no toggle/sub-menu).
  */
 function FilterLabelItems({
   labels,
@@ -314,13 +316,11 @@ function FilterLabelItems({
   labels: LabelConfig[]
   labelFilter: Map<string, FilterMode>
   setLabelFilter: (updater: Map<string, FilterMode> | ((prev: Map<string, FilterMode>) => Map<string, FilterMode>)) => void
-  /**
-   */
+  /** Label ID pinned by the current route (non-removable, shown as checked+disabled) */
   pinnedLabelId?: string | null
   altHeld?: boolean
 }) {
-  /**
-   */
+  /** Toggle a label filter: if active → remove, if inactive → add as 'include' (or 'exclude' with Alt) */
   const toggleLabel = (id: string, altKey = false) => {
     setLabelFilter(prev => {
       const next = new Map(prev)
@@ -330,8 +330,7 @@ function FilterLabelItems({
     })
   }
 
-  /**
-   */
+  /** Build callbacks for changing/removing a label's filter mode */
   const makeModeCallbacks = (id: string) => ({
     onChangeMode: (newMode: FilterMode) => setLabelFilter(prev => {
       const next = new Map(prev)
@@ -353,10 +352,9 @@ function FilterLabelItems({
         const mode = labelFilter.get(label.id)
         const isActive = !!mode && !isPinned
 
-        // --- 组标签（有子项）→ 总是 DropdownMenuSub ---
-
+        // --- Group labels (have children) → always DropdownMenuSub ---
         if (hasChildren) {
-          // 
+          // Check if any child has an active filter (to show indicator on parent)
           const hasActiveChild = label.children!.some(child => {
             const childMode = labelFilter.get(child.id)
             return !!childMode && child.id !== pinnedLabelId
@@ -376,8 +374,7 @@ function FilterLabelItems({
               </StyledDropdownMenuSubTrigger>
               <StyledDropdownMenuSubContent minWidth="min-w-[160px]">
                 {isActive ? (
-                  // 活动组：组标题作为模式选项的嵌套子触发器，然后是子级
-
+                  // Active group: group title as nested sub-trigger for mode options, then children
                   <>
                     <DropdownMenuSub>
                       {/* Click the group title to clear, hover to open mode submenu */}
@@ -402,7 +399,7 @@ function FilterLabelItems({
                     />
                   </>
                 ) : (
-                  // 
+                  // Inactive group: self-toggle item, then children
                   <>
                     <AltExcludeTooltip show={!!altHeld && !isPinned}>
                       <StyledDropdownMenuItem
@@ -435,8 +432,7 @@ function FilterLabelItems({
           )
         }
 
-        // --- 活动叶标签→带有模式选项的 DropdownMenuSub ---
-
+        // --- Active leaf label → DropdownMenuSub with mode options ---
         if (isActive) {
           return (
             <DropdownMenuSub key={label.id}>
@@ -455,8 +451,7 @@ function FilterLabelItems({
           )
         }
 
-        // --- 不活动/固定叶子标签 → 简单的可切换项目 ---
-
+        // --- Inactive / pinned leaf label → simple toggleable item ---
         return (
           <AltExcludeTooltip key={label.id} show={!!altHeld && !isPinned}>
             <StyledDropdownMenuItem
@@ -482,9 +477,17 @@ function FilterLabelItems({
 
 
 /**
+ * AppShell - Main 3-panel layout container
+ *
+ * Layout: [LeftSidebar 20%] | [NavigatorPanel 32%] | [MainContentPanel 48%]
+ *
+ * Session Filters:
+ * - 'allSessions': Shows all sessions
+ * - 'flagged': Shows flagged sessions
+ * - 'state': Shows sessions with a specific todo state
  */
 export function AppShell(props: AppShellProps) {
-  // 
+  // Wrap with EscapeInterruptProvider so AppShellContent can use useEscapeInterrupt
   return (
     <EscapeInterruptProvider>
       <AppShellContent {...props} />
@@ -493,6 +496,8 @@ export function AppShell(props: AppShellProps) {
 }
 
 /**
+ * AppShellContent - Inner component that contains all the AppShell logic
+ * Separated to allow useEscapeInterrupt hook to work (must be inside provider)
  */
 function AppShellContent({
   contextValue,
@@ -501,10 +506,9 @@ function AppShellContent({
   menuNewChatTrigger,
   isFocusedMode = false,
 }: AppShellProps) {
-  // 
-  // 注意：这里的会话没有被解构 - 我们使用 sessionMetaMapAtom 代替
-
-  // 
+  // Destructure commonly used values from context
+  // Note: sessions is NOT destructured here - we use sessionMetaMapAtom instead
+  // to prevent closures from retaining the full messages array
   const {
     workspaces,
     activeWorkspaceId,
@@ -531,8 +535,7 @@ function AppShellContent({
 
   const { t } = useTranslation()
 
-  // 从集中操作注册表获取热键标签
-
+  // Get hotkey labels from centralized action registry
   const newChatHotkey = useActionLabel('app.newChat').hotkey
 
   const [isSidebarVisible, setIsSidebarVisible] = React.useState(() => {
@@ -541,21 +544,20 @@ function AppShellContent({
   const [sidebarWidth, setSidebarWidth] = React.useState(() => {
     return storage.get(storage.KEYS.sidebarWidth, 220)
   })
-  // 
+  // Session list width in pixels (min 240, max 480)
   const [sessionListWidth, setSessionListWidth] = React.useState(() => {
     return storage.get(storage.KEYS.sessionListWidth, 300)
   })
 
-  // 
-  // 
+  // Hides both sidebar and navigator (CMD+. toggle)
+  // Seed from either focused window param or persisted preference, then keep it toggleable.
   const [isSidebarAndNavigatorHidden, setIsSidebarAndNavigatorHidden] = React.useState(() => {
     return isFocusedMode || storage.get(storage.KEYS.focusModeEnabled, false)
   })
 
-  // 
-  // 
-  // 桌面（窄窗口或小屏幕）。
-
+  // Auto-compact mode: shell width below mobile threshold hides sidebar/navigator
+  // and switches to single-panel mode. Works in both webui (narrow viewport) and
+  // desktop (narrow window or small screen).
   const shellRef = useRef<HTMLDivElement>(null)
   const shellWidth = useContainerWidth(shellRef)
   const MOBILE_THRESHOLD = 768
@@ -563,12 +565,12 @@ function AppShellContent({
 
   const effectiveSidebarAndNavigatorHidden = isSidebarAndNavigatorHidden || isAutoCompact
 
-  // 
+  // What's New overlay
   const [showWhatsNew, setShowWhatsNew] = React.useState(false)
   const [releaseNotesContent, setReleaseNotesContent] = React.useState('')
   const [hasUnseenReleaseNotes, setHasUnseenReleaseNotes] = React.useState(false)
 
-  // 
+  // Check for unseen release notes on mount
   useEffect(() => {
     window.electronAPI.getLatestReleaseVersion().then((latestVersion) => {
       if (!latestVersion) return
@@ -586,11 +588,11 @@ function AppShellContent({
   const { resolvedMode, isDark, setMode } = useTheme()
   const { canGoBack, canGoForward, goBack, goForward, navigateToSource, navigateToSession } = useNavigation()
 
-  // 
+  // Double-Esc interrupt feature: first Esc shows warning, second Esc interrupts
   const { handleEscapePress } = useEscapeInterrupt()
 
-  // 
-  // 
+  // UNIFIED NAVIGATION STATE - single source of truth from NavigationContext
+  // Derived from focused panel's route — all panels are peers
   const navState = useNavigationState()
 
   const store = useStore()
@@ -598,14 +600,11 @@ function AppShellContent({
   const panelCount = useAtomValue(panelCountAtom)
   const focusedSessionId = useAtomValue(focusedSessionIdAtom)
 
-  // 将焦点面板导航到会话。
-
-  // 如果会话已在另一个面板中打开，请改为关注该面板。
-
+  // Navigate the focused panel to a session.
+  // If the session is already open in another panel, focus that panel instead.
   const setFocusedPanel = useSetAtom(focusedPanelIdAtom)
   const navigateToSessionInPanel = useCallback((sessionId: string) => {
-    // 检查会话是否已在任何面板中打开 - 将其聚焦而不是导航
-
+    // Check if the session is already open in any panel — focus it instead of navigating
     const stack = store.get(panelStackAtom)
     for (const entry of stack) {
       if (parseSessionIdFromRoute(entry.route) === sessionId) {
@@ -614,7 +613,7 @@ function AppShellContent({
       }
     }
 
-    // 
+    // Not open in any panel — navigate() updates the focused panel
     navigateToSession(sessionId)
   }, [store, setFocusedPanel, navigateToSession])
 
@@ -634,21 +633,19 @@ function AppShellContent({
   // so the navigator (and its resize handle) collapse to zero width while it's active.
   const isBoardView = isSessionsNavigation(navState) && navState.viewMode === 'board'
 
-  // 从导航状态派生源过滤器（仅当在源导航器中时）
+  // Derive source filter from navigation state (only when in sources navigator)
   const sourceFilter: SourceFilter | null = isSourcesNavigation(navState) ? navState.filter ?? null : null
 
-  // 从导航状态派生自动化过滤器（仅当在自动化导航器中时）
-
+  // Derive automation filter from navigation state (only when in automations navigator)
   const automationFilter: AutomationFilter | null = isAutomationsNavigation(navState) ? navState.filter ?? null : null
 
-  // 
-  // 
-  // 
+  // Per-view filter storage: each session list view (allSessions, flagged, state:X, label:X, view:X)
+  // has its own independent set of status and label filters.
+  // Each filter entry stores a mode ('include' or 'exclude') for tri-state filtering.
   type FilterEntry = Record<string, FilterMode> // id → mode
   type ViewFiltersMap = Record<string, { statuses: FilterEntry, labels: FilterEntry, projects?: FilterEntry, groupingMode?: ChatGroupingMode }>
 
-  // 计算当前聊天过滤器视图的稳定密钥
-
+  // Compute a stable key for the current chat filter view
   const sessionFilterKey = useMemo(() => {
     if (!sessionFilter) return null
     switch (sessionFilter.kind) {
@@ -664,9 +661,9 @@ function AppShellContent({
 
   const [viewFiltersMap, setViewFiltersMap] = React.useState<ViewFiltersMap>(() => {
     const saved = storage.get<ViewFiltersMap>(storage.KEYS.viewFilters, {})
-    // 
+    // Backward compat: migrate old format (arrays) into new format (Record<string, FilterMode>)
     if (saved.allSessions && Array.isArray((saved.allSessions as any).statuses)) {
-      // 
+      // Old format: { statuses: string[], labels: string[] } → new: { statuses: Record, labels: Record }
       for (const key of Object.keys(saved)) {
         const entry = saved[key] as any
         if (Array.isArray(entry.statuses)) {
@@ -678,8 +675,7 @@ function AppShellContent({
         }
       }
     }
-    // 如果不存在 allSessions 条目，还迁移旧的全局过滤器
-
+    // Also migrate legacy global filters if no allSessions entry exists
     if (!saved.allSessions) {
       const oldStatuses = storage.get<SessionStatusId[]>(storage.KEYS.listFilter, [])
       const oldLabels = storage.get<string[]>(storage.KEYS.labelFilter, [])
@@ -694,30 +690,28 @@ function AppShellContent({
     return saved
   })
 
-  // 将当前视图的状态过滤器派生为 Map<SessionStatusId, FilterMode>
-
+  // Derive current view's status filter as a Map<SessionStatusId, FilterMode>
   const listFilter = useMemo(() => {
     if (!sessionFilterKey) return new Map<SessionStatusId, FilterMode>()
     const entry = viewFiltersMap[sessionFilterKey]?.statuses ?? {}
     return new Map<SessionStatusId, FilterMode>(Object.entries(entry) as [SessionStatusId, FilterMode][])
   }, [viewFiltersMap, sessionFilterKey])
 
-  // 将当前视图的标签过滤器派生为 Map<string, FilterMode>
-
+  // Derive current view's label filter as a Map<string, FilterMode>
   const labelFilter = useMemo(() => {
     if (!sessionFilterKey) return new Map<string, FilterMode>()
     const entry = viewFiltersMap[sessionFilterKey]?.labels ?? {}
     return new Map<string, FilterMode>(Object.entries(entry) as [string, FilterMode][])
   }, [viewFiltersMap, sessionFilterKey])
 
-  // 将当前视图的项目过滤器派生为 Map<projectId, FilterMode>
+  // Derive current view's project filter as a Map<projectId, FilterMode>
   const projectFilter = useMemo(() => {
     if (!sessionFilterKey) return new Map<string, FilterMode>()
     const entry = viewFiltersMap[sessionFilterKey]?.projects ?? {}
     return new Map<string, FilterMode>(Object.entries(entry) as [string, FilterMode][])
   }, [viewFiltersMap, sessionFilterKey])
 
-  // 状态过滤器的设置器 - 仅更新地图中当前视图的条目
+  // Setter for status filter — updates only the current view's entry in the map
   const setListFilter = useCallback((updater: Map<SessionStatusId, FilterMode> | ((prev: Map<SessionStatusId, FilterMode>) => Map<SessionStatusId, FilterMode>)) => {
     setViewFiltersMap(prev => {
       if (!sessionFilterKey) return prev
@@ -736,7 +730,7 @@ function AppShellContent({
     })
   }, [sessionFilterKey])
 
-  // 
+  // Setter for label filter — updates only the current view's entry in the map
   const setLabelFilter = useCallback((updater: Map<string, FilterMode> | ((prev: Map<string, FilterMode>) => Map<string, FilterMode>)) => {
     setViewFiltersMap(prev => {
       if (!sessionFilterKey) return prev
@@ -755,7 +749,7 @@ function AppShellContent({
     })
   }, [sessionFilterKey])
 
-  // 项目过滤器的设置器 - 仅更新地图中当前视图的条目
+  // Setter for project filter — updates only the current view's entry in the map
   const setProjectFilter = useCallback((updater: Map<string, FilterMode> | ((prev: Map<string, FilterMode>) => Map<string, FilterMode>)) => {
     setViewFiltersMap(prev => {
       if (!sessionFilterKey) return prev
@@ -774,9 +768,9 @@ function AppShellContent({
     })
   }, [sessionFilterKey])
 
-  // 跳转到按单个项目过滤的"所有会话"。由 Projects 列表
-  // 右键菜单使用 —— 设置 allSessions 视图的项目过滤器（保留其
-  // 其他过滤器），然后导航。
+  // Jump to All Sessions filtered by a single project. Used by the Projects list
+  // context menu — sets the allSessions view's project filter (preserving its
+  // other filters), then navigates.
   const handleJumpToProjectSessions = useCallback((projectId: string) => {
     setViewFiltersMap(prev => {
       const existing = prev['allSessions']
@@ -793,11 +787,11 @@ function AppShellContent({
     navigate(routes.view.allSessions())
   }, [])
 
-  // 跳转到限定到某个任务的"所有会话"：将 allSessions 视图的标签过滤器
-  // （当任务绑定到项目时还有项目过滤器）替换为该任务的范围，然后打开
-  // 该会话。这些与列表头部 chip 编辑的是同一套用户可清除的过滤器 ——
-  // 之后清除它们和任何手动设置的过滤器完全一样。与
-  // handleJumpToProjectSessions 对称；由看板卡片/子任务点击和创建后跳转使用。
+  // Jump to All Sessions scoped to a task: replace the allSessions view's label filter
+  // (and project filter, when the task is bound to one) with the task's scope, then open
+  // the session. These are the SAME user-clearable filters the list-header chips edit —
+  // clearing them afterwards works exactly like any hand-set filter. Mirrors
+  // handleJumpToProjectSessions; used by kanban tile/subtask clicks and post-create.
   const handleJumpToTaskSessions = useCallback(
     (sessionId: string, scope: { labelId: string; projectId?: string }) => {
       setViewFiltersMap(prev => {
@@ -817,11 +811,11 @@ function AppShellContent({
     []
   )
 
-  // 会话列表的搜索状态
+  // Search state for session list
   const [searchActive, setSearchActive] = React.useState(false)
   const [searchQuery, setSearchQuery] = React.useState('')
 
-  // 
+  // Grouping mode for chat list: per-view (stored in viewFiltersMap), forced to 'date' for state sub-views
   const isStateSubView = sessionFilter?.kind === 'state'
 
   const chatGroupingMode: ChatGroupingMode = isStateSubView
@@ -839,15 +833,13 @@ function AppShellContent({
     })
   }, [sessionFilterKey])
 
-  // 
+  // Ref for ChatDisplay navigation (exposed via forwardRef)
   const chatDisplayRef = React.useRef<ChatDisplayHandle>(null)
-  // 从 ChatDisplay 跟踪匹配计数和索引（用于 SessionList 导航 UI）
-
+  // Track match count and index from ChatDisplay (for SessionList navigation UI)
   const [chatMatchInfo, setChatMatchInfo] = React.useState<{ sessionId: string | null; count: number; index: number; isHighlighting?: boolean }>({ sessionId: null, count: 0, index: 0 })
 
-  // 
-  // 备忘录防护可防止相同更新的渲染反馈循环
-
+  // Callback for immediate match info updates from ChatDisplay
+  // Memo guard prevents render feedback loops from identical updates
   const handleChatMatchInfoChange = React.useCallback((info: { sessionId: string | null; count: number; index: number; isHighlighting: boolean }) => {
     setChatMatchInfo(prev => {
       if (prev.sessionId === info.sessionId && prev.count === info.count && prev.index === info.index && prev.isHighlighting === info.isHighlighting) {
@@ -857,20 +849,19 @@ function AppShellContent({
     })
   }, [])
 
-  // 
+  // Reset match info when search is deactivated
   React.useEffect(() => {
     if (!searchActive || !searchQuery) {
       setChatMatchInfo({ sessionId: null, count: 0, index: 0 })
     }
   }, [searchActive, searchQuery])
 
-  // 
-  // 
+  // Filter dropdown: inline search query for filtering statuses/labels in a flat list.
+  // When empty, the dropdown shows hierarchical submenus. When typing, shows a flat filtered list.
   const [filterDropdownQuery, setFilterDropdownQuery] = React.useState('')
   const [filterAltHeld, setFilterAltHeld] = React.useState(false)
 
-  // 仅当导航器或过滤器更改时（而不是选择会话时）重置搜索
-
+  // Reset search only when navigator or filter changes (not when selecting sessions)
   const navFilterKey = React.useMemo(() => {
     if (isSessionsNavigation(navState)) {
       const filter = navState.filter
@@ -884,76 +875,19 @@ function AppShellContent({
     setSearchQuery('')
   }, [navFilterKey])
 
-  // 
+  // Cmd+F to activate search
   useAction('app.search', () => setSearchActive(true))
 
-  // 
-  // 从 localStorage 加载展开的文件夹（默认：全部折叠）
-
-* 辅助消息的 Markdown 渲染模式
-* @default 'minimal'
-   
-因此我们匹配本地和远程工作区 ID。
-按特定待办事项状态过滤（不包括已存档）
-“配置状态”上下文菜单操作的处理程序
-将子项包裹在悬停时立即显示的工具提示中 - 仅当“show”为 True 时才呈现。  
-
-* AppShell - 主 3 面板布局容器
-*
-* 布局：[LeftSidebar 20%] | [导航面板 32%] | [MainContentPanel 48%]
-*
-* 会话过滤器：
-* - 'allSessions'：显示所有会话
-* - 'flaged'：显示已标记的会话
-* - 'state'：显示具有特定待办事项状态的会话
- 
-来源导航器
-状态过滤器的设置器 - 仅更新地图中当前视图的条目
-这可以防止闭包保留完整的消息数组
-扩展以包含后代标签 ID
-从共享的显示排序标签树构建递归侧边栏项目。
-
-* FilterModeSubMenuItems - 用于切换过滤器模式的共享子菜单内容。
-* 使用 StyledDropdownMenuItem 渲染包含/排除/删除选项，以实现一致的样式。当叶
-* 和组标签项具有活动过滤器模式时，它们在 StyledDropdownMenuSubContent 内部使用。
- 
-处理会话源选择更改
-- 包括：如果存在，则仅匹配的项目通过
-源类型过滤器视图的处理程序（源下拉列表中的子类别）
-在边界 - 不执行任何操作（左侧不会更改侧边栏的区域）
-新增内容叠加
-动作在@/actions/definitions.ts中定义
-ChatDisplay 导航的 Ref（通过forwardRef 公开）
-响应菜单栏“新聊天”触发
-当侧边栏区域获得焦点时聚焦侧边栏项目
-仅在选择“标签”本身（而不是子标签）时突出显示
---- 新消息 ---
-存档视图仅显示存档会话
-当 statusConfigs 更改时清除（配置观察器是事实来源）。
-非活动/固定标签 → 带有点击切换功能的普通 div
-标题旁边呈现的可选徽章元素（例如代理徽章）。  
-查询更改时重置所选索引
-“添加自动化”上下文菜单操作的处理程序
+  // Unified sidebar keyboard navigation state
+  // Load expanded folders from localStorage (default: all collapsed)
   const [expandedFolders, setExpandedFolders] = React.useState<Set<string>>(() => {
     const saved = storage.get<string[]>(storage.KEYS.expandedFolders, [])
     return new Set(saved)
   })
   const [focusedSidebarItemId, setFocusedSidebarItemId] = React.useState<string | null>(null)
   const sidebarItemRefs = React.useRef<Map<string, HTMLElement>>(new Map())
-  // 跟踪哪些可展开侧边栏项目已折叠
-
-  // 标签默认折叠；一旦切换，用户首选项就会保留
-如果剪贴板中没有文件则跳过
-当为空时，下拉菜单显示分层子菜单。键入时，显示平面过滤列表。
---- 设置 ---
-包装删除处理程序以在删除当前选定的会话时清除选择
-计算下拉列表搜索模式的过滤结果（已记忆以供在两者中使用）
-区域导航 - 明确的键盘意图，始终移动 DOM 焦点
-在打开新的聊天窗口之前，他们在弹出窗口 UI 中发出请求。
-回调以重新发送发生错误之前的用户消息  
-按单个待办事项状态计算会话数（基于 effectiveSessionStatuses 动态）
-清除搜索状态
-不在任何面板中打开——navigate() 更新聚焦面板
+  // Track which expandable sidebar items are collapsed
+  // Labels are collapsed by default; user preference is persisted once toggled
   const [collapsedItems, setCollapsedItems] = React.useState<Set<string>>(() => {
     const saved = storage.get<string[] | null>(storage.KEYS.collapsedSidebarItems, null)
     if (saved !== null) return new Set(saved)
@@ -968,29 +902,25 @@ ChatDisplay 导航的 Ref（通过forwardRef 公开）
       return next
     })
   }, [])
-  // 源状态（工作区范围）
-
+  // Sources state (workspace-scoped)
   const [sources, setSources] = React.useState<LoadedSource[]>([])
-  // 
+  // Sync sources to atom for NavigationContext auto-selection
   const setSourcesAtom = useSetAtom(sourcesAtom)
   React.useEffect(() => {
     setSourcesAtom(sources)
   }, [sources, setSourcesAtom])
 
-  // 技能状态（工作空间范围）
-
+  // Skills state (workspace-scoped)
   const [skills, setSkills] = React.useState<LoadedSkill[]>([])
-  // 将技能同步到 Atom 以实现 NavigationContext 自动选择
-
+  // Sync skills to atom for NavigationContext auto-selection
   const setSkillsAtom = useSetAtom(skillsAtom)
   React.useEffect(() => {
     setSkillsAtom(skills)
   }, [skills, setSkillsAtom])
-  // 
+  // Automations — state, handlers, loading, subscriptions
   const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId)
 
-  // 发送到工作区对话框状态（由 SessionMenu/BatchSessionMenu 中设置的 sendToWorkspaceAtom 驱动）
-
+  // Send to Workspace dialog state (driven by sendToWorkspaceAtom set from SessionMenu/BatchSessionMenu)
   const sendToWorkspaceIds = useAtomValue(sendToWorkspaceAtom)
   const setSendToWorkspaceIds = useSetAtom(sendToWorkspaceAtom)
   const handleTransferComplete = useCallback((targetWorkspaceId: string, _newSessionIds: string[]) => {
@@ -1017,20 +947,19 @@ ChatDisplay 导航的 Ref（通过forwardRef 公开）
     }
   }, [t])
 
-  // 本地 MCP 服务器是否启用（影响 stdio 源状态）
+  // Whether local MCP servers are enabled (affects stdio source status)
   const [localMcpEnabled, setLocalMcpEnabled] = React.useState(true)
 
-  // 启用 Shift+Tab 循环的权限模式（至少 2 种模式）
-
+  // Enabled permission modes for Shift+Tab cycling (min 2 modes)
   const [enabledModes, setEnabledModes] = React.useState<PermissionMode[]>(['safe', 'ask', 'allow-all'])
 
-  // 
+  // Load workspace settings (for localMcpEnabled and cyclablePermissionModes) on workspace change
   React.useEffect(() => {
     if (!activeWorkspaceId) return
     window.electronAPI.getWorkspaceSettings(activeWorkspaceId).then((settings) => {
       if (settings) {
         setLocalMcpEnabled(settings.localMcpEnabled ?? true)
-        // 
+        // Load cyclablePermissionModes from workspace settings
         if (settings.cyclablePermissionModes && settings.cyclablePermissionModes.length >= 2) {
           setEnabledModes(settings.cyclablePermissionModes)
         }
@@ -1040,33 +969,30 @@ ChatDisplay 导航的 Ref（通过forwardRef 公开）
     })
   }, [activeWorkspaceId])
 
-  // 工作区更改时重置 UI 状态
-
-  // 
+  // Reset UI state when workspace changes
+  // This prevents stale search queries, focused items, and filter state from persisting
   const previousWorkspaceRef = React.useRef<string | null>(null)
   React.useEffect(() => {
     if (!activeWorkspaceId) return
 
     const previousWorkspaceId = previousWorkspaceRef.current
 
-    // 
+    // Clear transient UI state only on workspace SWITCH (not initial mount)
     if (previousWorkspaceId !== null && previousWorkspaceId !== activeWorkspaceId) {
-      // 
+      // Clear search state
       setSearchActive(false)
       setSearchQuery('')
 
-      // 清除过滤器下拉状态
-
+      // Clear filter dropdown state
       setFilterDropdownQuery('')
       setFilterDropdownSelectedIdx(0)
 
-      // 
+      // Clear focused sidebar item
       setFocusedSidebarItemId(null)
     }
 
-    // 在初始安装和工作区切换上加载工作区范围的状态
-
-    // 
+    // Load workspace-scoped state on BOTH initial mount AND workspace switch
+    // This fixes CMD+R losing filters - previously only ran on workspace switch
     if (previousWorkspaceId !== activeWorkspaceId) {
       const newViewFilters = storage.get<ViewFiltersMap>(storage.KEYS.viewFilters, {}, activeWorkspaceId)
       setViewFiltersMap(newViewFilters)
@@ -1081,7 +1007,7 @@ ChatDisplay 导航的 Ref（通过forwardRef 公开）
     previousWorkspaceRef.current = activeWorkspaceId
   }, [activeWorkspaceId])
 
-  // 
+  // Load sources from backend on mount
   React.useEffect(() => {
     if (!activeWorkspaceId) return
     window.electronAPI.getSources(activeWorkspaceId).then((loaded) => {
@@ -1091,19 +1017,18 @@ ChatDisplay 导航的 Ref（通过forwardRef 公开）
     })
   }, [activeWorkspaceId])
 
-  // 订阅实时源更新（动态添加/删除源时）
-
+  // Subscribe to live source updates (when sources are added/removed dynamically)
   React.useEffect(() => {
     const cleanup = window.electronAPI.onSourcesChanged((workspaceId, updatedSources) => {
       if (workspaceId !== activeWorkspaceId) return
-      // 
+      // Clear icon cache so updated source icons are re-fetched on render
       clearSourceIconCaches()
       setSources(updatedSources || [])
     })
     return cleanup
   }, [activeWorkspaceId])
 
-  // 
+  // Subscribe to live skill updates (when skills are added/removed dynamically)
   React.useEffect(() => {
     const cleanup = window.electronAPI.onSkillsChanged((workspaceId, updatedSkills) => {
       if (workspaceId !== activeWorkspaceId) return
@@ -1112,33 +1037,32 @@ ChatDisplay 导航的 Ref（通过forwardRef 公开）
     return cleanup
   }, [activeWorkspaceId])
 
-  // 
+  // Handle session source selection changes
   const handleSessionSourcesChange = React.useCallback(async (sessionId: string, sourceSlugs: string[]) => {
     try {
       await window.electronAPI.sessionCommand(sessionId, { type: 'setSources', sourceSlugs })
-      // 
+      // Session will emit a 'sources_changed' event that updates the session state
     } catch (err) {
       console.error('[Chat] Failed to set session sources:', err)
     }
   }, [])
 
-  // 
+  // Handle session label changes (add/remove via # menu or badge X)
   const handleSessionLabelsChange = React.useCallback(async (sessionId: string, labels: string[]) => {
     try {
       await window.electronAPI.sessionCommand(sessionId, { type: 'setLabels', labels })
-      // 
+      // Session will emit a 'labels_changed' event that updates the session state
     } catch (err) {
       console.error('[Chat] Failed to set session labels:', err)
     }
   }, [])
 
 
-  // 从工作区配置加载动态状态
-
+  // Load dynamic statuses from workspace config
   const { statuses: statusConfigs, isLoading: isLoadingStatuses } = useStatuses(activeWorkspace?.id || null)
   const [sessionStatuses, setSessionStatuses] = React.useState<SessionStatus[]>([])
 
-  // 
+  // Convert StatusConfig to SessionStatus with resolved icons
   React.useEffect(() => {
     if (!activeWorkspace?.id || statusConfigs.length === 0) {
       setSessionStatuses([])
@@ -1148,63 +1072,57 @@ ChatDisplay 导航的 Ref（通过forwardRef 公开）
     setSessionStatuses(statusConfigsToSessionStatuses(statusConfigs, activeWorkspace.id, isDark))
   }, [statusConfigs, activeWorkspace?.id, isDark])
 
-  // 乐观状态顺序：在 IPC 传播时立即反映拖放顺序。
-
-  // 
+  // Optimistic status order: immediately reflects drag-drop order while IPC propagates.
+  // Cleared when statusConfigs changes (config watcher is source of truth).
   const [optimisticStatusOrder, setOptimisticStatusOrder] = React.useState<string[] | null>(null)
 
-  // 
+  // Clear optimistic state when the config watcher fires (statusConfigs changes)
   React.useEffect(() => {
     setOptimisticStatusOrder(null)
   }, [statusConfigs])
 
-  // 
+  // Derive effective todo states: apply optimistic reorder if active, otherwise use canonical order
   const effectiveSessionStatuses = React.useMemo(() => {
     if (!optimisticStatusOrder) return sessionStatuses
-    // 重新排序 sessionStatuses 数组以匹配乐观顺序
-
+    // Reorder sessionStatuses array to match optimistic order
     const stateMap = new Map(sessionStatuses.map(s => [s.id, s]))
     const reordered: SessionStatus[] = []
     for (const id of optimisticStatusOrder) {
       const state = stateMap.get(id)
       if (state) reordered.push(state)
     }
-    // 附加任何不按乐观顺序的状态（不应该发生，但防御性的）
-
+    // Append any states not in the optimistic order (shouldn't happen, but defensive)
     for (const state of sessionStatuses) {
       if (!optimisticStatusOrder.includes(state.id)) reordered.push(state)
     }
     return reordered
   }, [sessionStatuses, optimisticStatusOrder])
 
-  // 
+  // Load labels from workspace config
   const { labels: labelConfigs } = useLabels(activeWorkspace?.id || null)
   const displayLabelConfigs = useMemo(() => sortLabelsForDisplay(labelConfigs), [labelConfigs])
 
-  // 
+  // Views: compiled once on config load, evaluated per session in list/chat
   const { evaluateSession: evaluateViews, viewConfigs } = useViews(activeWorkspace?.id || null)
 
-  // 
+  // Build hierarchical label tree from the display-sorted label config structure
   const labelTree = useMemo(() => buildLabelTree(displayLabelConfigs), [displayLabelConfigs])
 
-  // 从过滤器下拉列表的搜索模式的分层标签构建平面 LabelMenuItem[]。
-
-  // 
+  // Build flat LabelMenuItem[] from hierarchical labels for the filter dropdown's search mode.
+  // Uses the same structure as the # inline menu so the two search surfaces stay aligned.
   const flatLabelMenuItems = useMemo(
     (): LabelMenuItem[] => createLabelMenuItems(displayLabelConfigs),
     [displayLabelConfigs],
   )
 
-  // 过滤器下拉键盘导航：在平面搜索模式下跟踪突出显示的项目索引。
-
-  // 
+  // Filter dropdown keyboard navigation: tracks highlighted item index in flat search mode.
+  // Unified index: [0..matchedStates-1] = statuses, [matchedStates..total-1] = labels.
   const [filterDropdownSelectedIdx, setFilterDropdownSelectedIdx] = React.useState(0)
   const filterDropdownListRef = React.useRef<HTMLDivElement>(null)
   const filterDropdownInputRef = React.useRef<HTMLInputElement>(null)
 
-  // 
-  // 键盘处理程序和 JSX 渲染）。
-
+  // Compute filtered results for the dropdown's search mode (memoized for use in both
+  // the keyboard handler and the JSX render).
   const filterDropdownResults = useMemo(() => {
     if (!filterDropdownQuery.trim()) return { states: [] as SessionStatus[], labels: [] as LabelMenuItem[] }
     return {
@@ -1213,124 +1131,64 @@ ChatDisplay 导航的 Ref（通过forwardRef 公开）
     }
   }, [filterDropdownQuery, effectiveSessionStatuses, flatLabelMenuItems])
 
-  // 
+  // Reset selected index when query changes
   React.useEffect(() => {
     setFilterDropdownSelectedIdx(0)
   }, [filterDropdownQuery])
 
-  // 
+  // Scroll keyboard-highlighted item into view
   React.useEffect(() => {
     if (!filterDropdownListRef.current) return
     const el = filterDropdownListRef.current.querySelector('[data-filter-selected="true"]')
     if (el) el.scrollIntoView({ block: 'nearest' })
   }, [filterDropdownSelectedIdx])
 
-  // 确保选择时加载会话消息
-
+  // Ensure session messages are loaded when selected
   const ensureMessagesLoaded = useSetAtom(ensureSessionMessagesLoadedAtom)
 
-  // 
+  // Handle selecting a source from the list (preserves current filter type)
   const handleSourceSelect = React.useCallback((source: LoadedSource) => {
     if (!activeWorkspaceId) return
     navigateToSource(source.config.slug)
   }, [activeWorkspaceId, navigateToSource])
 
-  // 处理从列表中选择技能
-
+  // Handle selecting a skill from the list
   const handleSkillSelect = React.useCallback((skill: LoadedSkill) => {
     if (!activeWorkspaceId) return
     navigate(routes.view.skills(skill.slug))
   }, [activeWorkspaceId, navigate])
 
-  // 
+  // Handle selecting an automation from the list
   const handleAutomationSelect = React.useCallback((automationId: string) => {
-    // 
+    // Preserve current automation filter when selecting an automation
     const type = isAutomationsNavigation(navState) ? navState.filter?.automationType : undefined
     navigate(routes.view.automations({ automationId, type }))
   }, [navState, navigate])
 
-  // 重点区域管理
-
+  // Focus zone management
   const { focusZone, focusNextZone, focusPreviousZone } = useFocusContext()
 
-  // 注册焦点区域
-
-* AppShellProps - AppShell 组件的最小 props 接口
-*
-* 数据和回调通过 contextValue (AppShellContextType) 来。
-* 仅特定于 UI 的状态作为单独的 props 传递。
-*
-* 添加新功能：
-* 1. 添加到 context/AppShellContext.tsx 中的 AppShellContextType
-* 2. 更新 App.tsx 以包含在 contextValue 中
-* 3. 通过子组件中的 useAppShellContext() 钩子使用
- 
-
-* 回调以将消息弹出到单独的窗口中
-   
-自动压缩模式：外壳宽度低于移动阈值隐藏侧边栏/导航器
-从工作区配置加载标签
-将焦点模式状态保留到 localStorage
-
-* FilterModeBadge - 仅显示标记，显示当前过滤器模式。
-* 显示“包含”的复选标记和“排除”的 X。用作 DropdownMenuSubTrigger 行内的视觉
-* 指示符（实际模式切换
-* 通过子菜单内容发生，而不是通过此标记）。
- 
-统一侧边栏键盘导航状态
-统一导航状态 - 来自 NavigationContext 的单一事实来源
-跳过初始渲染
-设置导航器  
-这可以防止重新渲染期间可能导致崩溃的过时状态
-向后兼容：将旧格式（数组）迁移到新格式（Record<string, FilterMode>）
-立即设置乐观顺序以获得即时 UI 反馈，然后触发 IPC。
-=== 用户消息：右对齐气泡，上面有附件 ===
-展平常规标签树以进行键盘导航（深度优先）
-否则过滤到特定视图（不包括已存档）
-处理从列表中选择源（保留当前过滤器类型）
-标签（用于#labels）
-每个过滤器都支持包含/排除模式：
-会话列表的搜索状态
-这可以防止过时的搜索查询、焦点项目和过滤器状态持续存在
-打开 EditPopover 添加新技能
-活动会话不包括已存档 - 将其用于除存档视图之外的所有计数和过滤器
-从菜单中监听焦点模式切换（视图 → 焦点模式）
-在挂载时从后端加载源
-防止闭包保留完整的消息数组
-使用集中操作注册表的全局键盘快捷键
-源视图的处理程序（所有源）
-覆盖层（对话框、菜单、弹出窗口等）应处理自己的转义
-技能清单  
-Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild）
-捕获当前打开的上下文菜单触发器（按钮）的边界矩形。
-仅在工作区 SWITCH 上清除瞬时 UI 状态（不是初始安装）
-工作区级别未读指示器（所有工作区的工作区选择器都需要）
-通过过滤并保存来从配置中删除视图
-来源
-如果对话框或菜单打开则跳过
-保持侧边栏对 localStorage 的可见性
-移至下一个区域（导航器）- 键盘导航
+  // Register focus zones
   const { zoneRef: sidebarRef, isFocused: sidebarFocused } = useFocusZone({ zoneId: 'sidebar' })
 
-  // 
-  // 
+  // Global keyboard shortcuts using centralized action registry
+  // Actions are defined in @/actions/definitions.ts
 
-  // 
+  // Zone navigation - explicit keyboard intent, always move DOM focus
   useAction('nav.focusSidebar', () => focusZone('sidebar', { intent: 'keyboard' }))
   useAction('nav.focusNavigator', () => focusZone('navigator', { intent: 'keyboard' }))
   useAction('nav.focusChat', () => focusZone('chat', { intent: 'keyboard' }))
 
-  // 
+  // Tab navigation between zones
   useAction('nav.nextZone', () => {
     focusNextZone()
   }, { enabled: () => !document.querySelector('[role="dialog"]') })
 
-  // Shift+Tab 在启用模式之间循环权限模式（文本区域处理自己的，当焦点在其他地方时处理）
-
-  // 
+  // Shift+Tab cycles permission mode through enabled modes (textarea handles its own, this handles when focus is elsewhere)
+  // In multi-panel, targets the focused panel's session
   const effectiveSessionId = focusedSessionId ?? session.selected
 
-  // 
+  // Focus chat input for the target session only (multi-panel safe).
   const focusChatInputForSession = useCallback((targetSessionId?: string | null) => {
     if (!targetSessionId) return
     dispatchFocusInputEvent({ sessionId: targetSessionId })
@@ -1340,12 +1198,10 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     if (effectiveSessionId) {
       const currentOptions = contextValue.sessionOptions.get(effectiveSessionId)
       const currentMode = currentOptions?.permissionMode ?? 'ask'
-      // 循环启用的权限模式
-
+      // Cycle through enabled permission modes
       const modes = enabledModes.length >= 2 ? enabledModes : ['safe', 'ask', 'allow-all'] as PermissionMode[]
       const currentIndex = modes.indexOf(currentMode)
-      // 如果当前模式不在启用列表中，则跳转到第一个启用模式
-
+      // If current mode not in enabled list, jump to first enabled mode
       const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % modes.length
       const nextMode = modes[nextIndex]
       contextValue.onSessionOptionsChange(effectiveSessionId, { permissionMode: nextMode })
@@ -1360,47 +1216,43 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     setIsSidebarVisible(v => !v)
   }, [isSidebarAndNavigatorHidden])
 
-  // 
+  // Sidebar toggle (CMD+B)
   useAction('view.toggleSidebar', handleToggleSidebar)
 
-  // 焦点模式切换 (CMD+.) - 隐藏两个侧边栏
-
+  // Focus mode toggle (CMD+.) - hides both sidebars
   useAction('view.toggleFocusMode', () => setIsSidebarAndNavigatorHidden(v => !v))
 
-  // 
+  // Panel focus navigation (CMD+SHIFT+[ / ])
   const focusNextPanel = useSetAtom(focusNextPanelAtom)
   const focusPrevPanel = useSetAtom(focusPrevPanelAtom)
   useAction('panel.focusNext', focusNextPanel, { enabled: () => panelCount > 1 })
   useAction('panel.focusPrev', focusPrevPanel, { enabled: () => panelCount > 1 })
 
-  // 新聊天
-
+  // New chat
   useAction('app.newChat', () => handleNewChat())
   useAction('app.newChatInPanel', () => handleNewChat(true))
 
-  // 设置
-
+  // Settings
   useAction('app.settings', onOpenSettings)
 
-  // 
+  // Keyboard shortcuts
   useAction('app.keyboardShortcuts', onOpenKeyboardShortcuts)
 
-  // 
+  // New window
   useAction('app.newWindow', () => window.electronAPI.menuNewWindow())
 
-  // 
+  // Quit (note: also handled by native menu on macOS)
   useAction('app.quit', () => window.electronAPI.menuQuit())
 
-  // 
+  // History navigation
   useAction('nav.goBack', goBack)
   useAction('nav.goForward', goForward)
 
-  // 历史导航（箭头键替代）
-
+  // History navigation (arrow key alternatives)
   useAction('nav.goBackAlt', goBack)
   useAction('nav.goForwardAlt', goForward)
 
-  // 
+  // Search match navigation (CMD+G next, CMD+SHIFT+G prev)
   useAction('chat.nextSearchMatch', () => chatDisplayRef.current?.goToNextMatch(), {
     enabled: () => searchActive && (chatMatchInfo.count ?? 0) > 0
   })
@@ -1408,38 +1260,14 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     enabled: () => searchActive && (chatMatchInfo.count ?? 0) > 0
   })
 
-  // ESC 停止处理 - 需要在 1 秒内按两次
-
-  // 
-  // 
+  // ESC to stop processing - requires double-press within 1 second
+  // First press shows warning overlay, second press interrupts
+  // In multi-panel, targets the focused panel's session
   useAction('chat.stopProcessing', () => {
     if (effectiveSessionId) {
       const meta = sessionMetaMap.get(effectiveSessionId)
       if (meta?.isProcessing) {
-        // 第二次按下时，handleEscapePress 返回 True（超时内）
-高级选项
-来自聚焦窗口参数或持久首选项的种子，然后保持其可切换。
-每个视图过滤器存储：每个会话列表视图（allSessions、flaged、state:X、label:X、view:X）
-视图：在配置加载时编译一次，在列表/聊天中每个会话进行评估
-设置视图的处理程序。没有 arg → 裸“设置”路线（仅导航器
-初始化所有动态状态的计数
-过滤器下拉列表：用于过滤平面列表中的状态/标签的内联搜索查询。
-非活动/固定状态 → 带有点击切换功能的普通 div
-处理会话标签更改（通过 # 菜单或徽章 X 添加/删除）
-区域之间的选项卡导航
-历史导航
-从显示排序的标签配置结构构建分层标签树
-工作目录
-从工作区设置加载 cyclablePermissionModes
-活动状态→带有模式选项的 DropdownMenuSub
-单击任何标签都会导航到其过滤器视图； V 形切换开关展开/折叠。
-触发按钮 + 抽屉标题中显示的标题文本。  
-起始索引 = 总匝数 - 可见匝数，
-打开 EditPopover 进行状态配置
-州（适用于 # 个菜单和徽章）
-更新上次看到的版本
-三态过滤的过滤模式：include 仅显示匹配的，exclusion 隐藏匹配的  
-旧格式： { statuses: string[], labels: string[] } → 新格式： { statuses: Record, labels: Record }
+        // handleEscapePress returns true on second press (within timeout)
         const shouldInterrupt = handleEscapePress()
         if (shouldInterrupt) {
           window.electronAPI.cancelProcessing(effectiveSessionId, false).catch(err => {
@@ -1449,8 +1277,8 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
       }
     }
   }, {
-    // 
-    // 
+    // Only active when no overlay is open and session is processing
+    // Overlays (dialogs, menus, popovers, etc.) should handle their own Escape
     enabled: () => {
       if (hasOpenOverlay()) return false
       if (!effectiveSessionId) return false
@@ -1459,26 +1287,23 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     }
   }, [effectiveSessionId, handleEscapePress])
 
-  // 主题切换 (CMD+SHIFT+A)
-
+  // Theme toggle (CMD+SHIFT+A)
   useAction('app.toggleTheme', () => setMode(resolvedMode === 'dark' ? 'light' : 'dark'))
 
-  // 
-  // 当在应用程序中的任何位置（不仅仅是文本区域）按下 Cmd+V 时触发
-
+  // Global paste listener for file attachments
+  // Fires when Cmd+V is pressed anywhere in the app (not just textarea)
   React.useEffect(() => {
     const handleGlobalPaste = (e: ClipboardEvent) => {
-      // 
+      // Skip if a dialog or menu is open
       if (document.querySelector('[role="dialog"], [role="menu"]')) {
         return
       }
 
-      // 
+      // Skip if there are no files in the clipboard
       const files = e.clipboardData?.files
       if (!files || files.length === 0) return
 
-      // 如果活动元素是 input/textarea/contenteditable 则跳过（让它直接处理粘贴）
-
+      // Skip if the active element is an input/textarea/contenteditable (let it handle paste directly)
       const activeElement = document.activeElement as HTMLElement | null
       if (
         activeElement?.tagName === 'TEXTAREA' ||
@@ -1488,12 +1313,10 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
         return
       }
 
-      // 防止默认粘贴行为
-
+      // Prevent default paste behavior
       e.preventDefault()
 
-      // 调度 FreeFormInput 处理的自定义事件（仅限目标聚焦会话）
-
+      // Dispatch custom event for FreeFormInput to handle (target focused session only)
       const filesArray = Array.from(files)
       const targetSessionId = focusedSessionId ?? session.selected
       if (!targetSessionId) return
@@ -1506,8 +1329,7 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     return () => document.removeEventListener('paste', handleGlobalPaste)
   }, [focusedSessionId, session.selected])
 
-  // 调整侧边栏、会话列表、浏览器主机通道和元数据右侧边栏的大小效果。
-
+  // Resize effect for sidebar, session list, browser host lane, and metadata right sidebar.
   React.useEffect(() => {
     if (!isResizing) return
 
@@ -1555,17 +1377,16 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     isSidebarVisible,
   ])
 
-  // 
-  // 
+  // Spring transition config - shared between sidebar and header
+  // Critical damping (no bounce): damping = 2 * sqrt(stiffness * mass)
   const springTransition = {
     type: "spring" as const,
     stiffness: 600,
     damping: 49,
   }
 
-  // 使用来自 Jotaiatom 的会话元数据（轻量级，无消息）
-
-  // 
+  // Use session metadata from Jotai atom (lightweight, no messages)
+  // This prevents closures from retaining full message arrays
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
   const setSessionMetaMap = useSetAtom(sessionMetaMapAtom)
 
@@ -1573,12 +1394,11 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     return (pendingPermissions.get(sessionId)?.length ?? 0) > 0
   }, [pendingPermissions])
 
-  // 
+  // Workspace-level unread indicators (needed for workspace selectors across all workspaces)
   const [workspaceUnreadMap, setWorkspaceUnreadMap] = useState<Record<string, boolean>>({})
 
-  // 
-  // 技能加载自：全局 (~/.agents/skills/)、工作区和项目 ({workingDirectory}/.agents/skills/)
-
+  // Reload skills when active session's workingDirectory changes (for project-level skills)
+  // Skills are loaded from: global (~/.agents/skills/), workspace, and project ({workingDirectory}/.agents/skills/)
   const activeSessionWorkingDirectory = session.selected
     ? sessionMetaMap.get(session.selected)?.workingDirectory
     : undefined
@@ -1591,13 +1411,10 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     })
   }, [activeWorkspaceId, activeSessionWorkingDirectory])
 
-  // 按活动工作区过滤会话元数据
-
-  // 还从所有计数和列表中排除隐藏会话（迷你代理会话）
-
-  // 对于远程工作区，会话具有远程工作区 ID（而不是本地工作区 ID），
-
-  // 
+  // Filter session metadata by active workspace
+  // Also exclude hidden sessions (mini-agent sessions) from all counts and lists
+  // For remote workspaces, sessions have the remote workspace ID (not the local one),
+  // so we match against both the local and remote workspace IDs.
   const remoteWorkspaceId = activeWorkspace?.remoteServer?.remoteWorkspaceId
   const workspaceSessionMetas = useMemo(() => {
     const metas = Array.from(sessionMetaMap.values())
@@ -1607,7 +1424,7 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     )
   }, [sessionMetaMap, activeWorkspaceId, remoteWorkspaceId])
 
-  // 
+  // Active sessions exclude archived - use this for all counts and filters except archived view
   const activeSessionMetas = useMemo(() => {
     return workspaceSessionMetas.filter(s => !s.isArchived)
   }, [workspaceSessionMetas])
@@ -1627,21 +1444,19 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     }
   }, [workspaces])
 
-  // 
+  // Initial + workspace-list refresh
   useEffect(() => {
     void refreshWorkspaceUnreadMap()
   }, [refreshWorkspaceUnreadMap])
 
-  // 保持活动工作区未读指示器与实时元数据更新同步
-
+  // Keep active workspace unread indicator in sync with live metadata updates
   useEffect(() => {
     if (!activeWorkspaceId) return
     const activeHasUnread = activeSessionMetas.some((session) => !!session.hasUnread)
     setWorkspaceUnreadMap((prev) => ({ ...prev, [activeWorkspaceId]: activeHasUnread }))
   }, [activeWorkspaceId, activeSessionMetas])
 
-  // 使跨工作区指标与主流程的全局未读更新保持同步
-
+  // Keep cross-workspace indicators in sync with global unread updates from main process
   useEffect(() => {
     const cleanup = window.electronAPI.onUnreadSummaryChanged((summary) => {
       const next: Record<string, boolean> = {}
@@ -1654,30 +1469,25 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     return cleanup
   }, [workspaces])
 
-  // 按待办事项状态计算会话数（范围为工作区）
-
+  // Count sessions by todo state (scoped to workspace)
   const isMetaDone = (s: SessionMeta) => s.sessionStatus === 'done' || s.sessionStatus === 'cancelled'
   const flaggedCount = activeSessionMetas.filter(s => s.isFlagged).length
   const archivedCount = workspaceSessionMetas.filter(s => s.isArchived).length
 
-  // 每个标签的计算会话计数（累积：父代包括后代）。
-
-  // 展平树以进行迭代，使用树进行后代查找。
-
-  // 使用 activeSessionMetas 从计数中排除存档会话。
-
+  // Compute session counts per label (cumulative: parent includes descendants).
+  // Flatten the tree for iteration, use the tree for descendant lookups.
+  // Uses activeSessionMetas to exclude archived sessions from counts.
   const labelCounts = useMemo(() => {
     const allLabels = flattenLabels(labelConfigs)
     const counts: Record<string, number> = {}
     for (const label of allLabels) {
-      // 直接计数：显式标记有此标签的会话（处理诸如“priority::3”之类的有价值的条目）
-
+      // Direct count: sessions explicitly tagged with this label (handles valued entries like "priority::3")
       const directCount = activeSessionMetas.filter(
         s => s.labels?.some(l => extractLabelId(l) === label.id)
       ).length
       counts[label.id] = directCount
     }
-    // 
+    // Add descendant counts to parents (cumulative)
     for (const label of allLabels) {
       const descendants = getDescendantIds(labelConfigs, label.id)
       if (descendants.length > 0) {
@@ -1690,28 +1500,24 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     return counts
   }, [activeSessionMetas, labelConfigs])
 
-  // 
-  // 使用 activeSessionMetas 从计数中排除存档会话。
-
+  // Count sessions by individual todo state (dynamic based on effectiveSessionStatuses)
+  // Uses activeSessionMetas to exclude archived sessions from counts.
   const sessionStatusCounts = useMemo(() => {
     const counts: Record<SessionStatusId, number> = {}
-    // 
+    // Initialize counts for all dynamic statuses
     for (const state of effectiveSessionStatuses) {
       counts[state.id] = 0
     }
-    // 计算会话数
-
+    // Count sessions
     for (const s of activeSessionMetas) {
       const state = (s.sessionStatus || 'todo') as SessionStatusId
-      // 递增计数（如果状态尚未处于 effectiveSessionStatuses 中，则初始化为 0）
-
+      // Increment count (initialize to 0 if status not in effectiveSessionStatuses yet)
       counts[state] = (counts[state] || 0) + 1
     }
     return counts
   }, [activeSessionMetas, effectiveSessionStatuses])
 
-  // 按源下拉子类别的类型对源进行计数
-
+  // Count sources by type for the Sources dropdown subcategories
   const sourceTypeCounts = useMemo(() => {
     const counts = { api: 0, mcp: 0, local: 0 }
     for (const source of sources) {
@@ -1723,8 +1529,7 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     return counts
   }, [sources])
 
-  // 按“自动化”下拉子类别的类型对自动化进行计数
-
+  // Count automations by type for the Automations dropdown subcategories
   const automationTypeCounts = useMemo(() => {
     const counts = { scheduled: 0, event: 0, agentic: 0 }
     for (const automation of automations) {
@@ -1735,10 +1540,9 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     return counts
   }, [automations])
 
-  // 根据侧边栏模式和聊天过滤器过滤会话元数据
-
+  // Filter session metadata based on sidebar mode and chat filter
   const filteredSessionMetas = useMemo(() => {
-    // 
+    // When in sources mode, return empty (no sessions to show)
     if (!sessionFilter) {
       return []
     }
@@ -1747,30 +1551,30 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
 
     switch (sessionFilter.kind) {
       case 'allSessions':
-        // “所有会话”- 显示活动（非存档）会话
-
+        // "All Sessions" - shows active (non-archived) sessions
         result = activeSessionMetas
         break
       case 'flagged':
         result = activeSessionMetas.filter(s => s.isFlagged)
         break
       case 'archived':
-        // 
+        // Archived view shows only archived sessions
         result = workspaceSessionMetas.filter(s => s.isArchived)
         break
       case 'state':
-        // 
+        // Filter by specific todo state (excludes archived)
         result = activeSessionMetas.filter(s => (s.sessionStatus || 'todo') === sessionFilter.stateId)
         break
       case 'label': {
-        // 共享谓词（处理 '__all__'、后代标签以及可选的项目范围）—— 与会话列表
-        // 过滤使用的是同一套实现，因此两者在构造上保持一致。
+        // Shared predicate (handles '__all__', descendant labels, and the optional
+        // project scope) — the same implementation the session list filters with,
+        // so the two stay aligned by construction.
         result = activeSessionMetas.filter(s => matchesLabelFilter(s, sessionFilter, labelConfigs))
         break
       }
       case 'view': {
-        // 
-        // 
+        // Filter by view: __all__ shows any session matched by any view,
+        // otherwise filter to the specific view (excludes archived)
         result = activeSessionMetas.filter(s => {
           const matched = evaluateViews(s)
           if (sessionFilter.viewId === '__all__') {
@@ -1784,13 +1588,11 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
         result = activeSessionMetas
     }
 
-    // 
-    // 这些层位于主 sessionFilter 之上，以允许进一步缩小范围。
-
-    // 
-    // 
-    // - 排除：匹配的项目被删除（包含后应用）
-
+    // Apply secondary filters (status + labels, AND-ed together) in ALL views.
+    // These layer on top of the primary sessionFilter to allow further narrowing.
+    // Each filter supports include/exclude modes:
+    //   - Includes: if any exist, only matching items pass
+    //   - Excludes: matching items are removed (applied after includes)
     if (listFilter.size > 0) {
       const statusIncludes = new Set<SessionStatusId>()
       const statusExcludes = new Set<SessionStatusId>()
@@ -1805,12 +1607,12 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
         result = result.filter(s => !statusExcludes.has((s.sessionStatus || 'todo') as SessionStatusId))
       }
     }
-    // 
+    // Filter by labels — supports include/exclude with descendant expansion
     if (labelFilter.size > 0) {
       const labelIncludes = new Set<string>()
       const labelExcludes = new Set<string>()
       for (const [id, mode] of labelFilter) {
-        // 
+        // Expand to include descendant label IDs
         const ids = [id, ...getDescendantIds(labelConfigs, id)]
         for (const expandedId of ids) {
           if (mode === 'include') labelIncludes.add(expandedId)
@@ -1853,20 +1655,16 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     return result
   }, [workspaceSessionMetas, activeSessionMetas, sessionFilter, listFilter, labelFilter, projectFilter, labelConfigs])
 
-  // 从当前 sessionFilter 路径派生“固定”（不可移动）过滤器。
-
-  // 这些表示当前深度链接/路由中隐含的过滤器，并且
-
-  // 应在过滤栏中显示为用户无法删除的固定碎片。
-
+  // Derive "pinned" (non-removable) filters from the current sessionFilter path.
+  // These represent filters that are implicit in the current deeplink/route and
+  // should be displayed as fixed chips in the filter bar that users cannot remove.
   const pinnedFilters = useMemo(() => {
     if (!sessionFilter) return { pinnedStatusId: null as string | null, pinnedLabelId: null as string | null, pinnedFlagged: false }
     switch (sessionFilter.kind) {
       case 'state':
         return { pinnedStatusId: sessionFilter.stateId, pinnedLabelId: null, pinnedFlagged: false }
       case 'label':
-        // 不要固定 __all__ 伪标签 - 这仅意味着“任何标签”
-
+        // Don't pin the __all__ pseudo-label — that just means "any label"
         return { pinnedStatusId: null, pinnedLabelId: sessionFilter.labelId !== '__all__' ? sessionFilter.labelId : null, pinnedFlagged: false }
       case 'flagged':
         return { pinnedStatusId: null, pinnedLabelId: null, pinnedFlagged: true }
@@ -1875,27 +1673,24 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     }
   }, [sessionFilter])
 
-  // 确保选择时加载会话消息
-
+  // Ensure session messages are loaded when selected
   React.useEffect(() => {
     if (session.selected) {
       ensureMessagesLoaded(session.selected)
     }
   }, [session.selected, ensureMessagesLoaded])
 
-  // 
-  // 
+  // Wrap delete handler to clear selection when deleting the currently selected session
+  // This prevents stale state during re-renders that could cause crashes
   const handleDeleteSession = useCallback(async (sessionId: string, skipConfirmation?: boolean): Promise<boolean> => {
-    // 如果这是选定的会话，请先清除选择
-
+    // Clear selection first if this is the selected session
     if (session.selected === sessionId) {
       setSession({ selected: null })
     }
     return onDeleteSession(sessionId, skipConfirmation)
   }, [session.selected, setSession, onDeleteSession])
 
-  // 使用本地覆盖扩展上下文值（包装 onDeleteSession、来源、技能、标签、enabledModes、rightSidebarOpenButton、 effectiveSessionStatuses）
-
+  // Extend context value with local overrides (wrapped onDeleteSession, sources, skills, labels, enabledModes, rightSidebarOpenButton, effectiveSessionStatuses)
   const appShellContextValue = React.useMemo<AppShellContextType>(() => ({
     ...contextValue,
     onDeleteSession: handleDeleteSession,
@@ -1910,7 +1705,7 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     onJumpToTaskSessions: handleJumpToTaskSessions,
     rightSidebarButton: null,
     isCompactMode: isAutoCompact,
-    // 
+    // Search state for ChatDisplay highlighting
     sessionListSearchQuery: searchActive ? searchQuery : undefined,
     isSearchModeActive: searchActive,
     chatDisplayRef,
@@ -1924,23 +1719,23 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     onReplayAutomation: handleReplayAutomation,
   }), [contextValue, handleDeleteSession, sources, skills, activeSessionWorkingDirectory, displayLabelConfigs, handleSessionLabelsChange, enabledModes, effectiveSessionStatuses, handleSessionSourcesChange, handleJumpToTaskSessions, isAutoCompact, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation])
 
-  // 
+  // Persist expanded folders to localStorage (workspace-scoped)
   React.useEffect(() => {
     if (!activeWorkspaceId) return
     storage.set(storage.KEYS.expandedFolders, [...expandedFolders], activeWorkspaceId)
   }, [expandedFolders, activeWorkspaceId])
 
-  // 
+  // Persist sidebar visibility to localStorage
   React.useEffect(() => {
     storage.set(storage.KEYS.sidebarVisible, isSidebarVisible)
   }, [isSidebarVisible])
 
-  // 
+  // Persist focus mode state to localStorage
   React.useEffect(() => {
     storage.set(storage.KEYS.focusModeEnabled, isSidebarAndNavigatorHidden)
   }, [isSidebarAndNavigatorHidden])
 
-  // 
+  // Listen for focus mode toggle from menu (View → Focus Mode)
   React.useEffect(() => {
     const cleanup = window.electronAPI.onMenuToggleFocusMode?.(() => {
       setIsSidebarAndNavigatorHidden(v => !v)
@@ -1948,8 +1743,7 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     return cleanup
   }, [])
 
-  // 从菜单中监听侧边栏切换（查看→切换侧边栏）
-
+  // Listen for sidebar toggle from menu (View → Toggle Sidebar)
   React.useEffect(() => {
     const cleanup = window.electronAPI.onMenuToggleSidebar?.(() => {
       handleToggleSidebar()
@@ -1957,14 +1751,13 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     return cleanup
   }, [handleToggleSidebar])
 
-  // 将每个视图过滤器映射保留到 localStorage（工作区范围）
-
+  // Persist per-view filter map to localStorage (workspace-scoped)
   React.useEffect(() => {
     if (!activeWorkspaceId) return
     storage.set(storage.KEYS.viewFilters, viewFiltersMap, activeWorkspaceId)
   }, [viewFiltersMap, activeWorkspaceId])
 
-  // 保留侧边栏部分折叠状态（工作区范围）
+  // Persist sidebar section collapsed states (workspace-scoped)
   React.useEffect(() => {
     if (!activeWorkspaceId) return
     storage.set(storage.KEYS.collapsedSidebarItems, [...collapsedItems], activeWorkspaceId)
@@ -1982,13 +1775,12 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     navigate(routes.view.archived())
   }, [])
 
-  // 
+  // Handler for individual todo state views
   const handleSessionStatusClick = useCallback((stateId: SessionStatusId) => {
     navigate(routes.view.state(stateId))
   }, [])
 
-  // 标签过滤视图的处理程序（分层 - 包括后代标签）
-
+  // Handler for label filter views (hierarchical — includes descendant labels)
   const handleLabelClick = useCallback((labelId: string) => {
     navigate(routes.view.label(labelId))
   }, [])
@@ -1997,21 +1789,20 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     navigate(routes.view.view(viewId))
   }, [])
 
-  // DnD 处理程序：重新排序状态（平面列表拖放）
-
-  // 
+  // DnD handler: reorder statuses (flat list drag-and-drop)
+  // Sets optimistic order immediately for instant UI feedback, then fires IPC.
   const handleStatusReorder = useCallback((orderedIds: string[]) => {
     if (!activeWorkspaceId) return
     setOptimisticStatusOrder(orderedIds)
     window.electronAPI.reorderStatuses(activeWorkspaceId, orderedIds)
   }, [activeWorkspaceId])
 
-  // 
+  // Handler for sources view (all sources)
   const handleSourcesClick = useCallback(() => {
     navigate(routes.view.sources())
   }, [])
 
-  // 
+  // Handlers for source type filter views (subcategories in Sources dropdown)
   const handleSourcesApiClick = useCallback(() => {
     navigate(routes.view.sourcesApi())
   }, [])
@@ -2024,14 +1815,12 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     navigate(routes.view.sourcesLocal())
   }, [])
 
-  // 技能视图处理程序
-
+  // Handler for skills view
   const handleSkillsClick = useCallback(() => {
     navigate(routes.view.skills())
   }, [])
 
-  // 自动化视图的处理程序
-
+  // Handlers for automations view
   const handleAutomationsClick = useCallback(() => {
     navigate(routes.view.automations())
   }, [])
@@ -2053,20 +1842,19 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     navigate(routes.view.automationsAgentic())
   }, [])
 
-  // 
-  // 
+  // Handler for settings view. With no arg → bare `settings` route (navigator-only
+  // in compact mode, App fallback on desktop). With an arg → `settings/<subpage>`.
   const handleSettingsClick = useCallback((subpage?: SettingsSubpage) => {
     navigate(routes.view.settings(subpage))
   }, [])
 
-  // 新增内容覆盖的处理程序
-
+  // Handler for What's New overlay
   const handleWhatsNewClick = useCallback(async () => {
     const content = await window.electronAPI.getReleaseNotes()
     setReleaseNotesContent(content)
     setShowWhatsNew(true)
     setHasUnseenReleaseNotes(false)
-    // 
+    // Update last seen version
     const latestVersion = await window.electronAPI.getLatestReleaseVersion()
     if (latestVersion) {
       storage.set(storage.KEYS.whatsNewLastSeenVersion, latestVersion)
@@ -2074,68 +1862,29 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
   }, [])
 
   // ============================================================================
-  // 
+  // EDIT POPOVER STATE
   // ============================================================================
-  // 控制打开哪个 EditPopover 的状态（从上下文菜单触发）。
-  // 我们使用受控弹出窗口而非深度链接，这样用户可以在弹出窗口 UI 中
-  // 输入请求，再打开新的聊天窗口。
-  // add-source 变体：add-source（通用）、add-source-api、add-source-mcp、add-source-local
+  // State to control which EditPopover is open (triggered from context menus).
+  // We use controlled popovers instead of deep links so the user can type
+  // their request in the popover UI before opening a new chat window.
+  // add-source variants: add-source (generic), add-source-api, add-source-mcp, add-source-local
   const [editPopoverOpen, setEditPopoverOpen] = useState<'statuses' | 'labels' | 'views' | 'add-source' | 'add-source-api' | 'add-source-mcp' | 'add-source-local' | 'add-skill' | 'add-label' | 'automation-config' | 'add-project' | null>(null)
 
-  // 存储最后一次右键单击侧边栏项目的 Y 位置，以便 EditPopover
-
-  // 出现在它附近而不是固定位置。之前同步更新过
-新窗口
-状态项（可通过 SortableStatusList 排序）
-标签：可导航标题（显示所有带标签的会话）+分层树（拖放重新排序+重新父级）
-
-* ErrorMessage - 错误消息的单独组件以允许 useState 钩子
- 
-仅当没有打开叠加且会话正在处理时才处于活动状态
-删除标签及其所有后代，从会话中剥离
-清除图标缓存，以便在渲染时重新获取更新的源图标
-临界阻尼（无弹跳）：阻尼 = 2 * sqrt(刚度 * 质量)
-在所有视图中应用辅助过滤器（状态 + 标签，通过 AND 组合在一起）。
-会话将发出更新会话状态的“sources_changed”事件
-按标签过滤 - 支持包含/排除后代扩展
-=== 警告消息：信息主题气泡 ===
-双 Esc 中断功能：第一个 Esc 显示警告，第二个 Esc 中断
-打开弹出窗口的 setTimeout，确保在渲染之前设置引用。
-分隔符：SortableStatusList 在此处拆分 — 成为不可排序的 TrailingItems 后的项目
-切换标签过滤器：如果处于活动状态 → 删除，如果处于非活动状态 → 添加为“包含”（或使用 Alt 进行“排除”）  
-处理从列表中选择自动化
-导航完成后聚焦聊天输入
-当活动会话的工作目录更改时重新加载技能（对于项目级技能）
-清除焦点侧边栏项目
-初始+工作区列表刷新
-存储触发元素（按钮），以便我们可以在
-导出有效的待办事项状态：如果处于活动状态，则应用乐观重新排序，否则使用规范顺序
-技能（用于@提及）
-会话导航器 - 使用 sessionFilter
-重新发布共享（碰撞快照）。  
-将后代计数添加到父母（累积）
-有自己独立的一组状态和标签过滤器。
-并切换到单面板模式。适用于 webui（窄视口）和
-从上下文中解构常用值
-侧边栏切换 (CMD+B)
-构建回调以更改/删除标签的过滤模式  
-会话列表宽度（以像素为单位）（最小 240，最大 480）
-统一侧边栏键盘导航
-  // 
+  // Stores the Y position of the last right-clicked sidebar item so the EditPopover
+  // appears near it rather than at a fixed location. Updated synchronously before
+  // the setTimeout that opens the popover, ensuring the ref is set before render.
   const editPopoverAnchorY = useRef<number>(120)
-  // 
-  // 
+  // Tracks which label was right-clicked when opening label EditPopovers,
+  // so the agent knows the target for commands like "make this red" or "add below this"
   const editLabelTargetId = useRef<string | undefined>(undefined)
 
-  // 
-  // EditPopover 已打开（在 Radix 删除上下文菜单关闭上的 data-state="open" 之后）。
-
+  // Stores the trigger element (button) so we can keep it highlighted while the
+  // EditPopover is open (after Radix removes data-state="open" on context menu close).
   const editPopoverTriggerRef = useRef<Element | null>(null)
 
-  // 
-  // 
-  // 而菜单是可见的，因此我们可以在单击时在 DOM 中找到它。
-
+  // Captures the bounding rect of the currently-open context menu trigger (the button).
+  // Radix sets data-state="open" on the button (via ContextMenuTrigger asChild)
+  // while the menu is visible, so we can locate it in the DOM at click time.
   const captureContextMenuPosition = useCallback(() => {
     const trigger = document.querySelector('.group\\/section > [data-state="open"]')
     if (trigger) {
@@ -2145,9 +1894,9 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     }
   }, [])
 
-  // 
-  // 
-  // 
+  // Sync data-edit-active attribute on the trigger element with EditPopover open state.
+  // This keeps the sidebar item visually highlighted while the popover is shown,
+  // since Radix's data-state="open" disappears when the context menu closes.
   useEffect(() => {
     const el = editPopoverTriggerRef.current
     if (!el) return
@@ -2159,36 +1908,32 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     }
   }, [editPopoverOpen])
 
-  // 
-  // 
-  // 
-  // 防止弹出窗口由于焦点转移而立即关闭
-
+  // Handler for "Configure Statuses" context menu action
+  // Opens the EditPopover for status configuration
+  // Uses setTimeout to delay opening until after context menu closes,
+  // preventing the popover from immediately closing due to focus shift
   const openConfigureStatuses = useCallback(() => {
     captureContextMenuPosition()
     setTimeout(() => setEditPopoverOpen('statuses'), 50)
   }, [captureContextMenuPosition])
 
-  // “配置标签”上下文菜单操作的处理程序
-
-  // 打开 EditPopover 进行标签配置，存储右键单击的标签
-
+  // Handler for "Configure Labels" context menu action
+  // Opens the EditPopover for label configuration, storing which label was right-clicked
   const openConfigureLabels = useCallback((labelId?: string) => {
     editLabelTargetId.current = labelId
     captureContextMenuPosition()
     setTimeout(() => setEditPopoverOpen('labels'), 50)
   }, [captureContextMenuPosition])
 
-  // 
-  // 
+  // Handler for "Edit Views" context menu action
+  // Opens the EditPopover for view configuration
   const openConfigureViews = useCallback(() => {
     captureContextMenuPosition()
     setTimeout(() => setEditPopoverOpen('views'), 50)
   }, [captureContextMenuPosition])
 
-  // “删除视图”上下文菜单操作的处理程序
-
-  // 
+  // Handler for "Delete View" context menu action
+  // Removes the view from config by filtering it out and saving
   const handleDeleteView = useCallback(async (viewId: string) => {
     if (!activeWorkspace?.id) return
     try {
@@ -2199,20 +1944,17 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     }
   }, [activeWorkspace?.id, viewConfigs])
 
-  // “添加新标签”上下文菜单操作的处理程序
-
-  // 
-  // 因此代理知道要添加与其相关的新标签
-
+  // Handler for "Add New Label" context menu action
+  // Opens the EditPopover with 'add-label' context, storing which label was right-clicked
+  // so the agent knows to add the new label relative to it
   const handleAddLabel = useCallback((parentId?: string) => {
     editLabelTargetId.current = parentId
     captureContextMenuPosition()
     setTimeout(() => setEditPopoverOpen('add-label'), 50)
   }, [captureContextMenuPosition])
 
-  // “删除标签”上下文菜单操作的处理程序
-
-  // 
+  // Handler for "Delete Label" context menu action
+  // Deletes the label and all its descendants, stripping from sessions
   const handleDeleteLabel = useCallback(async (labelId: string) => {
     if (!activeWorkspace?.id) return
     try {
@@ -2222,37 +1964,33 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     }
   }, [activeWorkspace?.id])
 
-  // “添加源”上下文菜单操作的处理程序
-
-  // 打开 EditPopover 以添加新源
-
-  // 
+  // Handler for "Add Source" context menu action
+  // Opens the EditPopover for adding a new source
+  // Optional sourceType param allows filter-aware context (from subcategory menus or filtered views)
   const openAddSource = useCallback((sourceType?: 'api' | 'mcp' | 'local') => {
     captureContextMenuPosition()
     const key = sourceType ? `add-source-${sourceType}` as const : 'add-source' as const
     setTimeout(() => setEditPopoverOpen(key), 50)
   }, [captureContextMenuPosition])
 
-  // “添加技能”上下文菜单操作的处理程序
-
-  // 
+  // Handler for "Add Skill" context menu action
+  // Opens the EditPopover for adding a new skill
   const openAddSkill = useCallback(() => {
     captureContextMenuPosition()
     setTimeout(() => setEditPopoverOpen('add-skill'), 50)
   }, [captureContextMenuPosition])
 
-  // 
-  // 打开 EditPopover 以添加新的自动化
-
+  // Handler for "Add Automation" context menu action
+  // Opens the EditPopover for adding a new automation
   const openAddAutomation = useCallback(() => {
     captureContextMenuPosition()
     setTimeout(() => setEditPopoverOpen('automation-config'), 50)
   }, [captureContextMenuPosition])
 
-  // "添加项目"右键菜单操作的处理程序 —— 直接创建一个项目
-  // 打开"创建项目"对话框，让用户先提供名称。
-  // 之前的流程会用默认名称自动创建，生成难看的、
-  // 永久性的 slug（new-project、new-project-1、…）。
+  // Handler for "Add Project" context menu action — creates a project directly
+  // Open the "Create Project" dialog so the user can provide a name up front.
+  // The previous flow auto-created with the default name and produced ugly
+  // permanent slugs (new-project, new-project-1, …).
   const [createProjectDialogOpen, setCreateProjectDialogOpen] = useState(false)
   const openAddProject = useCallback(() => {
     if (!activeWorkspace?.id) return
@@ -2271,9 +2009,9 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
   }, [activeWorkspace?.id, navigate, t])
 
   /**
-   * 解析"继承唯一激活的过滤器"规则：如果在状态 + 标签 + 项目中
-   * 恰好选中一个过滤器值，则将其作为新会话参数返回；否则返回 null
-   * （回退到工作区默认值）。
+   * Resolve the "inherit sole active filter" rule: if exactly one filter value
+   * is selected across statuses + labels + projects, return it as new-session
+   * params. Otherwise return null (fall back to workspace defaults).
    */
   const resolveInheritedNewSessionParams = useCallback((): { status?: string; label?: string; project?: string } | null => {
     const statusCount = listFilter.size
@@ -2296,31 +2034,29 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     return null
   }, [listFilter, labelFilter, projectFilter])
 
-  // 创建一个新的聊天并选择它
+  // Create a new chat and select it
   const handleNewChat = useCallback((newPanel: boolean = false) => {
     if (!activeWorkspace) return
 
-    // 退出搜索模式并切换到所有会话
-
+    // Exit search mode and switch to All Sessions
     setSearchActive(false)
     setSearchQuery('')
 
-    // 当没有歧义时，将唯一激活的过滤器继承到新会话中。
+    // Inherit sole-active filter into the new session when unambiguous.
     const inherited = resolveInheritedNewSessionParams()
 
-    // 委托给处理会话创建的 NavigationContext
+    // Delegate to NavigationContext which handles session creation
     navigate(
       routes.action.newSession(inherited ?? undefined),
       newPanel ? { newPanel: true, targetLaneId: 'main' } : undefined
     )
 
-    // 
+    // Focus the chat input after navigation completes
     setTimeout(() => focusZone('chat', { intent: 'programmatic' }), 50)
   }, [activeWorkspace, focusZone, navigate, resolveInheritedNewSessionParams])
 
-  // 
-  // 有意解除绑定：此操作应始终创建一个新窗口。
-
+  // Create a brand new dedicated browser window and focus it.
+  // Intentionally unbound: this action should always create a NEW window.
   const handleNewBrowserWindow = useCallback(async () => {
     try {
       const instanceId = await window.electronAPI.browserPane.create({
@@ -2333,7 +2069,7 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     }
   }, [])
 
-  // 
+  // Delete Source - simplified since agents system is removed
   const handleDeleteSource = useCallback(async (sourceSlug: string) => {
     if (!activeWorkspace) return
     try {
@@ -2345,7 +2081,7 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     }
   }, [activeWorkspace])
 
-  // 
+  // Delete Skill
   const handleDeleteSkill = useCallback(async (skillSlug: string) => {
     if (!activeWorkspace) return
     try {
@@ -2357,17 +2093,16 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     }
   }, [activeWorkspace])
 
-  // 
+  // Respond to menu bar "New Chat" trigger
   const menuTriggerRef = useRef(menuNewChatTrigger)
   useEffect(() => {
-    // 
+    // Skip initial render
     if (menuTriggerRef.current === menuNewChatTrigger) return
     menuTriggerRef.current = menuNewChatTrigger
     handleNewChat()
   }, [menuNewChatTrigger, handleNewChat])
 
-  // 统一侧边栏项目：仅导航按钮（代理系统已删除）
-
+  // Unified sidebar items: nav buttons only (agents system removed)
   type SidebarItem = {
     id: string
     type: 'nav'
@@ -2377,7 +2112,7 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
   const unifiedSidebarItems = React.useMemo((): SidebarItem[] => {
     const result: SidebarItem[] = []
 
-    // 
+    // 1. Sessions section: All Sessions (expandable) with status items, Flagged, Archived as children
     result.push({ id: 'nav:allSessions', type: 'nav', action: handleAllSessionsClick })
     for (const state of effectiveSessionStatuses) {
       result.push({ id: `nav:state:${state.id}`, type: 'nav', action: () => handleSessionStatusClick(state.id) })
@@ -2385,10 +2120,9 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     result.push({ id: 'nav:flagged', type: 'nav', action: handleFlaggedClick })
     result.push({ id: 'nav:archived', type: 'nav', action: handleArchivedClick })
 
-    // 2. 标签部分标题 + 用于键盘导航的常规标签树
-
+    // 2. Labels section header + regular label tree for keyboard nav
     result.push({ id: 'nav:labels', type: 'nav', action: () => handleLabelClick('__all__') })
-    // 
+    // Flatten regular label tree for keyboard navigation (depth-first)
     const flattenTree = (nodes: LabelTreeNode[]) => {
       for (const node of nodes) {
         if (node.label) {
@@ -2399,7 +2133,7 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     }
     flattenTree(labelTree)
 
-    // 
+    // 3. Sources, Skills, Settings
     result.push({ id: 'nav:sources', type: 'nav', action: handleSourcesClick })
     result.push({ id: 'nav:skills', type: 'nav', action: handleSkillsClick })
     result.push({ id: 'nav:automations', type: 'nav', action: handleAutomationsClick })
@@ -2409,8 +2143,7 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     return result
   }, [handleAllSessionsClick, handleFlaggedClick, handleArchivedClick, handleSessionStatusClick, effectiveSessionStatuses, handleLabelClick, labelConfigs, labelTree, viewConfigs, handleViewClick, handleSourcesClick, handleSkillsClick, handleAutomationsClick, handleSettingsClick, handleWhatsNewClick])
 
-  // 切换文件夹展开状态
-
+  // Toggle folder expanded state
   const handleToggleFolder = React.useCallback((path: string) => {
     setExpandedFolders(prev => {
       const next = new Set(prev)
@@ -2423,8 +2156,7 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     })
   }, [])
 
-  // 获取任何侧边栏项目的道具（统一的流动 tabindex 模式）
-
+  // Get props for any sidebar item (unified roving tabindex pattern)
   const getSidebarItemProps = React.useCallback((id: string) => ({
     tabIndex: focusedSidebarItemId === id ? 0 : -1,
     'data-focused': focusedSidebarItemId === id,
@@ -2437,7 +2169,7 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     },
   }), [focusedSidebarItemId])
 
-  // 
+  // Unified sidebar keyboard navigation
   const handleSidebarKeyDown = React.useCallback((e: React.KeyboardEvent) => {
     if (!sidebarFocused || unifiedSidebarItems.length === 0) return
 
@@ -2463,12 +2195,12 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
       }
       case 'ArrowLeft': {
         e.preventDefault()
-        // 
+        // At boundary - do nothing (Left doesn't change zones from sidebar)
         break
       }
       case 'ArrowRight': {
         e.preventDefault()
-        // 
+        // Move to next zone (navigator) - keyboard navigation
         focusZone('navigator', { intent: 'keyboard' })
         break
       }
@@ -2501,73 +2233,39 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     }
   }, [sidebarFocused, unifiedSidebarItems, focusedSidebarItemId, focusZone])
 
-  // 
+  // Focus sidebar item when sidebar zone gains focus
   React.useEffect(() => {
     if (sidebarFocused && unifiedSidebarItems.length > 0) {
-      // 如果尚未设置，则设置焦点项目
-
-* FilterMenuRow - 过滤器菜单项的一致布局。
-* 强制：[图标 14px 框] [标签 flex] [附件 12px 框]
- 
-检查安装上未见的发行说明
-搜索匹配导航（CMD+G 下一个、CMD+SHIFT+G 上一个）
-教程
-
-* FilterLabelItems - 用于在过滤器下拉列表中呈现标签树的递归组件。
-*
-* 按标签状态呈现规则：
-* - **非活动叶**：StyledDropdownMenuItem — 单击添加为“包含”
-* - **活动叶**：DropdownMenuSub — SubTrigger 显示标签 + 模式徽章，子内容
-* 具有包含/排除/删除选项（使用 Radix 的内置安全三角形悬停）
-* - **组（使用Children)**：始终是 DropdownMenuSub。激活时，子内容首先显示
-* 模式选项，然后是分隔符，然后是子项。不活动时，显示自切换
-* 项目，然后是分隔符，然后是子项。
-* - **固定标签**：显示为带有复选标记，非交互式（无切换/子菜单）。
- 
-从 ChatDisplay 即时更新比赛信息的回调
-
-* MemoizedMessageBubble - 防止重新呈现非流式消息
-*
-* 在流式传输期间，整个消息列表会在每个增量上更新。
-* 此包装器会跳过未更改的消息的重新渲染，
-* 显着提高了长时间对话的性能。
- 
-聊天列表的分组模式：每个视图（存储在 viewFiltersMap 中），强制为状态子视图“日期”
-统一索引：[0..matchedStates-1] = 状态，[matchedStates..total-1] = 标签。
-将源同步到atom以进行NavigationContext自动选择
-由于需要许多标签，因此每个节点都以压缩高度渲染（compact：True）。
-使用 EscapeInterruptProvider 包装，以便 AppShellContent 可以使用 useEscapeInterrupt
+      // Set focused item if not already set
       const itemId = focusedSidebarItemId || unifiedSidebarItems[0].id
       if (!focusedSidebarItemId) {
         setFocusedSidebarItemId(itemId)
       }
-      // 
+      // Actually focus the DOM element
       requestAnimationFrame(() => {
         sidebarItemRefs.current.get(itemId)?.focus()
       })
     }
   }, [sidebarFocused, focusedSidebarItemId, unifiedSidebarItems])
 
-  // 根据导航状态获取标题
-
+  // Get title based on navigation state
   const listTitle = React.useMemo(() => {
-    // 
+    // Sources navigator
     if (isSourcesNavigation(navState)) {
       return t("sidebar.sources")
     }
 
-    // 技能导航器
-
+    // Skills navigator
     if (isSkillsNavigation(navState)) {
       return t("sidebar.allSkills")
     }
 
-    // 项目导航器
+    // Projects navigator
     if (isProjectsNavigation(navState)) {
       return t("sidebar.allProjects")
     }
 
-    // 自动化导航器
+    // Automations navigator
     if (isAutomationsNavigation(navState)) {
       if (!automationFilter) return t("sidebar.allAutomations")
       switch (automationFilter.automationType) {
@@ -2578,10 +2276,10 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
       }
     }
 
-    // 
+    // Settings navigator
     if (isSettingsNavigation(navState)) return t("sidebar.settings")
 
-    // 
+    // Sessions navigator - use sessionFilter
     if (!sessionFilter) return t("sidebar.allSessions")
 
     switch (sessionFilter.kind) {
@@ -2600,9 +2298,9 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
     }
   }, [navState, t, sessionFilter, automationFilter, labelConfigs, viewConfigs, effectiveSessionStatuses])
 
-  // 
-  // 
-  // 
+  // Build recursive sidebar items from the shared display-sorted label tree.
+  // Each node renders with condensed height (compact: true) since many labels expected.
+  // Clicking any label navigates to its filter view; the chevron toggles expand/collapse.
   const buildLabelSidebarItems = useCallback((nodes: LabelTreeNode[]): any[] => {
     return nodes.map(node => {
       const hasChildren = node.children.length > 0
@@ -2613,8 +2311,7 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
         id: `nav:label:${node.fullId}`,
         title: node.label?.name || node.segment.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
         label: count > 0 ? String(count) : undefined,
-        // 显示计数前右对齐的标签类型图标（哈希/日历/类型），并带有解释类型的工具提示
-
+        // Show label type icon (Hash/Calendar/Type) right-aligned before count, with tooltip explaining the type
         afterTitle: node.label?.valueType ? (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -2634,7 +2331,7 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
         ) : <Tag className="h-3.5 w-3.5" />,
         variant: isActive ? "default" : "ghost",
         compact: true, // Reduced height for label items (many labels expected)
-        // 
+        // All labels navigate on click — parent and leaf alike
         onClick: () => handleLabelClick(node.fullId),
         contextMenu: {
           type: 'labels' as const,
@@ -2648,41 +2345,7 @@ Radix 在按钮上设置 data-state="open" （通过 ContextMenuTrigger asChild�
       if (hasChildren) {
         item.expandable = true
         item.expanded = isExpanded(`nav:label:${node.fullId}`)
-        // Chevron 独立于导航切换展开/折叠
-
-* AppShellContent - 包含所有 AppShell 逻辑的内部组件
-* 分开以允许 useEscapeInterrupt 挂钩工作（必须位于提供程序内部）
- 
-在紧凑模式下，应用程序在桌面上回退）。使用 arg → `settings/<subpage>`。
-始终重新渲染流消息（内容正在变化）
-在工作区更改时加载工作区设置（对于 localMcpEnabled 和 cyclablePermissionModes）
-
-* 带有标题和操作的标准化面板标题
- 
-隐藏侧边栏和导航器（CMD+.切换）
-打开 EditPopover 进行视图配置
-停用搜索后重置匹配信息
-删除技能
-“编辑视图”上下文菜单操作的处理程序
-当前路由固定的标签ID（不可移除，显示为选中+禁用）  
-使用与 # 内联菜单相同的结构，因此两个搜索界面保持对齐。
-源列表 - 如果 sourceFilter 处于活动状态，则按类型过滤  
-在系统浏览器中打开发布的共享 URL。  
-标签过滤器的设置器 - 仅更新地图中当前视图的条目
-将扩展文件夹保留到 localStorage（工作区范围）
-聚焦第一个菜单项，以便激活 Radix 的键盘导航
-自动化——状态、处理程序、加载、订阅
-Spring 过渡配置 - 在侧边栏和标题之间共享
-按视图过滤：__all__ 显示与任何视图匹配的任何会话，
-已存档（尾随、不可排序）
-设置导航器
-UI 特定的道具  
-跟踪打开标签 EditPopovers 时右键单击的标签，
-当处于源模式时，返回空（没有可显示的会话）
-因为当上下文菜单关闭时，Radix 的 data-state="open" 消失。
-文件附件的全局粘贴侦听器
-非活动/固定状态 → 简单的可切换项目
-查找最后一个用户消息时间戳以获得准确的经过时间
+        // Chevron toggles expand/collapse independently of navigation
         item.onToggle = () => toggleExpanded(`nav:label:${node.fullId}`)
         item.items = buildLabelSidebarItems(node.children)
       }
@@ -2780,9 +2443,8 @@ UI 特定的道具
                   getItemProps={getSidebarItemProps}
                   focusedItemId={focusedSidebarItemId}
                   links={[
-                    // 
-                    // 所有会话：可通过状态子项进行扩展（可排序）+ 标记并存档为尾随项目
-
+                    // --- Sessions Section ---
+                    // All Sessions: expandable with status children (sortable) + Flagged & Archived as trailing items
                     {
                       id: "nav:allSessions",
                       title: t("sidebar.allSessions"),
@@ -2798,8 +2460,7 @@ UI 特定的道具
                         onConfigureStatuses: openConfigureStatuses,
                         onMarkAllRead: () => {
                           if (!activeWorkspaceId) return
-                          // 乐观：清除所有工作区会话元上的 hasUnread
-
+                          // Optimistic: clear hasUnread on all workspace session metas
                           setSessionMetaMap(prev => {
                             const next = new Map(prev)
                             for (const [id, meta] of next) {
@@ -2812,11 +2473,10 @@ UI 特定的道具
                           window.electronAPI.markAllSessionsRead(activeWorkspaceId)
                         },
                       },
-                      // 为状态项目启用平面 DnD 重新排序
-
+                      // Enable flat DnD reorder for status items
                       sortable: { onReorder: handleStatusReorder },
                       items: [
-                        // 
+                        // Status items (sortable via SortableStatusList)
                         ...effectiveSessionStatuses.map(state => ({
                           id: `nav:state:${state.id}`,
                           title: t(`status.${state.id}`, state.label),
@@ -2832,10 +2492,9 @@ UI 特定的道具
                             onConfigureStatuses: openConfigureStatuses,
                           },
                         })),
-                        // 
+                        // Separator: SortableStatusList splits here — items after become non-sortable trailingItems
                         { id: 'separator:states-flagged', type: 'separator' as const },
-                        // 已标记（尾随、不可排序）
-
+                        // Flagged (trailing, non-sortable)
                         {
                           id: "nav:flagged",
                           title: t("sidebar.flagged"),
@@ -2844,7 +2503,7 @@ UI 特定的道具
                           variant: (sessionFilter?.kind === 'flagged' ? "default" : "ghost") as "default" | "ghost",
                           onClick: handleFlaggedClick,
                         },
-                        // 
+                        // Archived (trailing, non-sortable)
                         {
                           id: "nav:archived",
                           title: t("sidebar.archived"),
@@ -2855,15 +2514,14 @@ UI 特定的道具
                         },
                       ],
                     },
-                    // 
+                    // Labels: navigable header (shows all labeled sessions) + hierarchical tree (drag-and-drop reorder + re-parent)
                     {
                       id: "nav:labels",
                       title: t("sidebar.labels"),
                       icon: Tag,
-                      // 
+                      // Only highlighted when "Labels" itself is selected (not sub-labels)
                       variant: (sessionFilter?.kind === 'label' && sessionFilter.labelId === '__all__') ? "default" as const : "ghost" as const,
-                      // 单击导航到“所有标记的会话”视图
-
+                      // Clicking navigates to "all labeled sessions" view
                       onClick: () => handleLabelClick('__all__'),
                       expandable: true,
                       expanded: isExpanded('nav:labels'),
@@ -2875,11 +2533,9 @@ UI 特定的道具
                       },
                       items: buildLabelSidebarItems(labelTree),
                     },
-                    // --- 分隔符 ---
-
+                    // --- Separator ---
                     { id: "separator:chats-sources", type: "separator" },
-                    // --- 资源和技能部分 ---
-
+                    // --- Sources & Skills Section ---
                     {
                       id: "nav:sources",
                       title: t("sidebar.sources"),
@@ -3017,10 +2673,9 @@ UI 特定的道具
                         },
                       ],
                     },
-                    // --- 分隔符 ---
-
+                    // --- Separator ---
                     { id: "separator:skills-settings", type: "separator" },
-                    // 
+                    // --- Settings ---
                     {
                       id: "nav:settings",
                       title: t("sidebar.settings"),
@@ -3028,7 +2683,7 @@ UI 特定的道具
                       variant: isSettingsNavigation(navState) ? "default" : "ghost",
                       onClick: () => handleSettingsClick(),
                     },
-                    // 
+                    // --- What's New ---
                     {
                       id: "nav:whats-new",
                       title: t("sidebar.whatsNew"),
@@ -3118,7 +2773,7 @@ UI 特定的道具
                         minWidth="min-w-[200px]"
                         onKeyDown={(e: React.KeyboardEvent) => {
                           if (e.key === 'Alt') setFilterAltHeld(true)
-                          // 
+                          // When on the first menu item and pressing Up, refocus the search input
                           if (e.key === 'ArrowUp' && !filterDropdownQuery.trim()) {
                             const menu = (e.target as HTMLElement).closest('[role="menu"]')
                             const items = menu?.querySelectorAll('[role="menuitem"]')
@@ -3161,14 +2816,12 @@ UI 特定的道具
                               value={filterDropdownQuery}
                               onChange={(e) => setFilterDropdownQuery(e.target.value)}
                               onKeyDown={(e) => {
-                                // 当输入为空时，让ArrowDown/ArrowUp模糊输入
-
-                                // 所以 Radix 的本机菜单键盘导航接管
-
+                                // When input is empty, let ArrowDown/ArrowUp blur the input
+                                // so Radix's native menu keyboard navigation takes over
                                 if (!filterDropdownQuery.trim() && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
                                   e.preventDefault()
                                   ;(e.target as HTMLInputElement).blur()
-                                  // 
+                                  // Focus the first menu item so Radix's keyboard navigation activates
                                   const menu = (e.target as HTMLElement).closest('[role="menu"]')
                                   const firstItem = menu?.querySelector('[role="menuitem"]') as HTMLElement | null
                                   firstItem?.focus()
@@ -3192,8 +2845,7 @@ UI 特定的道具
                                     const mode: FilterMode = e.altKey ? 'exclude' : 'include'
                                     const idx = filterDropdownSelectedIdx
                                     if (idx < ms.length) {
-                                      // 切换状态过滤器
-
+                                      // Toggle a status filter
                                       const state = ms[idx]
                                       if (state.id !== pinnedFilters.pinnedStatusId) {
                                         setListFilter(prev => {
@@ -3204,8 +2856,7 @@ UI 特定的道具
                                         })
                                       }
                                     } else {
-                                      // 切换标签过滤器
-
+                                      // Toggle a label filter
                                       const item = ml[idx - ms.length]
                                       if (item && item.id !== pinnedFilters.pinnedLabelId) {
                                         setLabelFilter(prev => {
@@ -3388,8 +3039,7 @@ UI 特定的道具
                                   const isPinned = state.id === pinnedFilters.pinnedStatusId
                                   const currentMode = listFilter.get(state.id)
                                   const isActive = !!currentMode && !isPinned
-                                  // 活动状态→带有模式选项的 DropdownMenuSub（Radix 安全三角形悬停）
-
+                                  // Active status → DropdownMenuSub with mode options (Radix safe-triangle hover)
                                   if (isActive) {
                                     return (
                                       <DropdownMenuSub key={state.id}>
@@ -3420,7 +3070,7 @@ UI 特定的道具
                                       </DropdownMenuSub>
                                     )
                                   }
-                                  // 
+                                  // Inactive / pinned status → simple toggleable item
                                   return (
                                     <AltExcludeTooltip key={state.id} show={filterAltHeld && !isPinned}>
                                       <StyledDropdownMenuItem
@@ -3608,7 +3258,7 @@ UI 特定的道具
                                       const currentMode = listFilter.get(state.id)
                                       const isHighlighted = index === filterDropdownSelectedIdx
                                       const isActive = !!currentMode && !isPinned
-                                      // 
+                                      // Active status → DropdownMenuSub with mode options
                                       if (isActive) {
                                         return (
                                           <DropdownMenuSub key={`flat-status-${state.id}`}>
@@ -3644,7 +3294,7 @@ UI 特定的道具
                                           </DropdownMenuSub>
                                         )
                                       }
-                                      // 
+                                      // Inactive / pinned status → plain div with click-to-toggle
                                       return (
                                         <AltExcludeTooltip key={`flat-status-${state.id}`} show={filterAltHeld && !isPinned}>
                                           <div
@@ -3661,8 +3311,7 @@ UI 特定的道具
                                               })
                                             }}
                                             className={cn(
-                                              // SVG 大小与 StyledDropdownMenuSubTrigger 匹配，因此图标以相同的大小呈现
-
+                                              // SVG sizing matches StyledDropdownMenuSubTrigger so icons render at the same size
                                               "flex cursor-pointer select-none items-center gap-2 rounded-[4px] mx-1 px-2 py-1.5 text-sm [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0",
                                               isHighlighted && "bg-foreground/5",
                                               isPinned && "opacity-50 pointer-events-none",
@@ -3692,7 +3341,7 @@ UI 特定的道具
                                       Labels
                                     </div>
                                     {filterDropdownResults.labels.map((item, index) => {
-                                      // 
+                                      // Offset by state count for unified index
                                       const flatIndex = filterDropdownResults.states.length + index
                                       const isPinned = item.id === pinnedFilters.pinnedLabelId
                                       const currentMode = labelFilter.get(item.id)
@@ -3701,8 +3350,7 @@ UI 特定的道具
                                       const labelDisplay = item.parentPath
                                         ? <><span className="text-muted-foreground">{item.parentPath}</span>{item.label}</>
                                         : item.label
-                                      // 活动标签→带有模式选项的 DropdownMenuSub
-
+                                      // Active label → DropdownMenuSub with mode options
                                       if (isActive) {
                                         return (
                                           <DropdownMenuSub key={`flat-label-${item.id}`}>
@@ -3736,7 +3384,7 @@ UI 特定的道具
                                           </DropdownMenuSub>
                                         )
                                       }
-                                      // 
+                                      // Inactive / pinned label → plain div with click-to-toggle
                                       return (
                                         <AltExcludeTooltip key={`flat-label-${item.id}`} show={filterAltHeld && !isPinned}>
                                           <div
@@ -3753,8 +3401,7 @@ UI 特定的道具
                                               })
                                             }}
                                             className={cn(
-                                              // SVG 大小与 StyledDropdownMenuSubTrigger 匹配，因此图标以相同的大小呈现
-
+                                              // SVG sizing matches StyledDropdownMenuSubTrigger so icons render at the same size
                                               "flex cursor-pointer select-none items-center gap-2 rounded-[4px] mx-1 px-2 py-1.5 text-sm [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0",
                                               isHighlighted && "bg-foreground/5",
                                               isPinned && "opacity-50 pointer-events-none",
@@ -3833,8 +3480,7 @@ UI 特定的道具
             />
             {/* Content: SessionList, SourcesListPanel, or SettingsNavigator based on navigation state */}
             {isSourcesNavigation(navState) && (
-              /*
-               */
+              /* Sources List - filtered by type if sourceFilter is active */
               <SourcesListPanel
                 sources={sources}
                 sourceFilter={sourceFilter}
@@ -3846,8 +3492,7 @@ UI 特定的道具
               />
             )}
             {isSkillsNavigation(navState) && activeWorkspaceId && (
-              /*
-               */
+              /* Skills List */
               <SkillsListPanel
                 skills={skills}
                 workspaceId={activeWorkspaceId}
@@ -3869,8 +3514,7 @@ UI 特定的道具
               />
             )}
             {isAutomationsNavigation(navState) && (
-              /*
-               */
+              /* Automations List - filtered by type if automationFilter is active */
               <AutomationsListPanel
                 automations={automations}
                 automationFilter={automationFilter ? { kind: AUTOMATION_TYPE_TO_FILTER_KIND[automationFilter.automationType] ?? 'all' } : undefined}
@@ -3884,17 +3528,14 @@ UI 特定的道具
               />
             )}
             {isSettingsNavigation(navState) && (
-              /*
-               */
+              /* Settings Navigator */
               <SettingsNavigator
                 selectedSubpage={navState.subpage}
                 onSelectSubpage={(subpage) => handleSettingsClick(subpage)}
               />
             )}
             {isSessionsNavigation(navState) && (
-              /*
-               * 会议列表  
-               */
+              /* Sessions List */
               <>
                 {/* SessionList: Scrollable list of session cards */}
                 {/* Key on sidebarMode forces full remount when switching views, skipping animations */}
@@ -4087,7 +3728,7 @@ UI 特定的道具
               filePath: `${activeWorkspace.rootPath}/labels/config.json`,
             }}
             {...(() => {
-              // 
+              // Spread base config, override context to include which label was right-clicked
               const config = getEditConfig('edit-labels', activeWorkspace.rootPath)
               const targetLabel = editLabelTargetId.current
                 ? findLabelById(labelConfigs, editLabelTargetId.current)
@@ -4196,7 +3837,7 @@ UI 特定的道具
               filePath: `${activeWorkspace.rootPath}/labels/config.json`,
             }}
             {...(() => {
-              // 
+              // Spread base config, override context to include which label was right-clicked
               const config = getEditConfig('add-label', activeWorkspace.rootPath)
               const targetLabel = editLabelTargetId.current
                 ? findLabelById(labelConfigs, editLabelTargetId.current)

@@ -18,7 +18,6 @@
 export {
   PlatformProvider,
   usePlatform,
-  usePlatform,
   type PlatformActions,
   type PlatformProviderProps,
   ShikiThemeProvider,
