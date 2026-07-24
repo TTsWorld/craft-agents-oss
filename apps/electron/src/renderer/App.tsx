@@ -96,9 +96,24 @@ import { rendererLog } from '@/lib/logger'
 import { ActionRegistryProvider } from '@/actions'
 import { toast } from 'sonner'
 
-type AppState = 'loading' | 'onboarding' | 'reauth' | 'workspace-picker' | 'ready'
+/**
+ * App 的顶层状态机，决定当前渲染哪个屏幕。
+ * 典型流转：应用启动 → 'loading' → 检查 setup needs / workspace：
+ *   - 未配置完成 → 'onboarding'（完成引导后 → 'ready'）
+ *   - 已配置但没选 workspace（thin client）→ 'workspace-picker'（选完后 → 'ready'）
+ *   - 已配置且已选 workspace → 'ready'
+ * 完成后停留在 'ready'；'reauth' / reset 会把状态机拉回 'onboarding'。
+ * 判定与切换集中在挂载时的 initialize() 里（见 useEffect）。
+ */
+type AppState =
+  | 'loading' // 启动初始化中：正在检查鉴权状态（getSetupNeeds）/ 获取本窗口 workspace ID，渲染 SplashScreen
+  | 'onboarding' // 首次使用或配置缺失：引导用户配置 LLM provider / 凭证，渲染 OnboardingWizard
+  | 'reauth' // 鉴权过期、需要重新登录：渲染 ReauthScreen（目前流程未启用，保留分支）
+  | 'workspace-picker' // 已配置但未选定 workspace（thin client 场景）：让用户选一个 workspace，渲染 WorkspacePicker
+  | 'ready' // 一切就绪：渲染主界面 AppShell；数据（sessions 等）在此状态下开始加载
 
-/** Type for the Jotai store returned by useStore() */
+
+/** useStore() 返回的 Jotai store 类型 */
 type JotaiStore = ReturnType<typeof getDefaultStore>
 
 type SessionListRefreshOptions = {
@@ -128,9 +143,9 @@ function workspaceDistribution(sessions: Iterable<{ workspaceId?: string }>): Re
 }
 
 /**
- * Helper to handle background task events from the agent.
- * Updates the backgroundTasksAtomFamily based on event type.
- * Extracted to avoid code duplication between streaming and non-streaming paths.
+ * 处理来自 agent 的后台任务事件的辅助函数。
+ * 根据事件类型更新 backgroundTasksAtomFamily。
+ * 抽取出来是为了避免流式与非流式路径之间的代码重复。
  */
 function handleBackgroundTaskEvent(
   store: JotaiStore,
@@ -138,7 +153,7 @@ function handleBackgroundTaskEvent(
   event: { type: string },
   agentEvent: unknown
 ): void {
-  // Type guard for accessing properties
+  // 用于属性访问的类型守卫
   const evt = agentEvent as Record<string, unknown>
   const backgroundTasksAtom = backgroundTasksAtomFamily(sessionId)
 
@@ -162,7 +177,7 @@ function handleBackgroundTaskEvent(
       ])
     }
   } else if (event.type === 'workflow_agent_completed' && 'workflowId' in evt) {
-    // One sub-agent of a running Workflow finished — bump the owning chip's count.
+    // 一个运行中的 Workflow 的子 agent 完成 —— 给所属 chip 的计数 +1。
     const currentTasks = store.get(backgroundTasksAtom)
     store.set(backgroundTasksAtom, currentTasks.map(t =>
       t.type === 'workflow' && t.workflowId === evt.workflowId
@@ -194,10 +209,9 @@ function handleBackgroundTaskEvent(
         : t
     ))
   } else if (event.type === 'task_completed' && 'taskId' in evt) {
-    // Transition the chip to a terminal status (keep it visible with a terminal
-    // icon + click-through to output). The ActiveTasksBar auto-expiry ticker
-    // prunes it after a short linger — we no longer remove it instantly, so the
-    // user sees that the task finished rather than the chip just vanishing.
+    // 将 chip 切换为终态状态（保持可见，显示终态图标 + 点击可查看输出）。
+    // ActiveTasksBar 的自动过期 ticker 会在短暂停留后清除它 —— 我们不再立即移除，
+    // 这样用户能看到任务已完成，而不是 chip 直接消失。
     const status = (evt.status as BackgroundTask['status']) ?? 'completed'
     const currentTasks = store.get(backgroundTasksAtom)
     store.set(backgroundTasksAtom, currentTasks.map(t =>
@@ -212,7 +226,7 @@ function handleBackgroundTaskEvent(
         : t
     ))
   } else if (event.type === 'shell_killed' && 'shellId' in evt) {
-    // Mark shell stopped (lingers briefly, then auto-expires) instead of vanishing.
+    // 将 shell 标记为停止（短暂停留后自动过期），而不是直接消失。
     const currentTasks = store.get(backgroundTasksAtom)
     store.set(backgroundTasksAtom, currentTasks.map(t =>
       t.id === evt.shellId
@@ -220,9 +234,9 @@ function handleBackgroundTaskEvent(
         : t
     ))
   } else if (event.type === 'tool_result' && 'toolUseId' in evt) {
-    // Remove task when it completes - but NOT if this is the initial backgrounding result
-    // Background tasks return immediately with agentId/shell_id/backgroundTaskId,
-    // we should only remove when the task actually completes
+    // 任务完成时移除 —— 但如果这是初始后台化的结果则不移除。
+    // 后台任务会立即返回 agentId/shell_id/backgroundTaskId，
+    // 只有当任务真正完成时才应移除。
     const result = typeof evt.result === 'string' ? evt.result : JSON.stringify(evt.result)
     const isBackgroundingResult = result && (
       /agentId:\s*[a-zA-Z0-9_-]+/.test(result) ||
@@ -234,17 +248,15 @@ function handleBackgroundTaskEvent(
       store.set(backgroundTasksAtom, currentTasks.filter(t => t.toolUseId !== evt.toolUseId))
     }
   } else if (event.type === 'complete' || event.type === 'interrupted' || event.type === 'error') {
-    // Orphan backstop: when the turn ends, any chip still marked 'running' belongs
-    // to a background sub-agent whose per-turn subprocess is being torn down — with
-    // the default (keep-alive OFF) model it has almost certainly died. Flip it to
-    // 'orphaned' (visually distinct, auto-expires) so the bar never shows a false
-    // "running" forever. This is the reliability fix that lets the bar be re-enabled.
+    // 孤儿兜底：当一个 turn 结束时，任何仍标记为 'running' 的 chip 都属于某个后台子 agent，
+    // 而该子 agent 的 per-turn 子进程正在被销毁 —— 在默认（keep-alive 关闭）模型下，
+    // 它几乎肯定已经死了。将其切换为 'orphaned'（视觉上可区分，且会自动过期），
+    // 这样任务栏永远不会显示一个虚假的 "running"。这是让任务栏能够重新启用的可靠性修复。
     //
-    // WS2 keep-alive: when the main process reports `backgroundTasksAlive` on the
-    // complete event, the persistent query stays open across turns and the tasks
-    // genuinely survive — so do NOT orphan them here. They stay 'running' until a
-    // real `task_completed` arrives (routed via the between-turns background sink).
-    // Without this guard the chip lies "orphaned" while the agent is still working.
+    // WS2 keep-alive：当主进程在 complete 事件中上报 `backgroundTasksAlive` 时，
+    // 持久化查询会跨 turn 保持打开，任务确实存活 —— 所以不要在这里把它们标记为孤儿。
+    // 它们会保持 'running'，直到收到真正的 `task_completed`（经由 turn 之间的后台 sink 路由）。
+    // 如果没有这个保护，agent 仍在工作时 chip 就会谎报 "orphaned"。
     if (evt.backgroundTasksAlive === true) {
       return
     }
@@ -294,23 +306,23 @@ function SessionLoadErrorScreen({
 export default function App() {
   const { t } = useTranslation()
 
-  // Initialize renderer perf tracking early (debug mode = running from source)
-  // Uses useEffect with empty deps to run once on mount before any session switches
+  // 尽早初始化 renderer 性能追踪（debug 模式 = 从源码运行）
+  // 使用空依赖的 useEffect，在任何 session 切换之前于挂载时运行一次
   useEffect(() => {
     window.electronAPI.isDebugMode().then((isDebug) => {
       initRendererPerf(isDebug)
     })
   }, [])
 
-  // App state: loading -> check auth -> onboarding or ready
+  // App 状态：loading -> 检查鉴权 -> onboarding 或 ready
   const [appState, setAppState] = useState<AppState>('loading')
   const [setupNeeds, setSetupNeeds] = useState<SetupNeeds | null>(null)
 
-  // Per-session Jotai atom setters for isolated updates
-  // NOTE: No sessionsAtom - we don't store a Session[] array anywhere to prevent memory leaks
-  // Instead we use:
-  // - sessionMetaMapAtom for lightweight listing
-  // - sessionAtomFamily(id) for individual session data
+  // 用于隔离更新的 per-session Jotai atom setter
+  // 注意：没有 sessionsAtom —— 我们不在任何地方存储 Session[] 数组，以防止内存泄漏。
+  // 取而代之，我们使用：
+  // - sessionMetaMapAtom：用于轻量级列表
+  // - sessionAtomFamily(id)：用于单个 session 数据
   const initializeSessions = useSetAtom(initializeSessionsAtom)
   const addSession = useSetAtom(addSessionAtom)
   const removeSession = useSetAtom(removeSessionAtom)
@@ -318,8 +330,8 @@ export default function App() {
   const replaceLoadedSession = useSetAtom(replaceLoadedSessionAtom)
   const store = useStore()
 
-  // Helper to update a session by ID with partial fields
-  // Uses per-session atom directly instead of updating an array
+  // 用部分字段按 ID 更新 session 的辅助函数
+  // 直接使用 per-session atom，而不是更新整个数组
   const updateSessionById = useCallback((
     sessionId: string,
     updates: Partial<Session> | ((session: Session) => Partial<Session>)
@@ -332,17 +344,17 @@ export default function App() {
   }, [updateSessionDirect])
 
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
-  // Window's workspace ID — shared atom so Root/ThemeProvider stays in sync on switch
+  // 窗口的 workspace ID —— 共享 atom，使 Root/ThemeProvider 在切换时保持同步
   const [windowWorkspaceId, setWindowWorkspaceId] = useAtom(windowWorkspaceIdAtom)
 
-  // Derive workspace slug for SDK skill qualification
+  // 推导 workspace slug，用于 SDK skill 资格判定
   const windowWorkspaceSlug = useMemo(() => {
     if (!windowWorkspaceId) return null
     const workspace = workspaces.find(w => w.id === windowWorkspaceId)
     return workspace?.slug ?? windowWorkspaceId
   }, [windowWorkspaceId, workspaces])
 
-  // Get initial sessionId and focused mode from URL params (for "Open in New Window" feature)
+  // 从 URL 参数获取初始 sessionId 和 focused 模式（用于「在新窗口打开」功能）
   const { initialSessionId, isFocusedMode } = useMemo(() => {
     const params = new URLSearchParams(window.location.search)
     return {
@@ -351,82 +363,81 @@ export default function App() {
     }
   }, [])
 
-  // Derive remote workspace ID for session matching in NavigationContext
+  // 推导远程 workspace ID，供 NavigationContext 做 session 匹配
   const windowRemoteWorkspaceId = useMemo(() => {
     if (!windowWorkspaceId) return null
     const workspace = workspaces.find(w => w.id === windowWorkspaceId)
     return workspace?.remoteServer?.remoteWorkspaceId ?? null
   }, [windowWorkspaceId, workspaces])
 
-  // LLM connections with authentication status (for provider selection)
+  // 带鉴权状态的 LLM 连接（用于选择 provider）
   const [llmConnections, setLlmConnections] = useState<LlmConnectionWithStatus[]>([])
-  // Workspace default LLM connection (for new sessions)
+  // workspace 的默认 LLM 连接（用于新 session）
   const [workspaceDefaultLlmConnection, setWorkspaceDefaultLlmConnection] = useState<string | undefined>()
-  // Global default LLM connection slug (from app config)
+  // 全局默认 LLM 连接 slug（来自 app 配置）
   const [defaultLlmConnectionSlug, setDefaultLlmConnectionSlug] = useState<string | undefined>()
 
-  // Derive connection default model override from the default LLM connection
+  // 从默认 LLM 连接推导连接的默认 model 覆盖值
   const defaultConnection = useMemo(() => {
     return llmConnections.find(c => c.slug === defaultLlmConnectionSlug) ?? null
   }, [llmConnections, defaultLlmConnectionSlug])
 
   const [menuNewChatTrigger, setMenuNewChatTrigger] = useState(0)
-  // Permission requests per session (queue to handle multiple concurrent requests)
+  // per-session 的权限请求（用队列处理多个并发请求）
   const [pendingPermissions, setPendingPermissions] = useState<Map<string, PermissionRequest[]>>(new Map())
-  // Credential requests per session (queue to handle multiple concurrent requests)
+  // per-session 的凭证请求（用队列处理多个并发请求）
   const [pendingCredentials, setPendingCredentials] = useState<Map<string, CredentialRequest[]>>(new Map())
-  // Draft composer state per session (text + attachment refs), preserved across mode
-  // switches, conversation changes, and app restarts. Using a ref avoids re-renders
-  // during typing; attachments are stored as lightweight refs (path + name) and
-  // hydrated via readFileAttachment() on session switch.
+  // per-session 的草稿编辑器状态（文本 + 附件引用），跨模式切换、会话变更
+  // 和应用重启保留。使用 ref 可避免输入时触发重渲染；附件以轻量引用
+  // （path + name）存储，在 session 切换时通过 readFileAttachment() 水合。
   const sessionDraftsRef = useRef<Map<string, SessionDraft>>(new Map())
-  // Unified session options for all session-scoped settings
+  // 所有 session 级设置的统一 session options
   const [sessionOptions, setSessionOptions] = useState<Map<string, SessionOptions>>(new Map())
 
-  // Theme state (app-level only)
+  // 主题状态（仅 app 级）
   const [appTheme, setAppTheme] = useState<ThemeOverrides | null>(null)
-  // Reset confirmation dialog
+  // 重置确认对话框
   const [showResetDialog, setShowResetDialog] = useState(false)
 
-  // Auto-update state
+  // 自动更新状态
   const updateChecker = useUpdateChecker()
 
-  // Splash screen state - tracks when app is fully ready (all data loaded)
+  // 启动屏状态 —— 追踪 app 是否完全就绪（所有数据已加载）
   const [sessionsLoaded, setSessionsLoaded] = useState(false)
   const [sessionLoadError, setSessionLoadError] = useState<string | null>(null)
   const [splashExiting, setSplashExiting] = useState(false)
   const [splashHidden, setSplashHidden] = useState(false)
 
-  // Notifications enabled state (from app settings)
+  // 通知启用状态（来自 app 设置）
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
 
-  // Sources and skills for badge extraction
+  // 用于 badge 提取的 sources 和 skills
   const sources = useAtomValue(sourcesAtom)
   const skills = useAtomValue(skillsAtom)
 
-  // Compute if app is fully ready (all data loaded)
+  // 计算 app 是否完全就绪（所有数据已加载）
   const isFullyReady = appState === 'ready' && sessionsLoaded
 
-  // Trigger splash exit animation when fully ready
+  // 完全就绪时触发启动屏退出动画
   useEffect(() => {
     if (isFullyReady && !splashExiting) {
       setSplashExiting(true)
     }
   }, [isFullyReady, splashExiting])
 
-  // Handler for when splash exit animation completes
+  // 启动屏退出动画完成时的处理函数
   const handleSplashExitComplete = useCallback(() => {
     setSplashHidden(true)
   }, [])
 
-  // Apply theme via hook (injects CSS variables)
-  // shikiTheme is passed to ShikiThemeProvider to ensure correct syntax highlighting
-  // theme for dark-only themes in light system mode
+  // 通过 hook 应用主题（注入 CSS 变量）
+  // shikiTheme 传给 ShikiThemeProvider，以确保在浅色系统模式下
+  // dark-only 主题仍能获得正确的语法高亮主题
   const { shikiTheme, isDark } = useTheme({ appTheme })
 
-  // Ref for sessionOptions to access current value in event handlers without re-registering
+  // sessionOptions 的 ref，用于在事件处理函数中访问当前值而无需重新注册
   const sessionOptionsRef = useRef(sessionOptions)
-  // Keep ref in sync with state
+  // 让 ref 与 state 保持同步
   useEffect(() => {
     sessionOptionsRef.current = sessionOptions
   }, [sessionOptions])
@@ -483,7 +494,7 @@ export default function App() {
     }
   }, [applyPermissionModeState])
 
-  // Event processor hook - handles all agent events through pure functions
+  // 事件处理 hook —— 通过纯函数处理所有 agent 事件
   const { processAgentEvent, clearStreamingState } = useEventProcessor()
 
   const syncSessionOptionsFromSession = useCallback((session: Session) => {
@@ -538,11 +549,11 @@ export default function App() {
     try {
       const loadedSessions = await window.electronAPI.getSessions()
 
-      // Initialize per-session atoms and metadata map
-      // NOTE: No sessionsAtom used - sessions are only in per-session atoms
+      // 初始化 per-session atoms 和 metadata map
+      // 注意：没有使用 sessionsAtom —— session 只存在于 per-session atoms 中
       initializeSessions(loadedSessions)
 
-      // Initialize unified sessionOptions from session data
+      // 从 session 数据初始化统一的 sessionOptions
       const optionsMap = new Map<string, SessionOptions>()
       for (const s of loadedSessions) {
         const hasNonDefaultMode = s.permissionMode && s.permissionMode !== 'ask'
@@ -623,12 +634,11 @@ export default function App() {
 
       const loadedSessionIds = store.get(loadedSessionsAtom)
 
-      // Single transactional atom write — all cross-atom mutations happen
-      // inside one Jotai write function so React subscribers see one
-      // consistent update instead of intermediate states.
+      // 单次事务性 atom 写入 —— 所有跨 atom 的变更都在一个 Jotai write 函数内完成，
+      // 这样 React 订阅者看到的是一次一致的更新，而不是中间状态。
       const nextMetaMap = store.set(refreshSessionsMetadataAtom, { sessions, loadedSessionIds, removeMissing })
 
-      // Sync app-level state (React hooks / non-atom concerns) after the atom transaction
+      // 在 atom 事务之后同步 app 级状态（React hooks / 非 atom 相关部分）
       for (const session of sessions) {
         syncSessionOptionsFromSession(session)
       }
@@ -652,7 +662,7 @@ export default function App() {
     }
   }, [store, syncSessionOptionsFromSession, reconcilePermissionModeState, windowWorkspaceId, windowRemoteWorkspaceId])
 
-  // Stale session watchdog — catches stuck sessions that the reconnect protocol misses
+  // Stale session 看门狗 —— 捕获 reconnect 协议遗漏的卡住 session
   const { trackSessionActivity } = useStaleSessionRecovery({
     store,
     refreshSessionFromServer,
@@ -664,25 +674,25 @@ export default function App() {
     return connections.find(c => c.isDefault)?.slug ?? connections[0]?.slug
   }, [])
 
-  // Refresh LLM connections from config (called on workspace change and after connection updates)
+  // 从配置刷新 LLM 连接（在 workspace 切换以及连接更新后调用）
   const refreshLlmConnections = useCallback(async () => {
     const connections = await window.electronAPI.listLlmConnectionsWithStatus()
     setLlmConnections(connections)
     setDefaultLlmConnectionSlug(resolveDefaultConnectionSlug(connections))
-    // Also refresh workspace default
+    // 同时刷新 workspace 默认值
     if (windowWorkspaceId) {
       const settings = await window.electronAPI.getWorkspaceSettings(windowWorkspaceId)
       setWorkspaceDefaultLlmConnection(settings?.defaultLlmConnection)
     }
   }, [resolveDefaultConnectionSlug, windowWorkspaceId])
 
-  // Handle onboarding completion
+  // 处理 onboarding 完成
   const handleOnboardingComplete = useCallback(async () => {
     try {
-      // Reload workspaces after onboarding
+      // onboarding 之后重新加载 workspaces
       const ws = await window.electronAPI.getWorkspaces()
       if (ws.length > 0) {
-        // Switch to workspace in-place (no window close/reopen)
+        // 原地切换到 workspace（不关闭/重开窗口）
         await window.electronAPI.switchWorkspace(ws[0].id)
         setWindowWorkspaceId(ws[0].id)
         setWorkspaces(ws)
@@ -691,22 +701,22 @@ export default function App() {
       }
     } catch (error) {
       console.error('[App] Failed to load workspaces after onboarding:', error)
-      // Still transition to ready — the app can recover via reconnect
+      // 仍然切换到 ready —— app 可以通过 reconnect 恢复
     }
     setAppState('ready')
   }, [])
 
-  // Onboarding hook — onConfigSaved fires immediately when billing is saved,
-  // ensuring connection state updates before the wizard closes.
+  // Onboarding hook —— onConfigSaved 在 billing 保存后立即触发，
+  // 确保连接状态在向导关闭前更新。
   const onboarding = useOnboarding({
     onComplete: handleOnboardingComplete,
     onConfigSaved: refreshLlmConnections,
     initialSetupNeeds: setupNeeds || undefined,
   })
 
-  // Reauth login handler - placeholder (reauth is not currently used)
+  // Reauth 登录处理函数 —— 占位（reauth 目前未使用）
   const handleReauthLogin = useCallback(async () => {
-    // Re-check setup needs
+    // 重新检查 setup needs
     const needs = await window.electronAPI.getSetupNeeds()
     if (needs.isFullyConfigured) {
       setAppState('ready')
@@ -716,16 +726,16 @@ export default function App() {
     }
   }, [])
 
-  // Reauth reset handler - open reset confirmation dialog
+  // Reauth 重置处理函数 —— 打开重置确认对话框
   const handleReauthReset = useCallback(() => {
     setShowResetDialog(true)
   }, [])
 
-  // Check auth state and get window's workspace ID on mount
+  // 挂载时检查鉴权状态并获取窗口的 workspace ID
   useEffect(() => {
     const initialize = async () => {
       try {
-        // Get this window's workspace ID (passed via URL query param from main process)
+        // 获取这个窗口的 workspace ID（由主进程通过 URL query 参数传入）
         const wsId = await window.electronAPI.getWindowWorkspace()
         setWindowWorkspaceId(wsId)
 
@@ -733,20 +743,20 @@ export default function App() {
         setSetupNeeds(needs)
 
         if (needs.isFullyConfigured) {
-          // If no workspace is selected (thin client without CRAFT_WORKSPACE_ID),
-          // show workspace picker before entering the main app
+          // 如果未选择 workspace（没有 CRAFT_WORKSPACE_ID 的瘦客户端），
+          // 在进入主应用前显示 workspace 选择器
           if (!wsId) {
             setAppState('workspace-picker')
           } else {
             setAppState('ready')
           }
         } else {
-          // New user or needs setup - show onboarding
+          // 新用户或需要配置 —— 显示 onboarding
           setAppState('onboarding')
         }
       } catch (error) {
         console.error('Failed to check auth state:', error)
-        // If check fails, show onboarding to be safe
+        // 如果检查失败，稳妥起见显示 onboarding
         setAppState('onboarding')
       }
     }
@@ -754,31 +764,31 @@ export default function App() {
     initialize()
   }, [])
 
-  // Session selection state
+  // Session 选择状态
   const [sessionSelection, setSession] = useSession()
 
-  // Notification system - shows native OS notifications and badge count
+  // 通知系统 —— 显示原生 OS 通知和 badge 计数
   const handleNavigateToSession = useCallback((sessionId: string) => {
-    // Navigate to the session via central routing (uses allSessions filter)
+    // 通过中央路由导航到 session（使用 allSessions 过滤器）
     navigate(routes.view.allSessions(sessionId))
   }, [])
 
   const { isWindowFocused, showSessionNotification } = useNotifications({
     workspaceId: windowWorkspaceId,
-    // NOTE: sessions removed - hook now uses sessionMetaMapAtom internally
-    // to prevent closures from retaining full message arrays
+    // 注意：sessions 已移除 —— hook 现在内部使用 sessionMetaMapAtom，
+    // 防止闭包持有完整的消息数组
     onNavigateToSession: handleNavigateToSession,
     enabled: notificationsEnabled,
   })
 
-  // Load workspaces, sessions, model, notifications setting, and drafts when app is ready
+  // app 就绪时加载 workspaces、sessions、model、通知设置和草稿
   useEffect(() => {
     if (appState !== 'ready') return
 
     window.electronAPI.getWorkspaces().then(setWorkspaces)
     window.electronAPI.getNotificationsEnabled().then(setNotificationsEnabled).catch(() => {})
 
-    // Show actionable toast for missing system dependencies (Windows only)
+    // 针对缺失系统依赖显示可操作的 toast（仅 Windows）
     window.electronAPI.getSystemWarnings().then((warnings) => {
       if (warnings.vcredistMissing) {
         toast.warning(t('toast.vcRedistNotFound'), {
@@ -792,24 +802,24 @@ export default function App() {
       }
     }).catch(() => { /* non-fatal startup check */ })
     void loadSessionsFromServer()
-    // Load LLM connections with authentication status
+    // 加载带鉴权状态的 LLM 连接
     window.electronAPI.listLlmConnectionsWithStatus().then((connections) => {
       setLlmConnections(connections)
       setDefaultLlmConnectionSlug(resolveDefaultConnectionSlug(connections))
     })
-    // Load persisted input drafts into ref (no re-render needed).
-    // Attachment files are not read here — hydration happens lazily when the session
-    // is opened so app startup isn't delayed by reading potentially large files.
+    // 将持久化的输入草稿加载到 ref（不需要重渲染）。
+    // 此处不读取附件文件 —— 水合在 session 打开时惰性进行，
+    // 这样 app 启动不会被读取潜在的大文件所拖延。
     window.electronAPI.getAllDrafts().then((drafts) => {
       if (Object.keys(drafts).length > 0) {
         sessionDraftsRef.current = new Map(Object.entries(drafts))
       }
     })
-    // Load app-level theme
+    // 加载 app 级主题
     window.electronAPI.getAppTheme().then(setAppTheme)
   }, [appState, loadSessionsFromServer, resolveDefaultConnectionSlug])
 
-  // Subscribe to theme change events (live updates when theme.json changes)
+  // 订阅主题变更事件（theme.json 变更时实时更新）
   useEffect(() => {
     const cleanupApp = window.electronAPI.onAppThemeChange((theme) => {
       setAppTheme(theme)
@@ -819,7 +829,7 @@ export default function App() {
     }
   }, [])
 
-  // Subscribe to LLM connections change events (live updates when models are fetched)
+  // 订阅 LLM 连接变更事件（拉取 model 时实时更新）
   useEffect(() => {
     const cleanup = window.electronAPI.onLlmConnectionsChanged(() => {
       refreshLlmConnections()
@@ -827,31 +837,31 @@ export default function App() {
     return () => { cleanup() }
   }, [refreshLlmConnections])
 
-  // Refresh LLM connections and workspace default when workspace changes
+  // workspace 变更时刷新 LLM 连接和 workspace 默认值
   useEffect(() => {
     if (windowWorkspaceId) {
       refreshLlmConnections()
     }
   }, [windowWorkspaceId, refreshLlmConnections])
 
-  // Listen for session events - uses centralized event processor for consistent state transitions
+  // 监听 session 事件 —— 使用集中式事件处理器以保证状态转换的一致性
   //
-  // SOURCE OF TRUTH LOGIC:
-  // - During streaming (atom.isProcessing = true): Atom is source of truth
-  //   All events read from and write to atom. This preserves streaming data.
-  // - When not streaming: React state is source of truth
-  //   Events read/write React state, which syncs to atoms via useEffect.
-  // - Handoff events (complete, error, etc.): End streaming, sync atom → React state
+  // 事实源（SOURCE OF TRUTH）逻辑：
+  // - 流式期间（atom.isProcessing = true）：Atom 是事实源
+  //   所有事件都从 atom 读取并写入 atom，以此保留流式数据。
+  // - 非流式期间：React state 是事实源
+  //   事件读写 React state，后者通过 useEffect 同步到 atoms。
+  // - Handoff 事件（complete、error 等）：结束流式，把 atom 同步回 React state
   //
-  // This is simpler and more robust than checking event types - we just ask
-  // "is this session currently streaming?" and route accordingly.
+  // 这比检查事件类型更简单、更健壮 —— 我们只需问
+  // 「这个 session 当前正在流式吗？」并据此路由。
   useEffect(() => {
-    // Handoff events signal end of streaming - need to sync back to React state
-    // Also includes todo_state_changed so status updates immediately reflect in sidebar
-    // async_operation included so shimmer effect on session titles updates in real-time
+    // Handoff 事件标志着流式结束 —— 需要同步回 React state
+    // 同时包含 todo_state_changed，使状态更新立即反映到侧边栏
+    // 包含 async_operation，使 session 标题的 shimmer 效果实时更新
     const handoffEventTypes = new Set(['complete', 'error', 'interrupted', 'typed_error', 'session_status_changed', 'session_metadata_changed', 'session_flagged', 'session_unflagged', 'name_changed', 'labels_changed', 'project_id_changed', 'title_generated', 'async_operation'])
 
-    // Helper to handle side effects (same logic for both paths)
+    // 处理副作用的辅助函数（两条路径逻辑相同）
     const handleEffects = (effects: Effect[], sessionId: string, eventType: string) => {
       for (const effect of effects) {
         switch (effect.type) {
@@ -863,7 +873,7 @@ export default function App() {
               return next
             })
 
-            // Native notification for approval-required pauses (same gating as completion notifications)
+            // 针对需要审批的暂停发送原生通知（与完成通知相同的门控）
             const notifySession = store.get(sessionAtomFamily(sessionId))
             if (notifySession && !notifySession.hidden) {
               const isAdminPrompt = effect.request.type === 'admin_approval'
@@ -883,7 +893,7 @@ export default function App() {
                 changedBy: effect.changedBy,
               }, 'event')
             } else {
-              // Backward compatibility: apply mode optimistically then reconcile authoritative state.
+              // 向后兼容：乐观地应用 mode，然后再对账权威状态。
               setSessionOptions(prevOpts => {
                 const next = new Map(prevOpts)
                 const current = next.get(effect.sessionId) ?? defaultSessionOptions
@@ -904,8 +914,8 @@ export default function App() {
             break
           }
           case 'restore_input': {
-            // Queued messages were removed from chat on abort — restore their text to the input field.
-            // Append to existing draft (user may have started typing) rather than overwrite.
+            // 排队的消息在中断时已从聊天中移除 —— 把它们的文本恢复到输入框。
+            // 追加到现有草稿（用户可能已经开始输入）而不是覆盖。
             const existingDraft = sessionDraftsRef.current.get(sessionId)
             const existingText = coerceInputText(existingDraft?.text)
             const restoredText = coerceInputText(effect.text)
@@ -913,8 +923,8 @@ export default function App() {
               ? `${existingText}\n\n${restoredText}`
               : restoredText
             handleInputChange(sessionId, restored)
-            // handleInputChange updates the ref but ChatPage has local state.
-            // Dispatch a custom event so ChatPage re-reads the draft.
+            // handleInputChange 更新 ref，但 ChatPage 有自己的 local state。
+            // 派发一个自定义事件，让 ChatPage 重新读取草稿。
             window.dispatchEvent(new CustomEvent('craft:restore-input', {
               detail: { sessionId, text: restored },
             }))
@@ -927,7 +937,7 @@ export default function App() {
         }
       }
 
-      // Clear pending permissions and credentials on complete
+      // complete 时清除待处理的权限和凭证
       if (eventType === 'complete') {
         setPendingPermissions(prevPerms => {
           if (prevPerms.has(sessionId)) {
@@ -954,7 +964,7 @@ export default function App() {
       const sessionId = event.sessionId
       const workspaceId = windowWorkspaceId ?? ''
 
-      // Session lifecycle events are handled explicitly (not by the agent event processor).
+      // Session 生命周期事件被显式处理（不交给 agent event processor）。
       if (event.type === 'session_created') {
         window.electronAPI.getSessionMessages(sessionId)
           .then((createdSession: Session | null) => {
@@ -981,70 +991,69 @@ export default function App() {
 
       const agentEvent = event as unknown as AgentEvent
 
-      // Track activity for stale session watchdog
+      // 为 stale session 看门狗追踪活动
       trackSessionActivity(sessionId)
 
-      // Dispatch window event when compaction completes
-      // This allows FreeFormInput to sequence the plan execution message after compaction
-      // Note: markCompactionComplete is called on the backend (sessions.ts) to ensure
-      // it happens even if CMD+R occurs during compaction
+      // compaction 完成时派发 window 事件
+      // 这让 FreeFormInput 能在 compaction 之后排队执行 plan 执行消息
+      // 注意：markCompactionComplete 在后端（sessions.ts）调用，以确保
+      // 即使 compaction 期间发生 CMD+R 也能执行
       if (event.type === 'info' && event.statusType === 'compaction_complete') {
         window.dispatchEvent(new CustomEvent('craft:compaction-complete', {
           detail: { sessionId }
         }))
       }
 
-      // Check if session is currently streaming (atom is source of truth)
+      // 检查 session 当前是否在流式（atom 是事实源）
       const atomSession = store.get(sessionAtomFamily(sessionId))
       const isStreaming = atomSession?.isProcessing === true
       const isHandoff = handoffEventTypes.has(event.type)
 
-      // During streaming OR for handoff events: use atom as source of truth
-      // This ensures all events during streaming see the complete state
+      // 流式期间或 handoff 事件：以 atom 为事实源
+      // 这确保流式期间所有事件都能看到完整状态
       if (isStreaming || isHandoff) {
         const currentSession = atomSession ?? null
 
-        // Process the event
+        // 处理事件
         const { session: updatedSession, effects } = processAgentEvent(
           agentEvent,
           currentSession,
           workspaceId
         )
 
-        // Update atom directly (UI sees update immediately)
+        // 直接更新 atom（UI 立即看到更新）
         updateSessionDirect(sessionId, () => updatedSession)
 
-        // Handle side effects
+        // 处理副作用
         handleEffects(effects, sessionId, event.type)
 
-        // Handle background task events
+        // 处理后台任务事件
         handleBackgroundTaskEvent(store, sessionId, event, agentEvent)
 
-        // For handoff events, update metadata map for list display
-        // NOTE: No sessionsAtom to sync - atom and metadata are the source of truth
+        // 对 handoff 事件，更新 metadata map 以供列表显示
+        // 注意：没有 sessionsAtom 需要同步 —— atom 和 metadata 才是事实源
         if (isHandoff) {
-          // Update metadata map
+          // 更新 metadata map
           const metaMap = store.get(sessionMetaMapAtom)
           const newMetaMap = new Map(metaMap)
           newMetaMap.set(sessionId, extractSessionMeta(updatedSession))
           store.set(sessionMetaMapAtom, newMetaMap)
 
-          // Show notification on complete (when window is not focused)
-          // Skip hidden sessions (mini-agent sessions) - they shouldn't trigger notifications
+          // complete 时显示通知（当窗口未聚焦时）
+          // 跳过隐藏 session（mini-agent session）—— 它们不应触发通知
           if (event.type === 'complete' && !updatedSession.hidden) {
-            // Get the last assistant/plan message as preview
+            // 取最后一条 assistant/plan 消息作为预览
             const lastMessage = updatedSession.messages.findLast(
               m => (m.role === 'assistant' || m.role === 'plan') && !m.isIntermediate
             )
-            // Strip markdown so OS notifications display clean plain text
+            // 去掉 markdown，让 OS 通知显示干净纯文本
             const rawPreview = lastMessage?.content?.substring(0, 200) || undefined
             const preview = rawPreview ? stripMarkdown(rawPreview).substring(0, 100) || undefined : undefined
             showSessionNotification(updatedSession, preview)
 
-            // In-app complement to the OS notification: when a *background*
-            // session (one not shown in any open panel) finishes, queue a chip
-            // above the chat. The OS notification above is suppressed while the
-            // window is focused, so the chip is the only completion signal then.
+            // OS 通知的应用内补充：当一个*后台* session（未在任何打开面板中显示的）
+            // 完成时，在聊天上方排队一个 chip。上面的 OS 通知在窗口聚焦时被抑制，
+            // 所以那时 chip 是唯一的完成信号。
             if (
               store.get(showBackgroundFinishedChipAtom) &&
               !store.get(visibleSessionIdsAtom).has(sessionId)
@@ -1061,7 +1070,7 @@ export default function App() {
         return
       }
 
-      // Not streaming: use per-session atoms directly (no sessionsAtom)
+      // 非流式：直接使用 per-session atoms（没有 sessionsAtom）
       const currentSession = store.get(sessionAtomFamily(sessionId))
 
       const { session: updatedSession, effects } = processAgentEvent(
@@ -1070,16 +1079,16 @@ export default function App() {
         workspaceId
       )
 
-      // Handle side effects
+      // 处理副作用
       handleEffects(effects, sessionId, event.type)
 
-      // Handle background task events
+      // 处理后台任务事件
       handleBackgroundTaskEvent(store, sessionId, event, agentEvent)
 
-      // Update per-session atom
+      // 更新 per-session atom
       updateSessionDirect(sessionId, () => updatedSession)
 
-      // Update metadata map
+      // 更新 metadata map
       const metaMap = store.get(sessionMetaMapAtom)
       const newMetaMap = new Map(metaMap)
       newMetaMap.set(sessionId, extractSessionMeta(updatedSession))
@@ -1103,12 +1112,12 @@ export default function App() {
     reconcilePermissionModeState,
   ])
 
-  // Transport reconnect recovery — refresh session metadata plus active/processing
-  // session content after stale reconnects.
+  // Transport 重连恢复 —— 在 stale 重连后刷新 session metadata 以及
+  // active/processing session 的内容。
   useEffect(() => {
     const cleanup = window.electronAPI.onReconnected(async (isStale: boolean) => {
       if (!isStale) {
-        // Server replayed buffered events — we're caught up, nothing to do
+        // 服务器重放了缓冲事件 —— 我们已追上进度，无需处理
         console.info('[App] Reconnected with event replay — no refresh needed')
         return
       }
@@ -1125,13 +1134,13 @@ export default function App() {
 
       console.info(`[App] Stale reconnect — refreshing ${refreshIds.length} session(s):`, refreshIds)
 
-      // Refresh full message content only for the active session plus any
-      // session still marked processing after the metadata refresh.
+      // 只为 active session 以及 metadata 刷新后仍标记为 processing 的 session
+      // 刷新完整消息内容。
       for (const sessionId of refreshIds) {
         let refreshResult = await refreshSessionFromServer(sessionId)
         if (refreshResult !== 'refreshed') {
-          // Server may need time to restart session subprocess after reconnect,
-          // or it may still be lazily loading session messages.
+          // 服务器可能需要时间在重连后重启 session 子进程，
+          // 或者可能仍在惰性加载 session 消息。
           for (const delay of [2000, 4000]) {
             console.warn(`[App] Retrying session refresh for ${sessionId} after ${delay}ms (${refreshResult})`)
             await new Promise(r => setTimeout(r, delay))
@@ -1141,8 +1150,8 @@ export default function App() {
         }
       }
 
-      // Final fallback: if the active session is still empty, force a reload
-      // even when the session is already marked loaded.
+      // 最终兜底：如果 active session 仍为空，即使该 session 已标记为 loaded，
+      // 也强制重新加载。
       if (sessionSelection.selected) {
         const session = store.get(sessionAtomFamily(sessionSelection.selected))
         if (session && (!session.messages || session.messages.length === 0)) {
@@ -1158,7 +1167,7 @@ export default function App() {
     return cleanup
   }, [store, sessionSelection.selected, refreshSessionFromServer, refreshSessionListMetadataFromServer])
 
-  // Listen for menu bar events
+  // 监听菜单栏事件
   useEffect(() => {
     const unsubNewChat = window.electronAPI.onMenuNewChat(() => {
       setMenuNewChatTrigger(n => n + 1)
@@ -1178,24 +1187,24 @@ export default function App() {
 
   const handleCreateSession = useCallback(async (workspaceId: string, options?: import('../shared/types').CreateSessionOptions): Promise<Session> => {
     const session = await window.electronAPI.createSession(workspaceId, options)
-    // Add to per-session atom and metadata map (no sessionsAtom)
+    // 添加到 per-session atom 和 metadata map（没有 sessionsAtom）
     addSession(session)
     syncSessionOptionsFromSession(session)
 
     return session
   }, [addSession, syncSessionOptionsFromSession])
 
-  // Deep link navigation is initialized later after handleInputChange is defined
+  // 深链导航在 handleInputChange 定义之后初始化
 
   const handleDeleteSession = useCallback(async (sessionId: string, skipConfirmation = false): Promise<boolean> => {
-    // Show confirmation dialog before deleting (unless skipped or session is empty)
+    // 删除前显示确认对话框（除非跳过或 session 为空）
     if (!skipConfirmation) {
-      // Check if session has any messages using session metadata from Jotai store
-      // We use store.get() instead of closing over sessions to prevent memory leaks
-      // (closures would retain the full sessions array with all messages)
+      // 使用 Jotai store 中的 session metadata 检查 session 是否有任何消息
+      // 我们用 store.get() 而不是闭包捕获 sessions，以防止内存泄漏
+      // （闭包会持有完整的 sessions 数组及其所有消息）
       const metaMap = store.get(sessionMetaMapAtom)
       const meta = metaMap.get(sessionId)
-      // Session is empty if it has no lastFinalMessageId (no assistant responses) and no name (set on first user message)
+      // 如果 session 没有 lastFinalMessageId（没有 assistant 回复）且没有 name（在首条用户消息时设置），则视为空
       const isEmpty = !meta || (!meta.lastFinalMessageId && !meta.name)
 
       if (!isEmpty) {
@@ -1205,12 +1214,12 @@ export default function App() {
     }
 
     await window.electronAPI.deleteSession(sessionId)
-    // Remove from per-session atom and metadata map (no sessionsAtom)
+    // 从 per-session atom 和 metadata map 移除（没有 sessionsAtom）
     removeSession(sessionId)
     return true
   }, [store, removeSession])
 
-  // Auto-delete handler for empty sessions (fire-and-forget, no confirmation)
+  // 空 session 的自动删除处理函数（fire-and-forget，无确认）
   const handleAutoDeleteEmptySession = useCallback((sessionId: string) => {
     window.electronAPI.deleteSession(sessionId)
     removeSession(sessionId)
@@ -1237,20 +1246,20 @@ export default function App() {
   }, [updateSessionById])
 
   /**
-   * Set which session user is actively viewing (for unread state machine).
-   * Called when user navigates to a session. Main process uses this to determine
-   * whether to mark new assistant messages as unread.
+   * 设置用户当前正在查看的 session（用于未读状态机）。
+   * 在用户导航到某个 session 时调用。主进程据此判断
+   * 是否将新的 assistant 消息标记为未读。
    */
   const handleSetActiveViewingSession = useCallback((sessionId: string) => {
-    // Optimistic UI update: clear hasUnread immediately
+    // 乐观 UI 更新：立即清除 hasUnread
     updateSessionById(sessionId, { hasUnread: false })
-    // Tell main process user is viewing this session
+    // 告知主进程用户正在查看这个 session
     window.electronAPI.sessionCommand(sessionId, { type: 'setActiveViewing', workspaceId: windowWorkspaceId ?? '' })
   }, [updateSessionById, windowWorkspaceId])
 
   const handleMarkSessionRead = useCallback((sessionId: string) => {
-    // Update hasUnread flag (primary source of truth for NEW badge)
-    // Also update lastReadMessageId for backwards compatibility
+    // 更新 hasUnread 标志（NEW badge 的事实源）
+    // 同时更新 lastReadMessageId 以向后兼容
     updateSessionById(sessionId, (s) => {
       const lastFinalId = s.messages.findLast(
         m => (m.role === 'assistant' || m.role === 'plan') && !m.isIntermediate
@@ -1281,23 +1290,23 @@ export default function App() {
 
   const handleSendMessage = useCallback(async (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], externalBadges?: ContentBadge[]) => {
     try {
-      // Capture pre-send processing state so we can flag mid-stream sends
-      // for the queued badge (#616 follow-up — covers Pi steer path which
-      // returns status 'accepted', not 'queued').
+      // 捕获发送前的处理状态，以便我们能把流式中发送标记为
+      // queued badge（#616 后续 —— 覆盖 Pi steer 路径，它返回的是
+      // status 'accepted' 而非 'queued'）。
       const sendingMidStream = store.get(sessionAtomFamily(sessionId))?.isProcessing === true
 
-      // Step 1: Store attachments and get persistent metadata
+      // 第 1 步：存储附件并获取持久化 metadata
       let storedAttachments: StoredAttachment[] | undefined
       let processedAttachments: FileAttachment[] | undefined
 
       if (attachments?.length) {
-        // Store each attachment to disk (generates thumbnails, converts Office→markdown)
-        // Use allSettled so one failure doesn't kill all attachments
+        // 将每个附件存储到磁盘（生成缩略图，把 Office 转为 markdown）
+        // 使用 allSettled，这样一个失败不会让所有附件都失败
         const storeResults = await Promise.allSettled(
           attachments.map(a => window.electronAPI.storeAttachment(sessionId, a))
         )
 
-        // Filter successful stores, warn about failures
+        // 过滤成功的存储，对失败的发出警告
         storedAttachments = []
         const successfulAttachments: FileAttachment[] = []
         storeResults.forEach((result, i) => {
@@ -1309,11 +1318,11 @@ export default function App() {
           }
         })
 
-        // Notify user about failed attachments
+        // 就失败的附件通知用户
         const failedCount = storeResults.filter(r => r.status === 'rejected').length
         if (failedCount > 0) {
           console.warn(`${failedCount} attachment(s) failed to store`)
-          // Add warning message to session so user knows some attachments weren't included
+          // 在 session 中添加警告消息，让用户知道部分附件未包含
           const failedNames = attachments
             .filter((_, i) => storeResults[i].status === 'rejected')
             .map(a => a.name)
@@ -1328,46 +1337,46 @@ export default function App() {
           }))
         }
 
-        // Step 2: Create processed attachments for Claude
-        // - Office files: Convert to text with markdown content
-        // - Others: Use original FileAttachment
-        // - All: Include storedPath so agent knows where files are stored
-        // - Resized images: Use resizedBase64 instead of original large base64
+        // 第 2 步：为 Claude 创建处理后的附件
+        // - Office 文件：转换为带 markdown 内容的文本
+        // - 其他：使用原始 FileAttachment
+        // - 全部：包含 storedPath，让 agent 知道文件存储位置
+        // - 已缩放图片：使用 resizedBase64 而非原始大 base64
         processedAttachments = await Promise.all(
           successfulAttachments.map(async (att, i) => {
             const stored = storedAttachments?.[i]
             if (!stored) {
               console.error(`Missing stored attachment at index ${i}`)
-              return att // Fall back to original
+              return att // 回退到原始附件
             }
-            // Include storedPath and markdownPath for all attachment types
-            // Agent will use Read tool to access text/office files via these paths
-            // If image was resized, use the resized base64 for Claude API
+            // 为所有附件类型包含 storedPath 和 markdownPath
+            // agent 会用 Read 工具通过这些路径访问 text/office 文件
+            // 如果图片被缩放过，对 Claude API 使用缩放后的 base64
             return {
               ...att,
               storedPath: stored.storedPath,
               markdownPath: stored.markdownPath,
-              // Use resized base64 if available (for images that exceeded size limits)
+              // 如果可用则使用缩放后的 base64（针对超过大小限制的图片）
               base64: stored.resizedBase64 ?? att.base64,
             }
           })
         )
       }
 
-      // Step 3: Extract badges from mentions (sources/skills) with embedded icons
-      // Badges are self-contained for display in UserMessageBubble and viewer
-      // Merge with any externally provided badges (e.g., from EditPopover context badges)
-      // Use workspace slug (not UUID) for skill qualification - SDK expects "workspaceSlug:skillSlug"
+      // 第 3 步：从 mentions（sources/skills）提取带内嵌图标的 badge
+      // badge 是自包含的，用于在 UserMessageBubble 和 viewer 中显示
+      // 与任何外部提供的 badge（例如来自 EditPopover context badge）合并
+      // 用 workspace slug（而非 UUID）做 skill 资格判定 —— SDK 期望 "workspaceSlug:skillSlug"
       const mentionBadges: ContentBadge[] = windowWorkspaceSlug
         ? extractBadges(message, skills, sources, windowWorkspaceSlug)
         : []
       const badges: ContentBadge[] = [...(externalBadges || []), ...mentionBadges]
 
-      // Step 4.1: Detect SDK slash commands (e.g., /compact) and create command badges
-      // This makes /compact render as an inline badge rather than raw text
+      // 第 4.1 步：检测 SDK slash 命令（如 /compact）并创建 command badge
+      // 这让 /compact 渲染为内联 badge，而不是原始文本
       const commandMatch = message.match(/^\/([a-z]+)(\s|$)/i)
       if (commandMatch && commandMatch[1].toLowerCase() === 'compact') {
-        const commandText = commandMatch[0].trimEnd() // "/compact" without trailing space
+        const commandText = commandMatch[0].trimEnd() // "/compact"，去掉尾部空格
         badges.unshift({
           type: 'command',
           label: 'Compact',
@@ -1377,14 +1386,14 @@ export default function App() {
         })
       }
 
-      // Step 4.2: Detect plan execution messages and create file badges
-      // Pattern: "Read the plan at <path> and execute it."
-      // This is sent after compaction when accepting a plan, displays as clickable file badge
-      // Only the file path is replaced with a badge - surrounding text remains visible
+      // 第 4.2 步：检测 plan 执行消息并创建 file badge
+      // 模式："Read the plan at <path> and execute it."
+      // 这在压缩后接受 plan 时发送，显示为可点击的 file badge
+      // 只有文件路径被替换为 badge —— 周围文本保持可见
       const planExecuteMatch = message.match(/^(Read the plan at )(.+?)( and execute it\.?)$/i)
       if (planExecuteMatch) {
         const prefix = planExecuteMatch[1]      // "Read the plan at "
-        const filePath = planExecuteMatch[2]    // the actual path
+        const filePath = planExecuteMatch[2]    // 实际路径
         const fileName = filePath.split('/').pop() || 'plan.md'
         badges.push({
           type: 'file',
@@ -1396,14 +1405,13 @@ export default function App() {
         })
       }
 
-      // Step 5: Create user message with StoredAttachments (for UI display)
-      // Mark as isPending for optimistic UI — will be confirmed by user_message
-      // event. Flag mid-stream sends as queued so the bubble renders with the
-      // dashed-draft treatment immediately. Applies to both backends:
-      // Pi steers (server emits status: 'accepted' but the renderer preserves
-      // isQueued through that update) and Claude queues (server emits 'queued'
-      // which confirms it). Cleared by 'processing' status or when the current
-      // turn ends.
+      // 第 5 步：用 StoredAttachments 创建用户消息（供 UI 显示）
+      // 标记为 isPending 以支持乐观 UI —— 将由 user_message 事件确认。
+      // 把流式中发送标记为 queued，使气泡立即以虚线草稿样式渲染。
+      // 对两种后端都适用：
+      // Pi steer（服务器发出 status: 'accepted'，但 renderer 在该更新中
+      // 保留 isQueued）和 Claude 队列（服务器发出 'queued' 加以确认）。
+      // 由 'processing' 状态或当前 turn 结束时清除。
       const userMessage: Message = {
         id: generateMessageId(),
         role: 'user',
@@ -1411,18 +1419,18 @@ export default function App() {
         timestamp: Date.now(),
         attachments: storedAttachments,
         badges: badges.length > 0 ? badges : undefined,
-        isPending: true,  // Optimistic - will be confirmed by backend
+        isPending: true,  // 乐观 —— 将由后端确认
         isQueued: sendingMidStream,
       }
 
-      // Optimistic UI update - add user message and set processing state
+      // 乐观 UI 更新 —— 添加用户消息并设置处理状态
       updateSessionById(sessionId, (s) => ({
         messages: [...s.messages, userMessage],
         isProcessing: true,
         lastMessageAt: Date.now()
       }))
 
-      // Step 6: Send to Claude with processed attachments + stored attachments for persistence
+      // 第 6 步：发送给 Claude，附带处理后的附件 + 用于持久化的存储附件
       await window.electronAPI.sendMessage(sessionId, message, processedAttachments, storedAttachments, {
         skillSlugs,
         badges: badges.length > 0 ? badges : undefined,
@@ -1446,8 +1454,8 @@ export default function App() {
   }, [sessionOptions, updateSessionById, skills, sources, windowWorkspaceId])
 
   /**
-   * Unified handler for all session option changes.
-   * Handles persistence and backend sync for each option type.
+   * 所有 session option 变更的统一处理函数。
+   * 为每种 option 类型处理持久化和后端同步。
    */
   const handleSessionOptionsChange = useCallback((sessionId: string, updates: SessionOptionUpdates) => {
     setSessionOptions(prev => {
@@ -1457,21 +1465,21 @@ export default function App() {
       return next
     })
 
-    // Handle persistence/backend for specific options
+    // 为特定 option 处理持久化/后端
     if (updates.permissionMode !== undefined) {
-      // Sync permission mode change with backend
+      // 把 permission mode 变更同步到后端
       window.electronAPI.sessionCommand(sessionId, { type: 'setPermissionMode', mode: updates.permissionMode })
     }
     if (updates.thinkingLevel !== undefined) {
-      // Sync thinking level change with backend (session-level, persisted)
+      // 把 thinking level 变更同步到后端（session 级，持久化）
       window.electronAPI.sessionCommand(sessionId, { type: 'setThinkingLevel', level: updates.thinkingLevel })
     }
   }, [sessionOptions])
 
-  // Handle input draft changes per session with debounced persistence
+  // 处理 per-session 的输入草稿变更，带去抖持久化
   const draftSaveTimeoutRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
-  // Cleanup draft save timers on unmount to prevent memory leaks
+  // 卸载时清理草稿保存定时器，防止内存泄漏
   useEffect(() => {
     return () => {
       draftSaveTimeoutRef.current.forEach(clearTimeout)
@@ -1479,7 +1487,7 @@ export default function App() {
     }
   }, [])
 
-  // Getter for draft text - reads from ref without triggering re-renders
+  // 草稿文本的 getter —— 从 ref 读取，不触发重渲染
   const getDraft = useCallback((sessionId: string): string => {
     const draft = sessionDraftsRef.current.get(sessionId) as unknown
     const text = draft && typeof draft === 'object'
@@ -1488,18 +1496,18 @@ export default function App() {
     return coerceInputText(text)
   }, [])
 
-  // Getter for persisted attachment refs (path + name only — not hydrated files).
-  // Consumers that need FileAttachment objects should call hydrateDraftAttachments.
+  // 持久化附件引用的 getter（仅 path + name —— 不是已水合的文件）。
+  // 需要 FileAttachment 对象的调用方应调用 hydrateDraftAttachments。
   const getDraftAttachmentRefs = useCallback((sessionId: string): DraftAttachmentRef[] => {
     const attachments = sessionDraftsRef.current.get(sessionId)?.attachments
     return Array.isArray(attachments) ? attachments : []
   }, [])
 
-  // Hydrate persisted attachment refs into full FileAttachment objects.
-  //  - Track C (ref.content set): reconstruct directly from the inlined bytes.
-  //  - Track P (path-only): re-read from disk via the readUserAttachment RPC.
-  // Missing/moved files on Track P are silently dropped with a console warn — same
-  // UX as any other editor draft restore when the backing file is gone.
+  // 把持久化的附件引用水合为完整的 FileAttachment 对象。
+  //  - Track C（ref.content 已设置）：直接从内联字节重建。
+  //  - Track P（仅 path）：通过 readUserAttachment RPC 从磁盘重新读取。
+  // Track P 上缺失/移动的文件会静默丢弃并发出 console warn ——
+  // 与任何其他编辑器在底层文件不存在时恢复草稿的 UX 相同。
   const hydrateDraftAttachments = useCallback(async (sessionId: string): Promise<FileAttachment[]> => {
     const attachments = sessionDraftsRef.current.get(sessionId)?.attachments
     const refs = Array.isArray(attachments) ? attachments : []
@@ -1525,7 +1533,7 @@ export default function App() {
     return results.filter((a): a is FileAttachment => a !== null)
   }, [])
 
-  // Write a debounced snapshot of the current ref entry to disk.
+  // 把当前 ref 条目的去抖快照写入磁盘。
   const schedulePersistDraft = useCallback((sessionId: string) => {
     const existingTimeout = draftSaveTimeoutRef.current.get(sessionId)
     if (existingTimeout) {
@@ -1582,8 +1590,8 @@ export default function App() {
     schedulePersistDraft(sessionId)
   }, [schedulePersistDraft])
 
-  // Open new chat - creates session and selects it
-  // Used by components via AppShellContext and for programmatic navigation
+  // 打开新聊天 —— 创建 session 并选中它
+  // 由组件通过 AppShellContext 使用，也用于编程式导航
   const openNewChat = useCallback(async (params: NewChatActionParams = {}) => {
     if (!windowWorkspaceId) {
       console.warn('[App] Cannot open new chat: no workspace ID')
@@ -1596,10 +1604,10 @@ export default function App() {
       await window.electronAPI.sessionCommand(session.id, { type: 'rename', name: params.name })
     }
 
-    // Navigate to the chat view - this sets both selectedSession and activeView
+    // 导航到聊天视图 —— 这会同时设置 selectedSession 和 activeView
     navigate(routes.view.allSessions(session.id))
 
-    // Pre-fill input if provided (after a small delay to ensure component is mounted)
+    // 如果提供了输入则预填充（加一点延迟以确保组件已挂载）
     if (params.input) {
       setTimeout(() => handleInputChange(session.id, params.input!), 100)
     }
@@ -1615,11 +1623,11 @@ export default function App() {
     const success = await window.electronAPI.respondToPermission(sessionId, requestId, allowed, alwaysAllow, options)
 
     if (success) {
-      // Remove only the first permission from the queue (the one we just responded to)
+      // 只从队列移除第一个权限（即我们刚响应的那个）
       setPendingPermissions(prev => {
         const next = new Map(prev)
         const queue = next.get(sessionId) || []
-        const remainingQueue = queue.slice(1) // Remove first item
+        const remainingQueue = queue.slice(1) // 移除第一项
         if (remainingQueue.length === 0) {
           next.delete(sessionId)
         } else {
@@ -1627,10 +1635,10 @@ export default function App() {
         }
         return next
       })
-      // Note: No need to force session refresh - per-session atoms update automatically
+      // 注意：无需强制刷新 session —— per-session atoms 会自动更新
     } else {
-      // Response failed (agent/session gone) - clear the permission anyway
-      // to avoid UI being stuck with stale permission
+      // 响应失败（agent/session 已不存在）—— 仍清除该权限，
+      // 避免 UI 卡在过期的权限请求上
       setPendingPermissions(prev => {
         const next = new Map(prev)
         const queue = next.get(sessionId) || []
@@ -1649,11 +1657,11 @@ export default function App() {
     const success = await window.electronAPI.respondToCredential(sessionId, requestId, response)
 
     if (success) {
-      // Remove only the first credential from the queue (the one we just responded to)
+      // 只从队列移除第一个凭证（即我们刚响应的那个）
       setPendingCredentials(prev => {
         const next = new Map(prev)
         const queue = next.get(sessionId) || []
-        const remainingQueue = queue.slice(1) // Remove first item
+        const remainingQueue = queue.slice(1) // 移除第一项
         if (remainingQueue.length === 0) {
           next.delete(sessionId)
         } else {
@@ -1661,10 +1669,10 @@ export default function App() {
         }
         return next
       })
-      // Note: No need to force session refresh - per-session atoms update automatically
+      // 注意：无需强制刷新 session —— per-session atoms 会自动更新
     } else {
-      // Response failed (agent/session gone) - clear the credential anyway
-      // to avoid UI being stuck with stale credential request
+      // 响应失败（agent/session 已不存在）—— 仍清除该凭证，
+      // 避免 UI 卡在过期的凭证请求上
       setPendingCredentials(prev => {
         const next = new Map(prev)
         const queue = next.get(sessionId) || []
@@ -1679,9 +1687,9 @@ export default function App() {
     }
   }, [])
 
-  // Centralized link interceptor: classifies file types and decides whether to
-  // show an in-app preview overlay or open externally. Replaces the old
-  // handleOpenFile/handleOpenUrl that always opened in external apps.
+  // 集中式链接拦截器：分类文件类型，并决定是显示应用内预览 overlay
+  // 还是外部打开。取代了旧的、总是用外部应用打开的
+  // handleOpenFile/handleOpenUrl。
   const linkInterceptor = useLinkInterceptor({
     openFileExternal: async (path) => {
       try {
@@ -1700,10 +1708,9 @@ export default function App() {
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
         console.error('Failed to open URL:', error)
-        // The blocked-URL classifier already explains WHY and (for file:)
-        // points the user at preview blocks. Don't append the generic
-        // "use Open File instead" hint when the message already carries
-        // that guidance.
+        // 被拦截 URL 的分类器已经解释了原因，并且（对 file:）
+        // 会把用户指引到预览块。当消息已携带该指引时，
+        // 不要再追加通用的「改用 Open File」提示。
         const hasRichGuidance = /URL blocked/.test(message)
         const tail = hasRichGuidance ? '' : '. If this is a local path, use Open File instead.'
         toast.error(t('toast.failedToOpenLink'), {
@@ -1752,27 +1759,27 @@ export default function App() {
     navigate(routes.view.settings('preferences'))
   }, [])
 
-  // Show reset confirmation dialog
+  // 显示重置确认对话框
   const handleReset = useCallback(() => {
     setShowResetDialog(true)
   }, [])
 
-  // Execute reset after user confirms in dialog
+  // 用户在对话框确认后执行重置
   const executeReset = useCallback(async () => {
     try {
       await window.electronAPI.logout()
-      // Reset all state
-      // Clear session atoms - initialize with empty array clears all per-session atoms
+      // 重置所有状态
+      // 清除 session atoms —— 用空数组初始化会清除所有 per-session atoms
       initializeSessions([])
       setWorkspaces([])
       setWindowWorkspaceId(null)
-      // Reset setupNeeds to force fresh onboarding start
+      // 重置 setupNeeds，强制重新开始 onboarding
       setSetupNeeds({
         needsBillingConfig: true,
         needsCredentials: true,
         isFullyConfigured: false,
       })
-      // Reset onboarding hook state
+      // 重置 onboarding hook 状态
       onboarding.reset()
       setAppState('onboarding')
     } catch (error) {
@@ -1782,60 +1789,58 @@ export default function App() {
     }
   }, [onboarding, initializeSessions])
 
-  // Handle workspace selection
-  // - Default: switch workspace in same window (in-window switching)
-  // - With openInNewWindow=true: open in new window (or focus existing)
+  // 处理 workspace 选择
+  // - 默认：在同一窗口切换 workspace（窗口内切换）
+  // - 带 openInNewWindow=true：在新窗口打开（或聚焦已有窗口）
   const handleSelectWorkspace = useCallback(async (workspaceId: string, openInNewWindow = false) => {
-    // If selecting current workspace, do nothing
+    // 如果选择的是当前 workspace，什么都不做
     if (workspaceId === windowWorkspaceId) return
 
     if (openInNewWindow) {
-      // Open (or focus) the window for the selected workspace
+      // 打开（或聚焦）所选 workspace 的窗口
       window.electronAPI.openWorkspace(workspaceId)
     } else {
-      // Switch workspace in current window
-      // 1. Update the main process's window-workspace mapping
+      // 在当前窗口切换 workspace
+      // 1. 更新主进程的 window-workspace 映射
       await window.electronAPI.switchWorkspace(workspaceId)
 
-      // 2. Update React state to trigger re-renders
+      // 2. 更新 React state 以触发重渲染
       setWindowWorkspaceId(workspaceId)
 
-      // 3. Clear selected session - the old session belongs to the previous workspace
-      // and should not remain selected when switching to a new workspace.
-      // This prevents showing stale session data from the wrong workspace.
+      // 3. 清除选中的 session —— 旧 session 属于前一个 workspace，
+      // 切换到新 workspace 时不应保持选中。这避免显示来自错误 workspace 的过期 session 数据。
       setSession({ selected: null })
 
-      // 4. Clear pending permissions/credentials (not relevant to new workspace)
+      // 4. 清除待处理的权限/凭证（与新 workspace 无关）
       setPendingPermissions(new Map())
       setPendingCredentials(new Map())
 
-      // 5. Clear session options from previous workspace
-      // (session IDs are unique UUIDs, but clearing prevents unbounded memory growth
-      // and ensures no stale state from old workspace persists)
+      // 5. 清除前一个 workspace 的 session options
+      // （session ID 是唯一 UUID，但清除可防止无界内存增长，
+      // 并确保旧 workspace 的过期状态不残留）
       setSessionOptions(new Map())
 
-      // 6. Clear message drafts from previous workspace
-      // (prevents memory growth on repeated workspace switches)
+      // 6. 清除前一个 workspace 的消息草稿
+      // （防止反复切换 workspace 时的内存增长）
       sessionDraftsRef.current.clear()
 
-      // 7. Reset sources and skills atoms to empty
-      // (prevents stale data flash during workspace switch - AppShell will reload)
+      // 7. 把 sources 和 skills atoms 重置为空
+      // （防止 workspace 切换时的过期数据闪烁 —— AppShell 会重新加载）
       store.set(sourcesAtom, [])
       store.set(skillsAtom, [])
 
-      // 8. Clear session atoms BEFORE workspace switch
-      // This prevents stale session data from the previous workspace being visible.
+      // 8. 在 workspace 切换之前清除 session atoms
+      // 这避免前一个 workspace 的过期 session 数据被看到。
       store.set(sessionMetaMapAtom, new Map())
       store.set(sessionIdsAtom, [])
 
-      // Note: NavigationContext detects the workspaceId change and handles
-      // panel restoration from the stored workspace URL (or defaults to allSessions).
-      // Sessions and theme will reload automatically due to windowWorkspaceId dependency
-      // in useEffect hooks.
+      // 注意：NavigationContext 检测到 workspaceId 变更，并从存储的
+      // workspace URL 处理面板恢复（或默认到 allSessions）。
+      // Sessions 和 theme 会由于 useEffect hook 中的 windowWorkspaceId 依赖而自动重新加载。
     }
   }, [windowWorkspaceId, setSession, store])
 
-  // Handle workspace switch by slug (called by NavigationContext on popstate when ?ws= changes)
+  // 按 slug 处理 workspace 切换（由 NavigationContext 在 ?ws= 变化的 popstate 时调用）
   const handleSwitchWorkspaceBySlug = useCallback((slug: string) => {
     const target = workspaces.find(w => w.slug === slug)
     if (target) {
@@ -1843,23 +1848,23 @@ export default function App() {
     }
   }, [workspaces, handleSelectWorkspace])
 
-  // Handle workspace refresh (e.g., after icon upload)
+  // 处理 workspace 刷新（例如上传图标后）
   const handleRefreshWorkspaces = useCallback(() => {
     window.electronAPI.getWorkspaces().then(setWorkspaces)
   }, [])
 
-  // Handle cancel during onboarding
+  // 处理 onboarding 期间的取消
   const handleOnboardingCancel = useCallback(() => {
     onboarding.handleCancel()
   }, [onboarding])
 
-  // Build context value for AppShell component
-  // This is memoized to prevent unnecessary re-renders
-  // IMPORTANT: Must be before early returns to maintain consistent hook order
+  // 为 AppShell 组件构建 context value
+  // 这个值做了 memoize，以防止不必要的重渲染
+  // 重要：必须放在早返回之前，以保持 hook 顺序一致
   const appShellContextValue = useMemo<AppShellContextType>(() => ({
-    // Data
-    // NOTE: sessions is NOT included - use sessionMetaMapAtom for listing
-    // and useSession(id) hook for individual sessions. This prevents memory leaks.
+    // 数据
+    // 注意：不含 sessions —— 列表用 sessionMetaMapAtom，
+    // 单个 session 用 useSession(id) hook。这可防止内存泄漏。
     workspaces,
     activeWorkspaceId: windowWorkspaceId,
     activeWorkspaceSlug: windowWorkspaceSlug,
@@ -1872,7 +1877,7 @@ export default function App() {
     getDraftAttachmentRefs,
     hydrateDraftAttachments,
     sessionOptions,
-    // Session callbacks
+    // Session 回调
     onCreateSession: handleCreateSession,
     onSendMessage: handleSendMessage,
     onRenameSession: handleRenameSession,
@@ -1887,13 +1892,13 @@ export default function App() {
     onDeleteSession: handleDeleteSession,
     onRespondToPermission: handleRespondToPermission,
     onRespondToCredential: handleRespondToCredential,
-    // File/URL handlers
+    // 文件/URL 处理函数
     onOpenFile: handleOpenFile,
     onOpenUrl: handleOpenUrl,
     // Workspace
     onSelectWorkspace: handleSelectWorkspace,
     onRefreshWorkspaces: handleRefreshWorkspaces,
-    // App actions
+    // App 操作
     onOpenSettings: handleOpenSettings,
     onOpenKeyboardShortcuts: handleOpenKeyboardShortcuts,
     onOpenStoredUserPreferences: handleOpenStoredUserPreferences,
@@ -1902,10 +1907,10 @@ export default function App() {
     onSessionOptionsChange: handleSessionOptionsChange,
     onInputChange: handleInputChange,
     onAttachmentsChange: handleAttachmentsChange,
-    // New chat (via deep link navigation)
+    // 新聊天（通过深链导航）
     openNewChat,
   }), [
-    // NOTE: sessions removed to prevent memory leaks - components use atoms instead
+    // 注意：sessions 已移除以防内存泄漏 —— 组件改用 atoms
     workspaces,
     windowWorkspaceId,
     windowWorkspaceSlug,
@@ -1946,40 +1951,40 @@ export default function App() {
     openNewChat,
   ])
 
-  // Platform actions for @craft-agent/ui components (overlays, etc.)
-  // Memoized to prevent re-renders when these callbacks don't change
-  // NOTE: Must be defined before early returns to maintain consistent hook order
+  // 供 @craft-agent/ui 组件（overlay 等）使用的平台操作
+  // 做了 memoize，在这些回调不变时防止重渲染
+  // 注意：必须放在早返回之前，以保持 hook 顺序一致
   const platformActions = useMemo(() => ({
     onOpenFile: handleOpenFile,
     onOpenUrl: handleOpenUrl,
-    // Bypass link interceptor — opens file directly in system editor.
-    // Used by overlay header badges (when already viewing a file, "Open" should launch editor).
+    // 绕过链接拦截器 —— 直接在系统编辑器中打开文件。
+    // 由 overlay header badge 使用（当已在查看某文件时，「打开」应启动编辑器）。
     onOpenFileExternal: linkInterceptor.openFileExternal,
-    // Read file contents as UTF-8 string (used by datatable/spreadsheet/html-preview src fields)
+    // 以 UTF-8 字符串读取文件内容（供 datatable/spreadsheet/html-preview 的 src 字段使用）
     onReadFile: (path: string) => window.electronAPI.readFile(path),
-    // Read file as data URL (used by image-preview blocks)
+    // 以 data URL 读取文件（供图片预览块使用）
     onReadFileDataUrl: (path: string) => window.electronAPI.readFileDataUrl(path),
-    // Read file as binary Uint8Array (used by PDF preview blocks)
+    // 以二进制 Uint8Array 读取文件（供 PDF 预览块使用）
     onReadFileBinary: (path: string) => window.electronAPI.readFileBinary(path),
-    // Reveal a file in the system file manager (Finder on macOS, Explorer on Windows, etc.)
+    // 在系统文件管理器中显示文件（macOS 的 Finder、Windows 的 Explorer 等）
     onRevealInFinder: (path: string) => {
       window.electronAPI.showInFolder(path).catch(() => {})
     },
-    // Platform-specific file manager name for UI labels
+    // 平台相关的文件管理器名称，用于 UI 标签
     fileManagerName: getFileManagerName(),
-    // Hide/show macOS traffic lights when fullscreen overlays are open
+    // 全屏 overlay 打开时隐藏/显示 macOS 交通灯按钮
     onSetTrafficLightsVisible: (visible: boolean) => {
       window.electronAPI.setTrafficLightsVisible(visible)
     },
   }), [handleOpenFile, handleOpenUrl, linkInterceptor.openFileExternal])
 
-  // Loading state - show splash screen
+  // Loading 状态 —— 显示启动屏
   if (appState === 'loading') {
     return <SplashScreen isExiting={false} />
   }
 
-  // Reauth state - session expired, need to re-login
-  // ModalProvider + WindowCloseHandler ensures X button works on Windows
+  // Reauth 状态 —— session 过期，需要重新登录
+  // ModalProvider + WindowCloseHandler 确保 Windows 上 X 按钮可用
   if (appState === 'reauth') {
     return (
       <DismissibleLayerProvider>
@@ -1999,9 +2004,9 @@ export default function App() {
     )
   }
 
-  // Onboarding state
-  // ModalProvider + WindowCloseHandler ensures X button works on Windows
-  // (without this, the close IPC message has no listener and window stays open)
+  // Onboarding 状态
+  // ModalProvider + WindowCloseHandler 确保 Windows 上 X 按钮可用
+  // （没有这个，关闭 IPC 消息没有监听者，窗口会保持打开）
   if (appState === 'onboarding') {
     return (
       <DismissibleLayerProvider>
@@ -2032,7 +2037,7 @@ export default function App() {
     )
   }
 
-  // Workspace picker — thin client with no workspace selected
+  // Workspace 选择器 —— 未选择 workspace 的瘦客户端
   if (appState === 'workspace-picker') {
     return (
       <DismissibleLayerProvider>
@@ -2050,10 +2055,10 @@ export default function App() {
     )
   }
 
-  // Show splash until exit animation completes
+  // 在退出动画完成前一直显示启动屏
   const showSplash = !splashHidden
 
-  // Ready state - main app with splash overlay during data loading
+  // Ready 状态 —— 主应用，数据加载期间带启动屏 overlay
   return (
     <PlatformProvider actions={platformActions}>
     <ShikiThemeProvider shikiTheme={shikiTheme}>
@@ -2074,10 +2079,10 @@ export default function App() {
           isSessionsReady={sessionsLoaded}
           remoteWorkspaceId={windowRemoteWorkspaceId}
         >
-          {/* Handle window close requests (X button, Cmd+W) - close modal first if open */}
+          {/* 处理窗口关闭请求（X 按钮、Cmd+W）—— 若有打开的 modal 先关闭 */}
           <WindowCloseHandler />
 
-          {/* Splash screen overlay - fades out when fully ready */}
+          {/* 启动屏 overlay —— 完全就绪时淡出 */}
           {showSplash && (
             <SplashScreen
               isExiting={splashExiting}
@@ -2085,7 +2090,7 @@ export default function App() {
             />
           )}
 
-          {/* Main UI - always rendered, splash fades away to reveal it */}
+          {/* 主 UI —— 始终渲染，启动屏淡出后显露出来 */}
           <div
             className="h-full flex flex-col text-foreground"
             style={{ paddingTop: 'var(--topbar-height)' }}
@@ -2118,7 +2123,7 @@ export default function App() {
             />
           </div>
 
-          {/* File preview overlay — rendered by the link interceptor when a previewable file is clicked */}
+          {/* 文件预览 overlay —— 当点击可预览文件时由链接拦截器渲染 */}
           {linkInterceptor.previewState && (
             <FilePreviewRenderer
               state={linkInterceptor.previewState}
@@ -2140,8 +2145,8 @@ export default function App() {
 }
 
 /**
- * Component that handles window close requests.
- * Must be inside ModalProvider to access the modal registry.
+ * 处理窗口关闭请求的组件。
+ * 必须位于 ModalProvider 内部，以访问 modal registry。
  */
 function WindowCloseHandler() {
   useWindowCloseHandler()
@@ -2149,17 +2154,17 @@ function WindowCloseHandler() {
 }
 
 /**
- * FilePreviewRenderer - Routes file preview state to the correct overlay component.
+ * FilePreviewRenderer —— 把文件预览状态路由到正确的 overlay 组件。
  *
- * Handles all preview types from the link interceptor:
- * - image → ImagePreviewOverlay (binary, loaded via data URL)
- * - pdf → PDFPreviewOverlay (binary, embedded via Chromium viewer)
- * - code/text → CodePreviewOverlay (syntax highlighted)
+ * 处理来自链接拦截器的所有预览类型：
+ * - image → ImagePreviewOverlay（二进制，经 data URL 加载）
+ * - pdf → PDFPreviewOverlay（二进制，经 Chromium 查看器嵌入）
+ * - code/text → CodePreviewOverlay（语法高亮）
  * - markdown → DocumentFormattedMarkdownOverlay
  * - json → JSONPreviewOverlay
  *
- * File path badges with "Open" / "Reveal in {file manager}" menus are provided
- * automatically by PlatformContext — no per-overlay callback props needed.
+ * 带「打开」/「在 {文件管理器} 中显示」菜单的文件路径 badge
+ * 由 PlatformContext 自动提供 —— 无需为每个 overlay 单独传 callback props。
  */
 function FilePreviewRenderer({
   state,
@@ -2215,7 +2220,7 @@ function FilePreviewRenderer({
       )
 
     case 'markdown': {
-      // Show PLAN header for .md files in plans folder (handles both absolute and relative paths)
+      // 对 plans 文件夹中的 .md 文件显示 PLAN 头部（同时处理绝对和相对路径）
       const isPlanFile =
         (state.filePath.includes('/plans/') || state.filePath.startsWith('plans/')) &&
         state.filePath.endsWith('.md')
@@ -2231,13 +2236,13 @@ function FilePreviewRenderer({
     }
 
     case 'json': {
-      // JSONPreviewOverlay expects parsed data, not a raw string.
-      // @uiw/react-json-view crashes on null value, so guard against it.
+      // JSONPreviewOverlay 期望的是解析后的数据，而非原始字符串。
+      // @uiw/react-json-view 遇到 null 值会崩溃，因此要加以保护。
       let parsedData: unknown = null
       try {
         if (state.content) parsedData = JSON.parse(state.content)
       } catch {
-        // If parsing fails, fall back to showing as code
+        // 如果解析失败，回退为以代码形式显示
         return (
           <CodePreviewOverlay
             isOpen
@@ -2251,7 +2256,7 @@ function FilePreviewRenderer({
           />
         )
       }
-      // If read failed and content is empty, show raw code overlay with the read error.
+      // 如果读取失败且内容为空，显示带读取错误的原始代码 overlay。
       if ((!state.content || !state.content.trim()) && state.error) {
         return (
           <CodePreviewOverlay
